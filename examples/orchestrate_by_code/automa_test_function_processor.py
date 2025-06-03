@@ -1,6 +1,6 @@
 import asyncio
 from bridgic.core.worker import Worker
-from bridgic.core.worker.data_model import DataRecord
+from bridgic.core.worker.data_model import Task
 from bridgic.automa import AutoMa
 from bridgic.core.worker import FunctionProcessor
 from bridgic.core.worker import MethodProcessor
@@ -21,7 +21,7 @@ class SimpleFlow(AutoMa):
         my_adder = MyAdder()
         self.add_processor = MethodProcessor(my_adder.add_5)
 
-    async def process(self, data: DataRecord) -> DataRecord:
+    async def process(self, data: Task) -> Task:
         data = await self.multiply_processor.process(data)
         data = await self.add_processor.process(data)
         return data
@@ -30,7 +30,7 @@ class SimpleFlow(AutoMa):
 async def main():
     x = 7
     flow = SimpleFlow()
-    data = DataRecord.create_from_value(x)
+    data = Task.create_from_value(x)
     result = await flow.process(data)
     print(result)
 

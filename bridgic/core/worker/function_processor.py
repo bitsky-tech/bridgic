@@ -2,7 +2,7 @@ from typing import Callable
 import inspect
 from bridgic.core.utils.inspect_tools import get_first_arg_type
 from bridgic.core.worker import Worker
-from bridgic.core.worker.data_model import DataRecord
+from bridgic.core.worker.data_model import Task
 from bridgic.core.worker.callable_processor import CallableProcessor
 
 

@@ -1,5 +1,5 @@
 from bridgic.core.worker import Worker
-from bridgic.core.worker.data_model import ProcessorData, DataRecord
+from bridgic.core.worker.data_model import ProcessorData, Task
 from bridgic.automa.meta_class.meta import AutoMaMeta
 from bridgic.core.worker import MethodProcessor
 from bridgic.automa.bridge.decorator.bridge_info import _BridgeInfo
@@ -71,7 +71,7 @@ class AutoMa(Worker, metaclass=AutoMaMeta):
             data = cast(ProcessorData, args[0])
         else:
             # TODO: 需要一个系统的converion机制
-            data = DataRecord(**kwargs)
+            data = Task(**kwargs)
 
         # TODO: check here
         

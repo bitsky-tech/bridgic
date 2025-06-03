@@ -2,15 +2,15 @@ from typing import Callable, abstractmethod
 import inspect
 from bridgic.core.utils.inspect_tools import get_first_arg_type
 from bridgic.core.worker import Worker
-from bridgic.core.worker.data_model import DataRecord
+from bridgic.core.worker.data_model import Task
 
 class CallableProcessor(Worker):
-    async def process_record(self, data: DataRecord) -> DataRecord:
+    async def process_task(self, data: Task) -> Task:
         # Convert DataRecord to function arguments
         args = ()
         kwargs = {}
         sig = inspect.signature(self.get_callable())
-        if len(sig.parameters) == 1 and isinstance(get_first_arg_type(sig), DataRecord):
+        if len(sig.parameters) == 1 and isinstance(get_first_arg_type(sig), Task):
             args = (data,)
         elif hasattr(data, "value"):
             args = (data.value,)
@@ -30,14 +30,14 @@ class CallableProcessor(Worker):
             result = result_or_coroutine
 
         # Convert function return values to DataRecord
-        if isinstance(result, DataRecord):
+        if isinstance(result, Task):
             pass
         elif isinstance(result, tuple):
-            result = DataRecord(args=result)
+            result = Task(args=result)
         elif isinstance(result, dict):
-            result = DataRecord(**result)
+            result = Task(**result)
         else:
-            result = DataRecord(value=result)
+            result = Task(value=result)
 
         return result
 

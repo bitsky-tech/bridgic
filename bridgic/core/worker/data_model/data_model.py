@@ -1,31 +1,26 @@
 from pydantic import BaseModel, ConfigDict
-from typing import AsyncIterable, Generic, Any
+from typing import Any
 from typing import TypeVar
 
 T = TypeVar('T')
 
 # 
-# 在AutoMa中的各个Processor之间传递的数据结构
-# 遗留问题：TODO 输入或输出为None是否需要支持？
+# Input structure for each Worker
 # 
-class DataRecord(BaseModel):
+class Task(BaseModel):
     model_config = ConfigDict(extra='allow')
 
-    # TODO: 提供class_method，把基础类型快速封装成DataRecord
+    # 提供class_method，把基础类型快速封装成DataRecord
     @classmethod
-    def create_from_dict(cls, data: dict) -> "DataRecord":
+    def create_from_dict(cls, data: dict) -> "Task":
         return cls(**data)
-    
-    @classmethod
-    def create_from_value(cls, value: Any) -> "DataRecord":
-        return cls(value=value)
-    
-
-
-# TODO: Generic?
-class DataStream(Generic[T], BaseModel, AsyncIterable[T]):
+        
+# 
+# Output structure for each Worker
+# 
+class TaskResult(BaseModel):
     model_config = ConfigDict(extra='allow')
 
-ProcessorData = DataRecord | InEvent | DataStream
-
-__all__ = ["DataRecord", "InEvent", "DataStream", "ProcessorData"]
+    @classmethod
+    def create_from_dict(cls, data: dict) -> "TaskResult":
+        return cls(**data)
