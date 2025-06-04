@@ -1,44 +1,20 @@
 from typing import Callable, abstractmethod
-import inspect
 from bridgic.core.utils.inspect_tools import get_first_arg_type
 from bridgic.core.worker import Worker
 from bridgic.core.worker.data_model import Task
+from typing import Any
+import inspect
 
 class CallableProcessor(Worker):
-    async def process_task(self, data: Task) -> Task:
-        # Convert DataRecord to function arguments
-        args = ()
-        kwargs = {}
-        sig = inspect.signature(self.get_callable())
-        if len(sig.parameters) == 1 and isinstance(get_first_arg_type(sig), Task):
-            args = (data,)
-        elif hasattr(data, "value"):
-            args = (data.value,)
-        elif hasattr(data, "args"):
-            args = data.args
-        elif hasattr(data, "kwargs"):
-            kwargs = data.kwargs
-        else:
-            kwargs = data.model_dump()
+    _is_async: bool
 
-        # Convert function return value to DataRecord
+    async def process_default_async(self, *args, **kwargs) -> Any:
         callable = self.get_callable()
         result_or_coroutine = callable(*args, **kwargs)
         if self._is_async:
             result = await result_or_coroutine
         else:
             result = result_or_coroutine
-
-        # Convert function return values to DataRecord
-        if isinstance(result, Task):
-            pass
-        elif isinstance(result, tuple):
-            result = Task(args=result)
-        elif isinstance(result, dict):
-            result = Task(**result)
-        else:
-            result = Task(value=result)
-
         return result
 
     @abstractmethod

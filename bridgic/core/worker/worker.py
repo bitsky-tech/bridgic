@@ -23,18 +23,56 @@ class Worker:
     # 3，单个返回值，其他任意类型
     # 4，多个返回值，tuple
     async def process_async(self, *args, **kwargs) -> Any:
+        if len(args) > 0 and isinstance(args[0], AsyncIterable):
+            new_args = args[1:]
+
+        # Validate arguments
+        self._validate_args(*args, **kwargs)
+
+        result = None
         if len(args) > 0:
             if isinstance(args[0], AsyncIterable):
                 stream = args[0]
-                return await self.process_stream_async(stream, *args[1:], **kwargs)
+                result = await self.process_stream_async(stream, *new_args, **kwargs)
             elif isinstance(args[0], Task):
                 task = args[0]
-                return await self.process_task_async(task)
-        # By default, process_async handles other cases by itself
+                result = await self.process_task_async(task)
+            else:
+                result = await self.process_default_async(*args, **kwargs)
+        else:
+            # By default, process_default_async handles other cases
+            result = await self.process_default_async(*args, **kwargs)
+        
+        self._validate_result_values(result)
+
+        return result
         
     async def process_task_async(self, task: Task) -> TaskResult:
         pass
 
     async def process_stream_async(self, stream: AsyncIterable, *args, **kwargs) -> Any:
+        return stream
+
+    async def process_default_async(self, *args, **kwargs) -> Any:
         pass
 
+    def _validate_args(self, *args, **kwargs) -> None:
+        if len(args) > 0:
+            if len(kwargs) > 0:
+                raise ValueError("args and kwargs are not allowed to be used together in a Worker")
+            if isinstance(args[0], Task) and len(args) > 1:
+                raise ValueError("If the first argument is a Task, additional arguments are not permitted.")            # 
+            
+    # 返回值的允许类型：
+    # 1，单个返回值，TaskResult类型
+    # 2，单个返回值，dict
+    # 3，单个返回值，其他任意类型
+    # 4，多个返回值，tuple
+    def _validate_result_values(self, result: Any) -> None:
+        validated = True
+        if not isinstance(result, tuple):
+            validated = isinstance(result, dict) or isinstance(result, TaskResult)
+        elif len(result) == 1:
+            validated = isinstance(result[0], dict) or isinstance(result[0], TaskResult)
+        if not validated:
+            raise ValueError("The return value of a Worker must be a TaskResult, a dict, or a tuple.")
