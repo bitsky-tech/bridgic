@@ -1,6 +1,6 @@
 from bridgic.core.worker import Worker
 from bridgic.automa.meta_class.meta import AutoMaMeta
-from bridgic.core.worker import MethodWorker
+from bridgic.core.worker import CallableWorker
 from bridgic.automa.bridge.decorator.bridge_info import _BridgeInfo
 from typing import Any
 from bridgic.typing.event.event import InEvent, OutEvent
@@ -35,7 +35,7 @@ class AutoMa(Worker, metaclass=AutoMaMeta):
             workers = self.__dict__.get("_workers")
             for bridge in self._worker_bridges:
                 bound_func = bridge.func.__get__(self, type(self))
-                worker = MethodWorker(bound_func)
+                worker = CallableWorker(bound_func)
                 workers[bridge.func.__name__] = worker
 
     def process(self, *args, **kwargs) -> Any:
