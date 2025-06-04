@@ -55,25 +55,25 @@ class AutoMa(Worker, metaclass=AutoMaMeta):
     def post_out_event(self, event: OutEvent, event_emiter: InEventEmiter) -> None:
         pass
     
-    def __setattr__(self, name: str, value: Worker | None) -> None:
-        workers = self.__dict__.get("_workers")
-        if workers is None:
-            raise AttributeError(
-                        "cannot assign worker before AutoMa.__init__() call"
-                    )
-
+    def __setattr__(self, name: str, value: Any) -> None:
         if isinstance(value, Worker):
+            workers = self.__dict__.get("_workers")
+            if workers is None:
+                raise AttributeError(
+                            "cannot assign worker before AutoMa.__init__() call"
+                        )
+
             workers[name] = value
-        elif value is None and name in workers:
-                del workers[name]
+
+        if value is None and name in workers:
+            del workers[name]
+        super().__setattr__(name, value)
 
     def __getattr__(self, name: str) -> Worker | None:
         workers = self.__dict__.get("_workers")
-        if workers is None:
-            raise AttributeError(
-                        "cannot get worker before AutoMa.__init__() call"
-                    )
-        return workers.get(name)
+        if workers is not None and name in workers:
+            return workers.get(name)
+        return super().__getattr__(name)
 
     async def process_async(self, *args, **kwargs) -> Any:
         # TODO: check anything here
