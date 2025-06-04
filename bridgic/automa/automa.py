@@ -4,9 +4,9 @@ from bridgic.automa.meta_class.meta import AutoMaMeta
 from bridgic.core.worker import MethodProcessor
 from bridgic.automa.bridge.decorator.bridge_info import _BridgeInfo
 from typing import cast
-from bridgic.typing.event import InEvent, OutEvent
+from bridgic.typing.event.event import InEvent, OutEvent
+from bridgic.typing.event.in_event_emiter import InEventEmiter
 import asyncio
-from concurrent.futures import ThreadPoolExecutor
 from typing import Callable
 
 # 
@@ -21,7 +21,7 @@ class AutoMa(Worker, metaclass=AutoMaMeta):
     _processors: dict[str, Worker]
     _processor_bridges: list[_BridgeInfo]
 
-    def register_conduit_hook(self, hook: Callable[[OutEvent, xxx_future], None]) -> None:
+    def register_conduit_hook(self, hook: Callable[[OutEvent, InEventEmiter], None]) -> None:
         pass
 
     def __init__(self, *args, **kwargs) -> None:

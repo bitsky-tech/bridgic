@@ -1,7 +1,7 @@
 from typing import Any
-from bridgic.typing.event import InEvent
+from bridgic.typing.event.event import InEvent
 
-class InEventFuture:
+class InEventEmiter:
     def emit(self, event: InEvent) -> None:
         pass
 
