@@ -1,7 +1,7 @@
 from typing import Callable
 from .bridge_info import _BridgeInfo
 
-def processor(listen: Callable = None, is_start: bool = False, is_end: bool = False) -> Callable:
+def worker(listen: Callable = None, is_start: bool = False, is_end: bool = False) -> Callable:
     def actual_decorator(func: callable):
         def wrapper(*args, **kwargs):
             results = func(*args, **kwargs)

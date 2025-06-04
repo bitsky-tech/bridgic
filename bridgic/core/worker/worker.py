@@ -23,18 +23,5 @@ class Worker:
     # 3，单个返回值，其他任意类型
     # 4，多个返回值，tuple
     async def process_async(self, *args, **kwargs) -> Any:
-        if len(args) > 0:
-            if isinstance(args[0], AsyncIterable):
-                stream = args[0]
-                return await self.process_stream_async(stream, *args[1:], **kwargs)
-            elif isinstance(args[0], Task):
-                task = args[0]
-                return await self.process_task_async(task)
-        # By default, process_async handles other cases by itself
+        return None
         
-    async def process_task_async(self, task: Task) -> TaskResult:
-        pass
-
-    async def process_stream_async(self, stream: AsyncIterable, *args, **kwargs) -> Any:
-        pass
-

@@ -3,7 +3,6 @@
 # Processor是上层编排层操纵的基础单元。
 
 from .worker import Worker
-from .function_processor import FunctionProcessor
-from .method_processor import MethodProcessor
+from .callable_worker import CallableWorker
 
-__all__ = ["Worker", "FunctionProcessor", "MethodProcessor"]
+__all__ = ["Worker", "CallableWorker"]

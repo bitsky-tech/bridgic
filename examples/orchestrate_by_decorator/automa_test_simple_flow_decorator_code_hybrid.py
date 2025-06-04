@@ -1,37 +1,30 @@
 from bridgic.automa import AutoMa
 import asyncio
-from bridgic.automa.bridge.decorator import processor, router
+from bridgic.automa.bridge.decorator import worker, router
 from bridgic.typing.event import OutEvent, InEvent
-from typing import Future
+from bridgic.typing.event import InEventEmiter
 
 # 这个例子展示如何通过“decorated-based”的编排模式，实现一个中间夹杂动态判断逻辑的流程。
 # 最终实现的逻辑是：
 # 输入x，先计算 3x+5的值；
 # 然后，如果3x+5的值大于20，则最终输出3x+5的平方；否则，最终输出3x+5的立方。
 
-class ExampleState(BaseModel):
-    # Note: 'id' field is automatically added to all states
-    counter: int = 0
-    message: str = ""
-
-def simple_flow_hook(out_event: OutEvent, in_event_emiter: InEventEmiter) -> None:
+def simple_flow_hook(out_event: OutEvent, event_emiter: InEventEmiter) -> None:
     pass
 
 
 # TODO: 还没有调试通过，这个例子只是接口定义的展示。
-class SimpleFlow(AutoMa[ExampleState]):
+class SimpleFlow(AutoMa):
 
     def __init__(self):
         super().__init__()
-        self.event_emiter = InEventEmiter()
 
-    @processor(is_start=True)
+    @worker(is_start=True)
     def multiply_3(self, x: int) -> int:
-        return {"x": 4， “y”: "sss", "state": exampleState}
+        return x * 3
 
-    @processor(listen=multiply_3)
-    def add_5(self, x: int, ,y : str) -> int:
-        y = context.set_variable("y", y)
+    @worker(listen=multiply_3)
+    def add_5(self, x: int) -> int:
         return x + 5
     
     @router(listen=and_(add_5, multiply_3))
@@ -44,12 +37,12 @@ class SimpleFlow(AutoMa[ExampleState]):
         else:
             self.cube(x)
 
-    @processor(is_end=True,  context: XXXContext[ExampleState])
+    @worker(is_end=True,  context: XXXContext[ExampleState])
     def square(self, x: int) -> int:
         self.post_out_event(OutEvent(event_id="square", message="ee"))
         return x * x
     
-    @processor(is_end=True)
+    @worker(is_end=True)
     def cube(self, x: int) -> int:
         o = OutEvent(data_prompt="")
         event_emiter = InEventEmiter()
