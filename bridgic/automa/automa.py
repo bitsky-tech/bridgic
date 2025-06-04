@@ -2,7 +2,6 @@ from bridgic.core.worker import Worker
 from bridgic.automa.meta_class.meta import AutoMaMeta
 from bridgic.core.worker import MethodWorker
 from bridgic.automa.bridge.decorator.bridge_info import _BridgeInfo
-from typing import cast
 from typing import Any
 from bridgic.typing.event.event import InEvent, OutEvent
 from bridgic.typing.event.in_event_emiter import InEventEmiter
@@ -10,6 +9,7 @@ import asyncio
 from typing import Callable
 from bridgic.core.worker.data_model import TaskResult
 from types import NoneType
+from concurrent.futures import ThreadPoolExecutor
 
 # 
 # AutoMa表达一种智能体和精确处理逻辑的混合系统。
@@ -39,7 +39,18 @@ class AutoMa(Worker, metaclass=AutoMaMeta):
                 workers[bridge.func.__name__] = worker
 
     def process(self, *args, **kwargs) -> Any:
-        pass
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError as e:
+            loop = None
+
+        coro = self.process_async(*args, **kwargs)
+        if loop and loop.is_running():
+            with ThreadPoolExecutor(1) as pool:
+                result = pool.submit(asyncio.run, coro).result()
+        else:
+            result = asyncio.run(coro)
+        return result        
 
     def post_out_event(self, event: OutEvent, event_emiter: InEventEmiter) -> None:
         pass

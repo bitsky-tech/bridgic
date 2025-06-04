@@ -18,10 +18,10 @@ class SimpleFlow(AutoMa):
     def add_5(self, x: int) -> int:
         return x + 5
 
-async def main():
+def main():
     flow = SimpleFlow()
-    result = await flow.process_async(x=7)
+    result = flow.process(x=7)
     print(result)
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()

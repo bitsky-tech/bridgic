@@ -22,16 +22,16 @@ class SimpleFlow(AutoMa):
         self.multiply_worker = MultiplyWorker()
         self.add_worker = AddWorker()
 
-    async def process(self, x) -> Task:
+    async def process_async(self, x) -> Task:
         result = await self.multiply_worker.process_async(x)
         result = await self.add_worker.process_async(result)
         return result
 
 
-async def main():
+def main():
     flow = SimpleFlow()
-    result = await flow.process(x=7)
+    result = flow.process(x=7)
     print(result)
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
