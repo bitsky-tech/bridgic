@@ -7,12 +7,12 @@ from bridgic.automa import AutoMa
 # 输入x，输出 3x+5，用一个乘法Worker和一个加法Worker来实现。
 
 class MultiplyWorker(Worker):
-    async def process_default_async(self, x):
+    async def process_async(self, x):
         result = x * 3
         return result
 
 class AddWorker(Worker):
-    async def process_default_async(self, x):
+    async def process_async(self, x):
         result = x + 5
         return result
 

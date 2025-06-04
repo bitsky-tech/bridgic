@@ -8,7 +8,7 @@ import inspect
 class CallableWorker(Worker):
     _is_async: bool
 
-    async def process_default_async(self, *args, **kwargs) -> Any:
+    async def process_async(self, *args, **kwargs) -> Any:
         callable = self.get_callable()
         result_or_coroutine = callable(*args, **kwargs)
         if self._is_async:
