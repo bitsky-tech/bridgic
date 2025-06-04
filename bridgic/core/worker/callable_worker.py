@@ -5,7 +5,7 @@ from bridgic.core.worker.data_model import Task
 from typing import Any
 import inspect
 
-class CallableProcessor(Worker):
+class CallableWorker(Worker):
     _is_async: bool
 
     async def process_default_async(self, *args, **kwargs) -> Any:

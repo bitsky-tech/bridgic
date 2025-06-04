@@ -63,16 +63,5 @@ class Worker:
             if isinstance(args[0], Task) and len(args) > 1:
                 raise ValueError("If the first argument is a Task, additional arguments are not permitted.")            # 
             
-    # 返回值的允许类型：
-    # 1，单个返回值，TaskResult类型
-    # 2，单个返回值，dict
-    # 3，单个返回值，其他任意类型
-    # 4，多个返回值，tuple
     def _validate_result_values(self, result: Any) -> None:
-        validated = True
-        if not isinstance(result, tuple):
-            validated = isinstance(result, dict) or isinstance(result, TaskResult)
-        elif len(result) == 1:
-            validated = isinstance(result[0], dict) or isinstance(result[0], TaskResult)
-        if not validated:
-            raise ValueError("The return value of a Worker must be a TaskResult, a dict, or a tuple.")
+        pass

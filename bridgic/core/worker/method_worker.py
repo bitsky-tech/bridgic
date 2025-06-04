@@ -3,9 +3,9 @@ import inspect
 from bridgic.core.utils.inspect_tools import get_first_arg_type
 from bridgic.core.worker import Worker
 from bridgic.core.worker.data_model import Task
-from bridgic.core.worker.callable_processor import CallableProcessor
+from bridgic.core.worker.callable_worker import CallableWorker
 
-class MethodProcessor(CallableProcessor):
+class MethodWorker(CallableWorker):
     def __init__(self, bound_method: Callable):
         if not hasattr(bound_method, "__self__"):
             raise AttributeError("MethodProcessor.__init__ requires a bound method")

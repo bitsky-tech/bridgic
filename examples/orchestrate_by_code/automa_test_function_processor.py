@@ -2,10 +2,10 @@ import asyncio
 from bridgic.core.worker import Worker
 from bridgic.core.worker.data_model import Task
 from bridgic.automa import AutoMa
-from bridgic.core.worker import FunctionProcessor
-from bridgic.core.worker import MethodProcessor
+from bridgic.core.worker import FunctionWorker
+from bridgic.core.worker import MethodWorker
 # 这个例子测试“通过代码编排”的模式，演示如何将一个function或method包装成一个Processor。
-# 输入x，输出 3x+5，最终用一个自动创建的乘法Processor和一个加法Processor来实现。
+# 输入x，输出 3x+5，最终用一个自动创建的乘法Worker和一个加法Worker来实现。
 
 def multiply_3(a: int) -> int:
     return a * 3
@@ -17,21 +17,18 @@ class MyAdder:
 class SimpleFlow(AutoMa):
     def __init__(self):
         super().__init__()
-        self.multiply_processor = FunctionProcessor(multiply_3)
+        self.multiply_worker = FunctionWorker(multiply_3)
         my_adder = MyAdder()
-        self.add_processor = MethodProcessor(my_adder.add_5)
+        self.add_worker = MethodWorker(my_adder.add_5)
 
-    async def process(self, data: Task) -> Task:
-        data = await self.multiply_processor.process(data)
-        data = await self.add_processor.process(data)
-        return data
-
+    async def process(self, x):
+        result = await self.multiply_worker.process_async(x)
+        result = await self.add_worker.process_async(result)
+        return result
 
 async def main():
-    x = 7
     flow = SimpleFlow()
-    data = Task.create_from_value(x)
-    result = await flow.process(data)
+    result = await flow.process(x=7)
     print(result)
 
 if __name__ == "__main__":

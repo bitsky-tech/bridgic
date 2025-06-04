@@ -1,3 +1,3 @@
-from .decorator import processor, router
+from .decorator import worker, router
 
-__all__ = ["processor", "router"]
+__all__ = ["worker", "router"]

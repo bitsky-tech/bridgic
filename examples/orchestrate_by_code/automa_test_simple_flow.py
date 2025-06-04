@@ -1,38 +1,36 @@
 import asyncio
 from bridgic.core.worker import Worker
-from bridgic.core.worker.data_model import Task
+from bridgic.core.worker.data_model import Task, TaskResult
 from bridgic.automa import AutoMa
 
 # 这个例子展示如何通过“code-first”的编排模式，实现最简单的流程。
-# 输入x，输出 3x+5，用一个乘法Processor和一个加法Processor来实现。
+# 输入x，输出 3x+5，用一个乘法Worker和一个加法Worker来实现。
 
-class MultiplyProcessor(Worker):
-    async def process_task(self, data: Task) -> Task:
-        result = data.value * 3
-        return Task.create_from_value(result)
+class MultiplyWorker(Worker):
+    async def process_default_async(self, x):
+        result = x * 3
+        return result
 
-class AddProcessor(Worker):
-    async def process_task(self, data: Task) -> Task:
-        result = data.value + 5
-        return Task.create_from_value(result)
+class AddWorker(Worker):
+    async def process_default_async(self, x):
+        result = x + 5
+        return result
 
 class SimpleFlow(AutoMa):
     def __init__(self):
         super().__init__()
-        self.multiply_processor = MultiplyProcessor()
-        self.add_processor = AddProcessor()
+        self.multiply_worker = MultiplyWorker()
+        self.add_worker = AddWorker()
 
-    async def process(self, data: Task) -> Task:
-        data = await self.multiply_processor.process(data)
-        data = await self.add_processor.process(data)
-        return data
+    async def process(self, x) -> Task:
+        result = await self.multiply_worker.process_async(x)
+        result = await self.add_worker.process_async(result)
+        return result
 
 
 async def main():
-    x = 7
     flow = SimpleFlow()
-    data = Task.create_from_value(x)
-    result = await flow.process(data)
+    result = await flow.process(x=7)
     print(result)
 
 if __name__ == "__main__":
