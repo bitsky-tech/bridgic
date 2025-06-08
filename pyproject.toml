@@ -1,0 +1,16 @@
+[project]
+name = "bridgic"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "Tielei Zhang", email = "43289893@qq.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "pydantic>=2.11.5",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
