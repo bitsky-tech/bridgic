@@ -3,5 +3,6 @@
 # 它主要依赖bridgic.core包，不依赖任何框架外部概念。
 
 from .automa import AutoMa
+from .constrained_states import ExecutionFlowOutputBuffer
 
-__all__ = ["AutoMa"]
+__all__ = ["AutoMa", "ExecutionFlowOutputBuffer"]

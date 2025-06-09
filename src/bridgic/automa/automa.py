@@ -10,6 +10,9 @@ from typing import Callable
 from bridgic.core.worker.data_model import TaskResult
 from types import NoneType
 from concurrent.futures import ThreadPoolExecutor
+from bridgic.automa.constrained_states import ExecutionFlowOutputBuffer
+from pydantic import BaseModel
+from bridgic.automa.constrained_states import _OutputValueDescriptor
 
 # 
 # AutoMa表达一种智能体和精确处理逻辑的混合系统。
@@ -21,7 +24,9 @@ from concurrent.futures import ThreadPoolExecutor
 # 
 class AutoMa(Worker, metaclass=AutoMaMeta):
     _workers: dict[str, Worker]
-    _worker_bridges: list[_BridgeInfo]
+    _worker_bridges: list[_BridgeInfo] = []
+    # Mapping: method_name -> _OutputValueDescriptor
+    _output_buffer: dict[str, _OutputValueDescriptor] = {}
 
     def register_conduit_hook(self, hook: Callable[[OutEvent, InEventEmiter], None]) -> None:
         # TODO:
@@ -52,6 +57,17 @@ class AutoMa(Worker, metaclass=AutoMaMeta):
             result = asyncio.run(coro)
         return result        
 
+    @property
+    def execution_flow_output_buffer(self) -> ExecutionFlowOutputBuffer:
+        """1. The execution flow output buffer is a read-only.
+           2. The execution flow output buffer can only be called from worker.
+        """
+        initialized_out_vals = {}
+        for name, out_val_descriptor in self._output_buffer.items():
+            if out_val_descriptor.initialized:
+                initialized_out_vals[name] = out_val_descriptor.value
+        return ExecutionFlowOutputBuffer(**initialized_out_vals)
+
     def post_out_event(self, event: OutEvent, event_emiter: InEventEmiter) -> None:
         pass
     
@@ -69,10 +85,11 @@ class AutoMa(Worker, metaclass=AutoMaMeta):
             del workers[name]
         super().__setattr__(name, value)
 
-    def __getattr__(self, name: str) -> Worker | None:
+    def __getattr__(self, name: str) -> Any:
         workers = self.__dict__.get("_workers")
         if workers is not None and name in workers:
             return workers.get(name)
+        # TODO: no super().__getattr__ here?
         return super().__getattr__(name)
 
     async def process_async(self, *args, **kwargs) -> Any:
@@ -88,6 +105,14 @@ class AutoMa(Worker, metaclass=AutoMaMeta):
                     worker = workers.get(bridge.func.__name__)
                     assert worker is not None
                     result = await worker.process_async(*args, **kwargs)
+                    # Check the result type
+                    out_val_descriptor = self._output_buffer[bridge.func.__name__]
+                    if out_val_descriptor.value_type is not type(result):
+                        raise TypeError(f"The result type {type(result)} is not the same as the expected type {out_val_descriptor.value_type}")
+                    # Save result to output buffer
+                    out_val_descriptor.value = result
+                    out_val_descriptor.initialized = True
+                    # setattr(self._output_buffer, bridge.func.__name__, result)
                     # 把后续节点的predecessor_count减1
                     successors = self._find_successors(bridge)
                     for successor in successors:
