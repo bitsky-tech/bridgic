@@ -1,5 +1,8 @@
-from bridgic.core.worker.data_model import Task, TaskResult
-from typing import Any, AsyncIterable
+from pydantic import BaseModel, ConfigDict
+from typing import Any
+
+class WorkerLocalBuffer(BaseModel):
+    model_config = ConfigDict(extra='allow')
 
 # Worker is the core element of the orchestration layer in the bridgic framework.
 class Worker:
@@ -25,3 +28,16 @@ class Worker:
     async def process_async(self, *args, **kwargs) -> Any:
         return None
         
+    def __init__(self, *args, **kwargs):
+        self._local_buffer = None
+
+    @property
+    def worker_local_buffer(self) -> WorkerLocalBuffer:
+        if self._local_buffer is None:
+            # lazy-init the local buffer
+            self._local_buffer = WorkerLocalBuffer()
+        return self._local_buffer
+
+    @worker_local_buffer.setter
+    def worker_local_buffer(self, value: WorkerLocalBuffer):
+        self._local_buffer = value

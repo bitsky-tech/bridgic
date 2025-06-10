@@ -2,7 +2,7 @@ from bridgic.automa import AutoMa
 import asyncio
 from bridgic.automa.bridge.decorator import worker
 from pydantic import BaseModel
-
+from bridgic.core.worker import WorkerLocalBuffer
 # 这个例子展示了如何读取执行流的输出。
 
 class ArithmeticResult(BaseModel):
@@ -22,8 +22,11 @@ class FakeFlow(AutoMa):
 
     @worker(listen=square_and_cube)
     def arithmetic(self, square_x: int, cube_x: int) -> ArithmeticResult:
-        # TODO:
-        # self.arithmetic.worker_local_buffer.state_a = "xxx"
+        local_buffer: WorkerLocalBuffer = self.arithmetic.worker_local_buffer
+        local_buffer.state_a = "xxx"
+        local_buffer.state_b = "yyy"
+        self.arithmetic.worker_local_buffer.state_c = "zzz"
+        print(f"self.arithmetic.worker_local_buffer: {self.arithmetic.worker_local_buffer}")
 
         sum = square_x + cube_x
         diff = square_x - cube_x
@@ -46,6 +49,6 @@ def main():
     flow = FakeFlow()
     result = flow.process(x=7)
     print(result)
-
+    
 if __name__ == "__main__":
     main()

@@ -72,25 +72,48 @@ class AutoMa(Worker, metaclass=AutoMaMeta):
         pass
     
     def __setattr__(self, name: str, value: Any) -> None:
+        workers = self.__dict__.get("_workers")
         if isinstance(value, Worker):
-            workers = self.__dict__.get("_workers")
             if workers is None:
                 raise AttributeError(
                             "cannot assign worker before AutoMa.__init__() call"
                         )
 
             workers[name] = value
+        elif value is None and workers is not None and name in workers:
+            workers[name] = None
+        else:
+            super().__setattr__(name, value)
 
-        if value is None and name in workers:
-            del workers[name]
-        super().__setattr__(name, value)
+    def __getattribute__(self, name: str) -> Any:
+        attr_dict = super().__getattribute__("__dict__")
+        workers = attr_dict.get("_workers")
+        if workers is not None and name in workers:
+            worker =  workers[name]
+            if isinstance(worker, Worker):
+                return worker
+        return super().__getattribute__(name)
 
-    def __getattr__(self, name: str) -> Any:
+
+    # def __getattr__(self, name: str) -> Any:
+    #     workers = self.__dict__.get("_workers")
+    #     if workers is not None and name in workers:
+    #         print(f"**** __getattr__ get worker: {workers}")
+    #         worker =  workers[name]
+    #         if isinstance(worker, Worker):
+    #             return worker
+    #     raise AttributeError(f"'{self.__class__.__name__}' object has no attribute '{name}'")
+
+    def __delattr__(self, name: str) -> None:
         workers = self.__dict__.get("_workers")
         if workers is not None and name in workers:
-            return workers.get(name)
-        # TODO: no super().__getattr__ here?
-        return super().__getattr__(name)
+            worker =  workers[name]
+            if isinstance(worker, Worker):
+                del workers[name]
+            else:
+                super().__delattr__(name)
+        else:
+            super().__delattr__(name)
 
     async def process_async(self, *args, **kwargs) -> Any:
         # TODO: check anything here
