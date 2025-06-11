@@ -1,9 +1,8 @@
+import pytest
 from bridgic.automa import AutoMa
-import asyncio
 from bridgic.automa.bridge.decorator import worker
 from pydantic import BaseModel
 from bridgic.core.worker import WorkerLocalBuffer
-# 这个例子展示了如何读取执行流的输出。
 
 class ArithmeticResult(BaseModel):
     sum: int
@@ -26,12 +25,12 @@ class FakeFlow(AutoMa):
         local_buffer.state_a = "xxx"
         local_buffer.state_b = "yyy"
         self.arithmetic.worker_local_buffer.state_c = "zzz"
-        print(f"self.arithmetic.worker_local_buffer: {self.arithmetic.worker_local_buffer}")
 
         sum = square_x + cube_x
         diff = square_x - cube_x
         product = square_x * cube_x
         quotient = square_x / cube_x
+        print(f"sum: {sum}, diff: {diff}, product: {product}, quotient: {quotient}")
         return ArithmeticResult(sum=sum, diff=diff, product=product, quotient=quotient)
 
     @worker(listen=arithmetic)
@@ -45,10 +44,24 @@ class FakeFlow(AutoMa):
         sum = self.execution_flow_output_buffer.arithmetic.sum
         return {"avg": avg, "square": square, "cube": cube, "sum": sum}
 
-def main():
-    flow = FakeFlow()
-    result = flow.process(x=7)
-    print(result)
-    
-if __name__ == "__main__":
-    main()
+@pytest.fixture
+def fake_flow():
+    yield FakeFlow()
+    # teardown code may be here
+
+@pytest.mark.asyncio
+async def test_fake_flow_result(fake_flow):
+    x = 7
+    result = await fake_flow.process_async(x=x)
+    x_3 = x * 3
+    square_x = x_3 * x_3
+    cube_x = x_3 * x_3 * x_3
+    sum = square_x + cube_x
+    diff = square_x - cube_x
+    product = square_x * cube_x
+    quotient = square_x / cube_x
+    avg = (sum + diff + product + quotient) / 4
+    assert result["avg"] == avg
+    assert result["square"] == square_x
+    assert result["cube"] == cube_x
+    assert result["sum"] == sum

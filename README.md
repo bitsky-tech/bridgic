@@ -26,7 +26,13 @@ You can integrate this venv in your IDE.
 uv sync
 ```
 
-## How was the project initialized?
+## How to test?
+
+```shell
+uv run pytest
+```
+
+## How was this project initialized?
 
 ```shell
 uv init --lib

@@ -1,10 +1,12 @@
-import asyncio
+import pytest
 from bridgic.core.worker import Worker
 from bridgic.core.worker.data_model import Task
 from bridgic.automa import AutoMa
 from bridgic.core.worker import CallableWorker
-# 这个例子测试“通过代码编排”的模式，演示如何将一个function或method包装成一个Processor。
-# 输入x，输出 3x+5，最终用一个自动创建的乘法Worker和一个加法Worker来实现。
+
+# This test scirpt demonstrates the "code-first orchestration" pattern, on how to wrap a function or method into a Worker.
+# Input: x
+# Output: 3x+5
 
 def multiply_3(a: int) -> int:
     return a * 3
@@ -25,10 +27,13 @@ class SimpleFlow(AutoMa):
         result = await self.add_worker.process_async(result)
         return result
 
-def main():
-    flow = SimpleFlow()
-    result = flow.process(x=7)
-    print(result)
+@pytest.fixture
+def simple_flow():
+    yield SimpleFlow()
+    # teardown code may be here
 
-if __name__ == "__main__":
-    main()
+@pytest.mark.asyncio
+async def test_simple_flow(simple_flow):
+    x = 7
+    result = await simple_flow.process_async(x=x)
+    assert result == 3 * x + 5
