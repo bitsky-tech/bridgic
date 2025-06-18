@@ -6,7 +6,7 @@ readme = "README.md"
 authors = [
     { name = "Tielei Zhang", email = "43289893@qq.com" }
 ]
-requires-python = ">=3.12"
+requires-python = ">=3.9"
 dependencies = [
     "pydantic>=2.11.5",
 ]
@@ -20,3 +20,11 @@ dev = [
     "pytest>=8.4.0",
     "pytest-asyncio>=1.0.0",
 ]
+
+[tool.hatch.build]
+sources = ["src"]
+include = ["src/bridgic/**/*.py"]
+
+[tool.pytest.ini_options]
+testpaths = ["test"]
+python_files = ["test_*.py"]

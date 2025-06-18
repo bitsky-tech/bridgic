@@ -1,8 +1,11 @@
-# 这个包负责框架的编排层：
-# bridgic.automa
-# 它主要依赖bridgic.core包，不依赖任何框架外部概念。
+from bridgic.types.automa import Automa, worker
+from bridgic.types.error import AutomaCompilationError, AutomaDeclarationError, WorkerSignatureError, AutomaRuntimeError
 
-from .automa import AutoMa
-from .constrained_states import ExecutionFlowOutputBuffer
-
-__all__ = ["AutoMa", "ExecutionFlowOutputBuffer"]
+__all__ = [
+    "Automa",
+    "worker",
+    "AutomaCompilationError",
+    "AutomaDeclarationError",
+    "WorkerSignatureError",
+    "AutomaRuntimeError",
+]
