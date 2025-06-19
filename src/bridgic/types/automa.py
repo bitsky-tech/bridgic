@@ -1,6 +1,8 @@
 import asyncio
 import functools
 import inspect
+import traceback
+import json
 
 from typing import Any, List, Dict, Set, Callable, Union, Coroutine
 from concurrent.futures import ThreadPoolExecutor
@@ -293,6 +295,9 @@ class Automa(LandableWorker, metaclass=AutomaMeta):
         is_start : bool
             Whether the decorated callable is a start worker. True means it is, while False means it is not.
         """
+        # Validate the parameters of func that the user provided.
+        worker()(func)
+
         worker_obj = CallableLandableWorker(
             name=name,
             func=func,
