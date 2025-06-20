@@ -1,0 +1,40 @@
+#!/bin/bash
+
+# Get the target branch name.
+while read local_ref local_sha remote_ref remote_sha; do
+    if [[ -n "$remote_ref" ]]; then
+        branch_name=${remote_ref#refs/heads/}
+
+        # Check branch name prefix.
+        if ! [[ $branch_name =~ ^(feature/|refactor/|bugfix/|release/|docs/).+ ]]; then
+            echo "❌ Error: Branch name '$branch_name' doesn't follow naming convention!"
+            echo "💡 Branch name must start with one of: feature/, refactor/, bugfix/, release/, docs/."
+            exit 1
+        fi
+
+        # Check branch name format: only letters, numbers and hyphens allowed.
+        if ! [[ $branch_name =~ ^[a-zA-Z0-9/-]+$ ]]; then
+            echo "❌ Error: Branch name '$branch_name' contains invalid characters!"
+            echo "💡 Branch name can only contain letters (a-zA-Z), numbers (0-9) and hyphens (-)."
+            echo "   No spaces, underscores or other special characters allowed."
+            exit 1
+        fi
+
+        # Check hyphen usage rules.
+        if [[ $branch_name =~ ^-|-$ ]] || [[ $branch_name =~ -- ]]; then
+            echo "❌ Error: Branch name '$branch_name' has incorrect hyphen usage!"
+            echo "💡 Branch name cannot start/end with hyphen or contain consecutive hyphens (--)."
+            exit 1
+        fi
+    fi
+done
+
+# Run unit tests.
+echo "🚦 Running unit tests..."
+uv run pytest
+if [ $? -ne 0 ]; then
+    echo "❌ Unit tests failed. Please fix the tests before pushing."
+    exit 1
+fi
+
+exit 0
