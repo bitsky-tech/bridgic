@@ -4,7 +4,7 @@ import uuid
 from typing import Any, Dict, get_type_hints, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from bridgic.types.automa import Automa
+    from bridgic.automa.automa import Automa
 
 class Worker:
     def __init__(self, name: str = None):

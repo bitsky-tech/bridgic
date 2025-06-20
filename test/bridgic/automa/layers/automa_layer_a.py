@@ -1,6 +1,6 @@
 import asyncio
 
-from typing import Any, Dict, Callable
+from typing import Any, Dict
 
 from bridgic.automa import Automa, worker
 from bridgic.utils.console import printer

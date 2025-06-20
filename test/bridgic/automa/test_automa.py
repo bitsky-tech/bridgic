@@ -1,5 +1,4 @@
 import pytest
-import asyncio
 
 from bridgic.automa import (
     Automa,
@@ -9,7 +8,7 @@ from bridgic.automa import (
     WorkerSignatureError,
     AutomaRuntimeError,
 )
-from bridgic.types.worker import Worker
+from bridgic.automa.worker import Worker
 from bridgic.utils.console import printer
 
 def test_automa_declaration_dag_check():

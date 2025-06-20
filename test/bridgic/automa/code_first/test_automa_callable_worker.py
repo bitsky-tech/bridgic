@@ -1,8 +1,6 @@
 import pytest
-from bridgic.core.worker import Worker
-from bridgic.core.worker.data_model import Task
-from bridgic.automa import AutoMa
-from bridgic.core.worker import CallableWorker
+from bridgic.automa import Automa
+from bridgic.automa.worker import CallableWorker
 
 # This test scirpt demonstrates the "code-first orchestration" pattern, on how to wrap a function or method into a Worker.
 # Input: x
@@ -15,7 +13,7 @@ class MyAdder:
     def add_5(self, a: int) -> int:
         return a + 5
 
-class SimpleFlow(AutoMa):
+class SimpleFlow(Automa):
     def __init__(self):
         super().__init__()
         self.multiply_worker = CallableWorker(multiply_3)

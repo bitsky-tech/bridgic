@@ -1,7 +1,7 @@
-from typing import Any, Dict, Callable
+from typing import Any, Dict
 
-from bridgic.automa import Automa, worker
-from bridgic.types.worker import Worker
+from bridgic.automa import Automa
+from bridgic.automa.worker import Worker
 from bridgic.utils.console import printer
 
 from .automa_layer_a import AutomaLayerA

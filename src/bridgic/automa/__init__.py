@@ -1,4 +1,4 @@
-from bridgic.types.automa import Automa, worker
+from bridgic.automa.automa import Automa, worker
 from bridgic.types.error import AutomaCompilationError, AutomaDeclarationError, WorkerSignatureError, AutomaRuntimeError
 
 __all__ = [

@@ -1,7 +1,6 @@
 import pytest
-from bridgic.core.worker import Worker
-from bridgic.core.worker.data_model import Task, TaskResult
-from bridgic.automa import AutoMa
+from bridgic.automa import Automa
+from bridgic.automa.worker import Worker
 
 # This test script demonstrates how to implement a simple flow using the "code-first" orchestration pattern.
 # Input: x
@@ -17,15 +16,15 @@ class AddWorker(Worker):
         result = x + 5
         return result
 
-class SimpleFlow(AutoMa):
+class SimpleFlow(Automa):
     def __init__(self):
         super().__init__()
         self.multiply_worker = MultiplyWorker()
-        self.add_worker = AddWorker()
+        self.addition_worker = AddWorker()
 
-    async def process_async(self, x) -> Task:
+    async def process_async(self, x):
         result = await self.multiply_worker.process_async(x)
-        result = await self.add_worker.process_async(result)
+        result = await self.addition_worker.process_async(result)
         return result
 
 @pytest.fixture

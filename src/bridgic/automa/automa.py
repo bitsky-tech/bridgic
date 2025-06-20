@@ -12,7 +12,7 @@ from collections import defaultdict, deque
 from pydantic import BaseModel, Field
 
 from bridgic.utils.console import printer, colored
-from bridgic.types.worker import Worker
+from bridgic.automa.worker.worker import Worker
 from bridgic.types.error import AutomaDeclarationError, AutomaCompilationError, WorkerSignatureError, AutomaRuntimeError
 
 class _LandableMixin:

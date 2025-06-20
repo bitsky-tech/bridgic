@@ -1,7 +1,5 @@
 from typing import Callable, abstractmethod
-from bridgic.core.utils.inspect_tools import get_first_arg_type
-from bridgic.core.worker import Worker
-from bridgic.core.worker.data_model import Task
+from bridgic.automa.worker import Worker
 from typing import Any
 import inspect
 
