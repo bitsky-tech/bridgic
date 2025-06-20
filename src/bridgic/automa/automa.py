@@ -3,6 +3,7 @@ import functools
 import inspect
 import traceback
 import json
+import uuid
 
 from typing import Any, List, Dict, Set, Callable, Union, Coroutine
 from types import MethodType
@@ -240,6 +241,7 @@ class Automa(_AutomaBuiltinWorker, metaclass=AutomaMeta):
         self,
         name: str = None,
         parallel_num: int = 2,
+        output_worker_name: str = None,
         workers: Dict[str, Worker] = {},
         **kwargs,
     ):
@@ -252,10 +254,15 @@ class Automa(_AutomaBuiltinWorker, metaclass=AutomaMeta):
             The capacity of the built-in thread pool of the automa (excluding the main thread).
         workers : Dict[str, Worker] (default = {})
             A dictionary that maps the worker name to the worker instance.
+        output_worker_name : str (default = None)
+            The name of the output worker, of which the output will also be returned by the automa.
         """
         # Automa will own its own thread, so it does not need to be assigned a thread.
         if kwargs.get("as_thread", False):
             raise ValueError("Automa does not need to be assigned a thread. It will have it own thread.")
+
+        if not name:
+            name = f"unnamed-automa-{uuid.uuid4().hex[:8]}"
 
         super().__init__(name=name, func=None, as_thread=False)
         cls = type(self)
@@ -295,6 +302,9 @@ class Automa(_AutomaBuiltinWorker, metaclass=AutomaMeta):
 
         # Initialize the thread pool for the current automa's execution.
         self._executor: ThreadPoolExecutor = ThreadPoolExecutor(max_workers=parallel_num)
+
+        # Record the name of the output-worker.
+        self._output_worker_name: str = output_worker_name
 
         # Define the main thread and its event loop for the current automa's execution.
         self._loop: asyncio.AbstractEventLoop = None
@@ -342,28 +352,32 @@ class Automa(_AutomaBuiltinWorker, metaclass=AutomaMeta):
                 f"but got {type(worker_obj.process_async)}: worker_name={worker_obj.name}"
             )
 
-        # Validate the parameters of the "process_async" method of the worker_obj.
-        worker(
-            name=worker_obj.name,
-            dependencies=dependencies,
-            is_start=is_start,
-            as_thread=as_thread,
-        )(worker_obj.process_async)
+        if isinstance(worker_obj, _AutomaBuiltinWorker):
+            # If the worker_obj is a built-in worker, directly register it.
+            self._workers[worker_obj.name] = worker_obj
+        else:
+            # Validate the parameters of the "process_async" method of the worker_obj.
+            worker(
+                name=worker_obj.name,
+                dependencies=dependencies,
+                is_start=is_start,
+                as_thread=as_thread,
+            )(worker_obj.process_async)
 
-        # Adapt the class of worker_obj to __LandableMixin and __ThreadableMixin type.
-        class AdaptedWorker(type(worker_obj), _LandableMixin, _ThreadableMixin):
-            pass
+            # Adapt the class of worker_obj to __LandableMixin and __ThreadableMixin type.
+            class AdaptedWorker(type(worker_obj), _LandableMixin, _ThreadableMixin):
+                pass
 
-        # Create an adapted object.
-        new_worker_obj = AdaptedWorker.__new__(AdaptedWorker)
-        new_worker_obj.__dict__ = worker_obj.__dict__.copy()
-        new_worker_obj.parent_automa = self
-        new_worker_obj.dependencies = dependencies
-        new_worker_obj.is_start = is_start
-        new_worker_obj.as_thread = as_thread
+            # Create an adapted object.
+            new_worker_obj = AdaptedWorker.__new__(AdaptedWorker)
+            new_worker_obj.__dict__ = worker_obj.__dict__.copy()
+            new_worker_obj.parent_automa = self
+            new_worker_obj.dependencies = dependencies
+            new_worker_obj.is_start = is_start
+            new_worker_obj.as_thread = as_thread
 
-        # Register the worker_obj.
-        self._workers[new_worker_obj.name] = new_worker_obj
+            # Register the worker_obj.
+            self._workers[new_worker_obj.name] = new_worker_obj
 
     def add_func_as_worker(
         self,
@@ -523,10 +537,30 @@ class Automa(_AutomaBuiltinWorker, metaclass=AutomaMeta):
         )
 
     async def process_async(self, *, debug: bool = False, **kwargs) -> Any:
+        """
+        Drives the execution of the entire automa by starting all start workers inside it.
+        When there is no worker in the automa that can run, the whole process will end.
+        If the output-worker is specified, the output of the output-worker will be returned.
+        Otherwise, None will be returned.
+
+        Parameters
+        ----------
+        debug : bool (default = False)
+            Whether to print the debug information.
+
+        Returns
+        -------
+        Any
+            The output of the output-worker if it is specified, otherwise None.
+        """
         # Compile the whole automa graph, taking into account both statically defined and dynamically added workers.
         self._compile_automa()
 
-        printer.print(f"Automa-[{self.name}] is getting started.")
+        if debug:
+            printer.print(f"Automa-[{self.name}] is getting started.")
+
+        # The kick-off-worker is the automa itself.
+        kwargs["kickoff_worker"] = self.name
 
         # Main thread function of the current automa.
         def run_until_end(main_loop: asyncio.AbstractEventLoop):
@@ -560,13 +594,20 @@ class Automa(_AutomaBuiltinWorker, metaclass=AutomaMeta):
         # to the backend, all start workers will be executed in parallel. As an implicit convention,
         # all start workers should have no additional input parameters and no dependencies.
         for worker_name in start_workers:
-            self.ferry_to(worker_name, debug=debug, kickoff_worker=self.name, **kwargs)
+            self.ferry_to(worker_name, debug=debug, **kwargs)
 
         # Start the main event loop until the automa is in terminated state.
         self._thread.start()
         self._thread.join()
 
-        printer.print(f"Automa-[{self.name}] completed execution.")
+        if debug:
+            printer.print(f"Automa-[{self.name}] completed execution.")
+
+        # If the output-worker is specified, return its output as the return value of the automa.
+        if self._output_worker_name:
+            return self._workers[self._output_worker_name].output_buffer
+        else:
+            return None
 
     def _compile_automa(self):
         """
@@ -606,6 +647,13 @@ class Automa(_AutomaBuiltinWorker, metaclass=AutomaMeta):
 
         # Validate the DAG constraints.
         AutomaMeta.validate_dag_constraints(self._worker_forwards)
+
+        # Validate if the output worker exists.
+        if self._output_worker_name and self._output_worker_name not in self._workers:
+            raise AutomaCompilationError(
+                f"the output worker is not found: "
+                f"output_worker_name={self._output_worker_name}"
+            )
 
         # Find all connected components of the whole automa graph.
         self._find_connected_components()

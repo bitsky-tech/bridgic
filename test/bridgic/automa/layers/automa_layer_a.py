@@ -39,3 +39,5 @@ class AutomaLayerA(Automa):
         else:
             if type(self) != AutomaLayerA:
                 self.ferry_to("entry_point_worker_7", *args, **kwargs)
+
+        return 3
