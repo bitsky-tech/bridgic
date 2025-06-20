@@ -5,15 +5,58 @@ import traceback
 import json
 
 from typing import Any, List, Dict, Set, Callable, Union, Coroutine
+from types import MethodType
 from concurrent.futures import ThreadPoolExecutor
 from threading import Thread
-from types import MethodType
 from collections import defaultdict, deque
 from pydantic import BaseModel, Field
 
 from bridgic.utils.console import printer, colored
-from bridgic.types.worker import Worker, CallableWorker, LandableWorker, CallableLandableWorker
+from bridgic.types.worker import Worker
 from bridgic.types.error import AutomaDeclarationError, AutomaCompilationError, WorkerSignatureError, AutomaRuntimeError
+
+class _LandableMixin:
+    def __init__(self, dependencies: List[str] = [], is_start: bool = False, **kwargs):
+        super().__init__(**kwargs)
+        self.dependencies = dependencies
+        self.is_start = is_start
+
+class _CallableMixin:
+    def __init__(self, func: Callable, **kwargs):
+        super().__init__(**kwargs)
+        self.func = func
+        self.is_coro = inspect.iscoroutinefunction(func)
+
+class _ThreadableMixin:
+    def __init__(self, as_thread: bool = False, **kwargs):
+        super().__init__(**kwargs)
+        self.as_thread = as_thread
+
+class _AutomaBuiltinWorker(_LandableMixin, _CallableMixin, _ThreadableMixin, Worker):
+    def __init__(
+        self,
+        *,
+        name: str = None,
+        func: Callable,
+        dependencies: List[str] = [],
+        is_start: bool = False,
+        as_thread: bool = False,
+        **kwargs,
+    ):
+        super().__init__(
+            name=name,
+            func=func,
+            dependencies=dependencies,
+            is_start=is_start,
+            as_thread=as_thread,
+            **kwargs,
+        )
+
+    async def process_async(self, *args, **kwargs) -> Any:
+        if self.is_coro:
+            return await self.func(*args, **kwargs)
+        else:
+            return self.func(*args, **kwargs)
 
 class WorkerState(BaseModel):
     is_running: bool = Field(default=False)
@@ -86,14 +129,14 @@ class AutomaMeta(type):
         cls = super().__new__(mcls, name, bases, dct)
 
         # Inherit the graph structure from the parent classes and maintain the related data structures.
-        registered_workers: Dict[str, Callable] = {}
+        registered_worker_funcs: Dict[str, Callable] = {}
         worker_static_triggers: Dict[str, List[str]] = {}
         worker_static_forwards: Dict[str, List[str]] = {}
 
         for base in bases:
-            for worker_name, worker_func in getattr(base, "_registered_workers", {}).items():
-                if worker_name not in registered_workers.keys():
-                    registered_workers[worker_name] = worker_func
+            for worker_name, worker_func in getattr(base, "_registered_worker_funcs", {}).items():
+                if worker_name not in registered_worker_funcs.keys():
+                    registered_worker_funcs[worker_name] = worker_func
                 else:
                     raise AutomaDeclarationError(
                         f"worker is defined in multiple base classes: "
@@ -116,8 +159,8 @@ class AutomaMeta(type):
                 dependencies = list(set(attr_value.__dependencies__))
 
                 # Update the registered workers for current class.
-                if worker_name not in registered_workers.keys():
-                    registered_workers[worker_name] = attr_value
+                if worker_name not in registered_worker_funcs.keys():
+                    registered_worker_funcs[worker_name] = attr_value
                 else:
                     raise AutomaDeclarationError(
                         f"Duplicate worker names are not allowed: "
@@ -138,7 +181,7 @@ class AutomaMeta(type):
         # Validate if the DAG constraint is met.
         mcls.validate_dag_constraints(worker_static_forwards)
 
-        setattr(cls, "_registered_workers", registered_workers)
+        setattr(cls, "_registered_worker_funcs", registered_worker_funcs)
         setattr(cls, "_worker_static_triggers", worker_static_triggers)
         setattr(cls, "_worker_static_forwards", worker_static_forwards)
         return cls
@@ -188,12 +231,18 @@ class AutomaMeta(type):
                 f"following workers are in cycle: {nodes_in_cycle}"
             )
 
-class Automa(LandableWorker, metaclass=AutomaMeta):
-    _registered_workers: Dict[str, Callable] = {}
+class Automa(_AutomaBuiltinWorker, metaclass=AutomaMeta):
+    _registered_worker_funcs: Dict[str, Callable] = {}
     _worker_static_triggers: Dict[str, List[str]] = {}
     _worker_static_forwards: Dict[str, List[str]] = {}
 
-    def __init__(self, name: str = None, parallel_num: int = 2, workers: Dict[str, Worker] = {}, **kwargs):
+    def __init__(
+        self,
+        name: str = None,
+        parallel_num: int = 2,
+        workers: Dict[str, Worker] = {},
+        **kwargs,
+    ):
         """
         Parameters
         ----------
@@ -208,24 +257,31 @@ class Automa(LandableWorker, metaclass=AutomaMeta):
         if kwargs.get("as_thread", False):
             raise ValueError("Automa does not need to be assigned a thread. It will have it own thread.")
 
-        super().__init__(name=name, as_thread=False)
+        super().__init__(name=name, func=None, as_thread=False)
         cls = type(self)
 
         # Initialize the instances of pre-declared workers.
         self._workers: Dict[str, Worker] = {}
         if workers:
-            self._workers = workers
+            for worker_name, worker_obj in workers.items():
+                if not isinstance(worker_obj, (_LandableMixin, _ThreadableMixin)):
+                    raise TypeError(
+                        f"the type of worker_obj must inherit from __LandableMixin and __ThreadableMixin, "
+                        f"but got {type(worker_obj)}: worker_name={worker_name}"
+                    )
+                self._workers[worker_name] = worker_obj
         else:
             # Workers in the class definition all can be transformed into CallableLandableWorker objects.
-            for worker_name, worker_func in cls._registered_workers.items():
-                worker_obj = CallableLandableWorker(
+            for worker_name, worker_func in cls._registered_worker_funcs.items():
+                # Register the worker_func as a built-in worker.
+                worker_obj = _AutomaBuiltinWorker(
                     name=worker_name,
-                    func=worker_func,
+                    func=MethodType(worker_func, self),
                     dependencies=worker_func.__dependencies__,
                     is_start=worker_func.__is_start__,
                     as_thread=worker_func.__as_thread__,
                 )
-                self.register_worker(worker_obj)
+                self._workers[worker_name] = worker_obj
 
         # Define the related data structures that are used to compile the whole automa.
         self._worker_triggers: Dict[str, List[str]] = {}
@@ -244,31 +300,72 @@ class Automa(LandableWorker, metaclass=AutomaMeta):
         self._loop: asyncio.AbstractEventLoop = None
         self._thread: Thread = None
 
-    def register_worker(self, worker_obj: Union[CallableWorker, LandableWorker]):
+    def add_worker(
+        self,
+        worker_obj: Worker,
+        /,
+        *,
+        dependencies: List[str] = [],
+        is_start: bool = False,
+        as_thread: bool = False,
+    ):
         """
-        This method is used to register a worker to the automa.
+        This method is used to add a worker into the automa.
 
         Parameters
         ----------
         worker_obj : Worker
             The worker instance to be registered.
+        dependencies : List[str]
+            A list of worker names that the decorated callable depends on.
+        is_start : bool
+            Whether the decorated callable is a start worker. True means it is, while False means it is not.
+        as_thread : bool (default = False)
+            If True, the worker will be run as a new thread.
+            If False, the worker will be run as a new event.
         """
-        if not isinstance(worker_obj, CallableWorker) and not isinstance(worker_obj, LandableWorker):
+        if not isinstance(worker_obj, Worker):
             raise TypeError(
-                f"worker_obj to be registered must be a CallableWorker or LandableWorker, "
-                f"but got {type(worker_obj)}"
+                f"worker_obj to be registered must be a Worker, "
+                f"but got {type(worker_obj)}, worker_name={worker_obj.name}"
             )
 
-        # Validate the parameters of worker_obj and then register it to the automa.
-        worker()(worker_obj.process_async)
+        if worker_obj.name in self._workers:
+            raise AutomaDeclarationError(
+                f"duplicate worker names are not allowed: "
+                f"worker_name={worker_obj.name}"
+            )
 
-        # Bind the current automa instance to the worker's process_async method as the first parameter.
-        worker_obj.process_async = MethodType(worker_obj.process_async, self)
+        if not asyncio.iscoroutinefunction(worker_obj.process_async):
+            raise WorkerSignatureError(
+                f"process_async must be an async method, "
+                f"but got {type(worker_obj.process_async)}: worker_name={worker_obj.name}"
+            )
+
+        # Validate the parameters of the "process_async" method of the worker_obj.
+        worker(
+            name=worker_obj.name,
+            dependencies=dependencies,
+            is_start=is_start,
+            as_thread=as_thread,
+        )(worker_obj.process_async)
+
+        # Adapt the class of worker_obj to __LandableMixin and __ThreadableMixin type.
+        class AdaptedWorker(type(worker_obj), _LandableMixin, _ThreadableMixin):
+            pass
+
+        # Create an adapted object.
+        new_worker_obj = AdaptedWorker.__new__(AdaptedWorker)
+        new_worker_obj.__dict__ = worker_obj.__dict__.copy()
+        new_worker_obj.parent_automa = self
+        new_worker_obj.dependencies = dependencies
+        new_worker_obj.is_start = is_start
+        new_worker_obj.as_thread = as_thread
 
         # Register the worker_obj.
-        self._workers[worker_obj.name] = worker_obj
+        self._workers[new_worker_obj.name] = new_worker_obj
 
-    def add_worker(
+    def add_func_as_worker(
         self,
         /,
         *,
@@ -279,7 +376,7 @@ class Automa(LandableWorker, metaclass=AutomaMeta):
         as_thread: bool = False,
     ):
         """
-        This method is used to add a function to the automa.
+        This method is used to add a function as a worker into the automa.
 
         The format of the parameters will follow that of the decorator @worker(...), so that the 
         behavior of the decorated function is consistent with that of normal CallableLandableWorker objects.
@@ -287,30 +384,34 @@ class Automa(LandableWorker, metaclass=AutomaMeta):
         Parameters
         ----------
         name : str
-            The name of the worker.
+            The name of the function worker.
         func : Callable
-            The function to be added to the automa.
+            The function to be added as a worker to the automa.
         dependencies : List[str]
             A list of worker names that the decorated callable depends on.
         is_start : bool
             Whether the decorated callable is a start worker. True means it is, while False means it is not.
+        as_thread : bool
+            If True, the function that registered as a worker will be run as a new thread.
+            If False, the function that registered as a worker will be run as a new event.
         """
-        # Validate the parameters of func that the user provided.
-        worker()(func)
+        # Validate the parameters that the user provided.
+        worker(name=name, dependencies=dependencies, is_start=is_start, as_thread=as_thread)(func)
 
-        worker_obj = CallableLandableWorker(
+        # Register func as a built-in worker.
+        worker_obj = _AutomaBuiltinWorker(
             name=name,
-            func=func,
+            func=MethodType(func, self),
             dependencies=dependencies,
             is_start=is_start,
             as_thread=as_thread,
         )
-        self.register_worker(worker_obj)
+        self._workers[worker_obj.name] = worker_obj
 
     def worker(
         self,
         *,
-        name: str=None,
+        name: str = None,
         dependencies: List[str] = [],
         is_start: bool = False,
         as_thread: bool = False,
@@ -332,7 +433,7 @@ class Automa(LandableWorker, metaclass=AutomaMeta):
             Whether the decorated callable is a start worker. True means it is, while False means it is not.
         """
         def wrapper(func: Callable):
-            self.add_worker(
+            self.add_func_as_worker(
                 name=(name or func.__name__),
                 func=func,
                 dependencies=dependencies,
@@ -341,13 +442,6 @@ class Automa(LandableWorker, metaclass=AutomaMeta):
             )
 
         return wrapper
-
-    def __setattr__(self, key, value):
-        if isinstance(value, Worker):
-            value.name = key if value.name.startswith("unnamed-worker-") else value.name
-            self.register_worker(value)
-        else:
-            super().__setattr__(key, value)
 
     def __getattribute__(self, key):
         workers = super().__getattribute__('_workers')
@@ -667,4 +761,5 @@ class Automa(LandableWorker, metaclass=AutomaMeta):
                     state = colored("Running", "green") if v else colored("Inactive", "red")
                     d.append(f'({name}: {state})')
                 printer.print(colored(f"Automa-[{self.name}] current status =>", "blue"), " ".join(d))
+
         return all(running_array)

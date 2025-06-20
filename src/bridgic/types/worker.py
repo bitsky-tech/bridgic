@@ -1,22 +1,21 @@
 import copy
-import inspect
 import uuid
 
-from typing import Any, List, Dict, Callable, get_type_hints
+from typing import Any, Dict, get_type_hints, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from bridgic.types.automa import Automa
 
 class Worker:
-    def __init__(self, name: str = None, as_thread: bool = False):
+    def __init__(self, name: str = None):
         """
         Parameters
         ----------
         name : str (default = None, then a generated name will be provided)
             The name of the worker.
-        as_thread : bool (default = False)
-            If True, the worker will run as a single thread when orchestrated.
-            If False, the worker will run as a normal event in the current event loop.
         """
         self.name: str = name or f"unnamed-worker-{uuid.uuid4().hex[:8]}"
-        self.as_thread: bool = as_thread
+        self.parent_automa: Automa = None
         self.__output_buffer: Any = None
         self.__output_setted: bool = False
         self.__local_space: Dict[str, Any] = {}
@@ -46,43 +45,3 @@ class Worker:
     @local_space.setter
     def local_space(self, value: Dict[str, Any]):
         self.__local_space = value
-
-class LandableWorker(Worker):
-    def __init__(self, *, dependencies: List[str] = [], is_start: bool = False, **kwargs):
-        super().__init__(**kwargs)
-        self.is_start = is_start
-        self.dependencies = dependencies
-
-class CallableWorker(Worker):
-    def __init__(self, *, func: Callable, **kwargs):
-        super().__init__(**kwargs)
-        if not func:
-            raise ValueError("func is required")
-        self.func = func
-        self.is_coro = inspect.iscoroutinefunction(func)
-
-    async def process_async(self, *args, **kwargs) -> Any:
-        if self.is_coro:
-            return await self.func(*args, **kwargs)
-        else:
-            return self.func(*args, **kwargs)
-
-class CallableLandableWorker(CallableWorker, LandableWorker):
-    def __init__(
-        self,
-        *,
-        name: str = None,
-        as_thread: bool = False,
-        func: Callable,
-        dependencies: List[str] = [],
-        is_start: bool = False,
-        **kwargs,
-    ):
-        super().__init__(
-            name=name,
-            as_thread=as_thread,
-            func=func,
-            dependencies=dependencies,
-            is_start=is_start,
-            **kwargs,
-        )

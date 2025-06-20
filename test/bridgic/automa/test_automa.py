@@ -9,7 +9,7 @@ from bridgic.automa import (
     WorkerSignatureError,
     AutomaRuntimeError,
 )
-from bridgic.types.worker import LandableWorker
+from bridgic.types.worker import Worker
 from bridgic.utils.console import printer
 
 def test_automa_declaration_dag_check():
@@ -53,7 +53,7 @@ def test_decorated_worker_signature_check():
 
 def test_later_added_worker_signature_check():
     with pytest.raises(WorkerSignatureError):
-        class Worker(LandableWorker):
+        class IncorrectWorker(Worker):
             async def process_async(self, *args):
                 pass
 
@@ -61,14 +61,26 @@ def test_later_added_worker_signature_check():
             pass
 
         automa_obj = AutomaIncorrectDecoratedWorker3()
-        automa_obj.register_worker(Worker(name="wrong_worker"))
+        automa_obj.add_worker(IncorrectWorker(name="wrong_worker"))
 
     with pytest.raises(WorkerSignatureError):
         class AutomaIncorrectDecoratedWorker4(Automa):
             pass
 
         automa_obj = AutomaIncorrectDecoratedWorker4()
-        automa_obj.add_worker(name="wrong_worker", func=lambda x: None)
+        automa_obj.add_func_as_worker(name="wrong_worker", func=lambda x: None)
+
+def test_customized_worker_signature_check():
+    class IncorrectWorker(Worker):
+        def process_async(self, *args, **kwargs) -> None:
+            pass
+    
+    with pytest.raises(WorkerSignatureError):
+        class AutomaIncorrectDecoratedWorker5(Automa):
+            pass
+
+        automa_obj = AutomaIncorrectDecoratedWorker5()
+        automa_obj.add_worker(IncorrectWorker(name="wrong_worker"))
 
 @pytest.mark.asyncio
 async def test_automa_single_layer_run():
@@ -81,3 +93,11 @@ async def test_automa_multi_layer_run():
     from layers.automa_layer_c import AutomaLayerC
     automa_obj = AutomaLayerC()
     await automa_obj.process_async(debug=False)
+
+@pytest.mark.asyncio
+async def test_automa_classic_10_workers_run():
+    from layers.automa_layer_c import AutomaLayerC, PrintWorker
+    automa_obj = AutomaLayerC()
+    automa_obj.add_worker(PrintWorker(name="worker_9"), dependencies=["entry_point_worker_7", "entry_point_worker_8"])
+    automa_obj.add_worker(PrintWorker(name="customized_end_worker_10"), dependencies=["worker_9"])
+    await automa_obj.process_async(debug=True)
