@@ -1,22 +1,22 @@
 import pytest
-from bridgic.automa import AutoMa
-from bridgic.automa.bridge.decorator import worker
+from bridgic.automa import Automa
+from bridgic.automa import worker
 
 # This test script demonstrates how to implement a simple flow using the "decorator-based" orchestration pattern.
 # Input: x
 # Output: 3x+5
 
-class SimpleFlow(AutoMa):
+class SimpleFlow(Automa):
 
     def __init__(self):
-        super().__init__()
+        super().__init__(output_worker_name="add_5")
 
     @worker(is_start=True)
-    def multiply_3(self, x: int) -> int:
+    def multiply_3(self, x: int, **kwargs) -> int:
         return x * 3
 
-    @worker(is_end=True, listen=multiply_3)
-    def add_5(self, x: int) -> int:
+    @worker(dependencies=["multiply_3"])
+    def add_5(self, x: int, **kwargs) -> int:
         return x + 5
 
 @pytest.fixture

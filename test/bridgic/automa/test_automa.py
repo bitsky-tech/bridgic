@@ -29,46 +29,6 @@ def test_automa_compilation_dag_check():
 
         automa_obj._compile_automa()
 
-def test_decorated_worker_signature_check():
-    with pytest.raises(WorkerSignatureError):
-        class AutomaIncorrectDecoratedWorker1(Automa):
-            @worker(dependencies=["worker_1"])
-            def worker_0(self, **kwargs):
-                pass
-
-            @worker(dependencies=["worker_0"])
-            def worker_1(self, *args, **kwargs):
-                pass
-
-    with pytest.raises(WorkerSignatureError):
-        class AutomaIncorrectDecoratedWorker2(Automa):
-            pass
-
-        automa_obj = AutomaIncorrectDecoratedWorker2()
-
-        @automa_obj.worker(dependencies=["worker_1"])
-        def func(self, **kwargs):
-            pass
-
-def test_later_added_worker_signature_check():
-    with pytest.raises(WorkerSignatureError):
-        class IncorrectWorker(Worker):
-            async def process_async(self, *args):
-                pass
-
-        class AutomaIncorrectDecoratedWorker3(Automa):
-            pass
-
-        automa_obj = AutomaIncorrectDecoratedWorker3()
-        automa_obj.add_worker(IncorrectWorker(name="wrong_worker"))
-
-    with pytest.raises(WorkerSignatureError):
-        class AutomaIncorrectDecoratedWorker4(Automa):
-            pass
-
-        automa_obj = AutomaIncorrectDecoratedWorker4()
-        automa_obj.add_func_as_worker(name="wrong_worker", func=lambda x: None)
-
 def test_customized_worker_signature_check():
     class IncorrectWorker(Worker):
         def process_async(self, *args, **kwargs) -> None:

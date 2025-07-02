@@ -5,7 +5,7 @@ import traceback
 import json
 import uuid
 
-from typing import Any, List, Dict, Set, Callable, Union, Coroutine
+from typing import Any, List, Tuple, Dict, Set, Callable
 from types import MethodType
 from concurrent.futures import ThreadPoolExecutor
 from threading import Thread
@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field
 from bridgic.utils.console import printer, colored
 from bridgic.automa.worker.worker import Worker
 from bridgic.types.error import AutomaDeclarationError, AutomaCompilationError, WorkerSignatureError, AutomaRuntimeError
+from bridgic.utils.inspect_tools import get_arg_names
 
 class _LandableMixin:
     def __init__(self, dependencies: List[str] = [], is_start: bool = False, **kwargs):
@@ -61,6 +62,7 @@ class _AutomaBuiltinWorker(_LandableMixin, _CallableMixin, _ThreadableMixin, Wor
 
 class WorkerState(BaseModel):
     is_running: bool = Field(default=False)
+    kickoff_worker_name: str = Field(default=None)
     dependency_triggers: Set[str] = Field(default_factory=set)
 
 def worker(
@@ -89,15 +91,7 @@ def worker(
     if not all([isinstance(d, str) for d in dependencies]):
         raise ValueError(f"dependencies must be a List of str")
 
-    def validate_params(func: Callable) -> bool:
-        sig = inspect.signature(func)
-        has_args = any(param.kind == param.VAR_POSITIONAL for param in sig.parameters.values())
-        has_kwargs = any(param.kind == param.VAR_KEYWORD for param in sig.parameters.values())
-        if not (has_args and has_kwargs):
-            raise WorkerSignatureError(f"parameters of function {func.__name__} must contain *args and **kwargs")
-    
     def injected(func: Callable):
-        validate_params(func)
         setattr(func, "__is_worker__", True)
         setattr(func, "__worker_name__", name)
         setattr(func, "__dependencies__", dependencies)
@@ -487,9 +481,9 @@ class Automa(_AutomaBuiltinWorker, metaclass=AutomaMeta):
         ----------
         worker_name : str
             The name of the worker to execute.
-        args : Any, optional
+        args : optional
             Positional arguments to be passed.
-        kwargs : Any, optional
+        kwargs : optional
             Keyword arguments to be passed.
 
         Note
@@ -501,10 +495,10 @@ class Automa(_AutomaBuiltinWorker, metaclass=AutomaMeta):
         worker orchestration.
         """
         debug: bool = kwargs.get("debug", False)
-        kickoff_worker: str = kwargs.get("kickoff_worker", self.name)
+        kickoff_worker_name: str = self._get_kickoff_worker(worker_name)
 
         if debug:
-            printer.print(f"[{kickoff_worker}] will kick off [{worker_name}]")
+            printer.print(f"[{kickoff_worker_name}] will kick off [{worker_name}]")
 
         # Check if the target worker exists.
         if worker_name not in self._workers:
@@ -526,17 +520,13 @@ class Automa(_AutomaBuiltinWorker, metaclass=AutomaMeta):
         # Lock the running state to ensure that the worker is not requested to run again while it is running.
         worker_state.is_running = True
 
-        # The kick-off-worker of next step is the current worker.
-        kwargs["kickoff_worker"] = worker_name
-
         self._submit_to_backend(
-            worker_name=worker_name,
-            worker_coro=worker.process_async(*args, **kwargs),
-            as_thread=worker.as_thread,
-            debug=debug,
+            worker_name,
+            *args,
+            **kwargs
         )
 
-    async def process_async(self, *, debug: bool = False, **kwargs) -> Any:
+    async def process_async(self, *args, **kwargs) -> Any:
         """
         Drives the execution of the entire automa by starting all start workers inside it.
         When there is no worker in the automa that can run, the whole process will end.
@@ -545,8 +535,12 @@ class Automa(_AutomaBuiltinWorker, metaclass=AutomaMeta):
 
         Parameters
         ----------
-        debug : bool (default = False)
-            Whether to print the debug information.
+        args : optional
+            Positional arguments to be passed.
+        kwargs : optional
+            Keyword arguments to be passed.
+            
+        TODO: add some code snippet examples here
 
         Returns
         -------
@@ -556,11 +550,10 @@ class Automa(_AutomaBuiltinWorker, metaclass=AutomaMeta):
         # Compile the whole automa graph, taking into account both statically defined and dynamically added workers.
         self._compile_automa()
 
+        # Hidden argument "debug": to controlwhether to print the debug information.
+        debug = kwargs.get("debug", False)
         if debug:
             printer.print(f"Automa-[{self.name}] is getting started.")
-
-        # The kick-off-worker is the automa itself.
-        kwargs["kickoff_worker"] = self.name
 
         # Main thread function of the current automa.
         def run_until_end(main_loop: asyncio.AbstractEventLoop):
@@ -594,7 +587,9 @@ class Automa(_AutomaBuiltinWorker, metaclass=AutomaMeta):
         # to the backend, all start workers will be executed in parallel. As an implicit convention,
         # all start workers should have no additional input parameters and no dependencies.
         for worker_name in start_workers:
-            self.ferry_to(worker_name, debug=debug, **kwargs)
+            # The kick-off-worker is the automa itself when launched through process_async().
+            self._set_kickoff_worker(worker_name, self.name)
+            self.ferry_to(worker_name, *args, **kwargs)
 
         # Start the main event loop until the automa is in terminated state.
         self._thread.start()
@@ -699,7 +694,8 @@ class Automa(_AutomaBuiltinWorker, metaclass=AutomaMeta):
             worker_state = self._worker_states[target]
             worker_state.dependency_triggers.discard(worker_name)
             if len(worker_state.dependency_triggers) == 0:
-                self.ferry_to(target, debug=debug, kickoff_worker=worker_name)
+                self._set_kickoff_worker(target, worker_name)
+                self.ferry_to(target, debug=debug)
 
         if debug:
             printer.print(f"[{worker_name}] handover done")
@@ -718,7 +714,22 @@ class Automa(_AutomaBuiltinWorker, metaclass=AutomaMeta):
 
         worker_state = self._worker_states[worker_name]
         worker_state.is_running = False
+        worker_state.kickoff_worker_name = None
         worker_state.dependency_triggers = set(self._worker_triggers.get(worker_name, []))
+
+    def _set_kickoff_worker(self, worker_name: str, kickoff_worker_name: str):
+        """
+        Set the kickoff worker name of the worker, which is part of the worker running state.
+        """
+        worker_state = self._worker_states[worker_name]
+        worker_state.kickoff_worker_name = kickoff_worker_name
+    
+    def _get_kickoff_worker(self, worker_name: str) -> str:
+        """
+        Utility function to get the kickoff worker name of the worker.
+        """
+        worker_state = self._worker_states[worker_name]
+        return worker_state.kickoff_worker_name
 
     def _refresh_worker_buffers(self, worker_name: str):
         """
@@ -735,11 +746,9 @@ class Automa(_AutomaBuiltinWorker, metaclass=AutomaMeta):
 
     def _submit_to_backend(
         self,
-        *,
         worker_name: str,
-        worker_coro: Coroutine,
-        as_thread: bool = False,
-        debug: bool = False,
+        *args,
+        **kwargs
     ) -> asyncio.Future:
         """
         Submit the coroutine to the backend and return its future.
@@ -759,15 +768,23 @@ class Automa(_AutomaBuiltinWorker, metaclass=AutomaMeta):
         asyncio.Future
             The future of the submitted coroutine.
         """
+        debug = kwargs.get("debug", False)
+        kickoff_worker_name: str = self._get_kickoff_worker(worker_name)
         worker_obj = self._workers[worker_name]
 
         async def run_coro():
             if debug:
                 printer.print(f"[{worker_name}]", "running")
 
-            # Run the worker coroutine and set back the output to the corresponding output buffer.
             try:
-                worker_obj.output_buffer = await worker_coro
+                my_args, my_kwargs = self._mapping_args_from_kickoff_to_current_worker(
+                    kickoff_worker_name,
+                    worker_name,
+                    *args,
+                    **kwargs
+                )
+                # Run the worker coroutine and set back the output to the corresponding output buffer.
+                worker_obj.output_buffer = await worker_obj.process_async(*my_args, **my_kwargs)
             except Exception as e:
                 printer.print(
                     f"worker {worker_name} failed with error: {e}"
@@ -783,7 +800,7 @@ class Automa(_AutomaBuiltinWorker, metaclass=AutomaMeta):
             if debug:
                 printer.print(f"[{worker_name}]", "done")
 
-        if as_thread:
+        if worker_obj.as_thread:
             # Submit a new thread.
             loop = asyncio.new_event_loop()
             future = self._loop.run_in_executor(self._executor, lambda: loop.run_until_complete(run_coro()))
@@ -811,3 +828,62 @@ class Automa(_AutomaBuiltinWorker, metaclass=AutomaMeta):
                 printer.print(colored(f"Automa-[{self.name}] current status =>", "blue"), " ".join(d))
 
         return all(running_array)
+
+    def _convert_result_to_args(self, result: Any) -> Tuple[Tuple, Dict[str, Any]]:
+        if isinstance(result, tuple):
+            if len(result) == 1:
+                args, kwargs = self._convert_non_tuple_result_to_args(result[0])
+            elif len(result) > 1:
+                args = result
+                kwargs = {}
+            else:
+                # when len(result) == 0
+                args = ()
+                kwargs = {}
+        else:
+            args, kwargs = self._convert_non_tuple_result_to_args(result)
+        return args, kwargs
+
+    def _convert_non_tuple_result_to_args(self, single_result: Any) -> Tuple[Tuple, Dict[str, Any]]:
+        # TODO: add TaskResult support here in future
+        # if isinstance(single_result, TaskResult):
+        #     args = ()
+        #     kwargs = single_result.model_dump()
+        if isinstance(single_result, dict):
+            args = ()
+            kwargs = single_result
+        elif single_result is None:
+            args = ()
+            kwargs = {}
+        else:
+            args = (single_result, )
+            kwargs = {}
+        
+        return args, kwargs
+
+    def _mapping_args_from_kickoff_to_current_worker(
+        self, 
+        kickoff_worker_name: str,
+        current_worker_name: str,
+        *args,
+        **kwargs
+    ) -> Tuple[Tuple, Dict[str, Any]]:
+        worker_obj = self._workers[current_worker_name]
+        if kickoff_worker_name is not None and kickoff_worker_name != self.name:
+            kickoff_worker = self._workers[kickoff_worker_name]
+            my_args, my_kwargs = self._convert_result_to_args(kickoff_worker.output_buffer)
+        else:
+            my_args, my_kwargs = args, kwargs
+        if isinstance(worker_obj, _AutomaBuiltinWorker) and worker_obj.func is not None:
+            func = worker_obj.func
+        else:
+            func = worker_obj.process_async
+        trigger_worker_names = self._worker_triggers.get(current_worker_name, [])
+        if len(trigger_worker_names) > 1:
+            my_args = []
+            my_kwargs = {}
+        else:
+            needed_args_names = get_arg_names(func)
+            my_kwargs = {arg_name: my_kwargs[arg_name] for arg_name in needed_args_names if arg_name in my_kwargs}
+        
+        return my_args, my_kwargs
