@@ -6,7 +6,7 @@ from bridgic.automa import Automa, worker
 from bridgic.utils.console import printer
 
 class AutomaLayerA(Automa):
-    @worker(name="defined_start_worker_0", is_start=True, as_thread=True)
+    @worker(name="defined_start_worker_0", is_start=True)
     def worker_0(self, *args, **kwargs) -> tuple[int, int]:
         return (1, 2)
 
