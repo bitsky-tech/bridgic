@@ -29,12 +29,7 @@ class _CallableMixin:
         self.func = func
         self.is_coro = inspect.iscoroutinefunction(func)
 
-class _ThreadableMixin:
-    def __init__(self, as_thread: bool = False, **kwargs):
-        super().__init__(**kwargs)
-        self.as_thread = as_thread
-
-class _AutomaBuiltinWorker(_LandableMixin, _CallableMixin, _ThreadableMixin, Worker):
+class _AutomaBuiltinWorker(_LandableMixin, _CallableMixin, Worker):
     def __init__(
         self,
         *,
@@ -42,7 +37,6 @@ class _AutomaBuiltinWorker(_LandableMixin, _CallableMixin, _ThreadableMixin, Wor
         func: Callable,
         dependencies: List[str] = [],
         is_start: bool = False,
-        as_thread: bool = False,
         **kwargs,
     ):
         super().__init__(
@@ -50,7 +44,6 @@ class _AutomaBuiltinWorker(_LandableMixin, _CallableMixin, _ThreadableMixin, Wor
             func=func,
             dependencies=dependencies,
             is_start=is_start,
-            as_thread=as_thread,
             **kwargs,
         )
 
@@ -70,7 +63,6 @@ def worker(
     name: str = None,
     dependencies: List[str] = [],
     is_start: bool = False,
-    as_thread: bool = False,
 ):
     """
     This is a decorator used to mark a callable object (such as a function or method) as an Automa 
@@ -96,7 +88,6 @@ def worker(
         setattr(func, "__worker_name__", name)
         setattr(func, "__dependencies__", dependencies)
         setattr(func, "__is_start__", is_start)
-        setattr(func, "__as_thread__", as_thread)
         return func
 
     def wrapper(func: Callable):
@@ -251,23 +242,19 @@ class Automa(_AutomaBuiltinWorker, metaclass=AutomaMeta):
         output_worker_name : str (default = None)
             The name of the output worker, of which the output will also be returned by the automa.
         """
-        # Automa will own its own thread, so it does not need to be assigned a thread.
-        if kwargs.get("as_thread", False):
-            raise ValueError("Automa does not need to be assigned a thread. It will have it own thread.")
-
         if not name:
             name = f"unnamed-automa-{uuid.uuid4().hex[:8]}"
 
-        super().__init__(name=name, func=None, as_thread=False)
+        super().__init__(name=name, func=None)
         cls = type(self)
 
         # Initialize the instances of pre-declared workers.
         self._workers: Dict[str, Worker] = {}
         if workers:
             for worker_name, worker_obj in workers.items():
-                if not isinstance(worker_obj, (_LandableMixin, _ThreadableMixin)):
+                if not isinstance(worker_obj, _LandableMixin):
                     raise TypeError(
-                        f"the type of worker_obj must inherit from __LandableMixin and __ThreadableMixin, "
+                        f"the type of worker_obj must inherit from _LandableMixin, "
                         f"but got {type(worker_obj)}: worker_name={worker_name}"
                     )
                 self._workers[worker_name] = worker_obj
@@ -280,7 +267,6 @@ class Automa(_AutomaBuiltinWorker, metaclass=AutomaMeta):
                     func=MethodType(worker_func, self),
                     dependencies=worker_func.__dependencies__,
                     is_start=worker_func.__is_start__,
-                    as_thread=worker_func.__as_thread__,
                 )
                 self._workers[worker_name] = worker_obj
 
@@ -311,7 +297,6 @@ class Automa(_AutomaBuiltinWorker, metaclass=AutomaMeta):
         *,
         dependencies: List[str] = [],
         is_start: bool = False,
-        as_thread: bool = False,
     ):
         """
         This method is used to add a worker into the automa.
@@ -324,9 +309,6 @@ class Automa(_AutomaBuiltinWorker, metaclass=AutomaMeta):
             A list of worker names that the decorated callable depends on.
         is_start : bool
             Whether the decorated callable is a start worker. True means it is, while False means it is not.
-        as_thread : bool (default = False)
-            If True, the worker will be run as a new thread.
-            If False, the worker will be run as a new event.
         """
         if not isinstance(worker_obj, Worker):
             raise TypeError(
@@ -355,11 +337,10 @@ class Automa(_AutomaBuiltinWorker, metaclass=AutomaMeta):
                 name=worker_obj.name,
                 dependencies=dependencies,
                 is_start=is_start,
-                as_thread=as_thread,
             )(worker_obj.process_async)
 
-            # Adapt the class of worker_obj to __LandableMixin and __ThreadableMixin type.
-            class AdaptedWorker(type(worker_obj), _LandableMixin, _ThreadableMixin):
+            # Adapt the class of worker_obj to _LandableMixin type.
+            class AdaptedWorker(type(worker_obj), _LandableMixin):
                 pass
 
             # Create an adapted object.
@@ -368,7 +349,6 @@ class Automa(_AutomaBuiltinWorker, metaclass=AutomaMeta):
             new_worker_obj.parent_automa = self
             new_worker_obj.dependencies = dependencies
             new_worker_obj.is_start = is_start
-            new_worker_obj.as_thread = as_thread
 
             # Register the worker_obj.
             self._workers[new_worker_obj.name] = new_worker_obj
@@ -381,7 +361,6 @@ class Automa(_AutomaBuiltinWorker, metaclass=AutomaMeta):
         func: Callable,
         dependencies: List[str] = [],
         is_start: bool = False,
-        as_thread: bool = False,
     ):
         """
         This method is used to add a function as a worker into the automa.
@@ -399,12 +378,9 @@ class Automa(_AutomaBuiltinWorker, metaclass=AutomaMeta):
             A list of worker names that the decorated callable depends on.
         is_start : bool
             Whether the decorated callable is a start worker. True means it is, while False means it is not.
-        as_thread : bool
-            If True, the function that registered as a worker will be run as a new thread.
-            If False, the function that registered as a worker will be run as a new event.
         """
         # Validate the parameters that the user provided.
-        worker(name=name, dependencies=dependencies, is_start=is_start, as_thread=as_thread)(func)
+        worker(name=name, dependencies=dependencies, is_start=is_start)(func)
 
         # Register func as a built-in worker.
         worker_obj = _AutomaBuiltinWorker(
@@ -412,7 +388,6 @@ class Automa(_AutomaBuiltinWorker, metaclass=AutomaMeta):
             func=MethodType(func, self),
             dependencies=dependencies,
             is_start=is_start,
-            as_thread=as_thread,
         )
         self._workers[worker_obj.name] = worker_obj
 
@@ -422,7 +397,6 @@ class Automa(_AutomaBuiltinWorker, metaclass=AutomaMeta):
         name: str = None,
         dependencies: List[str] = [],
         is_start: bool = False,
-        as_thread: bool = False,
     ):
         """
         This is a decorator used to mark a function as an Automa detectable Worker. Dislike the 
@@ -446,7 +420,6 @@ class Automa(_AutomaBuiltinWorker, metaclass=AutomaMeta):
                 func=func,
                 dependencies=dependencies,
                 is_start=is_start,
-                as_thread=as_thread,
             )
 
         return wrapper
@@ -759,9 +732,6 @@ class Automa(_AutomaBuiltinWorker, metaclass=AutomaMeta):
             The name of the worker to submit.
         worker_coro : Coroutine
             The coroutine to be submitted.
-        as_thread : bool (default = False)
-            Whether to submit the coroutine as a new thread. If True, the coroutine will be submitted 
-            to the thread pool. If False, the coroutine will be submitted to the event loop.
 
         Returns
         -------
@@ -800,15 +770,9 @@ class Automa(_AutomaBuiltinWorker, metaclass=AutomaMeta):
             if debug:
                 printer.print(f"[{worker_name}]", "done")
 
-        if worker_obj.as_thread:
-            # Submit a new thread.
-            loop = asyncio.new_event_loop()
-            future = self._loop.run_in_executor(self._executor, lambda: loop.run_until_complete(run_coro()))
-            return future
-        else:
-            # Submit a new event to the main thread.
-            future = asyncio.run_coroutine_threadsafe(run_coro(), self._loop)
-            return asyncio.wrap_future(future)
+        # Submit a new event to the main thread.
+        future = asyncio.run_coroutine_threadsafe(run_coro(), self._loop)
+        return asyncio.wrap_future(future)
 
     def _is_in_terminated_state(self, debug: bool = False) -> bool:
         """
