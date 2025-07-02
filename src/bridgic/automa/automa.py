@@ -7,7 +7,6 @@ import uuid
 
 from typing import Any, List, Tuple, Dict, Set, Callable
 from types import MethodType
-from concurrent.futures import ThreadPoolExecutor
 from threading import Thread
 from collections import defaultdict, deque
 from pydantic import BaseModel, Field
@@ -225,7 +224,6 @@ class Automa(_AutomaBuiltinWorker, metaclass=AutomaMeta):
     def __init__(
         self,
         name: str = None,
-        parallel_num: int = 2,
         output_worker_name: str = None,
         workers: Dict[str, Worker] = {},
         **kwargs,
@@ -235,12 +233,10 @@ class Automa(_AutomaBuiltinWorker, metaclass=AutomaMeta):
         ----------
         name : str (default = None, then a generated name will be provided)
             The name of the automa.
-        parallel_num : int (default = 2)
-            The capacity of the built-in thread pool of the automa (excluding the main thread).
-        workers : Dict[str, Worker] (default = {})
-            A dictionary that maps the worker name to the worker instance.
         output_worker_name : str (default = None)
             The name of the output worker, of which the output will also be returned by the automa.
+        workers : Dict[str, Worker] (default = {})
+            A dictionary that maps the worker name to the worker instance.
         """
         if not name:
             name = f"unnamed-automa-{uuid.uuid4().hex[:8]}"
@@ -279,9 +275,6 @@ class Automa(_AutomaBuiltinWorker, metaclass=AutomaMeta):
         # Define the runtime data structures that are used when running the whole automa.
         self._worker_states: Dict[str, WorkerState] = {}
         self._worker_running_snapshot: Dict[str, bool] = None
-
-        # Initialize the thread pool for the current automa's execution.
-        self._executor: ThreadPoolExecutor = ThreadPoolExecutor(max_workers=parallel_num)
 
         # Record the name of the output-worker.
         self._output_worker_name: str = output_worker_name
@@ -523,7 +516,7 @@ class Automa(_AutomaBuiltinWorker, metaclass=AutomaMeta):
         # Compile the whole automa graph, taking into account both statically defined and dynamically added workers.
         self._compile_automa()
 
-        # Hidden argument "debug": to controlwhether to print the debug information.
+        # Hidden argument "debug": to control whether to print the debug information.
         debug = kwargs.get("debug", False)
         if debug:
             printer.print(f"Automa-[{self.name}] is getting started.")
