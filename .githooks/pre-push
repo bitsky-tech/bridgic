@@ -5,6 +5,12 @@ while read local_ref local_sha remote_ref remote_sha; do
     if [[ -n "$remote_ref" ]]; then
         branch_name=${remote_ref#refs/heads/}
 
+        # Protect branches.
+        if [[ $branch_name =~ ^(main|dev)$ ]]; then
+            echo "❌ Error: You are not allowed to push a local branch to 'origin/$branch_name'!"
+            exit 1
+        fi
+
         # Check branch name prefix.
         if ! [[ $branch_name =~ ^(feature/|refactor/|bugfix/|release/|docs/).+ ]]; then
             echo "❌ Error: Branch name '$branch_name' doesn't follow naming convention!"

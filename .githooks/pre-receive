@@ -5,6 +5,12 @@ while read oldrev newrev refname; do
     if [[ $refname =~ refs/heads/ ]]; then
         branch_name=${refname#refs/heads/}
 
+        # Protect branches.
+        if [[ $branch_name =~ ^(main|dev)$ ]]; then
+            echo "❌ Error: It is not allowed to push a local branch to 'origin/$branch_name'!"
+            exit 1
+        fi
+
         # Check branch name prefix.
         if ! [[ $branch_name =~ ^(feature/|refactor/|bugfix/|release/|docs/).+ ]]; then
             echo "❌ Error: Branch name '$branch_name' doesn't follow naming convention!"
