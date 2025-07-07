@@ -5,7 +5,7 @@ import traceback
 import json
 import uuid
 
-from typing import Any, List, Tuple, Dict, Set, Callable
+from typing import Any, List, Dict, Set, Mapping, Callable, Tuple
 from types import MethodType
 from threading import Thread
 from collections import defaultdict, deque
@@ -13,14 +13,24 @@ from pydantic import BaseModel, Field
 
 from bridgic.utils.console import printer, colored
 from bridgic.automa.worker.worker import Worker
-from bridgic.types.error import AutomaDeclarationError, AutomaCompilationError, WorkerSignatureError, AutomaRuntimeError
+from bridgic.types.error import *
+from bridgic.consts.args_mapping_rule import *
 from bridgic.utils.inspect_tools import get_arg_names
 
 class _LandableMixin:
-    def __init__(self, dependencies: List[str] = [], is_start: bool = False, **kwargs):
+
+    def __init__(
+        self,
+        dependencies: List[str] = [],
+        is_start: bool = False,
+        args_mapping_rule: str = ARGS_MAPPING_RULE_SUPPRESSED,
+        **kwargs,
+    ):
         super().__init__(**kwargs)
         self.dependencies = dependencies
         self.is_start = is_start
+        self.args_mapping_rule = args_mapping_rule
+
 
 class _CallableMixin:
     def __init__(self, func: Callable, **kwargs):
@@ -36,6 +46,7 @@ class _AutomaBuiltinWorker(_LandableMixin, _CallableMixin, Worker):
         func: Callable,
         dependencies: List[str] = [],
         is_start: bool = False,
+        args_mapping_rule: str = ARGS_MAPPING_RULE_SUPPRESSED,
         **kwargs,
     ):
         super().__init__(
@@ -43,6 +54,7 @@ class _AutomaBuiltinWorker(_LandableMixin, _CallableMixin, Worker):
             func=func,
             dependencies=dependencies,
             is_start=is_start,
+            args_mapping_rule=args_mapping_rule,
             **kwargs,
         )
 
@@ -57,16 +69,46 @@ class WorkerState(BaseModel):
     kickoff_worker_name: str = Field(default=None)
     dependency_triggers: Set[str] = Field(default_factory=set)
 
+def _validated_dependencies(worker_name: str, dependencies: List[str]) -> List[str]:
+    if not dependencies:
+        dependencies = []
+    if not all([isinstance(d, str) for d in dependencies]):
+        raise ValueError(
+            f"dependencies must be a List of str, "
+            f"but got {dependencies} for worker {worker_name}"
+        )
+    return dependencies
+
+def _validated_args_mapping_rule(worker_name: str, dependencies: List[str], args_mapping_rule: str) -> str:
+    if args_mapping_rule not in all_args_mapping_rules:
+        raise ValueError(
+            f"args_mapping_rule must be one of the following: {all_args_mapping_rules},"
+            f"but got {args_mapping_rule} for worker {worker_name}"
+        )
+    if len(dependencies) <= 1:
+        if args_mapping_rule == ARGS_MAPPING_RULE_AUTO:
+            args_mapping_rule = ARGS_MAPPING_RULE_AS_LIST
+    else:
+        if args_mapping_rule == ARGS_MAPPING_RULE_AUTO:
+            args_mapping_rule = ARGS_MAPPING_RULE_SUPPRESSED
+        if args_mapping_rule != ARGS_MAPPING_RULE_SUPPRESSED:
+            raise WorkerArgsMappingError(
+                f"args_mapping_rule must be set to \"{ARGS_MAPPING_RULE_SUPPRESSED}\" "
+                f"when the number of dependencies is greater than 1: {len(dependencies)} "
+                f"for worker {worker_name}"
+            )
+    return args_mapping_rule
+
 def worker(
     *,
     name: str = None,
     dependencies: List[str] = [],
     is_start: bool = False,
+    args_mapping_rule: str = ARGS_MAPPING_RULE_AUTO,
 ):
     """
-    This is a decorator used to mark a callable object (such as a function or method) as an Automa 
-    detectable Worker. Its core function is to add specific magic properties (such as __is_worker__) 
-    to the decorated Callable so that it can be transformed into a CallableLandableWorker object.
+    A decorator that marks a method as a worker within an Automa class. The worker's behavior can be
+    customized through the decorator's parameters.
 
     Parameters
     ----------
@@ -76,29 +118,22 @@ def worker(
         A list of worker names that the decorated callable depends on.
     is_start : bool
         Whether the decorated callable is a start worker. True means it is, while False means it is not.
+    args_mapping_rule : str
+        The rule of arguments mapping. The options are: "auto", "as_list", "as_dict", "suppressed".
     """
-    if not dependencies:
-        dependencies = []
-    if not all([isinstance(d, str) for d in dependencies]):
-        raise ValueError(f"dependencies must be a List of str")
+    dependencies = _validated_dependencies(name, dependencies)
+    args_mapping_rule = _validated_args_mapping_rule(name, dependencies, args_mapping_rule)
 
     def injected(func: Callable):
         setattr(func, "__is_worker__", True)
         setattr(func, "__worker_name__", name)
         setattr(func, "__dependencies__", dependencies)
         setattr(func, "__is_start__", is_start)
+        setattr(func, "__args_mapping_rule__", args_mapping_rule)
         return func
 
     def wrapper(func: Callable):
-        @functools.wraps(func)
-        def inner(*args, **kwargs):
-            return func(*args, **kwargs)
-
-        @functools.wraps(func)
-        async def inner_async(*args, **kwargs):
-            return await func(*args, **kwargs)
-
-        return injected(inner) if not inspect.iscoroutinefunction(func) else injected(inner_async)
+        return injected(func)
 
     return wrapper
 
@@ -263,6 +298,7 @@ class Automa(_AutomaBuiltinWorker, metaclass=AutomaMeta):
                     func=MethodType(worker_func, self),
                     dependencies=worker_func.__dependencies__,
                     is_start=worker_func.__is_start__,
+                    args_mapping_rule=worker_func.__args_mapping_rule__,
                 )
                 self._workers[worker_name] = worker_obj
 
@@ -279,6 +315,9 @@ class Automa(_AutomaBuiltinWorker, metaclass=AutomaMeta):
         # Record the name of the output-worker.
         self._output_worker_name: str = output_worker_name
 
+        # Define the options right before running.
+        self.debug: bool = False
+
         # Define the main thread and its event loop for the current automa's execution.
         self._loop: asyncio.AbstractEventLoop = None
         self._thread: Thread = None
@@ -290,6 +329,7 @@ class Automa(_AutomaBuiltinWorker, metaclass=AutomaMeta):
         *,
         dependencies: List[str] = [],
         is_start: bool = False,
+        args_mapping_rule: str = ARGS_MAPPING_RULE_AUTO,
     ):
         """
         This method is used to add a worker into the automa.
@@ -302,6 +342,8 @@ class Automa(_AutomaBuiltinWorker, metaclass=AutomaMeta):
             A list of worker names that the decorated callable depends on.
         is_start : bool
             Whether the decorated callable is a start worker. True means it is, while False means it is not.
+        args_mapping_rule : str
+            The rule of arguments mapping. The options are: "auto", "as_list", "as_dict", "suppressed".
         """
         if not isinstance(worker_obj, Worker):
             raise TypeError(
@@ -325,23 +367,21 @@ class Automa(_AutomaBuiltinWorker, metaclass=AutomaMeta):
             # If the worker_obj is a built-in worker, directly register it.
             self._workers[worker_obj.name] = worker_obj
         else:
-            # Validate the parameters of the "process_async" method of the worker_obj.
-            worker(
-                name=worker_obj.name,
-                dependencies=dependencies,
-                is_start=is_start,
-            )(worker_obj.process_async)
+            # Validate the parameters.
+            dependencies = _validated_dependencies(worker_obj.name, dependencies)
+            args_mapping_rule = _validated_args_mapping_rule(worker_obj.name, dependencies, args_mapping_rule)
 
             # Adapt the class of worker_obj to _LandableMixin type.
-            class AdaptedWorker(type(worker_obj), _LandableMixin):
+            class AutomaAdaptedWorker(type(worker_obj), _LandableMixin):
                 pass
 
             # Create an adapted object.
-            new_worker_obj = AdaptedWorker.__new__(AdaptedWorker)
+            new_worker_obj = AutomaAdaptedWorker.__new__(AutomaAdaptedWorker)
             new_worker_obj.__dict__ = worker_obj.__dict__.copy()
             new_worker_obj.parent_automa = self
             new_worker_obj.dependencies = dependencies
             new_worker_obj.is_start = is_start
+            new_worker_obj.args_mapping_rule = args_mapping_rule
 
             # Register the worker_obj.
             self._workers[new_worker_obj.name] = new_worker_obj
@@ -354,6 +394,7 @@ class Automa(_AutomaBuiltinWorker, metaclass=AutomaMeta):
         func: Callable,
         dependencies: List[str] = [],
         is_start: bool = False,
+        args_mapping_rule: str = ARGS_MAPPING_RULE_AUTO,
     ):
         """
         This method is used to add a function as a worker into the automa.
@@ -371,9 +412,12 @@ class Automa(_AutomaBuiltinWorker, metaclass=AutomaMeta):
             A list of worker names that the decorated callable depends on.
         is_start : bool
             Whether the decorated callable is a start worker. True means it is, while False means it is not.
+        args_mapping_rule : str
+            The rule of arguments mapping. The options are: "auto", "as_list", "as_dict", "suppressed".
         """
-        # Validate the parameters that the user provided.
-        worker(name=name, dependencies=dependencies, is_start=is_start)(func)
+        # Validate the parameters.
+        dependencies = _validated_dependencies(name, dependencies)
+        args_mapping_rule = _validated_args_mapping_rule(name, dependencies, args_mapping_rule)
 
         # Register func as a built-in worker.
         worker_obj = _AutomaBuiltinWorker(
@@ -381,6 +425,7 @@ class Automa(_AutomaBuiltinWorker, metaclass=AutomaMeta):
             func=MethodType(func, self),
             dependencies=dependencies,
             is_start=is_start,
+            args_mapping_rule=args_mapping_rule,
         )
         self._workers[worker_obj.name] = worker_obj
 
@@ -390,6 +435,7 @@ class Automa(_AutomaBuiltinWorker, metaclass=AutomaMeta):
         name: str = None,
         dependencies: List[str] = [],
         is_start: bool = False,
+        args_mapping_rule: str = ARGS_MAPPING_RULE_AUTO,
     ):
         """
         This is a decorator used to mark a function as an Automa detectable Worker. Dislike the 
@@ -406,6 +452,8 @@ class Automa(_AutomaBuiltinWorker, metaclass=AutomaMeta):
             A list of worker names that the decorated callable depends on.
         is_start : bool
             Whether the decorated callable is a start worker. True means it is, while False means it is not.
+        args_mapping_rule : str
+            The rule of arguments mapping. The options are: "auto", "as_list", "as_dict", "suppressed".
         """
         def wrapper(func: Callable):
             self.add_func_as_worker(
@@ -413,6 +461,7 @@ class Automa(_AutomaBuiltinWorker, metaclass=AutomaMeta):
                 func=func,
                 dependencies=dependencies,
                 is_start=is_start,
+                args_mapping_rule=args_mapping_rule,
             )
 
         return wrapper
@@ -460,10 +509,9 @@ class Automa(_AutomaBuiltinWorker, metaclass=AutomaMeta):
         developers can customize more complex execution logic in a flexible way and achieve more powerful 
         worker orchestration.
         """
-        debug: bool = kwargs.get("debug", False)
         kickoff_worker_name: str = self._get_kickoff_worker(worker_name)
 
-        if debug:
+        if self.debug:
             printer.print(f"[{kickoff_worker_name}] will kick off [{worker_name}]")
 
         # Check if the target worker exists.
@@ -492,7 +540,7 @@ class Automa(_AutomaBuiltinWorker, metaclass=AutomaMeta):
             **kwargs
         )
 
-    async def process_async(self, *args, **kwargs) -> Any:
+    async def process_async(self, debug: bool = False, *args, **kwargs) -> Any:
         """
         Drives the execution of the entire automa by starting all start workers inside it.
         When there is no worker in the automa that can run, the whole process will end.
@@ -513,12 +561,12 @@ class Automa(_AutomaBuiltinWorker, metaclass=AutomaMeta):
         Any
             The output of the output-worker if it is specified, otherwise None.
         """
+        self.debug = debug
+
         # Compile the whole automa graph, taking into account both statically defined and dynamically added workers.
         self._compile_automa()
 
-        # Hidden argument "debug": to control whether to print the debug information.
-        debug = kwargs.get("debug", False)
-        if debug:
+        if self.debug:
             printer.print(f"Automa-[{self.name}] is getting started.")
 
         # Main thread function of the current automa.
@@ -526,12 +574,12 @@ class Automa(_AutomaBuiltinWorker, metaclass=AutomaMeta):
             asyncio.set_event_loop(main_loop)
 
             async def wait_for_termination():
-                while not self._is_in_terminated_state(debug=debug):
+                while not self._is_in_terminated_state():
                     await asyncio.sleep(0.01)
 
             self._loop.run_until_complete(wait_for_termination())
 
-            if debug:
+            if self.debug:
                 printer.print("Event loop is closing.")
 
         # Initialize the runtime states of all workers.
@@ -561,7 +609,7 @@ class Automa(_AutomaBuiltinWorker, metaclass=AutomaMeta):
         self._thread.start()
         self._thread.join()
 
-        if debug:
+        if self.debug:
             printer.print(f"Automa-[{self.name}] completed execution.")
 
         # If the output-worker is specified, return its output as the return value of the automa.
@@ -616,6 +664,9 @@ class Automa(_AutomaBuiltinWorker, metaclass=AutomaMeta):
                 f"output_worker_name={self._output_worker_name}"
             )
 
+        # Penetrate the options to the next level automa instance.
+        self._penetrate_options()
+
         # Find all connected components of the whole automa graph.
         self._find_connected_components()
 
@@ -647,7 +698,15 @@ class Automa(_AutomaBuiltinWorker, metaclass=AutomaMeta):
 
         self._component_list, self._component_idx = component_list, component_idx
 
-    def _try_to_start_successors(self, worker_name: str, debug: bool = False):
+    def _penetrate_options(self):
+        """
+        Penetrate the options to the next level workers that are in Automa type.
+        """
+        for worker_obj in self._workers.values():
+            if isinstance(worker_obj, Automa):
+                worker_obj.debug = self.debug
+
+    def _try_to_start_successors(self, worker_name: str):
         """
         Try to start the successors of the trigger worker.
 
@@ -659,12 +718,16 @@ class Automa(_AutomaBuiltinWorker, metaclass=AutomaMeta):
         for target in self._worker_forwards.get(worker_name, []):
             worker_state = self._worker_states[target]
             worker_state.dependency_triggers.discard(worker_name)
-            if len(worker_state.dependency_triggers) == 0:
-                self._set_kickoff_worker(target, worker_name)
-                self.ferry_to(target, debug=debug)
 
-        if debug:
-            printer.print(f"[{worker_name}] handover done")
+            if len(worker_state.dependency_triggers) == 0:
+                # Map the arguments of the next worker according to the mapping rule.
+                next_args, next_kwargs = self._mapping_args(
+                    kickoff_worker_name=worker_name,
+                    current_worker_name=target,
+                )
+
+                self._set_kickoff_worker(target, worker_name)
+                self.ferry_to(target, *next_args, **next_kwargs)
 
     def _refresh_worker_state(self, worker_name: str):
         """
@@ -689,7 +752,7 @@ class Automa(_AutomaBuiltinWorker, metaclass=AutomaMeta):
         """
         worker_state = self._worker_states[worker_name]
         worker_state.kickoff_worker_name = kickoff_worker_name
-    
+
     def _get_kickoff_worker(self, worker_name: str) -> str:
         """
         Utility function to get the kickoff worker name of the worker.
@@ -723,31 +786,24 @@ class Automa(_AutomaBuiltinWorker, metaclass=AutomaMeta):
         ----------
         worker_name : str
             The name of the worker to submit.
-        worker_coro : Coroutine
-            The coroutine to be submitted.
 
         Returns
         -------
         asyncio.Future
             The future of the submitted coroutine.
         """
-        debug = kwargs.get("debug", False)
-        kickoff_worker_name: str = self._get_kickoff_worker(worker_name)
         worker_obj = self._workers[worker_name]
 
         async def run_coro():
-            if debug:
+            if self.debug:
                 printer.print(f"[{worker_name}]", "running")
 
             try:
-                my_args, my_kwargs = self._mapping_args_from_kickoff_to_current_worker(
-                    kickoff_worker_name,
-                    worker_name,
-                    *args,
-                    **kwargs
-                )
                 # Run the worker coroutine and set back the output to the corresponding output buffer.
-                worker_obj.output_buffer = await worker_obj.process_async(*my_args, **my_kwargs)
+                if isinstance(worker_obj, Automa):
+                    worker_obj.output_buffer = await worker_obj.process_async(debug=self.debug, *args, **kwargs)
+                else:
+                    worker_obj.output_buffer = await worker_obj.process_async(*args, **kwargs)
             except Exception as e:
                 printer.print(
                     f"worker {worker_name} failed with error: {e}"
@@ -755,25 +811,25 @@ class Automa(_AutomaBuiltinWorker, metaclass=AutomaMeta):
                 )
 
             # The successors of the current worker may have a chance to run.
-            self._try_to_start_successors(worker_name, debug=debug)
+            self._try_to_start_successors(worker_name)
 
             # Release the running state of the worker.
             self._refresh_worker_state(worker_name)
 
-            if debug:
+            if self.debug:
                 printer.print(f"[{worker_name}]", "done")
 
         # Submit a new event to the main thread.
         future = asyncio.run_coroutine_threadsafe(run_coro(), self._loop)
         return asyncio.wrap_future(future)
 
-    def _is_in_terminated_state(self, debug: bool = False) -> bool:
+    def _is_in_terminated_state(self) -> bool:
         """
         Check if the automa is in a terminated state (i.e., all workers are not running).
         """
         running_array = [not worker_state.is_running for worker_state in self._worker_states.values()]
 
-        if debug:
+        if self.debug:
             running_snapshot = {k: v.is_running for k, v in self._worker_states.items()}
             if running_snapshot != self._worker_running_snapshot:
                 self._worker_running_snapshot = running_snapshot
@@ -782,65 +838,82 @@ class Automa(_AutomaBuiltinWorker, metaclass=AutomaMeta):
                     name = colored(k, "blue")
                     state = colored("Running", "green") if v else colored("Inactive", "red")
                     d.append(f'({name}: {state})')
-                printer.print(colored(f"Automa-[{self.name}] current status =>", "blue"), " ".join(d))
+                printer.print(
+                    colored(f"Automa-[{self.name}] ", "yellow"),
+                    colored("current status =>", "blue"),
+                    " ".join(d),
+                )
 
         return all(running_array)
 
-    def _convert_result_to_args(self, result: Any) -> Tuple[Tuple, Dict[str, Any]]:
-        if isinstance(result, tuple):
-            if len(result) == 1:
-                args, kwargs = self._convert_non_tuple_result_to_args(result[0])
-            elif len(result) > 1:
-                args = result
-                kwargs = {}
-            else:
-                # when len(result) == 0
-                args = ()
-                kwargs = {}
-        else:
-            args, kwargs = self._convert_non_tuple_result_to_args(result)
-        return args, kwargs
-
-    def _convert_non_tuple_result_to_args(self, single_result: Any) -> Tuple[Tuple, Dict[str, Any]]:
-        # TODO: add TaskResult support here in future
-        # if isinstance(single_result, TaskResult):
-        #     args = ()
-        #     kwargs = single_result.model_dump()
-        if isinstance(single_result, dict):
-            args = ()
-            kwargs = single_result
-        elif single_result is None:
-            args = ()
-            kwargs = {}
-        else:
-            args = (single_result, )
-            kwargs = {}
-        
-        return args, kwargs
-
-    def _mapping_args_from_kickoff_to_current_worker(
+    def _mapping_args(
         self, 
         kickoff_worker_name: str,
         current_worker_name: str,
-        *args,
-        **kwargs
     ) -> Tuple[Tuple, Dict[str, Any]]:
-        worker_obj = self._workers[current_worker_name]
-        if kickoff_worker_name is not None and kickoff_worker_name != self.name:
-            kickoff_worker = self._workers[kickoff_worker_name]
-            my_args, my_kwargs = self._convert_result_to_args(kickoff_worker.output_buffer)
+        """
+        Prepare arguments for the current worker based on dependency relationships. This method is invoked 
+        after all its dependencies are satisfied and before the current worker is executed.
+
+        The arguments mapping mechanism is as follows:
+        1. For workers with a single dependency: The trigger worker's output is automatically mapped as the 
+        input of the current worker, using the "as_list" rule by default (unless overridden by another rule).
+        2. For workers with multiple dependencies: No automatic mapping occurs (equivalent to "depressed" rule).
+
+        Parameters
+        ----------
+        kickoff_worker_name : str
+            The name of the kickoff worker.
+        current_worker_name : str
+            The name of the current worker.
+        """
+        kickoff_worker_obj = self._workers[kickoff_worker_name]
+        current_worker_obj = self._workers[current_worker_name]
+
+        def convert_return_in_list_rule(result: Any) -> Tuple[Tuple, Dict[str, Any]]:
+            if not result:
+                args, kwargs = (), {}
+            else:
+                if isinstance(result, (List, Tuple)):
+                    args, kwargs = tuple(item for item in result), {}
+                else:
+                    args, kwargs = tuple([result]), {}
+            return args, kwargs
+
+        def convert_return_in_dict_rule(result: Any) -> Tuple[Tuple, Dict[str, Any]]:
+            if not result:
+                args, kwargs = (), {}
+            else:
+                if isinstance(result, Mapping):
+                    if isinstance(current_worker_obj, _AutomaBuiltinWorker):
+                        arg_names = get_arg_names(current_worker_obj.func)
+                    else:
+                        arg_names = get_arg_names(current_worker_obj.process_async)
+                    # Only map for the known parameters.
+                    args, kwargs = (), {k: v for k, v in result.items() if k in arg_names}
+                else:
+                    raise AutomaRuntimeError(
+                        f"since the args_mapping_rule is set to \"{ARGS_MAPPING_RULE_AS_DICT}\" "
+                        f"for the worker \"{current_worker_name}\", the return type of the previous worker "
+                        f"must be Mapping, but got {type(result)}"
+                    )
+            return args, kwargs
+
+        next_args, next_kwargs = (), {}
+        args_mapping_rule = current_worker_obj.args_mapping_rule
+
+        if self._worker_triggers.get(current_worker_name, []) == [kickoff_worker_name]:
+            # For one-to-one dependency relationship, map the return value of the previous worker
+            # as the arguments of the current worker, according to the args_mapping_rule.
+            if args_mapping_rule == ARGS_MAPPING_RULE_AS_LIST:
+                next_args, next_kwargs = convert_return_in_list_rule(kickoff_worker_obj.output_buffer)
+            elif args_mapping_rule == ARGS_MAPPING_RULE_AS_DICT:
+                next_args, next_kwargs = convert_return_in_dict_rule(kickoff_worker_obj.output_buffer)
+            elif args_mapping_rule == ARGS_MAPPING_RULE_SUPPRESSED:
+                next_args, next_kwargs = (), {}
         else:
-            my_args, my_kwargs = args, kwargs
-        if isinstance(worker_obj, _AutomaBuiltinWorker) and worker_obj.func is not None:
-            func = worker_obj.func
-        else:
-            func = worker_obj.process_async
-        trigger_worker_names = self._worker_triggers.get(current_worker_name, [])
-        if len(trigger_worker_names) > 1:
-            my_args = []
-            my_kwargs = {}
-        else:
-            needed_args_names = get_arg_names(func)
-            my_kwargs = {arg_name: my_kwargs[arg_name] for arg_name in needed_args_names if arg_name in my_kwargs}
-        
-        return my_args, my_kwargs
+            # For multi-to-one dependency relationship, only "suppressed" rule is allowed.
+            assert args_mapping_rule == ARGS_MAPPING_RULE_SUPPRESSED
+
+
+        return next_args, next_kwargs

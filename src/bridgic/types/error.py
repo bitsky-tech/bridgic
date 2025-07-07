@@ -8,5 +8,8 @@ class AutomaCompilationError(Exception):
 class WorkerSignatureError(Exception):
     pass
 
+class WorkerArgsMappingError(Exception):
+    pass
+
 class AutomaRuntimeError(RuntimeError):
     pass

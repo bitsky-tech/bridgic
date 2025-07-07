@@ -1,5 +1,5 @@
 from bridgic.automa.automa import Automa, worker
-from bridgic.types.error import AutomaCompilationError, AutomaDeclarationError, WorkerSignatureError, AutomaRuntimeError
+from bridgic.types.error import *
 
 __all__ = [
     "Automa",
@@ -7,5 +7,6 @@ __all__ = [
     "AutomaCompilationError",
     "AutomaDeclarationError",
     "WorkerSignatureError",
+    "WorkerArgsMappingError",
     "AutomaRuntimeError",
 ]

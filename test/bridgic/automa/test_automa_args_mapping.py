@@ -1,23 +1,19 @@
 import pytest
-from bridgic.automa import Automa
-from bridgic.automa import worker
+
+from bridgic.automa import *
 
 class SimpleFlow_1(Automa):
-    def __init__(self):
-        super().__init__(output_worker_name="func_2")
-
     @worker(is_start=True)
     def func_1(self, x: int, y) -> dict:
         return {"x": x, "y": y}
 
-    @worker(dependencies=["func_1"])
-    def func_2(self, x: int, y: int=4):
+    @worker(dependencies=["func_1"], args_mapping_rule="as_dict")
+    def func_2(self, x: int, y: int = 4):
         return (x, y)
 
 @pytest.fixture
 def simple_flow_1():
-    yield SimpleFlow_1()
-    # teardown code may be here
+    yield SimpleFlow_1(output_worker_name="func_2")
 
 @pytest.mark.asyncio
 async def test_simple_flow_1(simple_flow_1):
@@ -26,44 +22,36 @@ async def test_simple_flow_1(simple_flow_1):
 
 
 class SimpleFlow_2(Automa):
-    def __init__(self):
-        super().__init__(output_worker_name="func_2")
-
     @worker(is_start=True)
-    def func_1(self, x: int, y) -> dict:
-        return {"x": x, "y": y}
+    def func_1(self, x: int, y) -> tuple:
+        return x, y
 
-    @worker(dependencies=["func_1"])
-    def func_2(self, y: int):
-        return y * 2
+    @worker(dependencies=["func_1"], args_mapping_rule="as_list")
+    def func_2(self, x: int, y: int):
+        return x * y
 
 @pytest.fixture
 def simple_flow_2():
-    yield SimpleFlow_2()
-    # teardown code may be here
+    yield SimpleFlow_2(output_worker_name="func_2")
 
 @pytest.mark.asyncio
 async def test_simple_flow_2(simple_flow_2):
-    result = await simple_flow_2.process_async(x=1, y=3)
+    result = await simple_flow_2.process_async(x=2, y=3)
     assert result == 6
 
 
 class SimpleFlow_3(Automa):
-    def __init__(self):
-        super().__init__(output_worker_name="func_2")
-
     @worker(is_start=True)
     def func_1(self, x: int, y) -> dict:
-        return x + y
+        return {"sum": x+y}
 
     @worker(dependencies=["func_1"])
-    def func_2(self, x: int):
-        return x * 2
+    def func_2(self, obj: dict):
+        return obj["sum"] * 2
 
 @pytest.fixture
 def simple_flow_3():
-    yield SimpleFlow_3()
-    # teardown code may be here
+    yield SimpleFlow_3(output_worker_name="func_2")
 
 @pytest.mark.asyncio
 async def test_simple_flow_3(simple_flow_3):
@@ -78,11 +66,11 @@ class SimpleFlow_4(Automa):
     def start_1(self, x: int, y: int) -> dict:
         return {"key_a": x, "key_b": y}
 
-    @worker(dependencies=["start_1"])
+    @worker(dependencies=["start_1"], args_mapping_rule="as_dict")
     def func_2(self, key_a: int):
         return key_a * 3
 
-    @worker(dependencies=["start_1"])
+    @worker(dependencies=["start_1"], args_mapping_rule="as_dict")
     def func_3(self, key_b: int):
         return key_b * 5
 
