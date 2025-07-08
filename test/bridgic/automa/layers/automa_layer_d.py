@@ -1,9 +1,9 @@
 import random
 
-from bridgic.automa import Automa, worker
+from bridgic.automa import GraphAutoma, worker
 from bridgic.utils.console import printer
 
-class AutomaLayerD(Automa):
+class AutomaLayerD(GraphAutoma):
     @worker(is_start=True)
     def easy_start_worker(self, *args, **kwargs) -> str:
         time_zone_list = ["Asia/Shanghai", "Asia/Hong_Kong", "Asia/Tokyo", "America/New_York", "Europe/London"]

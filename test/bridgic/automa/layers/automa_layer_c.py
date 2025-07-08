@@ -1,6 +1,6 @@
 from typing import Any, Dict
 
-from bridgic.automa import Automa
+from bridgic.automa import GraphAutoma
 from bridgic.automa.worker import Worker
 from bridgic.utils.console import printer
 
@@ -9,10 +9,10 @@ from .automa_layer_b import AutomaLayerB
 
 class PrintWorker(Worker):
     async def process_async(self, *args, **kwargs) -> None:
-        assert isinstance(self.parent_automa, Automa)
+        assert isinstance(self.parent_automa, GraphAutoma)
         printer.print(
-            f"  {self.name}: parent_automa is Automa =>",
-            isinstance(self.parent_automa, Automa),
+            f"  {self.name}: parent_automa is GraphAutoma =>",
+            isinstance(self.parent_automa, GraphAutoma),
         )
 
 class EndWorker(Worker):

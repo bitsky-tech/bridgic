@@ -2,7 +2,7 @@ import pytest
 
 from bridgic.automa import *
 
-class SimpleFlow_1(Automa):
+class SimpleFlow_1(GraphAutoma):
     @worker(is_start=True)
     def func_1(self, x: int, y) -> dict:
         return {"x": x, "y": y}
@@ -21,7 +21,7 @@ async def test_simple_flow_1(simple_flow_1):
     assert result == (1, 3)
 
 
-class SimpleFlow_2(Automa):
+class SimpleFlow_2(GraphAutoma):
     @worker(is_start=True)
     def func_1(self, x: int, y) -> tuple:
         return x, y
@@ -40,7 +40,7 @@ async def test_simple_flow_2(simple_flow_2):
     assert result == 6
 
 
-class SimpleFlow_3(Automa):
+class SimpleFlow_3(GraphAutoma):
     @worker(is_start=True)
     def func_1(self, x: int, y) -> dict:
         return {"sum": x+y}
@@ -58,7 +58,7 @@ async def test_simple_flow_3(simple_flow_3):
     result = await simple_flow_3.process_async(x=1, y=3)
     assert result == 8
 
-class SimpleFlow_4(Automa):
+class SimpleFlow_4(GraphAutoma):
     def __init__(self):
         super().__init__(output_worker_name="merge_23")
 

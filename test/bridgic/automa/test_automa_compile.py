@@ -1,7 +1,7 @@
 import pytest
 
 from bridgic.automa import (
-    Automa,
+    GraphAutoma,
     worker,
     AutomaCompilationError,
     AutomaDeclarationError,
@@ -12,7 +12,7 @@ from bridgic.automa.worker import Worker
 
 def test_automa_declaration_dag_check():
     with pytest.raises(AutomaDeclarationError):
-        class AutomaLayerStatic(Automa):
+        class AutomaLayerStatic(GraphAutoma):
             @worker(is_start=True, dependencies=["worker_3"])
             def worker_0(self, *args, **kwargs) -> int:
                 return 0
@@ -31,14 +31,14 @@ def test_automa_declaration_dag_check():
 
 def test_automa_compilation_dag_check():
     with pytest.raises(AutomaDeclarationError):
-        automa_obj = Automa()
+        automa_obj = GraphAutoma()
 
         @automa_obj.worker(dependencies=["worker_1"])
-        def worker_0(atm: Automa, *args, **kwargs):
+        def worker_0(atm: GraphAutoma, *args, **kwargs):
             assert atm is automa_obj
 
         @automa_obj.worker(dependencies=["worker_0"])
-        def worker_1(atm: Automa, *args, **kwargs):
+        def worker_1(atm: GraphAutoma, *args, **kwargs):
             assert atm is automa_obj
 
         automa_obj._compile_automa()
@@ -49,7 +49,7 @@ def test_customized_worker_signature_check():
             pass
     
     with pytest.raises(WorkerSignatureError):
-        class AutomaIncorrectDecoratedWorker5(Automa):
+        class AutomaIncorrectDecoratedWorker5(GraphAutoma):
             pass
 
         automa_obj = AutomaIncorrectDecoratedWorker5()
