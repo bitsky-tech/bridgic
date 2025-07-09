@@ -11,7 +11,7 @@ class PlanningStrategy(Enum):
     LLMCompiler = 2
 
 # Tool selection scope?
-class LLMPlanningAutoma(GoalOrientedAutoma):
+class LlmpAutoma(GoalOrientedAutoma):
     descriptive_goal: str
     planning_llm: LLM
     planning_strategy: PlanningStrategy
