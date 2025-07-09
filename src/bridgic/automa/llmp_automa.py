@@ -1,15 +1,17 @@
-from bridgic.automa import Automa
+from bridgic.automa import GoalOrientedAutoma
 from typing import Optional, Tuple, Any, Dict, Callable
 from enum import Enum
 from bridgic.types.common_types import ZeroToOne, LLMOutputFormat, PromptTemplate
 from bridgic.core import LLM
+from bridgic.automa.worker import Worker
+from typing_extensions import override
 
 class PlanningStrategy(Enum):
     ReAct = 1
     LLMCompiler = 2
 
 # Tool selection scope?
-class FuzzyGoalAutoma(Automa):
+class LLMPlanningAutoma(GoalOrientedAutoma):
     descriptive_goal: str
     planning_llm: LLM
     planning_strategy: PlanningStrategy
@@ -33,6 +35,11 @@ class FuzzyGoalAutoma(Automa):
 
     def process_async(self, *args: Optional[Tuple[Any]], automa_context: Dict[str, Any] = None, **kwargs: Optional[Dict[str, Any]]) -> Any:
         pass
+
+    @override
+    def remove_worker(self, worker_name: str) -> Worker:
+        pass
+
 
 def descriptive_worker(
     *,

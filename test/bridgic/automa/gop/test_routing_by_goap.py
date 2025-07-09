@@ -1,5 +1,5 @@
 import pytest
-from bridgic.automa import PreciseGoalAutoma, conditional_worker, precise_goal
+from bridgic.automa import GoapAutoma, conditional_worker, precise_goal
 from typing import List
 from pydantic import BaseModel
 
@@ -11,7 +11,7 @@ class Chunk(BaseModel):
     content: str
     from_url: str
 
-class RoutingExample_RAGChatbot(PreciseGoalAutoma):
+class RoutingExample_RAGChatbot(GoapAutoma):
 
     @conditional_worker(output_effects=["routing_result"])
     def route_to_right_domain(self, user_input: str) -> RoutingResult:
