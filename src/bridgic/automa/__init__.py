@@ -1,7 +1,8 @@
 from bridgic.automa.automa import Automa, GoalOrientedAutoma
 from bridgic.automa.goap_automa import GoapAutoma, precise_goal, conditional_worker
 from bridgic.automa.llmp_automa import LlmpAutoma, descriptive_worker, PlanningStrategy
-from bridgic.automa.graph_automa import GraphAutoma, worker
+from bridgic.automa.graph_automa import GraphAutoma
+from bridgic.automa.decorators import worker
 from bridgic.types.error import *
 
 __all__ = [

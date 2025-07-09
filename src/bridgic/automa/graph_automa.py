@@ -138,7 +138,7 @@ def worker(
 
     return wrapper
 
-class AutomaMeta(ABCMeta):
+class GraphAutomaMeta(ABCMeta):
     def __new__(mcls, name, bases, dct):
         """
         This metaclass is used to:
@@ -252,7 +252,7 @@ class AutomaMeta(ABCMeta):
                 f"following workers are in cycle: {nodes_in_cycle}"
             )
 
-class GraphAutoma(Automa, _AutomaBuiltinWorker, metaclass=AutomaMeta):
+class GraphAutoma(Automa, _AutomaBuiltinWorker, metaclass=GraphAutomaMeta):
     _registered_worker_funcs: Dict[str, Callable] = {}
     _worker_static_triggers: Dict[str, List[str]] = {}
     _worker_static_forwards: Dict[str, List[str]] = {}
@@ -656,7 +656,7 @@ class GraphAutoma(Automa, _AutomaBuiltinWorker, metaclass=AutomaMeta):
                 self._worker_forwards[trigger].append(worker_name)
 
         # Validate the DAG constraints.
-        AutomaMeta.validate_dag_constraints(self._worker_forwards)
+        GraphAutomaMeta.validate_dag_constraints(self._worker_forwards)
 
         # Validate if the output worker exists.
         if self._output_worker_name and self._output_worker_name not in self._workers:
