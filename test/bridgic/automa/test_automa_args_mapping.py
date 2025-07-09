@@ -45,7 +45,7 @@ class SimpleFlow_3(GraphAutoma):
     def func_1(self, x: int, y) -> dict:
         return {"sum": x+y}
 
-    @worker(dependencies=["func_1"], args_mapping_rule="as_list")
+    @worker(dependencies=["func_1"])
     def func_2(self, obj: dict):
         return obj["sum"] * 2
 
