@@ -1,4 +1,4 @@
-name: Sync main to dev (via BitSky CI Bot)
+name: Sync main to dev
 
 on:
   pull_request:
@@ -20,8 +20,8 @@ jobs:
         id: generate_token
         uses: tibdex/github-app-token@v2
         with:
-          app_id: ${{ secrets.APP_ID }}
-          private_key: ${{ secrets.APP_PRIVATE_KEY }}
+          app_id: ${{ secrets.CI_BOT_APP_ID }}
+          private_key: ${{ secrets.CI_BOT_APP_PRIVATE_KEY }}
 
       - name: Configure Git
         run: |
@@ -32,7 +32,7 @@ jobs:
         run: |
           git fetch origin dev
           git checkout dev
-          git merge origin/main --no-ff -m "Sync: merge main triggered by ${{ github.event.pull_request.head.ref }} branch."
+          git merge origin/main -m "Sync: auto merge main after merging ${{ github.event.pull_request.head.ref }}."
           git push origin dev
         env:
           GITHUB_TOKEN: ${{ steps.generate_token.outputs.token }}
