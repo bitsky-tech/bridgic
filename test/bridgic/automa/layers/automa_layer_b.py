@@ -1,7 +1,7 @@
-from bridgic.automa import Automa, worker
+from bridgic.automa import GraphAutoma, worker
 from bridgic.utils.console import printer
 
-class AutomaLayerB(Automa):
+class AutomaLayerB(GraphAutoma):
     @worker(is_start=True)
     def worker_4(self, *args, **kwargs):
         pass

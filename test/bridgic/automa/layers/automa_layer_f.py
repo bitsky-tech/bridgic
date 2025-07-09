@@ -1,10 +1,10 @@
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from bridgic.automa import Automa, worker
+from bridgic.automa import GraphAutoma, worker
 from bridgic.utils.console import printer
 
-class AutomaLayerF(Automa):
+class AutomaLayerF(GraphAutoma):
     @worker(is_start=True)
     def datetime_worker(self, time_zone: str = "Asia/Shanghai") -> str:
         printer.print("  datetime_worker", f"time_zone: {time_zone}")
