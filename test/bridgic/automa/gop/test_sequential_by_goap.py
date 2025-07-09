@@ -1,5 +1,5 @@
 import pytest
-from bridgic.automa import PreciseGoalAutoma, conditional_worker, precise_goal
+from bridgic.automa import GoapAutoma, conditional_worker, precise_goal
 from typing import List
 from pydantic import BaseModel
 
@@ -8,7 +8,7 @@ class Snippet(BaseModel):
     content: str
     from_url: str
 
-class SequentialExample_QuerySummarizer(PreciseGoalAutoma):
+class SequentialExample_QuerySummarizer(GoapAutoma):
 
     @conditional_worker(output_effects=["text_in_english"])
     def translate_to_english(self, text_in_chinese: str) -> str:

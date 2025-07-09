@@ -1,5 +1,5 @@
 import pytest
-from bridgic.automa import FuzzyGoalAutoma, descriptive_worker, PlanningStrategy
+from bridgic.automa import LLMPlanningAutoma, descriptive_worker, PlanningStrategy
 from bridgic.core import LLM
 from pydantic import BaseModel
 from typing import List
@@ -10,7 +10,7 @@ class File(BaseModel):
     file_path: str
     is_dir: bool
 
-class ReActExample_IntelligentFileBrowser(FuzzyGoalAutoma):
+class ReActExample_IntelligentFileBrowser(LLMPlanningAutoma):
     def __init__(self):
         descriptive_goal = "Browse as many as possible files in the file system, and read the content of each file to find out the most relevant information to {person_name}"
         super().__init__(

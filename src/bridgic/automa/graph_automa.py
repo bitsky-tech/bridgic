@@ -1,10 +1,10 @@
 import asyncio
-import functools
 import inspect
 import traceback
 import json
 import uuid
 
+from abc import ABCMeta
 from typing import Any, List, Dict, Set, Mapping, Callable, Tuple
 from types import MethodType
 from threading import Thread
@@ -138,7 +138,7 @@ def worker(
 
     return wrapper
 
-class AutomaMeta(type):
+class AutomaMeta(ABCMeta):
     def __new__(mcls, name, bases, dct):
         """
         This metaclass is used to:
