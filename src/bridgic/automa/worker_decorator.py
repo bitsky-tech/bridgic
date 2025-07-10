@@ -111,7 +111,7 @@ def worker(**kwargs) -> Callable:
 def get_worker_decorator_default_paramap(worker_decorator_type: WorkerDecoratorType) -> Dict[str, Any]:
     return get_worker_decorator_default_paramap.__saved_paramaps[worker_decorator_type]
 
-def _extract_default_argmaps() -> Dict[WorkerDecoratorType, Dict[str, Any]]:
+def _extract_default_paramaps() -> Dict[WorkerDecoratorType, Dict[str, Any]]:
     """
     This ensures that retrieving default argument mappings is independent of the order in which worker decorators are defined.
     """
@@ -126,7 +126,7 @@ def _extract_default_argmaps() -> Dict[WorkerDecoratorType, Dict[str, Any]]:
             paramaps[WorkerDecoratorType.LlmpAutomaMethod] = params_default
     return paramaps
 
-get_worker_decorator_default_paramap.__saved_paramaps = _extract_default_argmaps()
+get_worker_decorator_default_paramap.__saved_paramaps = _extract_default_paramaps()
 
 def packup_worker_decorator_rumtime_args(worker_decorator_type: WorkerDecoratorType, worker_kwargs: Dict[str, Any]) -> Dict[str, Any]:
     def _map_worker_decorator_type_to_automa():
