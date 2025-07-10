@@ -1,5 +1,5 @@
 import pytest
-from bridgic.automa import LlmpAutoma, worker
+from bridgic.automa import LlmpAutoma, worker, goal
 from bridgic.core import LLM
 from pydantic import BaseModel
 from typing import List
@@ -10,11 +10,10 @@ class File(BaseModel):
     file_path: str
     is_dir: bool
 
+@goal(description="Browse as many as possible files in the file system, and read the content of each file to find out the most relevant information to {person_name}")
 class ReActExample_IntelligentFileBrowser(LlmpAutoma):
     def __init__(self):
-        descriptive_goal = "Browse as many as possible files in the file system, and read the content of each file to find out the most relevant information to {person_name}"
         super().__init__(
-            descriptive_goal=descriptive_goal,
             planning_llm=LLM(), # TODO: upgrade to a specific LLM model implementation
             expected_output_format=LLMOutputFormat.Json,
         )

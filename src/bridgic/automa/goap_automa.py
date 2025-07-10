@@ -22,9 +22,13 @@ class GoapAutomaMeta(ABCMeta):
             if worker_kwargs is not None:
                 default_args = get_default_worker_args_for_llmp()
                 complete_args = {**default_args, **worker_kwargs}
-                print(f"%%%%%%%%%%%%%%%%% [{cls}.{attr_name}] worker_kwargs = {worker_kwargs}")
-                print(f"%%%%%%%%%%%%%%%%% [{cls}.{attr_name}] default_args = {default_args}")
-                print(f"%%%%%%%%%%%%%%%%% [{cls}.{attr_name}] complete_args = {complete_args}")
+                # print(f"%%%%%%%%%%%%%%%%% [{cls}.{attr_name}] worker_kwargs = {worker_kwargs}")
+                # print(f"%%%%%%%%%%%%%%%%% [{cls}.{attr_name}] default_args = {default_args}")
+                # print(f"%%%%%%%%%%%%%%%%% [{cls}.{attr_name}] complete_args = {complete_args}")
+                # TODO:
+            goal_configs = getattr(attr_value, "__goal_config__", None)
+            if goal_configs is not None:
+                print(f"%%%%%%%%%%%%%%%%% [{cls}.{attr_name}] goal_configs = {goal_configs}")
                 # TODO:
         # TODO:
         return cls
@@ -49,13 +53,3 @@ class GoapAutoma(GoalOrientedAutoma, metaclass=GoapAutomaMeta):
     @override
     def remove_worker(self, worker_name: str) -> Worker:
         pass
-
-def precise_goal(
-    *,
-    pre_conditions: List[str] = [],
-    final_goal: bool = False,
-) -> Callable:
-    def wrapper(func: Callable):
-        # TODO:
-        return func
-    return wrapper

@@ -49,7 +49,7 @@ def goal_goap(
     final: bool = False,
     priority: int = 0,
 ) -> Callable:
-    func.__goal_config = {
+    func.__goal_config__ = {
         "pre_conditions": pre_conditions,
         "final": final,
         "priority": priority,
@@ -61,36 +61,26 @@ def goal_llmp(
     *,
     description: PromptTemplate
 ) -> type:
-    cls.__goal_config = {
+    cls.__goal_config__ = {
         "description": description,
     }
     return cls
 
-def goal(
-    *,
-    # First part of parameters. Used for GoapAutoma
-    pre_conditions: List[str] = [],
-    final: bool = False,
-    priority: int = 0,
-    # Second part of parameters. Used for LlmpAutoma
-    description: PromptTemplate
-) -> Union[Callable, type]:
+def goal(**kwargs) -> Union[Callable, type]:
     """
     The implementation of the overloaded goal decorators defined above.
     """
     def wrapper(cls_or_func):
         if isinstance(cls_or_func, type):
-            # Expect: goal is decorating a GoapAutoma method
-            return goal_goap(
-                cls_or_func,
-                pre_conditions=pre_conditions,
-                final=final,
-                priority=priority,
-            )
-        else:
             # Expect: goal is decorating the LlmpAutoma class
             return goal_llmp(
                 cls_or_func,
-                description=description,
+                **kwargs
+            )
+        else:
+            # Expect: goal is decorating a GoapAutoma method
+            return goal_goap(
+                cls_or_func,
+                **kwargs
             )
     return wrapper
