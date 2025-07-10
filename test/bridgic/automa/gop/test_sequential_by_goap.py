@@ -1,5 +1,5 @@
 import pytest
-from bridgic.automa import GoapAutoma, conditional_worker, precise_goal
+from bridgic.automa import GoapAutoma, worker,precise_goal
 from typing import List
 from pydantic import BaseModel
 
@@ -10,17 +10,17 @@ class Snippet(BaseModel):
 
 class SequentialExample_QuerySummarizer(GoapAutoma):
 
-    @conditional_worker(output_effects=["text_in_english"])
+    @worker(output_effects=["text_in_english"])
     def translate_to_english(self, text_in_chinese: str) -> str:
         text_in_english = "A translator should be called on $text_in_chinese"
         return text_in_english
 
-    @conditional_worker(output_effects=["keywords"])
+    @worker(output_effects=["keywords"])
     def extract_keywords(self, text_in_english: str) -> List[str]:
         keywords = ["translator", "should", "called"]
         return keywords
 
-    @conditional_worker(output_effects=["query_results"])
+    @worker(output_effects=["query_results"])
     def query_by_keywords(self, keywords: List[str]) -> List[Snippet]:
         # TODO: query from database / web
         snippets = [
@@ -30,7 +30,7 @@ class SequentialExample_QuerySummarizer(GoapAutoma):
         return snippets
 
     @precise_goal(final_goal=True)
-    @conditional_worker(output_effects=["summary"])
+    @worker(output_effects=["summary"])
     def summarize_snippets(self, query_results: List[Snippet]) -> str:
         return "A summarizer should be called on $query_results"
 

@@ -17,6 +17,7 @@ from bridgic.types.error import *
 from bridgic.consts.args_mapping_rule import *
 from bridgic.utils.inspect_tools import get_arg_names
 from bridgic.automa import Automa
+from bridgic.automa.decorators import get_default_worker_args
 
 class _LandableMixin:
 
@@ -100,45 +101,7 @@ def _validated_args_mapping_rule(worker_name: str, dependencies: List[str], args
             )
     return args_mapping_rule
 
-def worker(
-    *,
-    name: str = None,
-    dependencies: List[str] = [],
-    is_start: bool = False,
-    args_mapping_rule: str = ARGS_MAPPING_RULE_AUTO,
-):
-    """
-    A decorator that marks a method as a worker within an Automa class. The worker's behavior can be
-    customized through the decorator's parameters.
-
-    Parameters
-    ----------
-    name : str
-        The name of the worker. If not provided, the name of the decorated callable will be used.
-    dependencies : List[str]
-        A list of worker names that the decorated callable depends on.
-    is_start : bool
-        Whether the decorated callable is a start worker. True means it is, while False means it is not.
-    args_mapping_rule : str
-        The rule of arguments mapping. The options are: "auto", "as_list", "as_dict", "suppressed".
-    """
-    dependencies = _validated_dependencies(name, dependencies)
-    args_mapping_rule = _validated_args_mapping_rule(name, dependencies, args_mapping_rule)
-
-    def injected(func: Callable):
-        setattr(func, "__is_worker__", True)
-        setattr(func, "__worker_name__", name)
-        setattr(func, "__dependencies__", dependencies)
-        setattr(func, "__is_start__", is_start)
-        setattr(func, "__args_mapping_rule__", args_mapping_rule)
-        return func
-
-    def wrapper(func: Callable):
-        return injected(func)
-
-    return wrapper
-
-class AutomaMeta(ABCMeta):
+class GraphAutomaMeta(ABCMeta):
     def __new__(mcls, name, bases, dct):
         """
         This metaclass is used to:
@@ -153,6 +116,30 @@ class AutomaMeta(ABCMeta):
         registered_worker_funcs: Dict[str, Callable] = {}
         worker_static_triggers: Dict[str, List[str]] = {}
         worker_static_forwards: Dict[str, List[str]] = {}
+
+        def get_default_worker_args_for_llmp() -> Dict[str, Any]:
+            default_args_list = get_default_worker_args()
+            for default_args in default_args_list:
+                if "dependencies" in default_args:
+                    return default_args
+            return None
+        
+        for attr_name, attr_value in dct.items():
+            worker_kwargs = getattr(attr_value, "__worker_kwargs__", None)
+            if worker_kwargs is not None:
+                default_args = get_default_worker_args_for_llmp()
+                complete_args = {**default_args, **worker_kwargs}
+                # Convert values in complete_args to __is_worker__, __dependencies__ and other attributes used in the old metaclass version
+                func = attr_value
+                worker_name = complete_args["name"]
+                dependencies = _validated_dependencies(worker_name, complete_args["dependencies"])
+                args_mapping_rule = _validated_args_mapping_rule(worker_name, dependencies, complete_args["args_mapping_rule"])
+                setattr(func, "__is_worker__", True)
+                setattr(func, "__worker_name__", worker_name)
+                setattr(func, "__dependencies__", dependencies)
+                setattr(func, "__is_start__", complete_args["is_start"])
+                setattr(func, "__args_mapping_rule__", args_mapping_rule)
+
 
         for base in bases:
             for worker_name, worker_func in getattr(base, "_registered_worker_funcs", {}).items():
@@ -252,7 +239,7 @@ class AutomaMeta(ABCMeta):
                 f"following workers are in cycle: {nodes_in_cycle}"
             )
 
-class GraphAutoma(Automa, _AutomaBuiltinWorker, metaclass=AutomaMeta):
+class GraphAutoma(Automa, _AutomaBuiltinWorker, metaclass=GraphAutomaMeta):
     _registered_worker_funcs: Dict[str, Callable] = {}
     _worker_static_triggers: Dict[str, List[str]] = {}
     _worker_static_forwards: Dict[str, List[str]] = {}
@@ -656,7 +643,7 @@ class GraphAutoma(Automa, _AutomaBuiltinWorker, metaclass=AutomaMeta):
                 self._worker_forwards[trigger].append(worker_name)
 
         # Validate the DAG constraints.
-        AutomaMeta.validate_dag_constraints(self._worker_forwards)
+        GraphAutomaMeta.validate_dag_constraints(self._worker_forwards)
 
         # Validate if the output worker exists.
         if self._output_worker_name and self._output_worker_name not in self._workers:

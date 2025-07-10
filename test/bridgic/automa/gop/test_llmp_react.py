@@ -1,5 +1,5 @@
 import pytest
-from bridgic.automa import LlmpAutoma, descriptive_worker, PlanningStrategy
+from bridgic.automa import LlmpAutoma, worker
 from bridgic.core import LLM
 from pydantic import BaseModel
 from typing import List
@@ -19,7 +19,7 @@ class ReActExample_IntelligentFileBrowser(LlmpAutoma):
             expected_output_format=LLMOutputFormat.Json,
         )
 
-    @descriptive_worker()
+    @worker()
     def browse_files(self, start_dir_path: str) -> List[File]:
         """
         Browse the directory specified by the parameter `start_dir_path`, and return all files and directories under that directory.
@@ -32,7 +32,7 @@ class ReActExample_IntelligentFileBrowser(LlmpAutoma):
         ]
         return file_or_dir_list
 
-    @descriptive_worker(canonical_description="Read the content of the file specified by the parameter `file_path`")
+    @worker(canonical_description="Read the content of the file specified by the parameter `file_path`")
     def read_file(self, file_path: str) -> str:
         # TODO: call the file system to read the file content
         contents = [
