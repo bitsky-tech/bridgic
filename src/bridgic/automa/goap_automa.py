@@ -4,7 +4,7 @@ from bridgic.types.common_types import ZeroToOne
 from bridgic.automa.worker import Worker
 from typing_extensions import override
 from abc import ABCMeta
-from bridgic.automa.decorators import get_default_worker_args
+from bridgic.automa.worker_decorator import get_default_worker_args
 
 class GoapAutomaMeta(ABCMeta):
     def __new__(mcls, name, bases, dct):
@@ -49,23 +49,6 @@ class GoapAutoma(GoalOrientedAutoma, metaclass=GoapAutomaMeta):
     @override
     def remove_worker(self, worker_name: str) -> Worker:
         pass
-
-
-
-def conditional_worker(
-    *,
-    name: Optional[str] = None,
-    cost: ZeroToOne = 0.0,
-    re_use: bool = False,
-    pre_conditions: List[str] = [],
-    output_effects: List[str],
-    extra_effects: List[str] = [],
-) -> Callable:
-    def wrapper(func: Callable):
-        # TODO:
-        return func
-    return wrapper
-
 
 def precise_goal(
     *,

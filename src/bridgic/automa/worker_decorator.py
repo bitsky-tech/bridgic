@@ -1,13 +1,17 @@
 import inspect
+from enum import Enum
 from typing_extensions import get_overloads, overload
 
 from typing import List, Callable, Optional, Dict, Any
 from bridgic.consts.args_mapping_rule import ARGS_MAPPING_RULE_AUTO
 from bridgic.types.common_types import ZeroToOne, PromptTemplate
+from bridgic.utils.inspect_tools import get_default_argmaps_of_overloaded_funcs
 
-# 本文件定义了：
-# 1. GraphAutoma、GoapAutoma、LlmpAutoma的worker装饰器
-# 2. GoapAutoma、LlmpAutoma的goal装饰器
+# Constant Definitions
+class WorkerDecoratorType(Enum):
+    GraphAutomaMethod = 1
+    GoapAutomaMethod = 2
+    LlmpAutomaMethod = 3
 
 @overload
 def worker(
@@ -105,17 +109,24 @@ def worker(**kwargs) -> Callable:
     return wrapper
 
 def get_default_worker_args() -> List[Dict[str, Any]]:
-    """
-    Get the default argument values of all the overloaded worker decorators.
-    """
-    worker_funcs = get_overloads(worker)
-    func_found = False
-    args_defaults_list = []
-    for func in worker_funcs:
-        sig = inspect.signature(func)
-        args_default = {}
-        for name, param in sig.parameters.items():
-            args_default[name] = param.default
-        args_defaults_list.append(args_default)
+    return get_default_argmaps_of_overloaded_funcs(worker)
 
-    return args_defaults_list
+def get_worker_decorator_default_argmaps(worker_decorator_type: WorkerDecoratorType) -> Dict[str, Any]:
+    return get_worker_decorator_default_argmaps.__saved_argmaps[worker_decorator_type]
+
+def _extract_default_argmaps() -> Dict[WorkerDecoratorType, Dict[str, Any]]:
+    """
+    This ensures that retrieving default argument mappings is independent of the order in which worker decorators are defined.
+    """
+    args_defaults_list = get_default_argmaps_of_overloaded_funcs(worker)
+    argmaps = {}
+    for args_default in args_defaults_list:
+        if "dependencies" in args_default:
+            argmaps[WorkerDecoratorType.GraphAutomaMethod] = args_default
+        elif "output_effects" in args_default:
+            argmaps[WorkerDecoratorType.GoapAutomaMethod] = args_default
+        elif "canonical_description" in args_default:
+            argmaps[WorkerDecoratorType.LlmpAutomaMethod] = args_default
+    return argmaps
+
+get_worker_decorator_default_argmaps.__saved_argmaps = _extract_default_argmaps()

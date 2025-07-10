@@ -17,7 +17,7 @@ from bridgic.types.error import *
 from bridgic.consts.args_mapping_rule import *
 from bridgic.utils.inspect_tools import get_arg_names
 from bridgic.automa import Automa
-from bridgic.automa.decorators import get_default_worker_args
+from bridgic.automa.worker_decorator import get_default_worker_args
 
 class _LandableMixin:
 

@@ -6,7 +6,7 @@ from bridgic.core import LLM
 from bridgic.automa.worker import Worker
 from typing_extensions import override
 from abc import ABCMeta
-from bridgic.automa.decorators import get_default_worker_args
+from bridgic.automa.worker_decorator import get_default_worker_args
 
 class LlmpAutomaMeta(ABCMeta):
     def __new__(mcls, name, bases, dct):
@@ -44,10 +44,10 @@ class LlmpAutoma(GoalOrientedAutoma, metaclass=LlmpAutomaMeta):
     def __init__(
         self,
         descriptive_goal: str, # TODO: upgrade str to prompt template | prompt template path, etc
-        planning_llm: LLM,
+        planning_llm: LLM, # TODO: provide a default LLM model?
         expected_output_format: LLMOutputFormat = LLMOutputFormat.FreeText,
         expected_output_json_schema: Optional[str] = None,
-        name: Optional[str] = None, # TODO: provide a default LLM model?
+        name: Optional[str] = None, 
         planning_strategy: PlanningStrategy = PlanningStrategy.ReAct,
         canonical_planning_prompt: Optional[PromptTemplate] = None, # TODO: upgrade str to prompt template type
         **kwargs,
@@ -69,19 +69,3 @@ class LlmpAutoma(GoalOrientedAutoma, metaclass=LlmpAutomaMeta):
     def get_canonical_description(method: Callable) -> PromptTemplate:
         ...
         # TODO: implement this method
-
-def descriptive_worker(
-    *,
-    name: Optional[str] = None,
-    auto_convert_to_prompt: bool = True,
-    cost: ZeroToOne = 0.0,
-    re_use: bool = True,
-    canonical_description: Optional[PromptTemplate] = None, # TODO: upgrade str to prompt template type
-) -> Callable:
-    """
-    Either the canonical_description parameter or the decorated function's docstring must be provided.
-    """
-    def wrapper(func: Callable):
-        # TODO:
-        return func
-    return wrapper
