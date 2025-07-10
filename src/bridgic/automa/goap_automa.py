@@ -19,7 +19,6 @@ class GoapAutomaMeta(ABCMeta):
             if goal_configs is not None:
                 # TODO:
                 pass
-        # TODO:
         return cls
 
 

@@ -132,8 +132,7 @@ class GraphAutomaMeta(ABCMeta):
                 setattr(func, "__dependencies__", dependencies)
                 setattr(func, "__is_start__", complete_args["is_start"])
                 setattr(func, "__args_mapping_rule__", args_mapping_rule)
-
-
+        
         for base in bases:
             for worker_name, worker_func in getattr(base, "_registered_worker_funcs", {}).items():
                 if worker_name not in registered_worker_funcs.keys():
