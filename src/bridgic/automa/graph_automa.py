@@ -17,7 +17,7 @@ from bridgic.types.error import *
 from bridgic.consts.args_mapping_rule import *
 from bridgic.utils.inspect_tools import get_arg_names
 from bridgic.automa import Automa
-from bridgic.automa.worker_decorator import get_default_worker_args
+from bridgic.automa.worker_decorator import packup_worker_decorator_rumtime_args, WorkerDecoratorType
 
 class _LandableMixin:
 
@@ -116,20 +116,13 @@ class GraphAutomaMeta(ABCMeta):
         registered_worker_funcs: Dict[str, Callable] = {}
         worker_static_triggers: Dict[str, List[str]] = {}
         worker_static_forwards: Dict[str, List[str]] = {}
-
-        def get_default_worker_args_for_llmp() -> Dict[str, Any]:
-            default_args_list = get_default_worker_args()
-            for default_args in default_args_list:
-                if "dependencies" in default_args:
-                    return default_args
-            return None
         
         for attr_name, attr_value in dct.items():
             worker_kwargs = getattr(attr_value, "__worker_kwargs__", None)
             if worker_kwargs is not None:
-                default_args = get_default_worker_args_for_llmp()
-                complete_args = {**default_args, **worker_kwargs}
+                complete_args = packup_worker_decorator_rumtime_args(WorkerDecoratorType.GraphAutomaMethod, worker_kwargs)
                 # Convert values in complete_args to __is_worker__, __dependencies__ and other attributes used in the old metaclass version
+                # TODO: reactoring may be needed
                 func = attr_value
                 worker_name = complete_args["name"]
                 dependencies = _validated_dependencies(worker_name, complete_args["dependencies"])

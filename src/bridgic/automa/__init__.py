@@ -8,6 +8,10 @@ from bridgic.types.error import *
 
 __all__ = [
     "Automa",
+    "GoalOrientedAutoma",
+    "GraphAutoma",
+    "GoapAutoma",
+    "LlmpAutoma",
     "worker",
     "goal",
     "AutomaCompilationError",
@@ -15,9 +19,5 @@ __all__ = [
     "WorkerSignatureError",
     "WorkerArgsMappingError",
     "AutomaRuntimeError",
-    "GoapAutoma",
-    "LlmpAutoma",
     "PlanningStrategy",
-    "GraphAutoma",
-    "GoalOrientedAutoma",
 ]

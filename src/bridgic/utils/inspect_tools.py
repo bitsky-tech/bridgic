@@ -9,20 +9,20 @@ def get_arg_names(func: Callable) -> List[str]:
         arg_names.append(name)
     return arg_names
 
-def get_default_argmaps_of_overloaded_funcs(func: Callable) -> List[Dict[str, Any]]:
+def get_default_paramaps_of_overloaded_funcs(func: Callable) -> List[Dict[str, Any]]:
     """
-    Returns a list of dictionaries containing default argument values for each overloaded function.
+    Returns a list of dictionaries containing default parameter values for each overloaded function.
     """
     overloaded_funcs = get_overloads(func)
-    args_defaults_list = []
+    params_defaults_list = []
     for func in overloaded_funcs:
         sig = inspect.signature(func)
-        args_default = {}
+        params_default = {}
         for name, param in sig.parameters.items():
-            args_default[name] = param.default
-        args_defaults_list.append(args_default)
+            params_default[name] = param.default
+        params_defaults_list.append(params_default)
 
-    return args_defaults_list
+    return params_defaults_list
 
 
 
