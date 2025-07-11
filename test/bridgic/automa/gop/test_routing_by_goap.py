@@ -1,5 +1,5 @@
 import pytest
-from bridgic.automa import GoapAutoma, precise_goal, worker
+from bridgic.automa import GoapAutoma, worker, goal
 from typing import List
 from pydantic import BaseModel
 
@@ -33,7 +33,7 @@ class RoutingExample_RAGChatbot(GoapAutoma):
         ]
         return chunks
 
-    @precise_goal(final_goal=True)
+    @goal(final=True)
     @worker(output_effects=["answer_in_law_domain"])
     def answer_law_question(self, user_input: str, law_chunks: List[Chunk]) -> str:
         # TODO: call LLM to synthesize the final answer
@@ -52,7 +52,7 @@ class RoutingExample_RAGChatbot(GoapAutoma):
         ]
         return chunks
 
-    @precise_goal(final_goal=True)
+    @goal(final=True)
     @worker(output_effects=["answer_in_finance_domain"])
     def answer_finance_question(self, user_input: str, finance_chunks: List[Chunk]) -> str:
         # TODO: call LLM to synthesize the final answer

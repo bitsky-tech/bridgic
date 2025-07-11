@@ -1,5 +1,5 @@
 import pytest
-from bridgic.automa import GoapAutoma, worker,precise_goal
+from bridgic.automa import GoapAutoma, worker, goal
 from typing import List
 from pydantic import BaseModel
 
@@ -29,7 +29,7 @@ class SequentialExample_QuerySummarizer(GoapAutoma):
         ]
         return snippets
 
-    @precise_goal(final_goal=True)
+    @goal(final=True)
     @worker(output_effects=["summary"])
     def summarize_snippets(self, query_results: List[Snippet]) -> str:
         return "A summarizer should be called on $query_results"

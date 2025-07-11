@@ -1,13 +1,18 @@
 import inspect
+from enum import Enum
 from typing_extensions import get_overloads, overload
 
 from typing import List, Callable, Optional, Dict, Any
 from bridgic.consts.args_mapping_rule import ARGS_MAPPING_RULE_AUTO
 from bridgic.types.common_types import ZeroToOne, PromptTemplate
+from bridgic.utils.inspect_tools import get_default_paramaps_of_overloaded_funcs
+from bridgic.types.error import WorkerSignatureError
 
-# 本文件定义了：
-# 1. GraphAutoma、GoapAutoma、LlmpAutoma的worker装饰器
-# 2. GoapAutoma、LlmpAutoma的goal装饰器
+# Constant Definitions
+class WorkerDecoratorType(Enum):
+    GraphAutomaMethod = 1
+    GoapAutomaMethod = 2
+    LlmpAutomaMethod = 3
 
 @overload
 def worker(
@@ -104,18 +109,44 @@ def worker(**kwargs) -> Callable:
         return func
     return wrapper
 
-def get_default_worker_args() -> List[Dict[str, Any]]:
-    """
-    Get the default argument values of all the overloaded worker decorators.
-    """
-    worker_funcs = get_overloads(worker)
-    func_found = False
-    args_defaults_list = []
-    for func in worker_funcs:
-        sig = inspect.signature(func)
-        args_default = {}
-        for name, param in sig.parameters.items():
-            args_default[name] = param.default
-        args_defaults_list.append(args_default)
+def get_worker_decorator_default_paramap(worker_decorator_type: WorkerDecoratorType) -> Dict[str, Any]:
+    return get_worker_decorator_default_paramap.__saved_paramaps[worker_decorator_type]
 
-    return args_defaults_list
+def _extract_default_paramaps() -> Dict[WorkerDecoratorType, Dict[str, Any]]:
+    """
+    This ensures that retrieving default argument mappings is independent of the order in which worker decorators are defined.
+    """
+    params_defaults_list = get_default_paramaps_of_overloaded_funcs(worker)
+    paramaps = {}
+    for params_default in params_defaults_list:
+        if "dependencies" in params_default:
+            paramaps[WorkerDecoratorType.GraphAutomaMethod] = params_default
+        elif "output_effects" in params_default:
+            paramaps[WorkerDecoratorType.GoapAutomaMethod] = params_default
+        elif "canonical_description" in params_default:
+            paramaps[WorkerDecoratorType.LlmpAutomaMethod] = params_default
+    return paramaps
+
+get_worker_decorator_default_paramap.__saved_paramaps = _extract_default_paramaps()
+
+def packup_worker_decorator_rumtime_args(worker_decorator_type: WorkerDecoratorType, worker_kwargs: Dict[str, Any]) -> Dict[str, Any]:
+    def _map_worker_decorator_type_to_automa():
+        if worker_decorator_type == WorkerDecoratorType.GraphAutomaMethod:
+            return "GraphAutoma"
+        elif worker_decorator_type == WorkerDecoratorType.GoapAutomaMethod:
+            return "GoapAutoma"
+        elif worker_decorator_type == WorkerDecoratorType.LlmpAutomaMethod:
+            return "LlmpAutoma"
+
+    default_paramap = get_worker_decorator_default_paramap(worker_decorator_type)
+    # Validation One: filter extra args
+    extra_args = set(worker_kwargs.keys()) - set(default_paramap.keys())
+    if extra_args:
+        raise WorkerSignatureError(f"Unexpected arguments: {extra_args} for worker decorator when it is decorating {_map_worker_decorator_type_to_automa()} method")
+    # Validation Two: validate required parameters
+    missing_params = set(default_paramap.keys()) - set(worker_kwargs.keys())
+    missing_required_params = [param_name for param_name in missing_params if default_paramap[param_name] is inspect._empty]
+    if missing_required_params:
+        raise WorkerSignatureError(f"Missing required parameters: {missing_required_params} for worker decorator when it is decorating {_map_worker_decorator_type_to_automa()} method")
+    # Packup and return
+    return {**default_paramap, **worker_kwargs}
