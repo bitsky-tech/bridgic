@@ -6,6 +6,7 @@ from typing import List, Callable, Optional, Dict, Any
 from bridgic.consts.args_mapping_rule import ARGS_MAPPING_RULE_AUTO
 from bridgic.types.common_types import ZeroToOne, PromptTemplate
 from bridgic.utils.inspect_tools import get_default_paramaps_of_overloaded_funcs
+from bridgic.types.error import WorkerSignatureError
 
 # Constant Definitions
 class WorkerDecoratorType(Enum):
@@ -141,11 +142,11 @@ def packup_worker_decorator_rumtime_args(worker_decorator_type: WorkerDecoratorT
     # Validation One: filter extra args
     extra_args = set(worker_kwargs.keys()) - set(default_paramap.keys())
     if extra_args:
-        raise ValueError(f"Unexpected arguments: {extra_args} for worker decorator when it is decorating {_map_worker_decorator_type_to_automa()} method")
+        raise WorkerSignatureError(f"Unexpected arguments: {extra_args} for worker decorator when it is decorating {_map_worker_decorator_type_to_automa()} method")
     # Validation Two: validate required parameters
     missing_params = set(default_paramap.keys()) - set(worker_kwargs.keys())
     missing_required_params = [param_name for param_name in missing_params if default_paramap[param_name] is inspect._empty]
     if missing_required_params:
-        raise ValueError(f"Missing required parameters: {missing_required_params} for worker decorator when it is decorating {_map_worker_decorator_type_to_automa()} method")
+        raise WorkerSignatureError(f"Missing required parameters: {missing_required_params} for worker decorator when it is decorating {_map_worker_decorator_type_to_automa()} method")
     # Packup and return
     return {**default_paramap, **worker_kwargs}
