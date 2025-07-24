@@ -57,15 +57,85 @@ class LlmpAutoma(GoalOrientedAutoma, metaclass=LlmpAutomaMeta):
             # TODO:
        
 
-    def process_async(self, *args: Optional[Tuple[Any]], automa_context: Dict[str, Any] = None, **kwargs: Optional[Dict[str, Any]]) -> Any:
+    async def process_async(self, *args: Optional[Tuple[Any]], automa_context: Dict[str, Any] = None, **kwargs: Optional[Dict[str, Any]]) -> Any:
         pass
 
+    def add_worker(
+        self,
+        name: str, # required parameter
+        worker: Worker,
+        *,
+        cost: ZeroToOne = 0.0,
+        re_use: bool = True,
+        canonical_description: Optional[PromptTemplate] = None,
+    ) -> None:
+        """
+        Add a worker to the Automa and specify the configuration needed for LlmpAutoma planning. This method can be called at any time during execution to dynamically add new workers to the LlmpAutoma.
+
+        Parameters
+        ----------
+        name : str
+            The name of the worker used within the Automa. Must be unique within the scope of the Automa.
+        worker : Worker
+            The worker instance to be added.
+        cost : ZeroToOne
+            The cost of executing this worker, represented as a value between 0 and 1.
+        re_use : bool
+            Whether the worker can be reused. If True, this worker can be used again in the next scheduling step after being executed.
+        canonical_description : Optional[PromptTemplate]
+            If canonical_description is not None, the framework will use the prompt template specified by this parameter directly as the prompt for the LLM; if canonical_description is None, the framework will automatically construct the prompt based on the decorated method's information (including function name, parameters, return value, docstring, etc.).
+
+        Returns
+        -------
+        None
+
+        Raises
+        ------
+        AutomaDeclarationError
+            If the worker specified by worker_name already exists in the Automa, this exception will be raised.
+        """
+        ...
+        # TODO: implement this method
+
+    def add_func_as_worker(
+        self,
+        name: str, # required parameter
+        func: Callable,
+        *,
+        cost: ZeroToOne = 0.0,
+        re_use: bool = True,
+        canonical_description: Optional[PromptTemplate] = None,
+    ) -> None:
+        """
+        Add a worker to the Automa and specify the configuration needed for LlmpAutoma planning. This method can be called at any time during execution to dynamically add new workers to the LlmpAutoma.
+
+        Parameters
+        ----------
+        name : str
+            The name of the worker used within the Automa. Must be unique within the scope of the Automa.
+        func : Callable
+            The function to be added as a worker to the automa.
+        cost : ZeroToOne
+            The cost of executing this worker, represented as a value between 0 and 1.
+        re_use : bool
+            Whether the worker can be reused. If True, this worker can be used again in the next scheduling step after being executed.
+        canonical_description : Optional[PromptTemplate]
+            If canonical_description is not None, the framework will use the prompt template specified by this parameter directly as the prompt for the LLM; if canonical_description is None, the framework will automatically construct the prompt based on the decorated method's information (including function name, parameters, return value, docstring, etc.).
+
+        Returns
+        -------
+        None
+
+        Raises
+        ------
+        AutomaDeclarationError
+            If the worker specified by worker_name already exists in the Automa, this exception will be raised.
+        """
+        ...
+        # TODO: implement this method
+
     @override
-    def remove_worker(self, worker_name: str) -> Worker:
+    def remove_worker(self, name: str) -> Worker:
         ...
         # TODO: implement this method
     
-    @staticmethod
-    def get_canonical_description(method: Callable) -> PromptTemplate:
-        ...
-        # TODO: implement this method

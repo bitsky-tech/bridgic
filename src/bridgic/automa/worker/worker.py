@@ -1,7 +1,7 @@
 import copy
 import uuid
 
-from typing import Any, Dict, get_type_hints, TYPE_CHECKING
+from typing import Any, Dict, get_type_hints, TYPE_CHECKING, Optional, Tuple
 
 if TYPE_CHECKING:
     from bridgic.automa.automa import Automa
@@ -20,7 +20,7 @@ class Worker:
         self.__output_setted: bool = False
         self.__local_space: Dict[str, Any] = {}
 
-    async def process_async(self, *args: Any, **kwargs: Any) -> Any:
+    async def process_async(self, *args: Optional[Tuple[Any]], **kwargs: Optional[Dict[str, Any]]) -> Any:
         raise NotImplementedError(f"process_async is not implemented in {type(self)}")
 
     @property

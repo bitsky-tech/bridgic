@@ -1,8 +1,9 @@
 import inspect
 from enum import Enum
-from typing_extensions import get_overloads, overload
+from typing_extensions import overload, TypeAlias
 
-from typing import List, Callable, Optional, Dict, Any
+from typing import List, Callable, Optional, Dict, Any, Union
+
 from bridgic.consts.args_mapping_rule import ARGS_MAPPING_RULE_AUTO
 from bridgic.types.common_types import ZeroToOne, PromptTemplate
 from bridgic.utils.inspect_tools import get_default_paramaps_of_overloaded_funcs
@@ -13,6 +14,11 @@ class WorkerDecoratorType(Enum):
     GraphAutomaMethod = 1
     GoapAutomaMethod = 2
     LlmpAutomaMethod = 3
+
+StaticOutputEffect: TypeAlias = List[str]
+class DynamicOutputEffect(Enum):
+    UnpackByType = 1
+    PackByType = 2
 
 @overload
 def worker(
@@ -45,13 +51,13 @@ def worker(
     cost: ZeroToOne = 0.0,
     re_use: bool = False,
     preconditions: List[str] = [],
-    output_effects: List[str], # required parameter
+    output_effects: Union[StaticOutputEffect, DynamicOutputEffect], # required parameter
     extra_effects: List[str] = [],
 ) -> Callable:
     """
     A decorator that marks a method as a worker within an GaopAutoma class. 
 
-    Adding a worker into a GaopAutoma only requires specifying the pre_conditions and the effects, and the framework will call it at the appropriate time, automatically. You don't need to care about the explicit execution order of workers.
+    Adding a worker into a GaopAutoma only requires specifying the preconditions and the effects, and the framework will call it at the appropriate time, automatically. You don't need to care about the explicit execution order of workers.
 
     This worker's behavior can be customized through the decorator's parameters.
 
@@ -65,8 +71,8 @@ def worker(
         Whether the worker can be reused. If True, this worker can be used again in the next scheduling step after being executed.
     preconditions : List[str]
         The preconditions required for executing the current worker, expressed as a list of precondition IDs. The framework will automatically extract preconditions from the decorated method, and the preconditions specified here will be merged with the extracted ones.
-    output_effects : List[str]
-        The effects produced by executing the current worker, expressed as a list of effect IDs. This is a required parameter that must be specified explicitly.
+    output_effects : Union[StaticOutputEffect, DynamicOutputEffect]
+        The effects produced by executing the current worker, expressed as a list of effect IDs or a DynamicOutputEffect value. This is a required parameter that must be specified explicitly. DynamicOutputEffect is used for the packing and unpacking mechanism in `dynamic workers` scenarios.
     extra_effects : List[str]
         The extra effects produced by executing the current worker, in addition to the output_effects.
     """

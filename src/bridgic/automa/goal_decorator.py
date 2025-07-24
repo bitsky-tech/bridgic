@@ -5,7 +5,7 @@ from bridgic.types.common_types import PromptTemplate
 @overload
 def goal(
     *,
-    pre_conditions: List[str] = [],
+    preconditions: List[str] = [],
     final: bool = False,
     priority: int = 0,
 ) -> Callable:
@@ -45,12 +45,12 @@ def goal(
 def goal_goap(
     func: Callable,
     *,
-    pre_conditions: List[str] = [],
+    preconditions: List[str] = [],
     final: bool = False,
     priority: int = 0,
 ) -> Callable:
     func.__goal_config__ = {
-        "pre_conditions": pre_conditions,
+        "preconditions": preconditions,
         "final": final,
         "priority": priority,
     }
