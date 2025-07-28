@@ -6,7 +6,7 @@ from bridgic.automa import GraphAutoma, worker
 from bridgic.utils.console import printer
 
 class AutomaLayerA(GraphAutoma):
-    @worker(name="defined_start_worker_0", is_start=True)
+    @worker(key="defined_start_worker_0", is_start=True)
     def worker_0(self, greeting: str = "hi", loop_back: bool = False) -> tuple[int, int]:
         printer.print("  defined_start_worker_0:", "greeting =>", greeting, "loop_back =>", loop_back)
         assert (greeting != "hi" and loop_back) or (greeting == "hi" and not loop_back)
@@ -24,7 +24,7 @@ class AutomaLayerA(GraphAutoma):
         zero_output = self.defined_start_worker_0.output_buffer
         return zero_output[1]
 
-    @worker(name="loop_worker_3", dependencies=["worker_1", "worker_2"])
+    @worker(key="loop_worker_3", dependencies=["worker_1", "worker_2"])
     async def worker_3(self, *args, **kwargs) -> int:
         await asyncio.sleep(0.25)
 

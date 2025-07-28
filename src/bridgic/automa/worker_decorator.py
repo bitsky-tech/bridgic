@@ -2,7 +2,7 @@ import inspect
 from enum import Enum
 from typing_extensions import overload, TypeAlias
 
-from typing import List, Callable, Optional, Dict, Any, Union
+from typing import List, Callable, Optional, Dict, Any, Union, TYPE_CHECKING
 
 from bridgic.consts.args_mapping_rule import ARGS_MAPPING_RULE_AUTO
 from bridgic.types.common_types import ZeroToOne, PromptTemplate
@@ -23,7 +23,7 @@ class DynamicOutputEffect(Enum):
 @overload
 def worker(
     *,
-    name: Optional[str] = None,
+    key: Optional[str] = None,
     dependencies: List[str] = [],
     is_start: bool = False,
     args_mapping_rule: str = ARGS_MAPPING_RULE_AUTO,
@@ -33,8 +33,8 @@ def worker(
 
     Parameters
     ----------
-    name : Optional[str]
-        The name of the worker. If not provided, the name of the decorated callable will be used.
+    key : Optional[str]
+        The key of the worker. If not provided, the key of the decorated callable will be used.
     dependencies : List[str]
         A list of worker names that the decorated callable depends on.
     is_start : bool
@@ -47,7 +47,7 @@ def worker(
 @overload
 def worker(
     *,
-    name: Optional[str] = None,
+    key: Optional[str] = None,
     cost: ZeroToOne = 0.0,
     re_use: bool = False,
     preconditions: List[str] = [],
@@ -63,8 +63,8 @@ def worker(
 
     Parameters
     ----------
-    name : Optional[str]
-        The name of the worker. If not provided, the name of the decorated callable will be used.
+    key : Optional[str]
+        The key of the worker. If not provided, the key of the decorated callable will be used.
     cost : ZeroToOne
         The cost of executing this worker, represented as a value between 0 and 1.
     re_use : bool
@@ -81,7 +81,7 @@ def worker(
 @overload
 def worker(
     *,
-    name: Optional[str] = None,
+    key: Optional[str] = None,
     cost: ZeroToOne = 0.0,
     re_use: bool = True,
     canonical_description: Optional[PromptTemplate] = None,
@@ -95,8 +95,8 @@ def worker(
 
     Parameters
     ----------
-    name : Optional[str]
-        The name of the worker. If not provided, the name of the decorated callable will be used.
+    key : Optional[str]
+        The key of the worker. If not provided, the key of the decorated callable will be used.
     cost : ZeroToOne
         The cost of executing this worker, represented as a value between 0 and 1.
     re_use : bool
@@ -135,24 +135,36 @@ def _extract_default_paramaps() -> Dict[WorkerDecoratorType, Dict[str, Any]]:
 
 get_worker_decorator_default_paramap.__saved_paramaps = _extract_default_paramaps()
 
-def packup_worker_decorator_rumtime_args(worker_decorator_type: WorkerDecoratorType, worker_kwargs: Dict[str, Any]) -> Dict[str, Any]:
+def packup_worker_decorator_rumtime_args(
+        worker_decorator_type: WorkerDecoratorType,
+        worker_kwargs: Dict[str, Any],
+    ) -> Dict[str, Any]:
     def _map_worker_decorator_type_to_automa():
         if worker_decorator_type == WorkerDecoratorType.GraphAutomaMethod:
-            return "GraphAutoma"
+            from bridgic.automa.graph_automa import GraphAutoma
+            return GraphAutoma.__name__
         elif worker_decorator_type == WorkerDecoratorType.GoapAutomaMethod:
-            return "GoapAutoma"
+            from bridgic.automa.goap_automa import GoapAutoma
+            return GoapAutoma.__name__
         elif worker_decorator_type == WorkerDecoratorType.LlmpAutomaMethod:
-            return "LlmpAutoma"
+            from bridgic.automa.llmp_automa import LlmpAutoma
+            return LlmpAutoma.__name__
 
     default_paramap = get_worker_decorator_default_paramap(worker_decorator_type)
     # Validation One: filter extra args
     extra_args = set(worker_kwargs.keys()) - set(default_paramap.keys())
     if extra_args:
-        raise WorkerSignatureError(f"Unexpected arguments: {extra_args} for worker decorator when it is decorating {_map_worker_decorator_type_to_automa()} method")
+        raise WorkerSignatureError(
+            f"Unexpected arguments: {extra_args} for worker decorator when it is decorating "
+            f"{_map_worker_decorator_type_to_automa()} method"
+        )
     # Validation Two: validate required parameters
     missing_params = set(default_paramap.keys()) - set(worker_kwargs.keys())
     missing_required_params = [param_name for param_name in missing_params if default_paramap[param_name] is inspect._empty]
     if missing_required_params:
-        raise WorkerSignatureError(f"Missing required parameters: {missing_required_params} for worker decorator when it is decorating {_map_worker_decorator_type_to_automa()} method")
+        raise WorkerSignatureError(
+            f"Missing required parameters: {missing_required_params} for worker decorator "
+            f"when it is decorating {_map_worker_decorator_type_to_automa()} method"
+        )
     # Packup and return
     return {**default_paramap, **worker_kwargs}

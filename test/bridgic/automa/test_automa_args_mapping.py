@@ -13,7 +13,7 @@ class SimpleFlow_1(GraphAutoma):
 
 @pytest.fixture
 def simple_flow_1():
-    yield SimpleFlow_1(output_worker_name="func_2")
+    yield SimpleFlow_1(output_worker_key="func_2")
 
 @pytest.mark.asyncio
 async def test_simple_flow_1(simple_flow_1):
@@ -32,7 +32,7 @@ class SimpleFlow_2(GraphAutoma):
 
 @pytest.fixture
 def simple_flow_2():
-    yield SimpleFlow_2(output_worker_name="func_2")
+    yield SimpleFlow_2(output_worker_key="func_2")
 
 @pytest.mark.asyncio
 async def test_simple_flow_2(simple_flow_2):
@@ -51,7 +51,7 @@ class SimpleFlow_3(GraphAutoma):
 
 @pytest.fixture
 def simple_flow_3():
-    yield SimpleFlow_3(output_worker_name="func_2")
+    yield SimpleFlow_3(output_worker_key="func_2")
 
 @pytest.mark.asyncio
 async def test_simple_flow_3(simple_flow_3):
@@ -60,7 +60,7 @@ async def test_simple_flow_3(simple_flow_3):
 
 class SimpleFlow_4(GraphAutoma):
     def __init__(self):
-        super().__init__(output_worker_name="merge_23")
+        super().__init__(output_worker_key="merge_23")
 
     @worker(is_start=True)
     def start_1(self, x: int, y: int) -> dict:

@@ -1,5 +1,4 @@
 import copy
-import uuid
 
 from typing import Any, Dict, get_type_hints, TYPE_CHECKING, Optional, Tuple
 
@@ -7,15 +6,8 @@ if TYPE_CHECKING:
     from bridgic.automa.automa import Automa
 
 class Worker:
-    def __init__(self, name: str = None):
-        """
-        Parameters
-        ----------
-        name : str (default = None, then a generated name will be provided)
-            The name of the worker.
-        """
-        self.name: str = name or f"unnamed-worker-{uuid.uuid4().hex[:8]}"
-        self.parent_automa: Automa = None
+    def __init__(self, *args, **kwargs):
+        self.__parent: Automa = None
         self.__output_buffer: Any = None
         self.__output_setted: bool = False
         self.__local_space: Dict[str, Any] = {}
@@ -26,6 +18,14 @@ class Worker:
     @property
     def return_type(self) -> type:
         return get_type_hints(self.process_async).get('return', Any)
+
+    @property
+    def parent(self) -> "Automa":
+        return self.__parent
+
+    @parent.setter
+    def parent(self, value: "Automa"):
+        self.__parent = value
 
     @property
     def output_buffer(self) -> Any:

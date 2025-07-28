@@ -9,6 +9,7 @@ from bridgic.automa import (
     AutomaRuntimeError,
 )
 from bridgic.automa.worker import Worker
+from bridgic.utils.console import printer
 
 def test_automa_declaration_dag_check():
     with pytest.raises(AutomaDeclarationError):
@@ -47,10 +48,25 @@ def test_customized_worker_signature_check():
     class IncorrectWorker(Worker):
         def process_async(self, *args, **kwargs) -> None:
             pass
-    
+
     with pytest.raises(WorkerSignatureError):
-        class AutomaIncorrectDecoratedWorker5(GraphAutoma):
+        class AutomaBackground(GraphAutoma):
             pass
 
-        automa_obj = AutomaIncorrectDecoratedWorker5()
-        automa_obj.add_worker(IncorrectWorker(name="wrong_worker"))
+        automa_obj = AutomaBackground()
+        automa_obj.add_worker("incorrect_worker", IncorrectWorker())
+
+    with pytest.raises(WorkerSignatureError, match="Unexpected arguments"):
+        class AutomaBackground(GraphAutoma):
+            @worker(is_start=True, wrong_parameter=True)
+            async def start(self, *args, **kwargs) -> None:
+                pass
+
+def test_customized_worker_type_reserving():
+    from layers.automa_layer_c import AutomaLayerC
+    automa_obj = AutomaLayerC()
+    automa_str = str(automa_obj)
+    printer.print(automa_str)
+    assert "_GraphBuiltinWorker[worker_1]" in automa_str
+    assert "_GraphBuiltinWorker[<lambda>]" in automa_str
+    assert "_GraphAdaptedWorker[PrintWorker]" in automa_str
