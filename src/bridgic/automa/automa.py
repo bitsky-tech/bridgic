@@ -1,8 +1,7 @@
 import asyncio
 import uuid
 
-from threading import Thread
-from typing import List, Any, TypedDict
+from typing import List, Any
 from abc import ABCMeta, abstractmethod
 from pydantic import BaseModel
 from bridgic.automa.worker import Worker
@@ -21,12 +20,23 @@ class Automa(Worker, metaclass=ABCMeta):
         # Define the shared running options.
         self.running_options: RunningOptions = RunningOptions()
 
-        # Define the main thread and its event loop for the current automa's execution.
         self._loop: asyncio.AbstractEventLoop = None
-        self._thread: Thread = None
+        self._finish_event: asyncio.Event = None
+        self._future_list: List[asyncio.Future] = []
 
     async def process_async(self, *args, **kwargs) -> Any:
         raise NotImplementedError("process_async() is not implemented for Automa")
+
+    def is_top_level(self) -> bool:
+        """
+        Check if the current automa is the top-level automa.
+
+        Returns
+        -------
+        bool
+            True if the current automa is the top-level automa, False otherwise.
+        """
+        return self.parent is None
 
     def all_workers(self) -> List[str]:
         """
@@ -63,6 +73,15 @@ class Automa(Worker, metaclass=ABCMeta):
             if isinstance(worker_obj, AdaptableMixin) and isinstance(worker_obj.core_worker, Automa):
                 worker_obj.core_worker.set_running_options(**(self.running_options.model_dump()))
                 worker_obj.core_worker._penetrate_running_options()
+
+    def _get_top_level_automa(self) -> "Automa":
+        """
+        Get the top-level automa instance reference.
+        """
+        top_level_automa = self
+        while not top_level_automa.is_top_level():
+            top_level_automa = top_level_automa.parent
+        return top_level_automa
 
 class GoalOrientedAutoma(Automa):
     @abstractmethod

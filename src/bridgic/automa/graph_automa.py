@@ -298,7 +298,7 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         self._worker_states: Dict[str, WorkerState] = {}
         self._worker_running_snapshot: Dict[str, bool] = None
 
-        # Record the name of the output-worker.
+        # Record the key of the output-worker.
         self._output_worker_key: str = output_worker_key
 
     def add_worker(
@@ -527,11 +527,13 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         # Lock the running state to ensure that the worker is not requested to run again while it is running.
         worker_state.is_running = True
 
-        self._submit_to_backend(
+        # Record the future of the execution of this worker.
+        future = self._submit_to_backend(
             worker_key,
             *args,
             **kwargs
         )
+        self._future_list.append(future)
 
     async def process_async(self, *args, **kwargs) -> Any:
         """
@@ -546,7 +548,7 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
             Positional arguments to be passed.
         kwargs : optional
             Keyword arguments to be passed.
-            
+
         TODO: add some code snippet examples here
 
         Returns
@@ -560,27 +562,13 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         if self.running_options.debug:
             printer.print(f"GraphAutoma-[{self.name}] is getting started.")
 
-        # Main thread function of the current automa.
-        def run_until_end(main_loop: asyncio.AbstractEventLoop):
-            asyncio.set_event_loop(main_loop)
-
-            async def wait_for_termination():
-                while not self._is_in_terminated_state():
-                    await asyncio.sleep(0.01)
-
-            self._loop.run_until_complete(wait_for_termination())
-
-            if self.running_options.debug:
-                printer.print("Event loop is closing.")
+        self._loop = asyncio.get_running_loop()
+        self._finish_event = asyncio.Event()
 
         # Initialize the runtime states of all workers.
         for worker_key in self._workers.keys():
             self._refresh_worker_state(worker_key)
             self._refresh_worker_buffers(worker_key)
-
-        # Before executing the automa, the main thread and its event loop need to be initialized.
-        self._loop = asyncio.new_event_loop()
-        self._thread = Thread(target=run_until_end, args=(self._loop,), daemon=True)
 
         # Collect all of the start nodes.
         start_workers: List[str] = [
@@ -588,20 +576,23 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
             if getattr(worker_obj, "is_start", False)
         ]
 
-        # Kick off all of the start workers. Because "ferry_to" will submit the designated worker
-        # to the backend, all start workers will be executed in parallel. As an implicit convention,
-        # all start workers should have no additional input parameters and no dependencies.
+        # Kick off all of the start workers via "ferry_to". It will submit the designated worker
+        # to the backend and all start workers will be executed in parallel.
         for worker_key in start_workers:
-            # The kick-off-worker is the automa itself when launched through process_async().
+            # The kickoff_worker of the nested worker is the automa itself.
             self._set_kickoff_worker(worker_key, self.name)
             self.ferry_to(worker_key, *args, **kwargs)
 
-        # Start the main event loop until the automa is in terminated state.
-        self._thread.start()
-        self._thread.join()
+        await self._finish_event.wait()
+
+        for future in self._future_list:
+            if future.done():
+                exc = future.exception()
+                if exc is not None:
+                    raise exc
 
         if self.running_options.debug:
-            printer.print(f"GraphAutoma-[{self.name}] completed execution.")
+            printer.print(f"GraphAutoma-[{self.name}] is finished.")
 
         # If the output-worker is specified, return its output as the return value of the automa.
         if self._output_worker_key:
@@ -629,7 +620,7 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
                     f'there exists an uninstantiated worker "{worker_key}" in automa "{cls.__name__}"'
                 )
 
-        # It is necessary to strictly ensure that all occurrences of the worker name correspond to an instance.
+        # It is necessary to strictly ensure that all occurrences of the worker key correspond to an instance.
         for current, target_list in cls._worker_static_forwards.items():
             validate_worker(current)
             for target in target_list:
@@ -698,8 +689,8 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
 
         Parameters
         ----------
-        worker_name : str
-            The name of the trigger worker.
+        worker_key : str
+            The key of the trigger worker.
         """
         for target in self._worker_forwards.get(worker_key, []):
             worker_state = self._worker_states[target]
@@ -721,8 +712,8 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
 
         Parameters
         ----------
-        worker_name : str
-            The name of the worker to refresh.
+        worker_key : str
+            The key of the worker to refresh.
         """
         if worker_key not in self._worker_states:
             self._worker_states[worker_key] = WorkerState()
@@ -748,7 +739,7 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
 
     def _get_kickoff_worker(self, worker_key: str) -> str:
         """
-        Retrieve the name of the kickoff worker for the specified worker.
+        Retrieve the key of the kickoff worker for the specified worker.
 
         Parameters
         ----------
@@ -829,9 +820,8 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
             if exc is not None:
                 stack_str = ''.join(traceback.format_exception(type(exc), exc, exc.__traceback__))
                 printer.print(f"Error occurred in [{worker_key}]:\n\n{stack_str}")
-
-                # Terminate the entire autmoma.
-                self._loop.call_soon_threadsafe(self._loop.stop)
+                self._finish_event.set()
+                raise exc
             else:
                 # The successors of the current worker may have a chance to run.
                 self._try_to_start_successors(worker_key)
@@ -839,9 +829,10 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
                 # Release the running state of the worker.
                 self._refresh_worker_state(worker_key)
 
-        # Submit the execution event to the main loop.
-        future: concurrent.futures.Future = asyncio.run_coroutine_threadsafe(run_coro(), self._loop)
-        return asyncio.wrap_future(future)
+                # Check and terminate the entire automa if no worker could be kickoffed.
+                self._check_and_terminate_if_possible()
+
+        return self._loop.create_task(run_coro())
 
     def _is_in_terminated_state(self) -> bool:
         """
@@ -866,6 +857,13 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
                 )
 
         return all(running_array)
+
+    def _check_and_terminate_if_possible(self):
+        """
+        Check whether all workers in the automa are inactive, and if so, terminate the automa.
+        """
+        if self._is_in_terminated_state():
+            self._finish_event.set()
 
     def _mapping_args(
         self, 
