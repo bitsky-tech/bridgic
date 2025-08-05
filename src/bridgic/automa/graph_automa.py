@@ -1,61 +1,39 @@
 import asyncio
-import concurrent.futures
 import traceback
 import inspect
 import json
 import uuid
-import concurrent
 
 from abc import ABCMeta
-from typing import Any, List, Dict, Set, Mapping, Callable, Tuple, Generic, TypeVar, Optional
+from typing import Any, List, Dict, Set, Mapping, Callable, Tuple, Optional
 from types import MethodType
-from threading import Thread
 from collections import defaultdict, deque
 from pydantic import BaseModel, Field
+from typing_extensions import override
 
 from bridgic.utils.console import printer, colored
 from bridgic.automa.worker import Worker
 from bridgic.types.error import *
-from bridgic.types.mixin import WithKeyMixin, AdaptableMixin, LandableMixin, CallableMixin
+from bridgic.types.mixin import WithKeyMixin, AdaptableMixin, LandableMixin
 from bridgic.consts.args_mapping_rule import *
 from bridgic.utils.inspect_tools import get_arg_names
 from bridgic.automa import Automa
 from bridgic.automa.worker_decorator import packup_worker_decorator_rumtime_args, WorkerDecoratorType
+from bridgic.automa.worker.callable_worker import CallableWorker
 
-class _GraphBuiltinWorker(WithKeyMixin, LandableMixin, CallableMixin, Worker):
-    def __init__(
-        self,
-        *,
-        key: str = None,
-        func: Callable,
-        dependencies: List[str] = [],
-        is_start: bool = False,
-        args_mapping_rule: str = ARGS_MAPPING_RULE_SUPPRESSED,
-        **kwargs,
-    ):
-        super().__init__(
-            key=key,
-            func=func,
-            dependencies=dependencies,
-            is_start=is_start,
-            args_mapping_rule=args_mapping_rule,
-            **kwargs,
-        )
-
-    async def process_async(self, *args, **kwargs) -> Any:
-        if self.is_coro:
-            return await self.func(*args, **kwargs)
-        else:
-            return self.func(*args, **kwargs)
-
-W = TypeVar("W", bound=Worker)
-
-class _GraphAdaptedWorker(Generic[W], WithKeyMixin, AdaptableMixin, LandableMixin, Worker):
+class _GraphAdaptedWorker(WithKeyMixin, AdaptableMixin, LandableMixin, Worker):
+    """
+    A decorated worker used for GraphAutoma orchestration and scheduling. Not intended for external use.
+    Follows the `Decorator` design pattern:
+    - https://web.archive.org/web/20031204182047/http://patterndigest.com/patterns/Decorator.html
+    - https://en.wikipedia.org/wiki/Decorator_pattern
+    New Behavior Added: In addition to the original Worker functionality, maintains configuration and state variables related to dynamic scheduling and graph topology.
+    """
     def __init__(
         self,
         *,
         key: str,
-        worker: W,
+        worker: Worker,
         dependencies: List[str] = [],
         is_start: bool = False,
         args_mapping_rule: str = ARGS_MAPPING_RULE_SUPPRESSED,
@@ -68,13 +46,58 @@ class _GraphAdaptedWorker(Generic[W], WithKeyMixin, AdaptableMixin, LandableMixi
             args_mapping_rule=args_mapping_rule,
             **kwargs,
         )
-        self.core_worker = worker
+        self._decorated_worker = worker
 
-    def __getattr__(self, key):
-        return getattr(self.core_worker, key)
+    #
+    # Delegate all the properties and methods of _GraphAdaptedWorker to the decorated worker.
+    # TODO: Maybe 'Worker' should be a Protocol.
+    #
 
+    @override
     async def process_async(self, *args, **kwargs) -> Any:
-        return await self.core_worker.process_async(*args, **kwargs)
+        return await self._decorated_worker.process_async(*args, **kwargs)
+
+    @property
+    def return_type(self) -> type:
+        return self._decorated_worker.return_type
+
+    @property
+    def parent(self) -> "Automa":
+        return self._decorated_worker.parent
+
+    @parent.setter
+    def parent(self, value: "Automa"):
+        self._decorated_worker.parent = value
+
+    @property
+    def output_buffer(self) -> Any:
+        return self._decorated_worker.output_buffer
+    
+    @output_buffer.setter
+    def output_buffer(self, value: Any):
+        self._decorated_worker.output_buffer = value
+
+    @property
+    def local_space(self) -> Dict[str, Any]:
+        return self._decorated_worker.local_space
+    
+    @local_space.setter
+    def local_space(self, value: Dict[str, Any]):
+        self._decorated_worker.local_space = value
+
+    @property
+    def func(self):
+        """
+        Readonly property for getting the original/real function of the worker.
+        """
+        if isinstance(self._decorated_worker, CallableWorker):
+            return self._decorated_worker.callable
+        return self._decorated_worker.process_async
+
+    @override
+    def __str__(self) -> str:
+        # TODO: need some refactoring
+        return str(self._decorated_worker)
 
 class WorkerState(BaseModel):
     is_running: bool = Field(default=False)
@@ -273,16 +296,19 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         self._worker_triggers: Dict[str, List[str]] = {} # TODO: redundant
         self._worker_forwards: Dict[str, List[str]] = {}
 
+        # The runtime states of the Automa can be from two sources:
         if state_dict:
+            # 1. One source: from the state_dict serialized previously.
             pass
             # TODO: deserialize from the state_dict
         else:
-            # Workers in the class definition all can be transformed into _GraphBuiltinWorker objects.
+            # 2. Another source: from the class definition.
             for worker_key, worker_func in cls._registered_worker_funcs.items():
+                func_worker = CallableWorker(MethodType(worker_func, self))
                 # Register the worker_func as a built-in worker.
-                worker_obj = _GraphBuiltinWorker(
+                worker_obj = _GraphAdaptedWorker(
                     key=worker_key,
-                    func=MethodType(worker_func, self),
+                    worker=func_worker,
                     dependencies=worker_func.__dependencies__,
                     is_start=worker_func.__is_start__,
                     args_mapping_rule=worker_func.__args_mapping_rule__,
@@ -360,7 +386,7 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
 
             worker_obj.parent = self
 
-            new_worker_obj = _GraphAdaptedWorker[type(worker_obj)](
+            new_worker_obj = _GraphAdaptedWorker(
                 key=key,
                 worker=worker_obj,
                 dependencies=dependencies,
@@ -404,10 +430,11 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         dependencies = _validated_dependencies(key, dependencies)
         args_mapping_rule = _validated_args_mapping_rule(key, dependencies, args_mapping_rule)
 
-        # Register func as an instance of _GraphBuiltinWorker.
-        worker_obj = _GraphBuiltinWorker(
+        # Register func as an instance of CallableWorker.
+        func_worker = CallableWorker(MethodType(func, self))
+        worker_obj = _GraphAdaptedWorker(
             key=key,
-            func=MethodType(func, self),
+            worker=func_worker,
             dependencies=dependencies,
             is_start=is_start,
             args_mapping_rule=args_mapping_rule,
@@ -468,12 +495,7 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
     def __str__(self) -> str:
         d = {}
         for k, v in self._workers.items():
-            w_type = v.__class__.__name__
-            if isinstance(v, _GraphBuiltinWorker):
-                w_type += "[" + v.func.__name__ + "]"
-            if isinstance(v, _GraphAdaptedWorker):
-                w_type += "[" + v.core_worker.__class__.__name__ + "]"
-            d[k] = f"{w_type} depends on {getattr(v, 'dependencies', [])}"
+            d[k] = f"{v} depends on {getattr(v, 'dependencies', [])}"
         return json.dumps(d, ensure_ascii=False, indent=4)
 
     def ferry_to(self, worker_key: str, /, *args, **kwargs):
@@ -904,10 +926,7 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
                 args, kwargs = (), {}
             else:
                 if isinstance(result, Mapping):
-                    if isinstance(current_worker_obj, _GraphBuiltinWorker):
-                        arg_names = get_arg_names(current_worker_obj.func)
-                    else:
-                        arg_names = get_arg_names(current_worker_obj.process_async)
+                    arg_names = get_arg_names(current_worker_obj.func)
                     # Only map for the known parameters.
                     args, kwargs = (), {k: v for k, v in result.items() if k in arg_names}
                 else:

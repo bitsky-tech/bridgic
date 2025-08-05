@@ -67,6 +67,6 @@ def test_customized_worker_type_reserving():
     automa_obj = AutomaLayerC()
     automa_str = str(automa_obj)
     printer.print(automa_str)
-    assert "_GraphBuiltinWorker[worker_1]" in automa_str
-    assert "_GraphBuiltinWorker[<lambda>]" in automa_str
-    assert "_GraphAdaptedWorker[PrintWorker]" in automa_str
+    assert "CallableWorker(callable=worker_5)" in automa_str
+    assert "CallableWorker(callable=<lambda>)" in automa_str
+    assert "layers.automa_layer_c.PrintWorker" in automa_str

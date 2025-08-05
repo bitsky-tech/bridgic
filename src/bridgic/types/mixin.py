@@ -30,9 +30,3 @@ class LandableMixin:
         self.dependencies: List[str] = dependencies
         self.is_start: bool = is_start
         self.args_mapping_rule: str = args_mapping_rule
-
-class CallableMixin:
-    def __init__(self, func: Callable, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.func: Callable = func
-        self.is_coro: bool = inspect.iscoroutinefunction(func)
