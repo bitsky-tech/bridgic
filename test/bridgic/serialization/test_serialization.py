@@ -24,6 +24,13 @@ def test_basic_types_serialization(serder: JsonExtSerializer):
     # bytes deserialization test
     assert serder.loads(expected_data) == obj
 
+    #bytearray serialization test
+    obj: bytearray = bytearray(b'Hello, Bridgic!')
+    expected_data = msgpack.packb(obj)
+    assert serder.dumps(obj) == expected_data
+    # bytearray deserialization test
+    assert serder.loads(expected_data) == obj
+
     # dict serialization test
     obj: Dict = {
         "a": 1,
@@ -44,6 +51,13 @@ def test_basic_types_serialization(serder: JsonExtSerializer):
     assert serder.dumps(obj) == expected_data
     # list deserialization test
     assert serder.loads(expected_data) == obj
+
+    # None serialization test
+    obj: None = None
+    expected_data = msgpack.packb(obj)
+    assert serder.dumps(obj) == expected_data
+    # None deserialization test
+    assert serder.loads(expected_data) is None
 
 # Test a custom Serializable object
 class MyWorker1(Worker, Serializable):

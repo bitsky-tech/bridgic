@@ -14,6 +14,7 @@ class JsonExtSerializer:
     If the data type does not implement Serializable or Picklable, the serialization behavior is determined by the pickle_fallback parameter. If pickle_fallback is True, the data will be serialized using pickle. Otherwise, serialization will be tried by msgpack, which may raise a TypeError if failed.
 
     TODO: Add default serialization support for some common data types. Which data types should be supported?
+    Ref: https://docs.python.org/3/library/datatypes.html
     """
     
     def __init__(self, pickle_fallback: bool = False):
