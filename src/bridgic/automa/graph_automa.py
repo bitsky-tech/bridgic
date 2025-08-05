@@ -293,7 +293,6 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
 
         # Initialize [Part One]: topology.
         self._workers: Dict[str, Worker] = {}
-        self._worker_triggers: Dict[str, List[str]] = {} # TODO: redundant
         self._worker_forwards: Dict[str, List[str]] = {}
 
         # The runtime states of the Automa can be from two sources:
@@ -370,33 +369,21 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
                 f"but got {type(worker_obj.process_async)}: worker_key={key}"
             )
 
-        if (
-            isinstance(worker_obj, Worker)
-            and isinstance(worker_obj, WithKeyMixin)
-            and isinstance(worker_obj, LandableMixin)
-        ):
-            # If the worker_obj is able to be registered, directly register and rename it.
-            worker_obj.key = key
-            worker_obj.parent = self
-            self._workers[worker_obj.key] = worker_obj
-        else:
-            # Validate the parameters.
-            dependencies = _validated_dependencies(key, dependencies)
-            args_mapping_rule = _validated_args_mapping_rule(key, dependencies, args_mapping_rule)
+        # Validate the parameters.
+        dependencies = _validated_dependencies(key, dependencies)
+        args_mapping_rule = _validated_args_mapping_rule(key, dependencies, args_mapping_rule)
 
-            worker_obj.parent = self
+        new_worker_obj = _GraphAdaptedWorker(
+            key=key,
+            worker=worker_obj,
+            dependencies=dependencies,
+            is_start=is_start,
+            args_mapping_rule=args_mapping_rule,
+        )
+        new_worker_obj.parent = self
 
-            new_worker_obj = _GraphAdaptedWorker(
-                key=key,
-                worker=worker_obj,
-                dependencies=dependencies,
-                is_start=is_start,
-                args_mapping_rule=args_mapping_rule,
-            )
-            new_worker_obj.parent = self
-
-            # Register the worker_obj.
-            self._workers[new_worker_obj.key] = new_worker_obj
+        # Register the worker_obj.
+        self._workers[new_worker_obj.key] = new_worker_obj
 
     def add_func_as_worker(
         self,
@@ -649,16 +636,14 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
                 validate_worker(target)
 
         # Refresh the related data structures of the automa instance.
-        self._worker_triggers, self._worker_forwards = {}, {}
+        self._worker_forwards = {}
 
         # Read from self._workers to confirm their dependencies and maintain the related data structures.
         for worker_key, worker_obj in self._workers.items():
             dependencies = (getattr(worker_obj, "dependencies", []))
-
             for trigger in dependencies:
-                self._worker_triggers[worker_key] = self._worker_triggers.get(worker_key, [])
-                self._worker_triggers[worker_key].append(trigger)
-                self._worker_forwards[trigger] = self._worker_forwards.get(trigger, [])
+                if trigger not in self._worker_forwards:
+                    self._worker_forwards[trigger] = []
                 self._worker_forwards[trigger].append(worker_key)
 
         # Validate the DAG constraints.
@@ -676,6 +661,13 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
 
         # Find all connected components of the whole automa graph.
         self._find_connected_components()
+
+    def _get_worker_dependencies(self, worker_key: str) -> List[str]:
+        """
+        Get the worker keys of all dependencies of the worker.
+        """
+        deps = self._workers[worker_key].dependencies
+        return [] if deps is None else deps
 
     def _find_connected_components(self):
         """
@@ -743,7 +735,7 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         worker_state = self._worker_states[worker_key]
         worker_state.is_running = False
         worker_state.kickoff_worker_key_or_name = None
-        worker_state.dependency_triggers = set(self._worker_triggers.get(worker_key, []))
+        worker_state.dependency_triggers = set(self._get_worker_dependencies(worker_key))
 
     def _set_kickoff_worker(self, worker_key: str, kickoff_worker_key_or_name: str):
         """
@@ -940,7 +932,7 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         next_args, next_kwargs = (), {}
         args_mapping_rule = current_worker_obj.args_mapping_rule
 
-        if self._worker_triggers.get(current_worker_key, []) == [kickoff_worker_key_or_name]:
+        if self._get_worker_dependencies(current_worker_key) == [kickoff_worker_key_or_name]:
             # For one-to-one dependency relationship, map the return value of the previous worker
             # as the arguments of the current worker, according to the args_mapping_rule.
             if args_mapping_rule == ARGS_MAPPING_RULE_AS_LIST:
