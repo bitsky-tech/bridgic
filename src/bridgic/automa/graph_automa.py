@@ -7,7 +7,7 @@ import uuid
 import concurrent
 
 from abc import ABCMeta
-from typing import Any, List, Dict, Set, Mapping, Callable, Tuple, Generic, TypeVar
+from typing import Any, List, Dict, Set, Mapping, Callable, Tuple, Generic, TypeVar, Optional
 from types import MethodType
 from threading import Thread
 from collections import defaultdict, deque
@@ -153,10 +153,6 @@ class GraphAutomaMeta(ABCMeta):
                         f"base={base}, worker={worker_key}"
                     )
 
-            for current, trigger_list in getattr(base, "_worker_static_triggers", {}).items():
-                if current not in worker_static_triggers.keys():
-                    worker_static_triggers[current] = trigger_list
-
             for current, forward_list in getattr(base, "_worker_static_forwards", {}).items():
                 if current not in worker_static_forwards.keys():
                     worker_static_forwards[current] = []
@@ -177,11 +173,6 @@ class GraphAutomaMeta(ABCMeta):
                         f"worker={worker_key}"
                     )
 
-                # Update the table of static triggers.
-                if worker_key not in worker_static_triggers.keys():
-                    worker_static_triggers[worker_key] = []
-                worker_static_triggers[worker_key].extend(dependencies)
-
                 # Update the table of static forwards.
                 for trigger in dependencies:
                     if trigger not in worker_static_forwards.keys():
@@ -192,7 +183,6 @@ class GraphAutomaMeta(ABCMeta):
         mcls.validate_dag_constraints(worker_static_forwards)
 
         setattr(cls, "_registered_worker_funcs", registered_worker_funcs)
-        setattr(cls, "_worker_static_triggers", worker_static_triggers)
         setattr(cls, "_worker_static_forwards", worker_static_forwards)
         return cls
 
@@ -243,37 +233,49 @@ class GraphAutomaMeta(ABCMeta):
 
 class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
     _registered_worker_funcs: Dict[str, Callable] = {}
-    _worker_static_triggers: Dict[str, List[str]] = {}
     _worker_static_forwards: Dict[str, List[str]] = {}
 
     def __init__(
         self,
-        name: str = None,
-        output_worker_key: str = None,
-        workers: Dict[str, Worker] = {},
-        **kwargs,
+        name: Optional[str] = None,
+        output_worker_key: Optional[str] = None,
+        state_dict: Optional[Dict[str, Any]] = None,
     ):
         """
         Parameters
         ----------
-        output_worker_key : str (default = None)
-            The key of the output worker, of which the output will also be returned by the automa.
-        workers : Dict[str, Worker] (default = {})
-            A dictionary that maps the worker key to the worker instance.
+        name : Optional[str] (default = None)
+            The name of the automa.
+        output_worker_key : Optional[str] (default = None)
+            The key of the output worker whose output will be returned by the automa.
+        state_dict : Optional[Dict[str, Any]] (default = None)
+            A dictionary for initializing the automa's runtime state. This parameter is intended for internal framework use only, specifically for deserialization, and should not be used by developers.
         """
         super().__init__(name=name or f"graph-{uuid.uuid4().hex[:8]}")
         cls = type(self)
 
-        # Initialize the instances of pre-declared workers.
+        # Start to initialize the runtime states of the Automa.
+        # [IMPORTANT] 
+        # The runtime states of the Automa are divided into two main parts:
+        #
+        # [Part One] The (dynamic) graph topology of the Automa.
+        # -- Nodes: workers (A Worker can be another Automa)
+        # -- Edges: Dependencies between workers
+        #
+        # [Part Two] The runtime states of all the workers.
+        # -- Starting workers list.
+        # -- Running Task list.
+        # -- Dynamic in-degree of each workers.
+        # -- Other runtime states...
+
+        # Initialize [Part One]: topology.
         self._workers: Dict[str, Worker] = {}
-        if workers:
-            for worker_key, worker_obj in workers.items():
-                if not isinstance(worker_obj, LandableMixin):
-                    raise TypeError(
-                        f"the type of worker_obj must inherit from LandableMixin, "
-                        f"but got {type(worker_obj)}: worker_key={worker_key}"
-                    )
-                self._workers[worker_key] = worker_obj
+        self._worker_triggers: Dict[str, List[str]] = {} # TODO: redundant
+        self._worker_forwards: Dict[str, List[str]] = {}
+
+        if state_dict:
+            pass
+            # TODO: deserialize from the state_dict
         else:
             # Workers in the class definition all can be transformed into _GraphBuiltinWorker objects.
             for worker_key, worker_func in cls._registered_worker_funcs.items():
@@ -289,8 +291,6 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
                 self._workers[worker_key] = worker_obj
 
         # Define the related data structures that are used to compile the whole automa.
-        self._worker_triggers: Dict[str, List[str]] = {}
-        self._worker_forwards: Dict[str, List[str]] = {}
         self._component_list: List[List[str]] = []
         self._component_idx: Dict[str, int] = {}
 
