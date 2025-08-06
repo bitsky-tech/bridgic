@@ -8,6 +8,7 @@ from abc import ABCMeta
 from typing import Any, List, Dict, Set, Mapping, Callable, Tuple, Optional
 from types import MethodType
 from collections import defaultdict, deque
+from dataclasses import dataclass
 from pydantic import BaseModel, Field
 from typing_extensions import override
 
@@ -99,6 +100,24 @@ class _GraphAdaptedWorker(WithKeyMixin, AdaptableMixin, LandableMixin, Worker):
         # TODO: need some refactoring
         return str(self._decorated_worker)
 
+@dataclass
+class _RunnningTask:
+    """
+    States of the current running task.
+    The instances of this class do not need to be serialized.
+    """
+    worker_key: str
+    future: asyncio.Task
+    # Worker key or the container "__automa__"
+    kickoff_worker_key: str = Field(default=None)
+
+class _WorkerDynamicState(BaseModel):
+    # Dynamically record the dependency workers keys of each worker.
+    # Will be reset to the topology edges/dependencies of the worker
+    # once the task is finished or the topology is changed.
+    dependency_triggers: Set[str]
+
+# TODO: will be removed
 class WorkerState(BaseModel):
     is_running: bool = Field(default=False)
     kickoff_worker_key_or_name: str = Field(default=None)
@@ -275,45 +294,77 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
             A dictionary for initializing the automa's runtime state. This parameter is intended for internal framework use only, specifically for deserialization, and should not be used by developers.
         """
         super().__init__(name=name or f"graph-{uuid.uuid4().hex[:8]}")
-        cls = type(self)
+        self._workers: Dict[str, Worker] = {}
 
-        # Start to initialize the runtime states of the Automa.
+        # Start to initialize the states of the Automa.
         # [IMPORTANT] 
-        # The runtime states of the Automa are divided into two main parts:
+        # The whole states of the Automa are divided into two main parts:
         #
-        # [Part One] The (dynamic) graph topology of the Automa.
-        # -- Nodes: workers (A Worker can be another Automa)
-        # -- Edges: Dependencies between workers
+        # [Part One: Topology] The (dynamic) graph topology of the Automa.
+        # -- Nodes: workers (A Worker can be another Automa): {self._workers}
+        # -- Edges: Dependencies between workers: {dependencies in self._workers, self._worker_forwards}
+        # -- Configurations: Start workers, output worker, args_mapping_rule, etc. {self._output_worker_key, is_start and args_mapping_rule in self._workers}
         #
-        # [Part Two] The runtime states of all the workers.
-        # -- Starting workers list.
+        # [Part Two: Runtime States] The runtime states of all the workers.
+        # -- Current kickoff workers list.
         # -- Running Task list.
         # -- Dynamic in-degree of each workers.
         # -- Other runtime states...
 
-        # Initialize [Part One]: topology.
-        self._workers: Dict[str, Worker] = {}
-        self._worker_forwards: Dict[str, List[str]] = {}
-
-        # The runtime states of the Automa can be from two sources:
+        # The whole states of the Automa can be from two sources:
         if state_dict:
             # 1. One source: from the state_dict serialized previously.
-            pass
-            # TODO: deserialize from the state_dict
+            self._init_from_state_dict(state_dict)
         else:
             # 2. Another source: from the class definition.
-            for worker_key, worker_func in cls._registered_worker_funcs.items():
-                func_worker = CallableWorker(MethodType(worker_func, self))
-                # Register the worker_func as a built-in worker.
-                worker_obj = _GraphAdaptedWorker(
-                    key=worker_key,
-                    worker=func_worker,
-                    dependencies=worker_func.__dependencies__,
-                    is_start=worker_func.__is_start__,
-                    args_mapping_rule=worker_func.__args_mapping_rule__,
-                )
-                worker_obj.parent = self
-                self._workers[worker_key] = worker_obj
+            self._normal_init(output_worker_key)
+
+    def _normal_init(
+            self,
+            output_worker_key: Optional[str] = None,
+    ):
+        ############################################################
+        # Initialization of [Part One: Topology] ******* Strat *****
+        ############################################################
+
+        # self._workers: Dict[str, Worker] = {} #TODO: __getattribute__() refactoring
+        self._worker_forwards: Dict[str, List[str]] = {} # TODO: will be moved here from _compile_automa()...
+        self._output_worker_key: str = output_worker_key
+
+        cls = type(self)
+        for worker_key, worker_func in cls._registered_worker_funcs.items():
+            func_worker = CallableWorker(MethodType(worker_func, self))
+            # Register the worker_func as a built-in worker.
+            worker_obj = _GraphAdaptedWorker(
+                key=worker_key,
+                worker=func_worker,
+                dependencies=worker_func.__dependencies__,
+                is_start=worker_func.__is_start__,
+                args_mapping_rule=worker_func.__args_mapping_rule__,
+            )
+            worker_obj.parent = self
+            self._workers[worker_key] = worker_obj
+
+        ############################################################
+        # Initialization of [Part One: Topology] ******* End *****
+        ############################################################
+
+        ##################################################################
+        # Initialization of [Part Two: Runtime States] ******* Strat *****
+        ##################################################################
+
+        # -- Current kickoff workers list.
+        # The key list of the workers that are ready to be immediately executed in the next DS (Dynamic Step).
+        self._current_kickoff_workers: List[str] = [] # TODO: will be moved here from process_async()...
+        # -- Running Task list.
+        # The list of the tasks that are currently being executed.
+        self._running_tasks: List[_RunnningTask] = []
+        # -- Dynamic in-degree of each workers.
+        self._workers_dynamic_states: Dict[str, _WorkerDynamicState] = {}
+        for worker_key, worker_obj in self._workers.items():
+            self._workers_dynamic_states[worker_key] = _WorkerDynamicState(
+                dependency_triggers=set(getattr(worker_obj, "dependencies", []))
+            )
 
         # Define the related data structures that are used to compile the whole automa.
         self._component_list: List[List[str]] = []
@@ -323,8 +374,17 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         self._worker_states: Dict[str, WorkerState] = {}
         self._worker_running_snapshot: Dict[str, bool] = None
 
-        # Record the key of the output-worker.
-        self._output_worker_key: str = output_worker_key
+        ##################################################################
+        # Initialization of [Part Two: Runtime States] ******* End *****
+        ##################################################################
+
+
+    def _init_from_state_dict(
+            self,
+            state_dict: Dict[str, Any],
+    ):
+        ...
+        # TODO: deserialize from the state_dict
 
     def add_worker(
         self,
