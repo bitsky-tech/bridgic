@@ -30,7 +30,7 @@ class Worker:
     @property
     def output_buffer(self) -> Any:
         if not self.__output_setted:
-            raise RuntimeError(f"output of worker is not ready yet: worker_name={self.name}")
+            raise RuntimeError(f"output of worker is not ready yet")
         return copy.deepcopy(self.__output_buffer)
     
     @output_buffer.setter
