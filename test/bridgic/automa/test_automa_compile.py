@@ -11,6 +11,7 @@ from bridgic.automa import (
 from bridgic.automa.worker import Worker
 from bridgic.utils.console import printer
 
+# TODO: This file need to be refactored later...
 def test_automa_declaration_dag_check():
     with pytest.raises(AutomaDeclarationError):
         class AutomaLayerStatic(GraphAutoma):
@@ -42,7 +43,7 @@ def test_automa_compilation_dag_check():
         def worker_1(atm: GraphAutoma, *args, **kwargs):
             assert atm is automa_obj
 
-        automa_obj._compile_automa()
+        automa_obj._compile_graph_and_detect_risks()
 
 def test_customized_worker_signature_check():
     class IncorrectWorker(Worker):

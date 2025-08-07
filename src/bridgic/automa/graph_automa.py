@@ -1,5 +1,4 @@
 import asyncio
-import traceback
 import inspect
 import json
 import uuid
@@ -118,7 +117,6 @@ class _KickoffInfo(BaseModel):
     args: Tuple[Any, ...] = ()
     kwargs: Dict[str, Any] = {}
 
-
 class _WorkerDynamicState(BaseModel):
     # Dynamically record the dependency workers keys of each worker.
     # Will be reset to the topology edges/dependencies of the worker
@@ -230,10 +228,10 @@ class GraphAutomaMeta(ABCMeta):
                     worker_static_forwards[trigger].append(worker_key)
 
         # Validate if the DAG constraint is met.
+        # TODO: this is indeed a chance to detect risks. Add more checks here or remove totally!
         mcls.validate_dag_constraints(worker_static_forwards)
 
         setattr(cls, "_registered_worker_funcs", registered_worker_funcs)
-        setattr(cls, "_worker_static_forwards", worker_static_forwards)
         return cls
 
     @classmethod
@@ -286,8 +284,9 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
     DDG (Dynamic Directed Graph) implementation of Automa.
     The topology of a DDG are allowed to be changed during runtime, by developers.
     """
+
+    # The initial topology defined by @worker functions.
     _registered_worker_funcs: Dict[str, Callable] = {}
-    _worker_static_forwards: Dict[str, List[str]] = {}
 
     # [IMPORTANT] 
     # The whole states of the Automa are divided into two main parts:
@@ -313,9 +312,10 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
     _current_kickoff_workers: List[_KickoffInfo]
     _workers_dynamic_states: Dict[str, _WorkerDynamicState]
     # The whole running process of the DDG is divided into two main phases:
-    # 1. The first phase (when _running_started is False): the initial topology of DDG was constructed.
-    # 2. The second phase (when _running_started is True): the DDG is running, and the workers are executed in a dynamic step-by-step manner (DS loop).
-    _running_started: bool = False
+    # 1. [Initialization Phase] The first phase (when _running_started is False): the initial topology of DDG was constructed.
+    # 2. [Running Phase] The second phase (when _running_started is True): the DDG is running, and the workers are executed in a dynamic step-by-step manner (DS loop).
+    # Once _running_started is set to True, it will always be True.
+    _running_started: bool
 
     # The following need not to be serialized.
     _running_tasks: List[_RunnningTask]
@@ -337,8 +337,8 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         state_dict : Optional[Dict[str, Any]] (default = None)
             A dictionary for initializing the automa's runtime state. This parameter is intended for internal framework use only, specifically for deserialization, and should not be used by developers.
         """
-        super().__init__(name=name or f"graph-{uuid.uuid4().hex[:8]}")
-        self._workers = {}
+        super().__init__(name=name or f"{type(self).__name__}-{uuid.uuid4().hex[:8]}")
+        self._workers = {} #TODO: __getattribute__() refactoring
 
         # Start to initialize the states of the Automa.
         # The whole states of the Automa can be from two sources:
@@ -357,11 +357,9 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         # Initialization of [Part One: Topology] ******* Strat *****
         ############################################################
 
-        # self._workers: Dict[str, Worker] = {} #TODO: __getattribute__() refactoring
-        self._worker_forwards = {} # TODO: will be moved here from _compile_automa()...
-        self._output_worker_key = output_worker_key
-
         cls = type(self)
+        # One data source of self._workers: _registered_worker_funcs
+        # Another source of self._workers will be functions like add_worker()...
         for worker_key, worker_func in cls._registered_worker_funcs.items():
             func_worker = CallableWorker(MethodType(worker_func, self))
             # Register the worker_func as a built-in worker.
@@ -375,6 +373,10 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
             worker_obj.parent = self
             self._workers[worker_key] = worker_obj
 
+        # Initialization of _worker_forwards will be delayed until _compile_graph_and_detect_risks(). Before that, add_worker()... will probably change the value of _workers.
+        self._worker_forwards = {}
+        self._output_worker_key = output_worker_key
+
         ############################################################
         # Initialization of [Part One: Topology] ******* End *****
         ############################################################
@@ -384,29 +386,15 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         ##################################################################
 
         # -- Current kickoff workers list.
-        # The key list of the workers that are ready to be immediately executed in the next DS (Dynamic Step).
-        self._current_kickoff_workers = [
-            _KickoffInfo(
-                worker_key=worker_key,
-                last_kickoff="__automa__"
-            ) for worker_key, worker_obj in self._workers.items()
-            if getattr(worker_obj, "is_start", False)
-        ]
+        # The key list of the workers that are ready to be immediately executed in the next DS (Dynamic Step). It will be also lazily initialized in _compile_graph_and_detect_risks().
+        self._current_kickoff_workers = []
         # -- Running Task list.
         # The list of the tasks that are currently being executed.
         self._running_tasks = []
         self._ferry_deferred_tasks = []
-        # -- Dynamic in-degree of each workers.
+        # -- Dynamic in-degree of each workers. It will be also lazily initialized in _compile_graph_and_detect_risks().
         self._workers_dynamic_states = {}
-        for worker_key, worker_obj in self._workers.items():
-            self._workers_dynamic_states[worker_key] = _WorkerDynamicState(
-                dependency_triggers=set(getattr(worker_obj, "dependencies", []))
-            )
-
-        # Define the related data structures that are used to compile the whole automa.
-        self._component_list: List[List[str]] = []
-        self._component_idx: Dict[str, int] = {}
-        # TODO: check how to use _component_list and _component_idx...
+        self._running_started = False
 
         ##################################################################
         # Initialization of [Part Two: Runtime States] ******* End *****
@@ -427,7 +415,7 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         dependencies: List[str] = [],
         is_start: bool = False,
         args_mapping_rule: str = ARGS_MAPPING_RULE_AUTO,
-    ):
+    ) -> None:
         """
         This method is used to add a worker into the automa.
 
@@ -444,43 +432,43 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         args_mapping_rule : str
             The rule of arguments mapping. The options are: "auto", "as_list", "as_dict", "suppressed".
         """
-        if not isinstance(worker_obj, Worker):
-            raise TypeError(
-                f"worker_obj to be registered must be a Worker, "
-                f"but got {type(worker_obj)}, worker_key={key}"
+        if not self._running_started:
+            if not isinstance(worker_obj, Worker):
+                raise TypeError(
+                    f"worker_obj to be registered must be a Worker, "
+                    f"but got {type(worker_obj)}, worker_key={key}"
+                )
+
+            if key in self._workers:
+                raise AutomaDeclarationError(
+                    f"duplicate worker keys are not allowed: "
+                    f"worker_key={key}"
+                )
+
+            if not asyncio.iscoroutinefunction(worker_obj.process_async):
+                raise WorkerSignatureError(
+                    f"process_async of Worker must be an async method, "
+                    f"but got {type(worker_obj.process_async)}: worker_key={key}"
+                )
+
+            # Validate the parameters.
+            dependencies = _validated_dependencies(key, dependencies)
+            args_mapping_rule = _validated_args_mapping_rule(key, dependencies, args_mapping_rule)
+
+            new_worker_obj = _GraphAdaptedWorker(
+                key=key,
+                worker=worker_obj,
+                dependencies=dependencies,
+                is_start=is_start,
+                args_mapping_rule=args_mapping_rule,
             )
+            new_worker_obj.parent = self
 
-        if key in self._workers:
-            raise AutomaDeclarationError(
-                f"duplicate worker keys are not allowed: "
-                f"worker_key={key}"
-            )
-
-        if not asyncio.iscoroutinefunction(worker_obj.process_async):
-            raise WorkerSignatureError(
-                f"process_async of Worker must be an async method, "
-                f"but got {type(worker_obj.process_async)}: worker_key={key}"
-            )
-
-        # Validate the parameters.
-        dependencies = _validated_dependencies(key, dependencies)
-        args_mapping_rule = _validated_args_mapping_rule(key, dependencies, args_mapping_rule)
-
-        new_worker_obj = _GraphAdaptedWorker(
-            key=key,
-            worker=worker_obj,
-            dependencies=dependencies,
-            is_start=is_start,
-            args_mapping_rule=args_mapping_rule,
-        )
-        new_worker_obj.parent = self
-
-        # Register the worker_obj.
-        self._workers[new_worker_obj.key] = new_worker_obj
-        # Incrementally update the dynamic states of the workers.
-        self._workers_dynamic_states[new_worker_obj.key] = _WorkerDynamicState(
-            dependency_triggers=set(getattr(new_worker_obj, "dependencies", []))
-        )
+            # Register the worker_obj.
+            self._workers[new_worker_obj.key] = new_worker_obj
+        else:
+            # TODO: add worker deferred task here...
+            ...
 
 
     def add_func_as_worker(
@@ -491,7 +479,7 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         dependencies: List[str] = [],
         is_start: bool = False,
         args_mapping_rule: str = ARGS_MAPPING_RULE_AUTO,
-    ):
+    ) -> None:
         """
         This method is used to add a function as a worker into the automa.
 
@@ -511,10 +499,6 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         args_mapping_rule : str
             The rule of arguments mapping. The options are: "auto", "as_list", "as_dict", "suppressed".
         """
-        # Validate the parameters.
-        dependencies = _validated_dependencies(key, dependencies)
-        args_mapping_rule = _validated_args_mapping_rule(key, dependencies, args_mapping_rule)
-
         # Register func as an instance of CallableWorker.
         func_worker = CallableWorker(MethodType(func, self))
         worker_obj = _GraphAdaptedWorker(
@@ -524,10 +508,13 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
             is_start=is_start,
             args_mapping_rule=args_mapping_rule,
         )
-        worker_obj.parent = self
-        self._workers[worker_obj.key] = worker_obj
-        self._workers_dynamic_states[worker_obj.key] = _WorkerDynamicState(
-            dependency_triggers=set(getattr(worker_obj, "dependencies", []))
+
+        self.add_worker(
+            key=key,
+            worker_obj=worker_obj,
+            dependencies=dependencies,
+            is_start=is_start,
+            args_mapping_rule=args_mapping_rule,
         )
 
     def worker(
@@ -537,7 +524,7 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         dependencies: List[str] = [],
         is_start: bool = False,
         args_mapping_rule: str = ARGS_MAPPING_RULE_AUTO,
-    ):
+    ) -> Callable:
         """
         This is a decorator used to mark a function as an GraphAutoma detectable Worker. Dislike the 
         global decorator @worker(...), it is usally used after an GraphAutoma instance is initialized.
@@ -566,25 +553,103 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
             )
 
         return wrapper
+    
+    def set_output_worker(self, output_worker_key: str):
+        """
+        This method is used to set the output worker of the automa dynamically.
+        """
+        if not self._running_started:
+            self._output_worker_key = output_worker_key
+        else:
+            # TODO: add deferred task here...
+            ...
+
+    def remove_worker(self, key: str) -> None:
+        """
+        Remove a worker from the Automa. This method can be called at any time to remove a worker from the Automa.
+
+        When a worker is removed, all dependencies related to this worker, including all the dependencies of the worker itself and the dependencies between the worker and its successor workers, will be also removed.
+
+        Parameters
+        ----------
+        key : str
+            The key of the worker to be removed.
+
+        Returns
+        -------
+        None
+
+        Raises
+        ------
+        AutomaDeclarationError
+            If the worker specified by key does not exist in the Automa, this exception will be raised.
+        """
+        if not self._running_started:
+            # TODO: remove immediately
+            ...
+        else:
+            # TODO: add deferred task here...
+            ...
 
     def __getattribute__(self, key):
+        """
+        Used to get the worker object by its key (self.<key>).
+        """
         workers = super().__getattribute__('_workers')
         if key in workers:
             return workers[key]
         return super().__getattribute__(key)
 
-    def __repr__(self) -> str:
-        # TODO : It's good to make __repr__() of Automa compatible with eval().
-        # This feature depends on the implementation of __repr__() of workers.
-        class_name = self.__class__.__name__
-        workers_str = self._workers.__repr__()
-        return f"{class_name}(workers={workers_str})"
+    def _compile_graph_and_detect_risks(self):
+        """
+        This method should be called at the very beginning of self.run() to ensure that:
+        1. The whole graph is built out of all of the following worker sources:
+            - Pre-defined workers, such as:
+                - Methods decorated with @worker(...)
+            - Post-added workers, such as:
+                - Functions decorated with @automa_obj.worker(...)
+                - Workers added via automa_obj.add_func_as_worker(...)
+                - Workers added via automa_obj.add_worker(...)
+        2. The dependencies of each worker are confirmed to satisfy the DAG constraints.
+        """
 
-    def __str__(self) -> str:
-        d = {}
-        for k, v in self._workers.items():
-            d[k] = f"{v} depends on {getattr(v, 'dependencies', [])}"
-        return json.dumps(d, ensure_ascii=False, indent=4)
+        # Build self._worker_forwards from self._workers (including configurations of 
+        # both @worker and add_worker()...).
+        for worker_key, worker_obj in self._workers.items():
+            dependencies = (getattr(worker_obj, "dependencies", []))
+            for trigger in dependencies:
+                if trigger not in self._worker_forwards:
+                    self._worker_forwards[trigger] = []
+                self._worker_forwards[trigger].append(worker_key)
+
+        # Validate the DAG constraints.
+        GraphAutomaMeta.validate_dag_constraints(self._worker_forwards)
+
+        for worker_key, worker_obj in self._workers.items():
+            self._workers_dynamic_states[worker_key] = _WorkerDynamicState(
+                dependency_triggers=set(getattr(worker_obj, "dependencies", []))
+            )
+
+        self._current_kickoff_workers = [
+            _KickoffInfo(
+                worker_key=worker_key,
+                last_kickoff="__automa__"
+            ) for worker_key, worker_obj in self._workers.items()
+            if getattr(worker_obj, "is_start", False)
+        ]
+
+        # Validate if the output worker exists.
+        if self._output_worker_key and self._output_worker_key not in self._workers:
+            raise AutomaCompilationError(
+                f"the output worker is not found: "
+                f"output_worker_key={self._output_worker_key}"
+            )
+
+        # Penetrate the running options to all levels below.
+        self._penetrate_running_options()
+
+        # Find all connected components of the whole automa graph.
+        self._find_connected_components()
 
     def ferry_to(self, worker_key: str, /, *args, **kwargs):
         """
@@ -632,12 +697,10 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         """
         # Compile the whole automa graph, taking into account both statically defined and dynamically added workers.
         # TODO: will be removed later...
-        self._compile_automa()
-        # if self._running_started:
-        #     # In current implementation, an Automa can only be run once.
-        #     # Maybe we will add some reset() method later to support multiple runs...
-        #     raise AutomaRuntimeError(f"Automa {self.name} is not allowed to be run twice!")
-        self._running_started = True
+        if not self._running_started:
+            # Here is the last chance to compile and check the DDG in the end of the [Initialization Phase] (phase 1 just before the first DS).
+            self._compile_graph_and_detect_risks()
+            self._running_started = True
 
         if self.running_options.debug:
             printer.print(f"GraphAutoma-[{self.name}] is getting started.", color="green")
@@ -661,7 +724,10 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
                     )
 
                 if self.running_options.debug:
-                    printer.print(f"[{kickoff_info.last_kickoff}] will kick off [{kickoff_info.worker_key}]", color="cyan")
+                    kickoff_name = kickoff_info.last_kickoff
+                    if kickoff_name == "__automa__":
+                        kickoff_name = f"{kickoff_name}:({self.name})"
+                    printer.print(f"[{kickoff_name}] will kick off [{kickoff_info.worker_key}]", color="cyan")
 
                 # Schedule task for each kickoff worker.
                 task = asyncio.create_task(
@@ -745,59 +811,6 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         else:
             return None
 
-    def _compile_automa(self):
-        """
-        This method should be called at the very beginning of self.run() to ensure that:
-        1. The whole graph is built out of all of the following worker sources:
-            - Pre-defined workers, such as:
-                - Methods decorated with @worker(...)
-            - Post-added workers, such as:
-                - Functions decorated with @automa_obj.worker(...)
-                - Workers added via automa_obj.add_func_as_worker(...)
-                - Workers added via automa_obj.add_worker(...)
-        2. The dependencies of each worker are confirmed to satisfy the DAG constraints.
-        """
-        cls = type(self)
-
-        def validate_worker(worker_key: str):
-            if worker_key not in self._workers:
-                raise AutomaCompilationError(
-                    f'there exists an uninstantiated worker "{worker_key}" in automa "{cls.__name__}"'
-                )
-
-        # It is necessary to strictly ensure that all occurrences of the worker key correspond to an instance.
-        for current, target_list in cls._worker_static_forwards.items():
-            validate_worker(current)
-            for target in target_list:
-                validate_worker(target)
-
-        # Refresh the related data structures of the automa instance.
-        self._worker_forwards = {}
-
-        # Read from self._workers to confirm their dependencies and maintain the related data structures.
-        for worker_key, worker_obj in self._workers.items():
-            dependencies = (getattr(worker_obj, "dependencies", []))
-            for trigger in dependencies:
-                if trigger not in self._worker_forwards:
-                    self._worker_forwards[trigger] = []
-                self._worker_forwards[trigger].append(worker_key)
-
-        # Validate the DAG constraints.
-        GraphAutomaMeta.validate_dag_constraints(self._worker_forwards)
-
-        # Validate if the output worker exists.
-        if self._output_worker_key and self._output_worker_key not in self._workers:
-            raise AutomaCompilationError(
-                f"the output worker is not found: "
-                f"output_worker_key={self._output_worker_key}"
-            )
-
-        # Penetrate the running options to all levels below.
-        self._penetrate_running_options()
-
-        # Find all connected components of the whole automa graph.
-        self._find_connected_components()
-
     def _get_worker_dependencies(self, worker_key: str) -> List[str]:
         """
         Get the worker keys of all dependencies of the worker.
@@ -831,7 +844,8 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
                 for worker in current_component:
                     component_idx[worker] = current_idx
 
-        self._component_list, self._component_idx = component_list, component_idx
+        # self._component_list, self._component_idx = component_list, component_idx
+        # TODO: check how to use _component_list and _component_idx...
 
     def _get_kickoff_worker_from_stack(self) -> Optional[str]:
         """
@@ -917,3 +931,16 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
             assert args_mapping_rule == ARGS_MAPPING_RULE_SUPPRESSED
 
         return next_args, next_kwargs
+
+    def __repr__(self) -> str:
+        # TODO : It's good to make __repr__() of Automa compatible with eval().
+        # This feature depends on the implementation of __repr__() of workers.
+        class_name = self.__class__.__name__
+        workers_str = self._workers.__repr__()
+        return f"{class_name}(workers={workers_str})"
+
+    def __str__(self) -> str:
+        d = {}
+        for k, v in self._workers.items():
+            d[k] = f"{v} depends on {getattr(v, 'dependencies', [])}"
+        return json.dumps(d, ensure_ascii=False, indent=4)
