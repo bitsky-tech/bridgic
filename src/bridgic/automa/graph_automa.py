@@ -282,6 +282,10 @@ class GraphAutomaMeta(ABCMeta):
             )
 
 class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
+    """
+    DDG (Dynamic Directed Graph) implementation of Automa.
+    The topology of a DDG are allowed to be changed during runtime, by developers.
+    """
     _registered_worker_funcs: Dict[str, Callable] = {}
     _worker_static_forwards: Dict[str, List[str]] = {}
 
@@ -308,6 +312,11 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
 
     _current_kickoff_workers: List[_KickoffInfo]
     _workers_dynamic_states: Dict[str, _WorkerDynamicState]
+    # The whole running process of the DDG is divided into two main phases:
+    # 1. The first phase (when _running_started is False): the initial topology of DDG was constructed.
+    # 2. The second phase (when _running_started is True): the DDG is running, and the workers are executed in a dynamic step-by-step manner (DS loop).
+    _running_started: bool = False
+
     # The following need not to be serialized.
     _running_tasks: List[_RunnningTask]
     _ferry_deferred_tasks: List[_FerryDeferredTask]
@@ -591,6 +600,7 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         kwargs : optional
             Keyword arguments to be passed.
         """
+        # TODO: check worker_key is valid
         kickoff_worker_key: str = self._get_kickoff_worker_from_stack()
         deferred_task = _FerryDeferredTask(
             ferry_to_worker_key=worker_key,
@@ -623,12 +633,20 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         # Compile the whole automa graph, taking into account both statically defined and dynamically added workers.
         # TODO: will be removed later...
         self._compile_automa()
+        # if self._running_started:
+        #     # In current implementation, an Automa can only be run once.
+        #     # Maybe we will add some reset() method later to support multiple runs...
+        #     raise AutomaRuntimeError(f"Automa {self.name} is not allowed to be run twice!")
+        self._running_started = True
 
         if self.running_options.debug:
             printer.print(f"GraphAutoma-[{self.name}] is getting started.", color="green")
 
         # Task loop divided into many dynamic steps (DS).
         while self._current_kickoff_workers:
+            if self.running_options.debug:
+                kickoff_worker_keys = [kickoff_info.worker_key for kickoff_info in self._current_kickoff_workers]
+                printer.print(f"[DS][Before Tasks Started] kickoff workers: {kickoff_worker_keys}", color="purple")
             for kickoff_info in self._current_kickoff_workers:
                 # Args mapping:
                 # TODO: add top-down args mapping here...
@@ -697,14 +715,20 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
                     kwargs=deferred_task.kwargs,
                 ))
             # Then add kickoff workers triggered by dependencies elimination.
+            # Merge successor keys of all finished tasks.
+            successor_keys = set()
             for task in self._running_tasks:
                 for successor_key in self._worker_forwards.get(task.worker_key, []):
-                    dependency_triggers = self._workers_dynamic_states[successor_key].dependency_triggers
-                    if not dependency_triggers:
-                        self._current_kickoff_workers.append(_KickoffInfo(
-                            worker_key=successor_key,
-                            last_kickoff=task.worker_key,
-                        ))
+                    if successor_key not in successor_keys:
+                        dependency_triggers = self._workers_dynamic_states[successor_key].dependency_triggers
+                        if not dependency_triggers:
+                            self._current_kickoff_workers.append(_KickoffInfo(
+                                worker_key=successor_key,
+                                last_kickoff=task.worker_key,
+                            ))
+                        successor_keys.add(successor_key)
+            if self.running_options.debug:
+                printer.print(f"[DS][After Tasks Finished] successor workers: {successor_keys}", color="purple")
 
             # Clear running tasks after all finished.
             self._running_tasks.clear()
