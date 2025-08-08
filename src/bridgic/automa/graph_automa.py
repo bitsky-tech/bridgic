@@ -4,11 +4,11 @@ import json
 import uuid
 
 from abc import ABCMeta
-from typing import Any, List, Dict, Set, Mapping, Callable, Tuple, Optional
+from typing import Any, List, Dict, Set, Mapping, Callable, Tuple, Optional, Literal, Union
 from types import MethodType
 from collections import defaultdict, deque
 from dataclasses import dataclass
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 from typing_extensions import override
 
 from bridgic.utils.console import printer, colored
@@ -123,13 +123,30 @@ class _WorkerDynamicState(BaseModel):
     # once the task is finished or the topology is changed.
     dependency_triggers: Set[str]
 
+class _AddWorkerDeferredTask(BaseModel):
+    task_type: Literal["add_worker"] = Field(default="add_worker")
+    key: str
+    worker_obj: Worker # Note: Not a pydantic model!!
+    dependencies: List[str] = []
+    is_start: bool = False
+    args_mapping_rule: str = ARGS_MAPPING_RULE_AUTO
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+class _RemoveWorkerDeferredTask(BaseModel):
+    task_type: Literal["remove_worker"] = Field(default="remove_worker")
+    key: str
+
+class _SetOutputWorkerDeferredTask(BaseModel):
+    output_worker_key: str
+
 class _FerryDeferredTask(BaseModel):
     ferry_to_worker_key: str
     kickoff_worker_key: str
     args: Tuple[Any, ...]
     kwargs: Dict[str, Any]
 
-def _validated_dependencies(worker_key: str, dependencies: List[str]) -> List[str]:
+def _ensure_dependencies_params_valid(worker_key: str, dependencies: List[str]) -> List[str]:
     if not dependencies:
         dependencies = []
     if not all([isinstance(d, str) for d in dependencies]):
@@ -139,7 +156,7 @@ def _validated_dependencies(worker_key: str, dependencies: List[str]) -> List[st
         )
     return dependencies
 
-def _validated_args_mapping_rule(worker_key: str, dependencies: List[str], args_mapping_rule: str) -> str:
+def _ensure_args_mapping_rule_params_valid(worker_key: str, dependencies: List[str], args_mapping_rule: str) -> str:
     if args_mapping_rule not in all_args_mapping_rules:
         raise ValueError(
             f"args_mapping_rule must be one of the following: {all_args_mapping_rules},"
@@ -183,8 +200,8 @@ class GraphAutomaMeta(ABCMeta):
                 # TODO: reactoring may be needed
                 func = attr_value
                 worker_key = complete_args["key"]
-                dependencies = _validated_dependencies(worker_key, complete_args["dependencies"])
-                args_mapping_rule = _validated_args_mapping_rule(worker_key, dependencies, complete_args["args_mapping_rule"])
+                dependencies = _ensure_dependencies_params_valid(worker_key, complete_args["dependencies"])
+                args_mapping_rule = _ensure_args_mapping_rule_params_valid(worker_key, dependencies, complete_args["args_mapping_rule"])
                 setattr(func, "__is_worker__", True)
                 setattr(func, "__worker_key__", worker_key)
                 setattr(func, "__dependencies__", dependencies)
@@ -305,7 +322,7 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
 
     # Note: Just declarations, NOT instances!!!
     # So do not initialize them here!!!
-    _workers: Dict[str, Worker]
+    _workers: Dict[str, _AddWorkerDeferredTask]
     _worker_forwards: Dict[str, List[str]]
     _output_worker_key: str
 
@@ -319,6 +336,8 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
 
     # The following need not to be serialized.
     _running_tasks: List[_RunnningTask]
+    _topology_change_deferred_tasks: List[Union[_AddWorkerDeferredTask, _RemoveWorkerDeferredTask]]
+    _set_output_worker_deferred_task: _SetOutputWorkerDeferredTask
     _ferry_deferred_tasks: List[_FerryDeferredTask]
 
     def __init__(
@@ -391,6 +410,8 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         # -- Running Task list.
         # The list of the tasks that are currently being executed.
         self._running_tasks = []
+        self._topology_change_deferred_tasks = []
+        self._set_output_worker_deferred_task = None
         self._ferry_deferred_tasks = []
         # -- Dynamic in-degree of each workers. It will be also lazily initialized in _compile_graph_and_detect_risks().
         self._workers_dynamic_states = {}
@@ -417,7 +438,13 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         args_mapping_rule: str = ARGS_MAPPING_RULE_AUTO,
     ) -> None:
         """
-        This method is used to add a worker into the automa.
+        This method is used to add a worker dynamically into the automa.
+
+        If this method is called during the [Initialization Phase], the worker will be added immediately. If this method is called during the [Running Phase], the worker will be added as a deferred task which will be executed in the next DS.
+
+        In DDG, dependencies can only be added together with a worker. However, you can add a worker without any dependencies.
+
+        Note: A worker that is added during the [Running Phase] is not allowed to be a start worker.
 
         Parameters
         ----------
@@ -426,23 +453,18 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         worker_obj : Worker
             The worker instance to be registered.
         dependencies : List[str]
-            A list of worker names that the decorated callable depends on.
+            A list of worker keys that the worker depends on.
         is_start : bool
-            Whether the decorated callable is a start worker. True means it is, while False means it is not.
+            Whether the worker is a start worker.
         args_mapping_rule : str
             The rule of arguments mapping. The options are: "auto", "as_list", "as_dict", "suppressed".
         """
-        if not self._running_started:
+
+        def _basic_worker_params_check(key: str, worker_obj: Worker):
             if not isinstance(worker_obj, Worker):
                 raise TypeError(
                     f"worker_obj to be registered must be a Worker, "
                     f"but got {type(worker_obj)}, worker_key={key}"
-                )
-
-            if key in self._workers:
-                raise AutomaDeclarationError(
-                    f"duplicate worker keys are not allowed: "
-                    f"worker_key={key}"
                 )
 
             if not asyncio.iscoroutinefunction(worker_obj.process_async):
@@ -451,10 +473,18 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
                     f"but got {type(worker_obj.process_async)}: worker_key={key}"
                 )
 
-            # Validate the parameters.
-            dependencies = _validated_dependencies(key, dependencies)
-            args_mapping_rule = _validated_args_mapping_rule(key, dependencies, args_mapping_rule)
+        _basic_worker_params_check(key, worker_obj)
+        # Ensure the parameters are valid.
+        dependencies = _ensure_dependencies_params_valid(key, dependencies)
+        args_mapping_rule = _ensure_args_mapping_rule_params_valid(key, dependencies, args_mapping_rule)
 
+        if not self._running_started:
+            # Add worker during the [Initialization Phase].
+            if key in self._workers:
+                raise AutomaDeclarationError(
+                    f"duplicate worker keys are not allowed: "
+                    f"worker_key={key}"
+                )
             new_worker_obj = _GraphAdaptedWorker(
                 key=key,
                 worker=worker_obj,
@@ -467,9 +497,16 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
             # Register the worker_obj.
             self._workers[new_worker_obj.key] = new_worker_obj
         else:
-            # TODO: add worker deferred task here...
-            ...
-
+            # Add worker during the [Running Phase].
+            deferred_task = _AddWorkerDeferredTask(
+                key=key,
+                worker_obj=worker_obj,
+                dependencies=dependencies,
+                is_start=is_start,
+                args_mapping_rule=args_mapping_rule,
+            )
+            # Note: the execution order of topology change deferred tasks is important and is determined by the order of the calls of add_worker(), remove_worker() in one DS.
+            self._topology_change_deferred_tasks.append(deferred_task)
 
     def add_func_as_worker(
         self,
@@ -520,7 +557,7 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
     def worker(
         self,
         *,
-        key: str = None,
+        key: Optional[str] = None,
         dependencies: List[str] = [],
         is_start: bool = False,
         args_mapping_rule: str = ARGS_MAPPING_RULE_AUTO,
@@ -561,8 +598,11 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         if not self._running_started:
             self._output_worker_key = output_worker_key
         else:
-            # TODO: add deferred task here...
-            ...
+            deferred_task = _SetOutputWorkerDeferredTask(
+                output_worker_key=output_worker_key,
+            )
+            # Note: Only the last _SetOutputWorkerDeferredTask is valid if set_output_worker() is called multiple times in one DS.
+            self._set_output_worker_deferred_task = deferred_task
 
     def remove_worker(self, key: str) -> None:
         """
@@ -588,8 +628,11 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
             # TODO: remove immediately
             ...
         else:
-            # TODO: add deferred task here...
-            ...
+            deferred_task = _RemoveWorkerDeferredTask(
+                key=key,
+            )
+            # Note: the execution order of topology change deferred tasks is important and is determined by the order of the calls of add_worker(), remove_worker() in one DS.
+            self._topology_change_deferred_tasks.append(deferred_task)
 
     def __getattribute__(self, key):
         """
@@ -599,6 +642,19 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         if key in workers:
             return workers[key]
         return super().__getattribute__(key)
+
+    def _rebuild_worker_forwards(
+            self, 
+            worker_depends: Dict[str, _GraphAdaptedWorker]
+        ) -> Dict[str, List[str]]:
+        worker_forwards = {}
+        for worker_key, worker_obj in worker_depends.items():
+            dependencies = (getattr(worker_obj, "dependencies", []))
+            for trigger in dependencies:
+                if trigger not in worker_forwards:
+                    worker_forwards[trigger] = []
+                worker_forwards[trigger].append(worker_key)
+        return worker_forwards
 
     def _compile_graph_and_detect_risks(self):
         """
@@ -615,12 +671,7 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
 
         # Build self._worker_forwards from self._workers (including configurations of 
         # both @worker and add_worker()...).
-        for worker_key, worker_obj in self._workers.items():
-            dependencies = (getattr(worker_obj, "dependencies", []))
-            for trigger in dependencies:
-                if trigger not in self._worker_forwards:
-                    self._worker_forwards[trigger] = []
-                self._worker_forwards[trigger].append(worker_key)
+        self._worker_forwards = self._rebuild_worker_forwards(self._workers)
 
         # Validate the DAG constraints.
         GraphAutomaMeta.validate_dag_constraints(self._worker_forwards)
@@ -761,8 +812,36 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
                 for successor_key in self._worker_forwards.get(task.worker_key, []):
                     self._workers_dynamic_states[successor_key].dependency_triggers.discard(task.worker_key)
 
-            # TODO: Graph topology may be changed here...
             # TODO: Graph topology risk detection may be added here...
+
+            # Process graph topology change deferred tasks triggered by add_worker() and remove_worker().
+            for topology_task in self._topology_change_deferred_tasks:
+                if topology_task.task_type == "add_worker":
+                    # TODO: maybe refactoring considering risk detection...
+                    new_worker_obj = _GraphAdaptedWorker(
+                        key=topology_task.key,
+                        worker=topology_task.worker_obj,
+                        dependencies=topology_task.dependencies,
+                        is_start=topology_task.is_start,
+                        args_mapping_rule=topology_task.args_mapping_rule,
+                    )
+                    new_worker_obj.parent = self
+                    self._workers[topology_task.key] = new_worker_obj
+                elif topology_task.task_type == "remove_worker":
+                    ...
+                # Rebuild worker forwards.
+                # TODO: 
+                self._worker_forwards = self._rebuild_worker_forwards(self._workers)
+                # Incrementally update the dynamic states of successor workers.
+                self._workers_dynamic_states[topology_task.key] = _WorkerDynamicState(
+                    dependency_triggers=set(getattr(new_worker_obj, "dependencies", []))
+                )
+
+            # Process set_output_worker() deferred task.
+            if self._set_output_worker_deferred_task:
+                ...
+                # TODO: add validation...
+
             # TODO: Ferry-related risk detection may be added here...
 
             # Find next kickoff workers and rebuild _current_kickoff_workers
@@ -772,13 +851,13 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
             # 2. The dependencies are eliminated after all predecessor workers are finished.
             # So,
             # First add kickoff workers triggered by ferry_to();
-            for deferred_task in self._ferry_deferred_tasks:
+            for ferry_task in self._ferry_deferred_tasks:
                 self._current_kickoff_workers.append(_KickoffInfo(
-                    worker_key=deferred_task.ferry_to_worker_key,
-                    last_kickoff=deferred_task.kickoff_worker_key,
+                    worker_key=ferry_task.ferry_to_worker_key,
+                    last_kickoff=ferry_task.kickoff_worker_key,
                     from_ferry=True,
-                    args=deferred_task.args,
-                    kwargs=deferred_task.kwargs,
+                    args=ferry_task.args,
+                    kwargs=ferry_task.kwargs,
                 ))
             # Then add kickoff workers triggered by dependencies elimination.
             # Merge successor keys of all finished tasks.
