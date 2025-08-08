@@ -23,14 +23,10 @@ class AutomaLayerC(AutomaLayerA, AutomaLayerB):
 
     def __init__(
         self,
-        parallel_num: int = 2,
         output_worker_key: str = None,
-        workers: Dict[str, Worker] = {},
     ):
         super().__init__(
-            parallel_num=parallel_num,
             output_worker_key=output_worker_key,
-            workers=workers,
         )
         self.add_func_as_worker(
             key="entry_point_worker_7",

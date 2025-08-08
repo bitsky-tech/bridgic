@@ -1,61 +1,39 @@
 import asyncio
-import concurrent.futures
-import traceback
 import inspect
 import json
 import uuid
-import concurrent
 
 from abc import ABCMeta
-from typing import Any, List, Dict, Set, Mapping, Callable, Tuple, Generic, TypeVar
+from typing import Any, List, Dict, Set, Mapping, Callable, Tuple, Optional, Literal, Union
 from types import MethodType
-from threading import Thread
 from collections import defaultdict, deque
-from pydantic import BaseModel, Field
+from dataclasses import dataclass
+from pydantic import BaseModel, Field, ConfigDict
+from typing_extensions import override
 
 from bridgic.utils.console import printer, colored
 from bridgic.automa.worker import Worker
 from bridgic.types.error import *
-from bridgic.types.mixin import WithKeyMixin, AdaptableMixin, LandableMixin, CallableMixin
+from bridgic.types.mixin import WithKeyMixin, AdaptableMixin, LandableMixin
 from bridgic.consts.args_mapping_rule import *
 from bridgic.utils.inspect_tools import get_arg_names
 from bridgic.automa import Automa
 from bridgic.automa.worker_decorator import packup_worker_decorator_rumtime_args, WorkerDecoratorType
+from bridgic.automa.worker.callable_worker import CallableWorker
 
-class _GraphBuiltinWorker(WithKeyMixin, LandableMixin, CallableMixin, Worker):
-    def __init__(
-        self,
-        *,
-        key: str = None,
-        func: Callable,
-        dependencies: List[str] = [],
-        is_start: bool = False,
-        args_mapping_rule: str = ARGS_MAPPING_RULE_SUPPRESSED,
-        **kwargs,
-    ):
-        super().__init__(
-            key=key,
-            func=func,
-            dependencies=dependencies,
-            is_start=is_start,
-            args_mapping_rule=args_mapping_rule,
-            **kwargs,
-        )
-
-    async def process_async(self, *args, **kwargs) -> Any:
-        if self.is_coro:
-            return await self.func(*args, **kwargs)
-        else:
-            return self.func(*args, **kwargs)
-
-W = TypeVar("W", bound=Worker)
-
-class _GraphAdaptedWorker(Generic[W], WithKeyMixin, AdaptableMixin, LandableMixin, Worker):
+class _GraphAdaptedWorker(WithKeyMixin, AdaptableMixin, LandableMixin, Worker):
+    """
+    A decorated worker used for GraphAutoma orchestration and scheduling. Not intended for external use.
+    Follows the `Decorator` design pattern:
+    - https://web.archive.org/web/20031204182047/http://patterndigest.com/patterns/Decorator.html
+    - https://en.wikipedia.org/wiki/Decorator_pattern
+    New Behavior Added: In addition to the original Worker functionality, maintains configuration and state variables related to dynamic scheduling and graph topology.
+    """
     def __init__(
         self,
         *,
         key: str,
-        worker: W,
+        worker: Worker,
         dependencies: List[str] = [],
         is_start: bool = False,
         args_mapping_rule: str = ARGS_MAPPING_RULE_SUPPRESSED,
@@ -68,20 +46,107 @@ class _GraphAdaptedWorker(Generic[W], WithKeyMixin, AdaptableMixin, LandableMixi
             args_mapping_rule=args_mapping_rule,
             **kwargs,
         )
-        self.core_worker = worker
+        self._decorated_worker = worker
 
-    def __getattr__(self, key):
-        return getattr(self.core_worker, key)
+    #
+    # Delegate all the properties and methods of _GraphAdaptedWorker to the decorated worker.
+    # TODO: Maybe 'Worker' should be a Protocol.
+    #
 
+    @override
     async def process_async(self, *args, **kwargs) -> Any:
-        return await self.core_worker.process_async(*args, **kwargs)
+        return await self._decorated_worker.process_async(*args, **kwargs)
 
-class WorkerState(BaseModel):
-    is_running: bool = Field(default=False)
-    kickoff_worker_key_or_name: str = Field(default=None)
-    dependency_triggers: Set[str] = Field(default_factory=set)
+    @property
+    def return_type(self) -> type:
+        return self._decorated_worker.return_type
 
-def _validated_dependencies(worker_key: str, dependencies: List[str]) -> List[str]:
+    @property
+    def parent(self) -> "Automa":
+        return self._decorated_worker.parent
+
+    @parent.setter
+    def parent(self, value: "Automa"):
+        self._decorated_worker.parent = value
+
+    @property
+    def output_buffer(self) -> Any:
+        return self._decorated_worker.output_buffer
+    
+    @output_buffer.setter
+    def output_buffer(self, value: Any):
+        self._decorated_worker.output_buffer = value
+
+    @property
+    def local_space(self) -> Dict[str, Any]:
+        return self._decorated_worker.local_space
+    
+    @local_space.setter
+    def local_space(self, value: Dict[str, Any]):
+        self._decorated_worker.local_space = value
+
+    @property
+    def func(self):
+        """
+        Readonly property for getting the original/real function of the worker.
+        """
+        if isinstance(self._decorated_worker, CallableWorker):
+            return self._decorated_worker.callable
+        return self._decorated_worker.process_async
+
+    @override
+    def __str__(self) -> str:
+        # TODO: need some refactoring
+        return str(self._decorated_worker)
+
+@dataclass
+class _RunnningTask:
+    """
+    States of the current running task.
+    The instances of this class do not need to be serialized.
+    """
+    worker_key: str
+    task: asyncio.Task
+
+class _KickoffInfo(BaseModel):
+    worker_key: str
+    # Worker key or the container "__automa__"
+    last_kickoff: str
+    # Whether the kickoff is triggered by ferry_to() initiated by developers.
+    from_ferry: bool = False
+    args: Tuple[Any, ...] = ()
+    kwargs: Dict[str, Any] = {}
+
+class _WorkerDynamicState(BaseModel):
+    # Dynamically record the dependency workers keys of each worker.
+    # Will be reset to the topology edges/dependencies of the worker
+    # once the task is finished or the topology is changed.
+    dependency_triggers: Set[str]
+
+class _AddWorkerDeferredTask(BaseModel):
+    task_type: Literal["add_worker"] = Field(default="add_worker")
+    key: str
+    worker_obj: Worker # Note: Not a pydantic model!!
+    dependencies: List[str] = []
+    is_start: bool = False
+    args_mapping_rule: str = ARGS_MAPPING_RULE_AUTO
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+class _RemoveWorkerDeferredTask(BaseModel):
+    task_type: Literal["remove_worker"] = Field(default="remove_worker")
+    key: str
+
+class _SetOutputWorkerDeferredTask(BaseModel):
+    output_worker_key: str
+
+class _FerryDeferredTask(BaseModel):
+    ferry_to_worker_key: str
+    kickoff_worker_key: str
+    args: Tuple[Any, ...]
+    kwargs: Dict[str, Any]
+
+def _ensure_dependencies_params_valid(worker_key: str, dependencies: List[str]) -> List[str]:
     if not dependencies:
         dependencies = []
     if not all([isinstance(d, str) for d in dependencies]):
@@ -91,7 +156,7 @@ def _validated_dependencies(worker_key: str, dependencies: List[str]) -> List[st
         )
     return dependencies
 
-def _validated_args_mapping_rule(worker_key: str, dependencies: List[str], args_mapping_rule: str) -> str:
+def _ensure_args_mapping_rule_params_valid(worker_key: str, dependencies: List[str], args_mapping_rule: str) -> str:
     if args_mapping_rule not in all_args_mapping_rules:
         raise ValueError(
             f"args_mapping_rule must be one of the following: {all_args_mapping_rules},"
@@ -135,8 +200,8 @@ class GraphAutomaMeta(ABCMeta):
                 # TODO: reactoring may be needed
                 func = attr_value
                 worker_key = complete_args["key"]
-                dependencies = _validated_dependencies(worker_key, complete_args["dependencies"])
-                args_mapping_rule = _validated_args_mapping_rule(worker_key, dependencies, complete_args["args_mapping_rule"])
+                dependencies = _ensure_dependencies_params_valid(worker_key, complete_args["dependencies"])
+                args_mapping_rule = _ensure_args_mapping_rule_params_valid(worker_key, dependencies, complete_args["args_mapping_rule"])
                 setattr(func, "__is_worker__", True)
                 setattr(func, "__worker_key__", worker_key)
                 setattr(func, "__dependencies__", dependencies)
@@ -152,10 +217,6 @@ class GraphAutomaMeta(ABCMeta):
                         f"worker is defined in multiple base classes: "
                         f"base={base}, worker={worker_key}"
                     )
-
-            for current, trigger_list in getattr(base, "_worker_static_triggers", {}).items():
-                if current not in worker_static_triggers.keys():
-                    worker_static_triggers[current] = trigger_list
 
             for current, forward_list in getattr(base, "_worker_static_forwards", {}).items():
                 if current not in worker_static_forwards.keys():
@@ -177,11 +238,6 @@ class GraphAutomaMeta(ABCMeta):
                         f"worker={worker_key}"
                     )
 
-                # Update the table of static triggers.
-                if worker_key not in worker_static_triggers.keys():
-                    worker_static_triggers[worker_key] = []
-                worker_static_triggers[worker_key].extend(dependencies)
-
                 # Update the table of static forwards.
                 for trigger in dependencies:
                     if trigger not in worker_static_forwards.keys():
@@ -189,11 +245,10 @@ class GraphAutomaMeta(ABCMeta):
                     worker_static_forwards[trigger].append(worker_key)
 
         # Validate if the DAG constraint is met.
+        # TODO: this is indeed a chance to detect risks. Add more checks here or remove totally!
         mcls.validate_dag_constraints(worker_static_forwards)
 
         setattr(cls, "_registered_worker_funcs", registered_worker_funcs)
-        setattr(cls, "_worker_static_triggers", worker_static_triggers)
-        setattr(cls, "_worker_static_forwards", worker_static_forwards)
         return cls
 
     @classmethod
@@ -242,64 +297,136 @@ class GraphAutomaMeta(ABCMeta):
             )
 
 class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
+    """
+    DDG (Dynamic Directed Graph) implementation of Automa.
+    The topology of a DDG are allowed to be changed during runtime, by developers.
+    """
+
+    # The initial topology defined by @worker functions.
     _registered_worker_funcs: Dict[str, Callable] = {}
-    _worker_static_triggers: Dict[str, List[str]] = {}
-    _worker_static_forwards: Dict[str, List[str]] = {}
+
+    # [IMPORTANT] 
+    # The whole states of the Automa are divided into two main parts:
+    #
+    # [Part One: Topology] The (dynamic) graph topology of the Automa.
+    # -- Nodes: workers (A Worker can be another Automa): {_workers}
+    # -- Edges: Dependencies between workers: {dependencies in _workers, _worker_forwards}
+    # -- Configurations: Start workers, output worker, args_mapping_rule, etc. {_output_worker_key, is_start and args_mapping_rule in _workers}
+    #
+    # [Part Two: Runtime States] The runtime states of all the workers.
+    # -- Current kickoff workers list. {_current_kickoff_workers}
+    # -- Running Task list. {_running_tasks, _ferry_deferred_tasks}
+    # -- Dynamic in-degree of each workers. {_workers_dynamic_states}
+    # -- Output buffer and local space for each worker. {in _workers}
+    # -- Other runtime states...
+
+    # Note: Just declarations, NOT instances!!!
+    # So do not initialize them here!!!
+    _workers: Dict[str, _AddWorkerDeferredTask]
+    _worker_forwards: Dict[str, List[str]]
+    _output_worker_key: str
+
+    _current_kickoff_workers: List[_KickoffInfo]
+    _workers_dynamic_states: Dict[str, _WorkerDynamicState]
+    # The whole running process of the DDG is divided into two main phases:
+    # 1. [Initialization Phase] The first phase (when _running_started is False): the initial topology of DDG was constructed.
+    # 2. [Running Phase] The second phase (when _running_started is True): the DDG is running, and the workers are executed in a dynamic step-by-step manner (DS loop).
+    # Once _running_started is set to True, it will always be True.
+    _running_started: bool
+
+    # The following need not to be serialized.
+    _running_tasks: List[_RunnningTask]
+    _topology_change_deferred_tasks: List[Union[_AddWorkerDeferredTask, _RemoveWorkerDeferredTask]]
+    _set_output_worker_deferred_task: _SetOutputWorkerDeferredTask
+    _ferry_deferred_tasks: List[_FerryDeferredTask]
 
     def __init__(
         self,
-        name: str = None,
-        output_worker_key: str = None,
-        workers: Dict[str, Worker] = {},
-        **kwargs,
+        name: Optional[str] = None,
+        output_worker_key: Optional[str] = None,
+        state_dict: Optional[Dict[str, Any]] = None,
     ):
         """
         Parameters
         ----------
-        output_worker_key : str (default = None)
-            The key of the output worker, of which the output will also be returned by the automa.
-        workers : Dict[str, Worker] (default = {})
-            A dictionary that maps the worker key to the worker instance.
+        name : Optional[str] (default = None)
+            The name of the automa.
+        output_worker_key : Optional[str] (default = None)
+            The key of the output worker whose output will be returned by the automa.
+        state_dict : Optional[Dict[str, Any]] (default = None)
+            A dictionary for initializing the automa's runtime state. This parameter is intended for internal framework use only, specifically for deserialization, and should not be used by developers.
         """
-        super().__init__(name=name or f"graph-{uuid.uuid4().hex[:8]}")
-        cls = type(self)
+        super().__init__(name=name or f"{type(self).__name__}-{uuid.uuid4().hex[:8]}")
+        self._workers = {} #TODO: __getattribute__() refactoring
 
-        # Initialize the instances of pre-declared workers.
-        self._workers: Dict[str, Worker] = {}
-        if workers:
-            for worker_key, worker_obj in workers.items():
-                if not isinstance(worker_obj, LandableMixin):
-                    raise TypeError(
-                        f"the type of worker_obj must inherit from LandableMixin, "
-                        f"but got {type(worker_obj)}: worker_key={worker_key}"
-                    )
-                self._workers[worker_key] = worker_obj
+        # Start to initialize the states of the Automa.
+        # The whole states of the Automa can be from two sources:
+        if state_dict:
+            # 1. One source: from the state_dict serialized previously.
+            self._init_from_state_dict(state_dict)
         else:
-            # Workers in the class definition all can be transformed into _GraphBuiltinWorker objects.
-            for worker_key, worker_func in cls._registered_worker_funcs.items():
-                # Register the worker_func as a built-in worker.
-                worker_obj = _GraphBuiltinWorker(
-                    key=worker_key,
-                    func=MethodType(worker_func, self),
-                    dependencies=worker_func.__dependencies__,
-                    is_start=worker_func.__is_start__,
-                    args_mapping_rule=worker_func.__args_mapping_rule__,
-                )
-                worker_obj.parent = self
-                self._workers[worker_key] = worker_obj
+            # 2. Another source: from the class definition.
+            self._normal_init(output_worker_key)
 
-        # Define the related data structures that are used to compile the whole automa.
-        self._worker_triggers: Dict[str, List[str]] = {}
-        self._worker_forwards: Dict[str, List[str]] = {}
-        self._component_list: List[List[str]] = []
-        self._component_idx: Dict[str, int] = {}
+    def _normal_init(
+            self,
+            output_worker_key: Optional[str] = None,
+    ):
+        ############################################################
+        # Initialization of [Part One: Topology] ******* Strat *****
+        ############################################################
 
-        # Define the runtime data structures that are used when running the whole automa.
-        self._worker_states: Dict[str, WorkerState] = {}
-        self._worker_running_snapshot: Dict[str, bool] = None
+        cls = type(self)
+        # One data source of self._workers: _registered_worker_funcs
+        # Another source of self._workers will be functions like add_worker()...
+        for worker_key, worker_func in cls._registered_worker_funcs.items():
+            func_worker = CallableWorker(MethodType(worker_func, self))
+            # Register the worker_func as a built-in worker.
+            worker_obj = _GraphAdaptedWorker(
+                key=worker_key,
+                worker=func_worker,
+                dependencies=worker_func.__dependencies__,
+                is_start=worker_func.__is_start__,
+                args_mapping_rule=worker_func.__args_mapping_rule__,
+            )
+            worker_obj.parent = self
+            self._workers[worker_key] = worker_obj
 
-        # Record the key of the output-worker.
-        self._output_worker_key: str = output_worker_key
+        # Initialization of _worker_forwards will be delayed until _compile_graph_and_detect_risks(). Before that, add_worker()... will probably change the value of _workers.
+        self._worker_forwards = {}
+        self._output_worker_key = output_worker_key
+
+        ############################################################
+        # Initialization of [Part One: Topology] ******* End *****
+        ############################################################
+
+        ##################################################################
+        # Initialization of [Part Two: Runtime States] ******* Strat *****
+        ##################################################################
+
+        # -- Current kickoff workers list.
+        # The key list of the workers that are ready to be immediately executed in the next DS (Dynamic Step). It will be also lazily initialized in _compile_graph_and_detect_risks().
+        self._current_kickoff_workers = []
+        # -- Running Task list.
+        # The list of the tasks that are currently being executed.
+        self._running_tasks = []
+        self._topology_change_deferred_tasks = []
+        self._set_output_worker_deferred_task = None
+        self._ferry_deferred_tasks = []
+        # -- Dynamic in-degree of each workers. It will be also lazily initialized in _compile_graph_and_detect_risks().
+        self._workers_dynamic_states = {}
+        self._running_started = False
+
+        ##################################################################
+        # Initialization of [Part Two: Runtime States] ******* End *****
+        ##################################################################
+
+    def _init_from_state_dict(
+            self,
+            state_dict: Dict[str, Any],
+    ):
+        ...
+        # TODO: deserialize from the state_dict
 
     def add_worker(
         self,
@@ -309,9 +436,15 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         dependencies: List[str] = [],
         is_start: bool = False,
         args_mapping_rule: str = ARGS_MAPPING_RULE_AUTO,
-    ):
+    ) -> None:
         """
-        This method is used to add a worker into the automa.
+        This method is used to add a worker dynamically into the automa.
+
+        If this method is called during the [Initialization Phase], the worker will be added immediately. If this method is called during the [Running Phase], the worker will be added as a deferred task which will be executed in the next DS.
+
+        In DDG, dependencies can only be added together with a worker. However, you can add a worker without any dependencies.
+
+        Note: A worker that is added during the [Running Phase] is not allowed to be a start worker.
 
         Parameters
         ----------
@@ -320,47 +453,39 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         worker_obj : Worker
             The worker instance to be registered.
         dependencies : List[str]
-            A list of worker names that the decorated callable depends on.
+            A list of worker keys that the worker depends on.
         is_start : bool
-            Whether the decorated callable is a start worker. True means it is, while False means it is not.
+            Whether the worker is a start worker.
         args_mapping_rule : str
             The rule of arguments mapping. The options are: "auto", "as_list", "as_dict", "suppressed".
         """
-        if not isinstance(worker_obj, Worker):
-            raise TypeError(
-                f"worker_obj to be registered must be a Worker, "
-                f"but got {type(worker_obj)}, worker_key={key}"
-            )
 
-        if key in self._workers:
-            raise AutomaDeclarationError(
-                f"duplicate worker keys are not allowed: "
-                f"worker_key={key}"
-            )
+        def _basic_worker_params_check(key: str, worker_obj: Worker):
+            if not isinstance(worker_obj, Worker):
+                raise TypeError(
+                    f"worker_obj to be registered must be a Worker, "
+                    f"but got {type(worker_obj)}, worker_key={key}"
+                )
 
-        if not asyncio.iscoroutinefunction(worker_obj.process_async):
-            raise WorkerSignatureError(
-                f"process_async of Worker must be an async method, "
-                f"but got {type(worker_obj.process_async)}: worker_key={key}"
-            )
+            if not asyncio.iscoroutinefunction(worker_obj.process_async):
+                raise WorkerSignatureError(
+                    f"process_async of Worker must be an async method, "
+                    f"but got {type(worker_obj.process_async)}: worker_key={key}"
+                )
 
-        if (
-            isinstance(worker_obj, Worker)
-            and isinstance(worker_obj, WithKeyMixin)
-            and isinstance(worker_obj, LandableMixin)
-        ):
-            # If the worker_obj is able to be registered, directly register and rename it.
-            worker_obj.key = key
-            worker_obj.parent = self
-            self._workers[worker_obj.key] = worker_obj
-        else:
-            # Validate the parameters.
-            dependencies = _validated_dependencies(key, dependencies)
-            args_mapping_rule = _validated_args_mapping_rule(key, dependencies, args_mapping_rule)
+        _basic_worker_params_check(key, worker_obj)
+        # Ensure the parameters are valid.
+        dependencies = _ensure_dependencies_params_valid(key, dependencies)
+        args_mapping_rule = _ensure_args_mapping_rule_params_valid(key, dependencies, args_mapping_rule)
 
-            worker_obj.parent = self
-
-            new_worker_obj = _GraphAdaptedWorker[type(worker_obj)](
+        if not self._running_started:
+            # Add worker during the [Initialization Phase].
+            if key in self._workers:
+                raise AutomaDeclarationError(
+                    f"duplicate worker keys are not allowed: "
+                    f"worker_key={key}"
+                )
+            new_worker_obj = _GraphAdaptedWorker(
                 key=key,
                 worker=worker_obj,
                 dependencies=dependencies,
@@ -371,6 +496,17 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
 
             # Register the worker_obj.
             self._workers[new_worker_obj.key] = new_worker_obj
+        else:
+            # Add worker during the [Running Phase].
+            deferred_task = _AddWorkerDeferredTask(
+                key=key,
+                worker_obj=worker_obj,
+                dependencies=dependencies,
+                is_start=is_start,
+                args_mapping_rule=args_mapping_rule,
+            )
+            # Note: the execution order of topology change deferred tasks is important and is determined by the order of the calls of add_worker(), remove_worker() in one DS.
+            self._topology_change_deferred_tasks.append(deferred_task)
 
     def add_func_as_worker(
         self,
@@ -380,7 +516,7 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         dependencies: List[str] = [],
         is_start: bool = False,
         args_mapping_rule: str = ARGS_MAPPING_RULE_AUTO,
-    ):
+    ) -> None:
         """
         This method is used to add a function as a worker into the automa.
 
@@ -400,29 +536,30 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         args_mapping_rule : str
             The rule of arguments mapping. The options are: "auto", "as_list", "as_dict", "suppressed".
         """
-        # Validate the parameters.
-        dependencies = _validated_dependencies(key, dependencies)
-        args_mapping_rule = _validated_args_mapping_rule(key, dependencies, args_mapping_rule)
+        # Register func as an instance of CallableWorker.
+        if not isinstance(func, MethodType):
+            func = MethodType(func, self)
+        else:
+            # TODO: validate whether self is Automa?
+            ...
+        func_worker = CallableWorker(func)
 
-        # Register func as an instance of _GraphBuiltinWorker.
-        worker_obj = _GraphBuiltinWorker(
+        self.add_worker(
             key=key,
-            func=MethodType(func, self),
+            worker_obj=func_worker,
             dependencies=dependencies,
             is_start=is_start,
             args_mapping_rule=args_mapping_rule,
         )
-        worker_obj.parent = self
-        self._workers[worker_obj.key] = worker_obj
 
     def worker(
         self,
         *,
-        key: str = None,
+        key: Optional[str] = None,
         dependencies: List[str] = [],
         is_start: bool = False,
         args_mapping_rule: str = ARGS_MAPPING_RULE_AUTO,
-    ):
+    ) -> Callable:
         """
         This is a decorator used to mark a function as an GraphAutoma detectable Worker. Dislike the 
         global decorator @worker(...), it is usally used after an GraphAutoma instance is initialized.
@@ -451,96 +588,147 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
             )
 
         return wrapper
+    
+    def set_output_worker(self, output_worker_key: str):
+        """
+        This method is used to set the output worker of the automa dynamically.
+        """
+        if not self._running_started:
+            self._output_worker_key = output_worker_key
+        else:
+            deferred_task = _SetOutputWorkerDeferredTask(
+                output_worker_key=output_worker_key,
+            )
+            # Note: Only the last _SetOutputWorkerDeferredTask is valid if set_output_worker() is called multiple times in one DS.
+            self._set_output_worker_deferred_task = deferred_task
+
+    def remove_worker(self, key: str) -> None:
+        """
+        Remove a worker from the Automa. This method can be called at any time to remove a worker from the Automa.
+
+        When a worker is removed, all dependencies related to this worker, including all the dependencies of the worker itself and the dependencies between the worker and its successor workers, will be also removed.
+
+        Parameters
+        ----------
+        key : str
+            The key of the worker to be removed.
+
+        Returns
+        -------
+        None
+
+        Raises
+        ------
+        AutomaDeclarationError
+            If the worker specified by key does not exist in the Automa, this exception will be raised.
+        """
+        if not self._running_started:
+            # TODO: remove immediately
+            ...
+        else:
+            deferred_task = _RemoveWorkerDeferredTask(
+                key=key,
+            )
+            # Note: the execution order of topology change deferred tasks is important and is determined by the order of the calls of add_worker(), remove_worker() in one DS.
+            self._topology_change_deferred_tasks.append(deferred_task)
 
     def __getattribute__(self, key):
+        """
+        Used to get the worker object by its key (self.<key>).
+        """
         workers = super().__getattribute__('_workers')
         if key in workers:
             return workers[key]
         return super().__getattribute__(key)
 
-    def __repr__(self) -> str:
-        # TODO : It's good to make __repr__() of Automa compatible with eval().
-        # This feature depends on the implementation of __repr__() of workers.
-        class_name = self.__class__.__name__
-        workers_str = self._workers.__repr__()
-        return f"{class_name}(workers={workers_str})"
+    def _rebuild_worker_forwards(
+            self, 
+            worker_depends: Dict[str, _GraphAdaptedWorker]
+        ) -> Dict[str, List[str]]:
+        worker_forwards = {}
+        for worker_key, worker_obj in worker_depends.items():
+            dependencies = (getattr(worker_obj, "dependencies", []))
+            for trigger in dependencies:
+                if trigger not in worker_forwards:
+                    worker_forwards[trigger] = []
+                worker_forwards[trigger].append(worker_key)
+        return worker_forwards
 
-    def __str__(self) -> str:
-        d = {}
-        for k, v in self._workers.items():
-            w_type = v.__class__.__name__
-            if isinstance(v, _GraphBuiltinWorker):
-                w_type += "[" + v.func.__name__ + "]"
-            if isinstance(v, _GraphAdaptedWorker):
-                w_type += "[" + v.core_worker.__class__.__name__ + "]"
-            d[k] = f"{w_type} depends on {getattr(v, 'dependencies', [])}"
-        return json.dumps(d, ensure_ascii=False, indent=4)
+    def _compile_graph_and_detect_risks(self):
+        """
+        This method should be called at the very beginning of self.run() to ensure that:
+        1. The whole graph is built out of all of the following worker sources:
+            - Pre-defined workers, such as:
+                - Methods decorated with @worker(...)
+            - Post-added workers, such as:
+                - Functions decorated with @automa_obj.worker(...)
+                - Workers added via automa_obj.add_func_as_worker(...)
+                - Workers added via automa_obj.add_worker(...)
+        2. The dependencies of each worker are confirmed to satisfy the DAG constraints.
+        """
+
+        # Build self._worker_forwards from self._workers (including configurations of 
+        # both @worker and add_worker()...).
+        self._worker_forwards = self._rebuild_worker_forwards(self._workers)
+
+        # Validate the DAG constraints.
+        GraphAutomaMeta.validate_dag_constraints(self._worker_forwards)
+
+        for worker_key, worker_obj in self._workers.items():
+            self._workers_dynamic_states[worker_key] = _WorkerDynamicState(
+                dependency_triggers=set(getattr(worker_obj, "dependencies", []))
+            )
+
+        self._current_kickoff_workers = [
+            _KickoffInfo(
+                worker_key=worker_key,
+                last_kickoff="__automa__"
+            ) for worker_key, worker_obj in self._workers.items()
+            if getattr(worker_obj, "is_start", False)
+        ]
+
+        # Validate if the output worker exists.
+        if self._output_worker_key and self._output_worker_key not in self._workers:
+            raise AutomaCompilationError(
+                f"the output worker is not found: "
+                f"output_worker_key={self._output_worker_key}"
+            )
+
+        # Penetrate the running options to all levels below.
+        self._penetrate_running_options()
+
+        # Find all connected components of the whole automa graph.
+        self._find_connected_components()
 
     def ferry_to(self, worker_key: str, /, *args, **kwargs):
         """
-        Designate a worker to run asynchronously, enabling subsequent workers to run after its completion. 
-
-        This operation will inject a new control flow into the automa through the designated worker, 
-        and the subsequent part of the automa may be automatically triggered by this control flow.
-        Whether a subsequent worker will actually run depends on whether its dependencies are satisfied 
-        or whether there is an explicit "ferry_to" operation calling to it.
+        Handoff control flow to the specified worker, passing along any arguments as needed.
+        The specified worker will always start to run asynchronously in the next event loop, regardless of its dependencies.
 
         Parameters
         ----------
         worker_key : str
-            The key of the worker to execute.
+            The key of the worker to run.
         args : optional
             Positional arguments to be passed.
         kwargs : optional
             Keyword arguments to be passed.
-
-        Note
-        ----
-        The "ferry_to" operation serves as the ONLY entry point for worker execution. If a worker 
-        is marked as a start worker, or its dependencies are satisfied, a "ferry_to" operation will be 
-        automatically called on it by the framework behind the scene. By using the "ferry_to" method, 
-        developers can customize more complex execution logic in a flexible way and achieve more powerful 
-        worker orchestration.
         """
-        kickoff_worker_key: str = self._get_kickoff_worker(worker_key)
-
-        if self.running_options.debug:
-            printer.print(f"[{kickoff_worker_key}] will kick off [{worker_key}]")
-
-        # Check if the target worker exists.
-        if worker_key not in self._workers:
-            raise AutomaRuntimeError(
-                f"the target worker that is ferried to is not found: "
-                f"worker_key={worker_key}"
-            )
-
-        worker = self._workers[worker_key]
-        worker_state = self._worker_states[worker_key]
-
-        # To keep control flow as unique as possible, we do not allow a worker to be started again while it is running.
-        if worker_state.is_running:
-            raise AutomaRuntimeError(
-                f"a worker should not be requested to execute again while it is already running: "
-                f"worker_key={worker_key}"
-            )
-
-        # Lock the running state to ensure that the worker is not requested to run again while it is running.
-        worker_state.is_running = True
-
-        # Record the future of the execution of this worker.
-        future = self._submit_to_backend(
-            worker_key,
-            *args,
-            **kwargs
+        # TODO: check worker_key is valid
+        kickoff_worker_key: str = self._get_kickoff_worker_from_stack()
+        deferred_task = _FerryDeferredTask(
+            ferry_to_worker_key=worker_key,
+            kickoff_worker_key=kickoff_worker_key,
+            args=args,
+            kwargs=kwargs,
         )
-        self._future_list.append(future)
+        self._ferry_deferred_tasks.append(deferred_task)
 
     async def process_async(self, *args, **kwargs) -> Any:
         """
-        Drives the execution of the entire automa by starting all start workers inside it.
-        When there is no worker in the automa that can run, the whole process will end.
-        If the output-worker is specified, the output of the output-worker will be returned.
-        Otherwise, None will be returned.
+        The entry point of the automa.
+
+        The GraphAutoma will orchestrate all workers to run, manage dependencies and dynamically handoff control flows (ferry_to) between workers. Arguments can be mapped and passed automatically if needed.
 
         Parameters
         ----------
@@ -557,42 +745,142 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
             The output of the output-worker if it is specified, otherwise None.
         """
         # Compile the whole automa graph, taking into account both statically defined and dynamically added workers.
-        self._compile_automa()
+        # TODO: will be removed later...
+        if not self._running_started:
+            # Here is the last chance to compile and check the DDG in the end of the [Initialization Phase] (phase 1 just before the first DS).
+            self._compile_graph_and_detect_risks()
+            self._running_started = True
 
         if self.running_options.debug:
-            printer.print(f"GraphAutoma-[{self.name}] is getting started.")
+            printer.print(f"GraphAutoma-[{self.name}] is getting started.", color="green")
 
-        self._loop = asyncio.get_running_loop()
-        self._finish_event = asyncio.Event()
+        # Task loop divided into many dynamic steps (DS).
+        while self._current_kickoff_workers:
+            if self.running_options.debug:
+                kickoff_worker_keys = [kickoff_info.worker_key for kickoff_info in self._current_kickoff_workers]
+                printer.print(f"[DS][Before Tasks Started] kickoff workers: {kickoff_worker_keys}", color="purple")
+            for kickoff_info in self._current_kickoff_workers:
+                # Args mapping:
+                # TODO: add top-down args mapping here...
+                if kickoff_info.last_kickoff == "__automa__":
+                    next_args, next_kwargs = args, kwargs
+                elif kickoff_info.from_ferry:
+                    next_args, next_kwargs = kickoff_info.args, kickoff_info.kwargs
+                else:
+                    next_args, next_kwargs = self._mapping_args(
+                        kickoff_worker_key_or_name=kickoff_info.last_kickoff,
+                        current_worker_key=kickoff_info.worker_key,
+                    )
 
-        # Initialize the runtime states of all workers.
-        for worker_key in self._workers.keys():
-            self._refresh_worker_state(worker_key)
-            self._refresh_worker_buffers(worker_key)
+                if self.running_options.debug:
+                    kickoff_name = kickoff_info.last_kickoff
+                    if kickoff_name == "__automa__":
+                        kickoff_name = f"{kickoff_name}:({self.name})"
+                    printer.print(f"[{kickoff_name}] will kick off [{kickoff_info.worker_key}]", color="cyan")
 
-        # Collect all of the start nodes.
-        start_workers: List[str] = [
-            worker_key for worker_key, worker_obj in self._workers.items()
-            if getattr(worker_obj, "is_start", False)
-        ]
+                # Schedule task for each kickoff worker.
+                task = asyncio.create_task(
+                    # TODO1: process_async() may need to be wrapped to support better interrupt...
+                    # TODO2: paralellization support...
+                    self._workers[kickoff_info.worker_key].process_async(
+                        *next_args, **next_kwargs
+                    ),
+                    name=f"Task-{kickoff_info.worker_key}"
+                )
+                self._running_tasks.append(_RunnningTask(
+                    worker_key=kickoff_info.worker_key,
+                    task=task,
+                ))
+            
+            # Wait until all of the tasks are finished.
+            while True:
+                undone_tasks = [t.task for t in self._running_tasks if not t.task.done()]
+                if not undone_tasks:
+                    break
+                await undone_tasks[0]
+            
+            # Carry out post-task follow-up work
+            for task in self._running_tasks:
+                worker_obj = self._workers[task.worker_key]
+                # Collect results of the finished tasks.
+                worker_obj.output_buffer = task.task.result() # Will raise an exception if task failed.
+                # reset dynamic states of finished workers.
+                self._workers_dynamic_states[task.worker_key].dependency_triggers = set(getattr(worker_obj, "dependencies", []))
+                # Update the dynamic states of successor workers.
+                for successor_key in self._worker_forwards.get(task.worker_key, []):
+                    self._workers_dynamic_states[successor_key].dependency_triggers.discard(task.worker_key)
 
-        # Kick off all of the start workers via "ferry_to". It will submit the designated worker
-        # to the backend and all start workers will be executed in parallel.
-        for worker_key in start_workers:
-            # The kickoff_worker of the nested worker is the automa itself.
-            self._set_kickoff_worker(worker_key, self.name)
-            self.ferry_to(worker_key, *args, **kwargs)
+            # TODO: Graph topology risk detection may be added here...
 
-        await self._finish_event.wait()
+            # Process graph topology change deferred tasks triggered by add_worker() and remove_worker().
+            for topology_task in self._topology_change_deferred_tasks:
+                if topology_task.task_type == "add_worker":
+                    # TODO: maybe refactoring considering risk detection...
+                    new_worker_obj = _GraphAdaptedWorker(
+                        key=topology_task.key,
+                        worker=topology_task.worker_obj,
+                        dependencies=topology_task.dependencies,
+                        is_start=topology_task.is_start,
+                        args_mapping_rule=topology_task.args_mapping_rule,
+                    )
+                    new_worker_obj.parent = self
+                    self._workers[topology_task.key] = new_worker_obj
+                elif topology_task.task_type == "remove_worker":
+                    ...
+                # Rebuild worker forwards.
+                # TODO: 
+                self._worker_forwards = self._rebuild_worker_forwards(self._workers)
+                # Incrementally update the dynamic states of successor workers.
+                self._workers_dynamic_states[topology_task.key] = _WorkerDynamicState(
+                    dependency_triggers=set(getattr(new_worker_obj, "dependencies", []))
+                )
 
-        for future in self._future_list:
-            if future.done():
-                exc = future.exception()
-                if exc is not None:
-                    raise exc
+            # Process set_output_worker() deferred task.
+            if self._set_output_worker_deferred_task:
+                ...
+                # TODO: add validation...
+
+            # TODO: Ferry-related risk detection may be added here...
+
+            # Find next kickoff workers and rebuild _current_kickoff_workers
+            self._current_kickoff_workers = []
+            # New kickoff workers can be triggered by two ways:
+            # 1. The ferry_to() operation is called during current worker execution.
+            # 2. The dependencies are eliminated after all predecessor workers are finished.
+            # So,
+            # First add kickoff workers triggered by ferry_to();
+            for ferry_task in self._ferry_deferred_tasks:
+                self._current_kickoff_workers.append(_KickoffInfo(
+                    worker_key=ferry_task.ferry_to_worker_key,
+                    last_kickoff=ferry_task.kickoff_worker_key,
+                    from_ferry=True,
+                    args=ferry_task.args,
+                    kwargs=ferry_task.kwargs,
+                ))
+            # Then add kickoff workers triggered by dependencies elimination.
+            # Merge successor keys of all finished tasks.
+            successor_keys = set()
+            for task in self._running_tasks:
+                for successor_key in self._worker_forwards.get(task.worker_key, []):
+                    if successor_key not in successor_keys:
+                        dependency_triggers = self._workers_dynamic_states[successor_key].dependency_triggers
+                        if not dependency_triggers:
+                            self._current_kickoff_workers.append(_KickoffInfo(
+                                worker_key=successor_key,
+                                last_kickoff=task.worker_key,
+                            ))
+                        successor_keys.add(successor_key)
+            if self.running_options.debug:
+                printer.print(f"[DS][After Tasks Finished] successor workers: {successor_keys}", color="purple")
+
+            # Clear running tasks after all finished.
+            self._running_tasks.clear()
+            self._ferry_deferred_tasks.clear()
+
+            # TODO: Can serialize and interrupt here...
 
         if self.running_options.debug:
-            printer.print(f"GraphAutoma-[{self.name}] is finished.")
+            printer.print(f"GraphAutoma-[{self.name}] is finished.", color="green")
 
         # If the output-worker is specified, return its output as the return value of the automa.
         if self._output_worker_key:
@@ -600,60 +888,12 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         else:
             return None
 
-    def _compile_automa(self):
+    def _get_worker_dependencies(self, worker_key: str) -> List[str]:
         """
-        This method should be called at the very beginning of self.run() to ensure that:
-        1. The whole graph is built out of all of the following worker sources:
-            - Pre-defined workers, such as:
-                - Methods decorated with @worker(...)
-            - Post-added workers, such as:
-                - Functions decorated with @automa_obj.worker(...)
-                - Workers added via automa_obj.add_func_as_worker(...)
-                - Workers added via automa_obj.add_worker(...)
-        2. The dependencies of each worker are confirmed to satisfy the DAG constraints.
+        Get the worker keys of all dependencies of the worker.
         """
-        cls = type(self)
-
-        def validate_worker(worker_key: str):
-            if worker_key not in self._workers:
-                raise AutomaCompilationError(
-                    f'there exists an uninstantiated worker "{worker_key}" in automa "{cls.__name__}"'
-                )
-
-        # It is necessary to strictly ensure that all occurrences of the worker key correspond to an instance.
-        for current, target_list in cls._worker_static_forwards.items():
-            validate_worker(current)
-            for target in target_list:
-                validate_worker(target)
-
-        # Refresh the related data structures of the automa instance.
-        self._worker_triggers, self._worker_forwards = {}, {}
-
-        # Read from self._workers to confirm their dependencies and maintain the related data structures.
-        for worker_key, worker_obj in self._workers.items():
-            dependencies = (getattr(worker_obj, "dependencies", []))
-
-            for trigger in dependencies:
-                self._worker_triggers[worker_key] = self._worker_triggers.get(worker_key, [])
-                self._worker_triggers[worker_key].append(trigger)
-                self._worker_forwards[trigger] = self._worker_forwards.get(trigger, [])
-                self._worker_forwards[trigger].append(worker_key)
-
-        # Validate the DAG constraints.
-        GraphAutomaMeta.validate_dag_constraints(self._worker_forwards)
-
-        # Validate if the output worker exists.
-        if self._output_worker_key and self._output_worker_key not in self._workers:
-            raise AutomaCompilationError(
-                f"the output worker is not found: "
-                f"output_worker_key={self._output_worker_key}"
-            )
-
-        # Penetrate the running options to all levels below.
-        self._penetrate_running_options()
-
-        # Find all connected components of the whole automa graph.
-        self._find_connected_components()
+        deps = self._workers[worker_key].dependencies
+        return [] if deps is None else deps
 
     def _find_connected_components(self):
         """
@@ -681,189 +921,25 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
                 for worker in current_component:
                     component_idx[worker] = current_idx
 
-        self._component_list, self._component_idx = component_list, component_idx
+        # self._component_list, self._component_idx = component_list, component_idx
+        # TODO: check how to use _component_list and _component_idx...
 
-    def _try_to_start_successors(self, worker_key: str):
-        """
-        Try to start the successors of the trigger worker.
-
-        Parameters
-        ----------
-        worker_key : str
-            The key of the trigger worker.
-        """
-        for target in self._worker_forwards.get(worker_key, []):
-            worker_state = self._worker_states[target]
-            worker_state.dependency_triggers.discard(worker_key)
-
-            if len(worker_state.dependency_triggers) == 0:
-                # Map the arguments of the next worker according to the mapping rule.
-                next_args, next_kwargs = self._mapping_args(
-                    kickoff_worker_key_or_name=worker_key,
-                    current_worker_key=target,
-                )
-
-                self._set_kickoff_worker(target, worker_key)
-                self.ferry_to(target, *next_args, **next_kwargs)
-
-    def _refresh_worker_state(self, worker_key: str):
-        """
-        Refresh the runtime state of the worker.
-
-        Parameters
-        ----------
-        worker_key : str
-            The key of the worker to refresh.
-        """
-        if worker_key not in self._worker_states:
-            self._worker_states[worker_key] = WorkerState()
-
-        worker_state = self._worker_states[worker_key]
-        worker_state.is_running = False
-        worker_state.kickoff_worker_key_or_name = None
-        worker_state.dependency_triggers = set(self._worker_triggers.get(worker_key, []))
-
-    def _set_kickoff_worker(self, worker_key: str, kickoff_worker_key_or_name: str):
-        """
-        Set the kickoff worker name of the worker, which is part of the worker running state.
-
-        Parameters
-        ----------
-        worker_key : str
-            The key of the worker to set the kickoff_worker_name for.
-        kickoff_worker_key_or_name : str
-            The key or name of the kickoff worker.
-        """
-        worker_state = self._worker_states[worker_key]
-        worker_state.kickoff_worker_key_or_name = kickoff_worker_key_or_name
-
-    def _get_kickoff_worker(self, worker_key: str) -> str:
+    def _get_kickoff_worker_from_stack(self) -> Optional[str]:
         """
         Retrieve the key of the kickoff worker for the specified worker.
-
-        Parameters
-        ----------
-        worker_key : str
-            The key of the worker whose kickoff worker is to be retrieved.
 
         Returns
         -------
         str
-            The key or name of the kickoff worker.
+            The key of the kickoff worker, or None if not found.
         """
-        worker_state = self._worker_states[worker_key]
-        if worker_state.kickoff_worker_key_or_name is not None:
-            return worker_state.kickoff_worker_key_or_name
-        else:
-            for frame_info in inspect.stack():
-                frame = frame_info.frame
-                if frame_info.function == "process_async" and 'self' in frame.f_locals:
-                    self_obj = frame.f_locals['self']
-                    if isinstance(self_obj, WithKeyMixin):
-                        return getattr(self_obj, "key", self.name)
-            return self.name
-
-    def _refresh_worker_buffers(self, worker_key: str):
-        """
-        Refresh the output buffer and local space of the worker.
-
-        Parameters
-        ----------
-        worker_key : str
-            The key of the worker to refresh.
-        """
-        worker_obj = self._workers[worker_key]
-        worker_obj.output_buffer = None
-        worker_obj.local_space.clear()
-
-    def _submit_to_backend(
-        self,
-        worker_key: str,
-        *args,
-        **kwargs
-    ) -> asyncio.Future:
-        """
-        Submit the coroutine to the backend and return its future.
-
-        Parameters
-        ----------
-        worker_key : str
-            The key of the worker to submit.
-
-        Returns
-        -------
-        asyncio.Future
-            The future of the submitted coroutine.
-        """
-        worker_obj = self._workers[worker_key]
-
-        async def run_coro():
-            if self.running_options.debug:
-                printer.print(f"[{worker_key}]", "running")
-
-            exc: Exception = None
-
-            # Run the worker coroutine and set back the output to the corresponding output buffer.
-            try:
-                worker_obj.output_buffer = await worker_obj.process_async(*args, **kwargs)
-            except Exception as e:
-                exc = e
-
-            if self.running_options.debug:
-                printer.print(f"[{worker_key}]", "done" if exc is None else "failed")
-
-            # Exception handling strategy by default:
-            # 1. If the current worker fails, the entire automa execution will be terminated.
-            # 2. If the current worker succeeds, it will proceed to trigger its successor worker(s).
-            # TODO : It may be useful to provide callback api for developers to define how to handle exceptions.
-
-            if exc is not None:
-                stack_str = ''.join(traceback.format_exception(type(exc), exc, exc.__traceback__))
-                printer.print(f"Error occurred in [{worker_key}]:\n\n{stack_str}")
-                self._finish_event.set()
-                raise exc
-            else:
-                # The successors of the current worker may have a chance to run.
-                self._try_to_start_successors(worker_key)
-
-                # Release the running state of the worker.
-                self._refresh_worker_state(worker_key)
-
-                # Check and terminate the entire automa if no worker could be kickoffed.
-                self._check_and_terminate_if_possible()
-
-        return self._loop.create_task(run_coro())
-
-    def _is_in_terminated_state(self) -> bool:
-        """
-        Check if the automa is in a terminated state (i.e., all workers are not running).
-        """
-        running_array = [not worker_state.is_running for worker_state in self._worker_states.values()]
-
-        if self.running_options.debug:
-            running_snapshot = {k: v.is_running for k, v in self._worker_states.items()}
-            if running_snapshot != self._worker_running_snapshot:
-                self._worker_running_snapshot = running_snapshot
-                d = []
-                for k, v in self._worker_running_snapshot.items():
-                    key = colored(k, "blue")
-                    state = "Running" if v else "Inactive"
-                    state = f"{state:<9}"
-                    state = colored(state, "green") if v else colored(state, "red")
-                    d.append(f'\n    {state}: {key}')
-                printer.print(
-                    colored(f"Current status of [{self.name}] =>", "yellow"),
-                    " ".join(d),
-                )
-
-        return all(running_array)
-
-    def _check_and_terminate_if_possible(self):
-        """
-        Check whether all workers in the automa are inactive, and if so, terminate the automa.
-        """
-        if self._is_in_terminated_state():
-            self._finish_event.set()
+        for frame_info in inspect.stack():
+            frame = frame_info.frame
+            if frame_info.function == "process_async" and 'self' in frame.f_locals:
+                self_obj = frame.f_locals['self']
+                if isinstance(self_obj, WithKeyMixin):
+                    return getattr(self_obj, "key", self.name)
+        return None # TODO: how to process?
 
     def _mapping_args(
         self, 
@@ -904,10 +980,7 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
                 args, kwargs = (), {}
             else:
                 if isinstance(result, Mapping):
-                    if isinstance(current_worker_obj, _GraphBuiltinWorker):
-                        arg_names = get_arg_names(current_worker_obj.func)
-                    else:
-                        arg_names = get_arg_names(current_worker_obj.process_async)
+                    arg_names = get_arg_names(current_worker_obj.func)
                     # Only map for the known parameters.
                     args, kwargs = (), {k: v for k, v in result.items() if k in arg_names}
                 else:
@@ -921,7 +994,7 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         next_args, next_kwargs = (), {}
         args_mapping_rule = current_worker_obj.args_mapping_rule
 
-        if self._worker_triggers.get(current_worker_key, []) == [kickoff_worker_key_or_name]:
+        if self._get_worker_dependencies(current_worker_key) == [kickoff_worker_key_or_name]:
             # For one-to-one dependency relationship, map the return value of the previous worker
             # as the arguments of the current worker, according to the args_mapping_rule.
             if args_mapping_rule == ARGS_MAPPING_RULE_AS_LIST:
@@ -935,3 +1008,16 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
             assert args_mapping_rule == ARGS_MAPPING_RULE_SUPPRESSED
 
         return next_args, next_kwargs
+
+    def __repr__(self) -> str:
+        # TODO : It's good to make __repr__() of Automa compatible with eval().
+        # This feature depends on the implementation of __repr__() of workers.
+        class_name = self.__class__.__name__
+        workers_str = self._workers.__repr__()
+        return f"{class_name}(workers={workers_str})"
+
+    def __str__(self) -> str:
+        d = {}
+        for k, v in self._workers.items():
+            d[k] = f"{v} depends on {getattr(v, 'dependencies', [])}"
+        return json.dumps(d, ensure_ascii=False, indent=4)

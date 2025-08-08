@@ -30,7 +30,6 @@ def ready_automa_obj():
     )
     yield automa_obj
 
-@pytest.mark.asyncio
 def test_automa_naming(ready_automa_obj: AutomaLayerD):
     assert ready_automa_obj.name == "wrapped_automa"
 
