@@ -537,18 +537,16 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
             The rule of arguments mapping. The options are: "auto", "as_list", "as_dict", "suppressed".
         """
         # Register func as an instance of CallableWorker.
-        func_worker = CallableWorker(MethodType(func, self))
-        worker_obj = _GraphAdaptedWorker(
-            key=key,
-            worker=func_worker,
-            dependencies=dependencies,
-            is_start=is_start,
-            args_mapping_rule=args_mapping_rule,
-        )
+        if not isinstance(func, MethodType):
+            func = MethodType(func, self)
+        else:
+            # TODO: validate whether self is Automa?
+            ...
+        func_worker = CallableWorker(func)
 
         self.add_worker(
             key=key,
-            worker_obj=worker_obj,
+            worker_obj=func_worker,
             dependencies=dependencies,
             is_start=is_start,
             args_mapping_rule=args_mapping_rule,
