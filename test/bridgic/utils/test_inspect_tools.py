@@ -1,22 +1,45 @@
-from typing import Any
-from bridgic.utils.inspect_tools import get_arg_names, load_qualified_class
+from inspect import Parameter
+from bridgic.utils.inspect_tools import load_qualified_class, get_param_names_by_kind
 
 class A:
-    def func_1(self, a: int, s: str, c, d, *args: Any, **kwargs) -> int:
+    def func_1(self, a: int, b: str, c=5, d=6) -> int:
         pass
 
-    def func_2(self, a: int, s: str, /, c, e: str="e", f="f") -> None:
+    def func_2(self, a: int, /, b: str, c=5, d=6) -> int:
         pass
 
-    def func_3(self, a, s, c):
+    def func_3(self, a: int, /, b: str, c=5, d=6, *, e: str, f:int=7, g, h="", **kwargs) -> int:
         pass
 
+    def func_4(self, a: int, /, b: str, c=5, d=6, *args, **kwargs) -> int:
+        pass
 
 def test_get_arg_names_without_defaults():
     a = A()
-    assert get_arg_names(a.func_1) == ["a", "s", "c", "d", "args", "kwargs"]
-    assert get_arg_names(a.func_2) == ["a", "s", "c", "e", "f"]
-    assert get_arg_names(a.func_3) == ["a", "s", "c"]
+
+    assert get_param_names_by_kind(a.func_1, Parameter.POSITIONAL_ONLY) == []
+    assert get_param_names_by_kind(a.func_1, Parameter.POSITIONAL_OR_KEYWORD) == ["a", "b", "c", "d"]
+    assert get_param_names_by_kind(a.func_1, Parameter.POSITIONAL_OR_KEYWORD, exclude_default=True) == ["a", "b"]
+
+    assert get_param_names_by_kind(a.func_2, Parameter.POSITIONAL_ONLY) == ["a"]
+    assert get_param_names_by_kind(a.func_2, Parameter.POSITIONAL_ONLY, exclude_default=True) == ["a"]
+    assert get_param_names_by_kind(a.func_2, Parameter.POSITIONAL_OR_KEYWORD) == ["b", "c", "d"]
+    assert get_param_names_by_kind(a.func_2, Parameter.POSITIONAL_OR_KEYWORD, exclude_default=True) == ["b"]
+
+    assert get_param_names_by_kind(a.func_3, Parameter.POSITIONAL_ONLY) == ["a"]
+    assert get_param_names_by_kind(a.func_3, Parameter.POSITIONAL_ONLY, exclude_default=True) == ["a"]
+    assert get_param_names_by_kind(a.func_3, Parameter.POSITIONAL_OR_KEYWORD) == ["b", "c", "d"]
+    assert get_param_names_by_kind(a.func_3, Parameter.POSITIONAL_OR_KEYWORD, exclude_default=True) == ["b"]
+    assert get_param_names_by_kind(a.func_3, Parameter.KEYWORD_ONLY) == ["e", "f", "g", "h"]
+    assert get_param_names_by_kind(a.func_3, Parameter.KEYWORD_ONLY, exclude_default=True) == ["e", "g"]
+    assert get_param_names_by_kind(a.func_3, Parameter.VAR_KEYWORD) == ["kwargs"]
+
+    assert get_param_names_by_kind(a.func_4, Parameter.POSITIONAL_ONLY) == ["a"]
+    assert get_param_names_by_kind(a.func_4, Parameter.POSITIONAL_ONLY, exclude_default=True) == ["a"]
+    assert get_param_names_by_kind(a.func_4, Parameter.POSITIONAL_OR_KEYWORD) == ["b", "c", "d"]
+    assert get_param_names_by_kind(a.func_4, Parameter.POSITIONAL_OR_KEYWORD, exclude_default=True) == ["b"]
+    assert get_param_names_by_kind(a.func_4, Parameter.VAR_POSITIONAL) == ["args"]
+    assert get_param_names_by_kind(a.func_4, Parameter.VAR_KEYWORD) == ["kwargs"]
 
 class C:
     class D:

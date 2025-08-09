@@ -2,7 +2,7 @@ import inspect
 import uuid
 
 from typing import List, Callable, TYPE_CHECKING
-from bridgic.consts.args_mapping_rule import *
+from bridgic.automa.worker_decorator import ArgsMappingRule
 
 if TYPE_CHECKING:
     from bridgic.automa.automa import Automa
@@ -22,7 +22,7 @@ class LandableMixin:
         self,
         dependencies: List[str] = [],
         is_start: bool = False,
-        args_mapping_rule: str = ARGS_MAPPING_RULE_SUPPRESSED,
+        args_mapping_rule: ArgsMappingRule = ArgsMappingRule.AS_IS,
         *args,
         **kwargs,
     ):

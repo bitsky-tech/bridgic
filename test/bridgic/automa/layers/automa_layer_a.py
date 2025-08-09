@@ -2,7 +2,7 @@ import asyncio
 
 from typing import Any, Dict
 
-from bridgic.automa import GraphAutoma, worker
+from bridgic.automa import GraphAutoma, worker, ArgsMappingRule
 from bridgic.utils.console import printer
 
 class AutomaLayerA(GraphAutoma):
@@ -12,19 +12,19 @@ class AutomaLayerA(GraphAutoma):
         assert (greeting != "hi" and loop_back) or (greeting == "hi" and not loop_back)
         return (1, 2)
 
-    @worker(dependencies=["defined_start_worker_0"])
-    def worker_1(self, *args, **kwargs) -> int:
+    @worker(dependencies=["defined_start_worker_0"], args_mapping_rule=ArgsMappingRule.SUPPRESSED)
+    def worker_1(self) -> int:
         printer.print(f"  worker_1:", "self is GraphAutoma =>", isinstance(self, GraphAutoma))
         zero_output = self.defined_start_worker_0.output_buffer
         return zero_output[0]
 
-    @worker(dependencies=["defined_start_worker_0"])
+    @worker(dependencies=["defined_start_worker_0"], args_mapping_rule=ArgsMappingRule.SUPPRESSED)
     def worker_2(self, *args, **kwargs) -> int:
         printer.print("  worker_2:", "self is GraphAutoma =>", isinstance(self, GraphAutoma))
         zero_output = self.defined_start_worker_0.output_buffer
         return zero_output[1]
 
-    @worker(key="loop_worker_3", dependencies=["worker_1", "worker_2"])
+    @worker(key="loop_worker_3", dependencies=["worker_1", "worker_2"], args_mapping_rule=ArgsMappingRule.SUPPRESSED)
     async def worker_3(self, *args, **kwargs) -> int:
         await asyncio.sleep(0.25)
 

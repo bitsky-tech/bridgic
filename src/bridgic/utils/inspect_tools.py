@@ -2,12 +2,49 @@ import inspect
 from typing import Callable, List, Dict, Any
 from typing_extensions import get_overloads
 import importlib
+import enum
 
 def get_arg_names(func: Callable) -> List[str]:
     sig = inspect.signature(func)
     arg_names = []
     for name, _ in sig.parameters.items():
         arg_names.append(name)
+    return arg_names
+
+def get_param_names_by_kind(
+        func: Callable, 
+        param_kind: enum.IntEnum,
+        exclude_default: bool = False,
+    ) -> List[str]:
+    """
+    Get the names of parameters of a function by the kind of the parameter.
+
+    Parameters
+    ----------
+    func : Callable
+        The function to get the parameter names from.
+    param_kind : enum.IntEnum
+        The kind of the parameter. One of five possible values:
+        - inspect.Parameter.POSITIONAL_ONLY
+        - inspect.Parameter.POSITIONAL_OR_KEYWORD
+        - inspect.Parameter.VAR_POSITIONAL
+        - inspect.Parameter.KEYWORD_ONLY
+        - inspect.Parameter.VAR_KEYWORD
+    exclude_default : bool
+        Whether to exclude the default parameters.
+
+    Returns
+    -------
+    List[str]
+        A list of parameter names.
+    """
+    sig = inspect.signature(func)
+    arg_names = []
+    for name, param in sig.parameters.items():
+        if param.kind == param_kind:
+            if exclude_default and param.default is not inspect.Parameter.empty:
+                continue
+            arg_names.append(name)
     return arg_names
 
 def get_default_paramaps_of_overloaded_funcs(func: Callable) -> List[Dict[str, Any]]:

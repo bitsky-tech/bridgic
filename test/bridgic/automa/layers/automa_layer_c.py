@@ -16,7 +16,8 @@ class PrintWorker(Worker):
         )
 
 class EndWorker(Worker):
-    async def process_async(self, *args, **kwargs) -> str:
+    async def process_async(self, time_str: str) -> str:
+        assert isinstance(time_str, str)
         return "happy_ending"
 
 class AutomaLayerC(AutomaLayerA, AutomaLayerB):

@@ -1,8 +1,8 @@
 import asyncio
 import inspect
+from inspect import Parameter
 import json
 import uuid
-
 from abc import ABCMeta
 from typing import Any, List, Dict, Set, Mapping, Callable, Tuple, Optional, Literal, Union
 from types import MethodType
@@ -15,10 +15,9 @@ from bridgic.utils.console import printer, colored
 from bridgic.automa.worker import Worker
 from bridgic.types.error import *
 from bridgic.types.mixin import WithKeyMixin, AdaptableMixin, LandableMixin
-from bridgic.consts.args_mapping_rule import *
-from bridgic.utils.inspect_tools import get_arg_names
+from bridgic.utils.inspect_tools import get_param_names_by_kind
 from bridgic.automa import Automa
-from bridgic.automa.worker_decorator import packup_worker_decorator_rumtime_args, WorkerDecoratorType
+from bridgic.automa.worker_decorator import packup_worker_decorator_rumtime_args, WorkerDecoratorType, ArgsMappingRule
 from bridgic.automa.worker.callable_worker import CallableWorker
 
 class _GraphAdaptedWorker(WithKeyMixin, AdaptableMixin, LandableMixin, Worker):
@@ -36,7 +35,7 @@ class _GraphAdaptedWorker(WithKeyMixin, AdaptableMixin, LandableMixin, Worker):
         worker: Worker,
         dependencies: List[str] = [],
         is_start: bool = False,
-        args_mapping_rule: str = ARGS_MAPPING_RULE_SUPPRESSED,
+        args_mapping_rule: ArgsMappingRule = ArgsMappingRule.AS_IS,
         **kwargs,
     ):
         super().__init__(
@@ -129,7 +128,7 @@ class _AddWorkerDeferredTask(BaseModel):
     worker_obj: Worker # Note: Not a pydantic model!!
     dependencies: List[str] = []
     is_start: bool = False
-    args_mapping_rule: str = ARGS_MAPPING_RULE_AUTO
+    args_mapping_rule: ArgsMappingRule = ArgsMappingRule.AS_IS
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
@@ -156,26 +155,6 @@ def _ensure_dependencies_params_valid(worker_key: str, dependencies: List[str]) 
         )
     return dependencies
 
-def _ensure_args_mapping_rule_params_valid(worker_key: str, dependencies: List[str], args_mapping_rule: str) -> str:
-    if args_mapping_rule not in all_args_mapping_rules:
-        raise ValueError(
-            f"args_mapping_rule must be one of the following: {all_args_mapping_rules},"
-            f"but got {args_mapping_rule} for worker {worker_key}"
-        )
-    if len(dependencies) <= 1:
-        if args_mapping_rule == ARGS_MAPPING_RULE_AUTO:
-            args_mapping_rule = ARGS_MAPPING_RULE_AS_LIST
-    else:
-        if args_mapping_rule == ARGS_MAPPING_RULE_AUTO:
-            args_mapping_rule = ARGS_MAPPING_RULE_SUPPRESSED
-        if args_mapping_rule != ARGS_MAPPING_RULE_SUPPRESSED:
-            raise WorkerArgsMappingError(
-                f"args_mapping_rule must be set to \"{ARGS_MAPPING_RULE_SUPPRESSED}\" "
-                f"when the number of dependencies is greater than 1: {len(dependencies)} "
-                f"for worker {worker_key}"
-            )
-    return args_mapping_rule
-
 class GraphAutomaMeta(ABCMeta):
     def __new__(mcls, name, bases, dct):
         """
@@ -189,7 +168,6 @@ class GraphAutomaMeta(ABCMeta):
 
         # Inherit the graph structure from the parent classes and maintain the related data structures.
         registered_worker_funcs: Dict[str, Callable] = {}
-        worker_static_triggers: Dict[str, List[str]] = {}
         worker_static_forwards: Dict[str, List[str]] = {}
         
         for attr_name, attr_value in dct.items():
@@ -201,12 +179,11 @@ class GraphAutomaMeta(ABCMeta):
                 func = attr_value
                 worker_key = complete_args["key"]
                 dependencies = _ensure_dependencies_params_valid(worker_key, complete_args["dependencies"])
-                args_mapping_rule = _ensure_args_mapping_rule_params_valid(worker_key, dependencies, complete_args["args_mapping_rule"])
                 setattr(func, "__is_worker__", True)
                 setattr(func, "__worker_key__", worker_key)
                 setattr(func, "__dependencies__", dependencies)
                 setattr(func, "__is_start__", complete_args["is_start"])
-                setattr(func, "__args_mapping_rule__", args_mapping_rule)
+                setattr(func, "__args_mapping_rule__", complete_args["args_mapping_rule"])
         
         for base in bases:
             for worker_key, worker_func in getattr(base, "_registered_worker_funcs", {}).items():
@@ -322,7 +299,7 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
 
     # Note: Just declarations, NOT instances!!!
     # So do not initialize them here!!!
-    _workers: Dict[str, _AddWorkerDeferredTask]
+    _workers: Dict[str, _GraphAdaptedWorker]
     _worker_forwards: Dict[str, List[str]]
     _output_worker_key: str
 
@@ -358,6 +335,7 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         """
         super().__init__(name=name or f"{type(self).__name__}-{uuid.uuid4().hex[:8]}")
         self._workers = {} #TODO: __getattribute__() refactoring
+        self._running_started = False
 
         # Start to initialize the states of the Automa.
         # The whole states of the Automa can be from two sources:
@@ -380,17 +358,15 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         # One data source of self._workers: _registered_worker_funcs
         # Another source of self._workers will be functions like add_worker()...
         for worker_key, worker_func in cls._registered_worker_funcs.items():
-            func_worker = CallableWorker(MethodType(worker_func, self))
-            # Register the worker_func as a built-in worker.
-            worker_obj = _GraphAdaptedWorker(
+            # The decorator based mechanism (i.e. @worker) is based on the add_worker() interface.
+            # Parameters check and other implementation details can be unified.
+            self.add_func_as_worker(
                 key=worker_key,
-                worker=func_worker,
+                func=worker_func,
                 dependencies=worker_func.__dependencies__,
                 is_start=worker_func.__is_start__,
                 args_mapping_rule=worker_func.__args_mapping_rule__,
             )
-            worker_obj.parent = self
-            self._workers[worker_key] = worker_obj
 
         # Initialization of _worker_forwards will be delayed until _compile_graph_and_detect_risks(). Before that, add_worker()... will probably change the value of _workers.
         self._worker_forwards = {}
@@ -415,7 +391,6 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         self._ferry_deferred_tasks = []
         # -- Dynamic in-degree of each workers. It will be also lazily initialized in _compile_graph_and_detect_risks().
         self._workers_dynamic_states = {}
-        self._running_started = False
 
         ##################################################################
         # Initialization of [Part Two: Runtime States] ******* End *****
@@ -435,7 +410,7 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         *,
         dependencies: List[str] = [],
         is_start: bool = False,
-        args_mapping_rule: str = ARGS_MAPPING_RULE_AUTO,
+        args_mapping_rule: ArgsMappingRule = ArgsMappingRule.AS_IS,
     ) -> None:
         """
         This method is used to add a worker dynamically into the automa.
@@ -456,8 +431,8 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
             A list of worker keys that the worker depends on.
         is_start : bool
             Whether the worker is a start worker.
-        args_mapping_rule : str
-            The rule of arguments mapping. The options are: "auto", "as_list", "as_dict", "suppressed".
+        args_mapping_rule : ArgsMappingRule
+            The rule of arguments mapping.
         """
 
         def _basic_worker_params_check(key: str, worker_obj: Worker):
@@ -472,11 +447,16 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
                     f"process_async of Worker must be an async method, "
                     f"but got {type(worker_obj.process_async)}: worker_key={key}"
                 )
+            
+            if args_mapping_rule not in ArgsMappingRule:
+                raise ValueError(
+                    f"args_mapping_rule must be one of the following: {[e for e in ArgsMappingRule]}, "
+                    f"but got {args_mapping_rule} for worker {key}"
+                )
 
         _basic_worker_params_check(key, worker_obj)
         # Ensure the parameters are valid.
         dependencies = _ensure_dependencies_params_valid(key, dependencies)
-        args_mapping_rule = _ensure_args_mapping_rule_params_valid(key, dependencies, args_mapping_rule)
 
         if not self._running_started:
             # Add worker during the [Initialization Phase].
@@ -515,7 +495,7 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         *,
         dependencies: List[str] = [],
         is_start: bool = False,
-        args_mapping_rule: str = ARGS_MAPPING_RULE_AUTO,
+        args_mapping_rule: ArgsMappingRule = ArgsMappingRule.AS_IS,
     ) -> None:
         """
         This method is used to add a function as a worker into the automa.
@@ -533,8 +513,8 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
             A list of worker names that the decorated callable depends on.
         is_start : bool
             Whether the decorated callable is a start worker. True means it is, while False means it is not.
-        args_mapping_rule : str
-            The rule of arguments mapping. The options are: "auto", "as_list", "as_dict", "suppressed".
+        args_mapping_rule : ArgsMappingRule
+            The rule of arguments mapping.
         """
         # Register func as an instance of CallableWorker.
         if not isinstance(func, MethodType):
@@ -558,7 +538,7 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         key: Optional[str] = None,
         dependencies: List[str] = [],
         is_start: bool = False,
-        args_mapping_rule: str = ARGS_MAPPING_RULE_AUTO,
+        args_mapping_rule: ArgsMappingRule = ArgsMappingRule.AS_IS,
     ) -> Callable:
         """
         This is a decorator used to mark a function as an GraphAutoma detectable Worker. Dislike the 
@@ -752,7 +732,7 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
             self._running_started = True
 
         if self.running_options.debug:
-            printer.print(f"GraphAutoma-[{self.name}] is getting started.", color="green")
+            printer.print(f"\nGraphAutoma-[{self.name}] is getting started.", color="green")
 
         # Task loop divided into many dynamic steps (DS).
         while self._current_kickoff_workers:
@@ -807,6 +787,7 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
                 # reset dynamic states of finished workers.
                 self._workers_dynamic_states[task.worker_key].dependency_triggers = set(getattr(worker_obj, "dependencies", []))
                 # Update the dynamic states of successor workers.
+                # TODO: delay run this later
                 for successor_key in self._worker_forwards.get(task.worker_key, []):
                     self._workers_dynamic_states[successor_key].dependency_triggers.discard(task.worker_key)
 
@@ -839,6 +820,7 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
             if self._set_output_worker_deferred_task:
                 ...
                 # TODO: add validation...
+                self._output_worker_key = self._set_output_worker_deferred_task.output_worker_key
 
             # TODO: Ferry-related risk detection may be added here...
 
@@ -871,11 +853,14 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
                             ))
                         successor_keys.add(successor_key)
             if self.running_options.debug:
-                printer.print(f"[DS][After Tasks Finished] successor workers: {successor_keys}", color="purple")
+                deferred_ferrys = [ferry_task.ferry_to_worker_key for ferry_task in self._ferry_deferred_tasks]
+                printer.print(f"[DS][After Tasks Finished] successor workers: {successor_keys}, deferred ferrys: {deferred_ferrys}", color="purple")
 
             # Clear running tasks after all finished.
             self._running_tasks.clear()
             self._ferry_deferred_tasks.clear()
+            self._topology_change_deferred_tasks.clear()
+            self._set_output_worker_deferred_task = None
 
             # TODO: Can serialize and interrupt here...
 
@@ -964,48 +949,102 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         """
         kickoff_worker_obj = self._workers[kickoff_worker_key_or_name]
         current_worker_obj = self._workers[current_worker_key]
-
-        def convert_return_in_list_rule(result: Any) -> Tuple[Tuple, Dict[str, Any]]:
-            if not result:
-                args, kwargs = (), {}
-            else:
-                if isinstance(result, (List, Tuple)):
-                    args, kwargs = tuple(item for item in result), {}
-                else:
-                    args, kwargs = tuple([result]), {}
-            return args, kwargs
-
-        def convert_return_in_dict_rule(result: Any) -> Tuple[Tuple, Dict[str, Any]]:
-            if not result:
-                args, kwargs = (), {}
-            else:
-                if isinstance(result, Mapping):
-                    arg_names = get_arg_names(current_worker_obj.func)
-                    # Only map for the known parameters.
-                    args, kwargs = (), {k: v for k, v in result.items() if k in arg_names}
-                else:
-                    raise AutomaRuntimeError(
-                        f"since the args_mapping_rule is set to \"{ARGS_MAPPING_RULE_AS_DICT}\" "
-                        f"for the worker \"{current_worker_key}\", the return type of the previous worker "
-                        f"must be Mapping, but got {type(result)}"
-                    )
-            return args, kwargs
-
-        next_args, next_kwargs = (), {}
         args_mapping_rule = current_worker_obj.args_mapping_rule
+        dep_workers_keys = self._get_worker_dependencies(current_worker_key)
+        assert kickoff_worker_key_or_name in dep_workers_keys
 
-        if self._get_worker_dependencies(current_worker_key) == [kickoff_worker_key_or_name]:
-            # For one-to-one dependency relationship, map the return value of the previous worker
-            # as the arguments of the current worker, according to the args_mapping_rule.
-            if args_mapping_rule == ARGS_MAPPING_RULE_AS_LIST:
-                next_args, next_kwargs = convert_return_in_list_rule(kickoff_worker_obj.output_buffer)
-            elif args_mapping_rule == ARGS_MAPPING_RULE_AS_DICT:
-                next_args, next_kwargs = convert_return_in_dict_rule(kickoff_worker_obj.output_buffer)
-            elif args_mapping_rule == ARGS_MAPPING_RULE_SUPPRESSED:
+        def as_is_return_values(results: List[Any]) -> Tuple[Tuple, Dict[str, Any]]:
+            positional_param_names = get_param_names_by_kind(current_worker_obj.func, Parameter.POSITIONAL_ONLY) + get_param_names_by_kind(current_worker_obj.func, Parameter.POSITIONAL_OR_KEYWORD)
+            positional_param_names_without_default = get_param_names_by_kind(current_worker_obj.func, Parameter.POSITIONAL_ONLY, exclude_default=True) + get_param_names_by_kind(current_worker_obj.func, Parameter.POSITIONAL_OR_KEYWORD, exclude_default=True)
+            var_positional_param_names = get_param_names_by_kind(current_worker_obj.func, Parameter.VAR_POSITIONAL)
+
+            if len(results) == 1 and results[0] is None and len(positional_param_names) == 0 and len(var_positional_param_names) == 0:
+                # The special case of returning None and no arguments are expected.
                 next_args, next_kwargs = (), {}
-        else:
-            # For multi-to-one dependency relationship, only "suppressed" rule is allowed.
-            assert args_mapping_rule == ARGS_MAPPING_RULE_SUPPRESSED
+            else:
+                # Note: The order of dependent workers is important here.
+                if len(results) >= len(positional_param_names_without_default) and (len(results) <= len(positional_param_names) or len(var_positional_param_names) > 0):
+                    next_args, next_kwargs = tuple(results), {}
+                else:
+                    raise WorkerArgsMappingError(
+                        f"For args_mapping_rule=\"{ArgsMappingRule.AS_IS}\", "
+                        f"the worker \"{current_worker_key}\" expects at least {len(positional_param_names_without_default)} arguments "
+                        f"and at most {len(positional_param_names)} arguments, "
+                        f"but the dependency workers {dep_workers_keys} returned {len(results)} {'values' if len(results) > 1 else 'value'}.\n"
+                        f"The returned {'values' if len(results) > 1 else 'value'} are: {results}"
+                    )
+            return next_args, next_kwargs
+
+        def unpack_return_value(result: Any) -> Tuple[Tuple, Dict[str, Any]]:
+            if dep_workers_keys != [kickoff_worker_key_or_name]:
+                raise WorkerArgsMappingError(
+                    f"The worker \"{current_worker_key}\" must has exatly one dependency for the args_mapping_rule=\"{ArgsMappingRule.UNPACK}\", "
+                    f"but got {len(dep_workers_keys)} dependencies: {dep_workers_keys}"
+                )
+            # result is not allowed to be None, since None can not be unpacked.
+            if isinstance(result, (List, Tuple)):
+                # Similar args mapping logic to as_is_return_values()
+                positional_param_names = get_param_names_by_kind(current_worker_obj.func, Parameter.POSITIONAL_ONLY) + get_param_names_by_kind(current_worker_obj.func, Parameter.POSITIONAL_OR_KEYWORD)
+                positional_param_names_without_default = get_param_names_by_kind(current_worker_obj.func, Parameter.POSITIONAL_ONLY, exclude_default=True) + get_param_names_by_kind(current_worker_obj.func, Parameter.POSITIONAL_OR_KEYWORD, exclude_default=True)
+                var_positional_param_names = get_param_names_by_kind(current_worker_obj.func, Parameter.VAR_POSITIONAL)
+
+                if len(result) >= len(positional_param_names_without_default) and (len(result) <= len(positional_param_names) or len(var_positional_param_names) > 0):
+                    next_args, next_kwargs = tuple(result), {}
+                else:
+                    raise WorkerArgsMappingError(
+                        f"For args_mapping_rule=\"{ArgsMappingRule.UNPACK}\", "
+                        f"the worker \"{current_worker_key}\" expects at least {len(positional_param_names_without_default)} arguments "
+                        f"and at most {len(positional_param_names)} arguments, "
+                        f"but the kickoff worker \"{kickoff_worker_key_or_name}\" returned a list/tuple of length {len(result)}.\n"
+                        f"The returned list/tuple are: {result}"
+                    )
+            elif isinstance(result, Mapping):
+                keyword_param_names = get_param_names_by_kind(current_worker_obj.func, Parameter.POSITIONAL_OR_KEYWORD) + get_param_names_by_kind(current_worker_obj.func, Parameter.KEYWORD_ONLY)
+                var_keyword_param_names = get_param_names_by_kind(current_worker_obj.func, Parameter.VAR_KEYWORD)
+                if len(var_keyword_param_names) > 0:
+                    # A kwargs exists.
+                    next_args, next_kwargs = (), {**result}
+                else:
+                    # Only map for the known parameters.
+                    next_args, next_kwargs = (), {k: v for k, v in result.items() if k in keyword_param_names}
+            else:
+                # Other types, including None, are not unpackable.
+                raise WorkerArgsMappingError(
+                    f"args_mapping_rule=\"{ArgsMappingRule.UNPACK}\" is only valid for "
+                    f"tuple/list, or dict. But the worker\"{current_worker_obj}\" got type \"{type(result)}\" from the kickoff worker \"{kickoff_worker_key_or_name}\"."
+                )
+            return next_args, next_kwargs
+
+        def merge_return_values(results: List[Any]) -> Tuple[Tuple, Dict[str, Any]]:
+            if len(dep_workers_keys) < 2:
+                raise WorkerArgsMappingError(
+                    f"The worker \"{current_worker_key}\" must has at least 2 dependencies for the args_mapping_rule=\"{ArgsMappingRule.MERGE}\", "
+                    f"but got {len(dep_workers_keys)} dependencies: {dep_workers_keys}"
+                )
+
+            positional_param_names = get_param_names_by_kind(current_worker_obj.func, Parameter.POSITIONAL_ONLY) + get_param_names_by_kind(current_worker_obj.func, Parameter.POSITIONAL_OR_KEYWORD)
+            positional_param_names_without_default = get_param_names_by_kind(current_worker_obj.func, Parameter.POSITIONAL_ONLY, exclude_default=True) + get_param_names_by_kind(current_worker_obj.func, Parameter.POSITIONAL_OR_KEYWORD, exclude_default=True)
+            var_positional_param_names = get_param_names_by_kind(current_worker_obj.func, Parameter.VAR_POSITIONAL)
+
+            if len(positional_param_names_without_default) <= 1 and (len(positional_param_names) >= 1 or len(var_positional_param_names) > 0):
+                next_args, next_kwargs = tuple([results]), {}
+            else:
+                raise WorkerArgsMappingError(
+                    f"For args_mapping_rule=\"{ArgsMappingRule.MERGE}\", "
+                    f"the worker \"{current_worker_key}\" must have at least "
+                    "one positional parameter to receive the merged return values. "
+                    f"Please check the signature of {current_worker_obj.func}."
+                )
+            return next_args, next_kwargs
+
+        if args_mapping_rule == ArgsMappingRule.AS_IS:
+            next_args, next_kwargs = as_is_return_values([self._workers[dep_worker_key].output_buffer for dep_worker_key in dep_workers_keys])
+        elif args_mapping_rule == ArgsMappingRule.UNPACK:
+            next_args, next_kwargs = unpack_return_value(kickoff_worker_obj.output_buffer)
+        elif args_mapping_rule == ArgsMappingRule.MERGE:
+            next_args, next_kwargs = merge_return_values([self._workers[dep_worker_key].output_buffer for dep_worker_key in dep_workers_keys])
+        elif args_mapping_rule == ArgsMappingRule.SUPPRESSED:
+            next_args, next_kwargs = (), {}
 
         return next_args, next_kwargs
 

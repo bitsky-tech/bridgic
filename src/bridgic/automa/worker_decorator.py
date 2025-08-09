@@ -1,10 +1,8 @@
 import inspect
 from enum import Enum
 from typing_extensions import overload, TypeAlias
+from typing import List, Callable, Optional, Dict, Any, Union
 
-from typing import List, Callable, Optional, Dict, Any, Union, TYPE_CHECKING
-
-from bridgic.consts.args_mapping_rule import ARGS_MAPPING_RULE_AUTO
 from bridgic.types.common_types import ZeroToOne, PromptTemplate
 from bridgic.utils.inspect_tools import get_default_paramaps_of_overloaded_funcs
 from bridgic.types.error import WorkerSignatureError
@@ -14,6 +12,21 @@ class WorkerDecoratorType(Enum):
     GraphAutomaMethod = 1
     GoapAutomaMethod = 2
     LlmpAutomaMethod = 3
+
+class ArgsMappingRule(Enum):
+    """
+    Definitions of arguments mapping rules:
+    - AS_IS: The arguments for a worker are passed as is from the return values of its predecessors, preserving the order of the dependencies list as specified when the current worker is added. All types of return values, including list/tuple, dict, and single value, are all passed in as is (no unpacking or merging is performed).
+    - UNPACK: The return value of the predecessor worker is unpacked and passed as arguments to the current worker. Only valid when the current worker has exactly one dependency and the return value of the predecessor worker is a list/tuple or dict.
+    - MERGE: The return values of the predecessor workers are merged and passed as arguments to the current worker. Only valid when the current worker has multiple (at least two) dependencies.
+    - SUPPRESSED: The return values of the predecessor worker(s) are NOT passed to the current worker. The current worker has to access the outbuf mechanism to get the output data of its predecessor workers.
+
+    Please refer to test/bridgic/automa/test_automa_args_mapping.py for more details.
+    """
+    AS_IS = "as_is"
+    UNPACK = "unpack"
+    MERGE = "merge"
+    SUPPRESSED = "suppressed"
 
 StaticOutputEffect: TypeAlias = List[str]
 class DynamicOutputEffect(Enum):
@@ -26,7 +39,7 @@ def worker(
     key: Optional[str] = None,
     dependencies: List[str] = [],
     is_start: bool = False,
-    args_mapping_rule: str = ARGS_MAPPING_RULE_AUTO,
+    args_mapping_rule: ArgsMappingRule = ArgsMappingRule.AS_IS,
 ) -> Callable:
     """
     A decorator that marks a method as a worker within an GraphAutoma class. The worker's behavior can be customized through the decorator's parameters.
@@ -39,8 +52,8 @@ def worker(
         A list of worker names that the decorated callable depends on.
     is_start : bool
         Whether the decorated callable is a start worker. True means it is, while False means it is not.
-    args_mapping_rule : str
-        The rule of arguments mapping. The options are: "auto", "as_list", "as_dict", "suppressed".
+    args_mapping_rule : ArgsMappingRule
+        The rule of arguments mapping.
     """
     ...
 
