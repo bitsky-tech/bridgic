@@ -461,9 +461,8 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         if not self._running_started:
             # Add worker during the [Initialization Phase].
             if key in self._workers:
-                raise AutomaDeclarationError(
-                    f"duplicate worker keys are not allowed: "
-                    f"worker_key={key}"
+                raise AutomaRuntimeError(
+                    f"duplicate workers with the same key '{key}' are not allowed to be added"
                 )
             new_worker_obj = _GraphAdaptedWorker(
                 key=key,
@@ -724,8 +723,35 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         Any
             The output of the output-worker if it is specified, otherwise None.
         """
-        # Compile the whole automa graph, taking into account both statically defined and dynamically added workers.
-        # TODO: will be removed later...
+
+        def _execute_topology_change_deferred_tasks(tc_tasks: List[Union[_AddWorkerDeferredTask, _RemoveWorkerDeferredTask]]):
+            for topology_task in tc_tasks:
+                if topology_task.task_type == "add_worker":
+                    if topology_task.key in self._workers:
+                        raise AutomaRuntimeError(
+                            f"duplicate workers with the same key '{topology_task.key}' are not allowed to be added"
+                        )
+
+                    new_worker_obj = _GraphAdaptedWorker(
+                        key=topology_task.key,
+                        worker=topology_task.worker_obj,
+                        dependencies=topology_task.dependencies,
+                        is_start=topology_task.is_start,
+                        args_mapping_rule=topology_task.args_mapping_rule,
+                    )
+                    new_worker_obj.parent = self
+                    self._workers[topology_task.key] = new_worker_obj
+                    # Incrementally update the dynamic states of added workers.
+                    self._workers_dynamic_states[topology_task.key] = _WorkerDynamicState(
+                        dependency_triggers=set(getattr(new_worker_obj, "dependencies", []))
+                    )
+                elif topology_task.task_type == "remove_worker":
+                    ...
+                    # TODO: 
+            # Although self._work_farwads be incrementally built, we choose rebuild the whole table here for simplicity.
+            if len(tc_tasks) > 0:
+                self._worker_forwards = self._rebuild_worker_forwards(self._workers)
+
         if not self._running_started:
             # Here is the last chance to compile and check the DDG in the end of the [Initialization Phase] (phase 1 just before the first DS).
             self._compile_graph_and_detect_risks()
@@ -779,32 +805,15 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
                     break
                 await undone_tasks[0]
             
-            # TODO: Graph topology risk detection may be added here...
 
             # Process graph topology change deferred tasks triggered by add_worker() and remove_worker().
-            for topology_task in self._topology_change_deferred_tasks:
-                if topology_task.task_type == "add_worker":
-                    # TODO: maybe refactoring considering risk detection...
-                    new_worker_obj = _GraphAdaptedWorker(
-                        key=topology_task.key,
-                        worker=topology_task.worker_obj,
-                        dependencies=topology_task.dependencies,
-                        is_start=topology_task.is_start,
-                        args_mapping_rule=topology_task.args_mapping_rule,
-                    )
-                    new_worker_obj.parent = self
-                    self._workers[topology_task.key] = new_worker_obj
-                elif topology_task.task_type == "remove_worker":
-                    ...
-                # Incrementally update the dynamic states of successor workers.
-                self._workers_dynamic_states[topology_task.key] = _WorkerDynamicState(
-                    dependency_triggers=set(getattr(new_worker_obj, "dependencies", []))
-                )
-                # Rebuild worker forwards.
-                # TODO: 
-                self._worker_forwards = self._rebuild_worker_forwards(self._workers)
+            # Classify the topology change deferred tasks into two categories according to whether it refers to a worker in self._running_tasks.
+            running_worker_keys = [t.worker_key for t in self._running_tasks]
+            tc_deferred_tasks_not_running = [t for t in self._topology_change_deferred_tasks if t.key not in running_worker_keys]
+            tc_deferred_tasks_in_running = [t for t in self._topology_change_deferred_tasks if t.key in running_worker_keys]
+            _execute_topology_change_deferred_tasks(tc_deferred_tasks_not_running)
 
-            # Carry out post-task follow-up work
+            # Perform post-task follow-up operations.
             for task in self._running_tasks:
                 worker_obj = self._workers[task.worker_key]
                 # Collect results of the finished tasks.
@@ -812,9 +821,13 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
                 # reset dynamic states of finished workers.
                 self._workers_dynamic_states[task.worker_key].dependency_triggers = set(getattr(worker_obj, "dependencies", []))
                 # Update the dynamic states of successor workers.
-                # TODO: delay run this later
                 for successor_key in self._worker_forwards.get(task.worker_key, []):
                     self._workers_dynamic_states[successor_key].dependency_triggers.discard(task.worker_key)
+
+            # Execute the second part of topology change deferred tasks after all the post-task follow-up operations.
+            _execute_topology_change_deferred_tasks(tc_deferred_tasks_in_running)
+
+            # TODO: Graph topology risk detection may be added here...
 
             # Process set_output_worker() deferred task.
             if self._set_output_worker_deferred_task:
