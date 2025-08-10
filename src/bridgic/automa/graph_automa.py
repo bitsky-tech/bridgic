@@ -145,16 +145,6 @@ class _FerryDeferredTask(BaseModel):
     args: Tuple[Any, ...]
     kwargs: Dict[str, Any]
 
-def _ensure_dependencies_params_valid(worker_key: str, dependencies: List[str]) -> List[str]:
-    if not dependencies:
-        dependencies = []
-    if not all([isinstance(d, str) for d in dependencies]):
-        raise ValueError(
-            f"dependencies must be a List of str, "
-            f"but got {dependencies} for worker {worker_key}"
-        )
-    return dependencies
-
 class GraphAutomaMeta(ABCMeta):
     def __new__(mcls, name, bases, dct):
         """
@@ -177,11 +167,9 @@ class GraphAutomaMeta(ABCMeta):
                 # Convert values in complete_args to __is_worker__, __dependencies__ and other attributes used in the old metaclass version
                 # TODO: reactoring may be needed
                 func = attr_value
-                worker_key = complete_args["key"]
-                dependencies = _ensure_dependencies_params_valid(worker_key, complete_args["dependencies"])
                 setattr(func, "__is_worker__", True)
-                setattr(func, "__worker_key__", worker_key)
-                setattr(func, "__dependencies__", dependencies)
+                setattr(func, "__worker_key__", complete_args["key"])
+                setattr(func, "__dependencies__", complete_args["dependencies"])
                 setattr(func, "__is_start__", complete_args["is_start"])
                 setattr(func, "__args_mapping_rule__", complete_args["args_mapping_rule"])
         
@@ -313,6 +301,8 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
 
     # The following need not to be serialized.
     _running_tasks: List[_RunnningTask]
+    # TODO: The following deferred task structures need to be thread-safe.
+    # TODO: Need to be refactored when parallelization features are added.
     _topology_change_deferred_tasks: List[Union[_AddWorkerDeferredTask, _RemoveWorkerDeferredTask]]
     _set_output_worker_deferred_task: _SetOutputWorkerDeferredTask
     _ferry_deferred_tasks: List[_FerryDeferredTask]
@@ -439,13 +429,24 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
             if not isinstance(worker_obj, Worker):
                 raise TypeError(
                     f"worker_obj to be registered must be a Worker, "
-                    f"but got {type(worker_obj)}, worker_key={key}"
+                    f"but got {type(worker_obj)} for worker '{key}'"
                 )
 
             if not asyncio.iscoroutinefunction(worker_obj.process_async):
                 raise WorkerSignatureError(
                     f"process_async of Worker must be an async method, "
-                    f"but got {type(worker_obj.process_async)}: worker_key={key}"
+                    f"but got {type(worker_obj.process_async)} for worker '{key}'"
+                )
+            
+            if not isinstance(dependencies, list):
+                raise TypeError(
+                    f"dependencies must be a list, "
+                    f"but got {type(dependencies)} for worker '{key}'"
+                )
+            if not all([isinstance(d, str) for d in dependencies]):
+                raise ValueError(
+                    f"dependencies must be a List of str, "
+                    f"but got {dependencies} for worker {key}"
                 )
             
             if args_mapping_rule not in ArgsMappingRule:
@@ -454,9 +455,8 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
                     f"but got {args_mapping_rule} for worker {key}"
                 )
 
-        _basic_worker_params_check(key, worker_obj)
         # Ensure the parameters are valid.
-        dependencies = _ensure_dependencies_params_valid(key, dependencies)
+        _basic_worker_params_check(key, worker_obj)
 
         if not self._running_started:
             # Add worker during the [Initialization Phase].
@@ -779,18 +779,6 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
                     break
                 await undone_tasks[0]
             
-            # Carry out post-task follow-up work
-            for task in self._running_tasks:
-                worker_obj = self._workers[task.worker_key]
-                # Collect results of the finished tasks.
-                worker_obj.output_buffer = task.task.result() # Will raise an exception if task failed.
-                # reset dynamic states of finished workers.
-                self._workers_dynamic_states[task.worker_key].dependency_triggers = set(getattr(worker_obj, "dependencies", []))
-                # Update the dynamic states of successor workers.
-                # TODO: delay run this later
-                for successor_key in self._worker_forwards.get(task.worker_key, []):
-                    self._workers_dynamic_states[successor_key].dependency_triggers.discard(task.worker_key)
-
             # TODO: Graph topology risk detection may be added here...
 
             # Process graph topology change deferred tasks triggered by add_worker() and remove_worker().
@@ -808,13 +796,25 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
                     self._workers[topology_task.key] = new_worker_obj
                 elif topology_task.task_type == "remove_worker":
                     ...
-                # Rebuild worker forwards.
-                # TODO: 
-                self._worker_forwards = self._rebuild_worker_forwards(self._workers)
                 # Incrementally update the dynamic states of successor workers.
                 self._workers_dynamic_states[topology_task.key] = _WorkerDynamicState(
                     dependency_triggers=set(getattr(new_worker_obj, "dependencies", []))
                 )
+                # Rebuild worker forwards.
+                # TODO: 
+                self._worker_forwards = self._rebuild_worker_forwards(self._workers)
+
+            # Carry out post-task follow-up work
+            for task in self._running_tasks:
+                worker_obj = self._workers[task.worker_key]
+                # Collect results of the finished tasks.
+                worker_obj.output_buffer = task.task.result() # Will raise an exception if task failed.
+                # reset dynamic states of finished workers.
+                self._workers_dynamic_states[task.worker_key].dependency_triggers = set(getattr(worker_obj, "dependencies", []))
+                # Update the dynamic states of successor workers.
+                # TODO: delay run this later
+                for successor_key in self._worker_forwards.get(task.worker_key, []):
+                    self._workers_dynamic_states[successor_key].dependency_triggers.discard(task.worker_key)
 
             # Process set_output_worker() deferred task.
             if self._set_output_worker_deferred_task:

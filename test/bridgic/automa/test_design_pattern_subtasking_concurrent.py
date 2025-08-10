@@ -1,7 +1,7 @@
 from typing import List
 import pytest
 
-from bridgic.automa import GraphAutoma, worker, goal, DynamicOutputEffect
+from bridgic.automa import GraphAutoma, worker, ArgsMappingRule
 from pydantic import BaseModel
 
 class SeachSubtask(BaseModel):
@@ -33,7 +33,17 @@ class SubtaskingExample_SearchOrchestrator(GraphAutoma):
                 key=new_worker_key,
                 func=self.search_by_subtask,
             )
+            # Note: There is no way here to implement as sepecifying dependencies of these dynamic workers, because currently no args_mapping_rule is appropriate for this case.
+            # So we use ferry_to() to specify the arguments to the dynamic worker.
+            # TODO: Maybe need to add a new args_mapping_rule for this case.
             self.ferry_to(new_worker_key, sub_task=subtask)
+        self.add_func_as_worker(
+            key="synthesize_search_results",
+            func=self.synthesize_search_results,
+            dependencies=[f"search_by_{subtask.aspect}" for subtask in subtasks],
+            args_mapping_rule=ArgsMappingRule.MERGE,
+        )
+        self.set_output_worker("synthesize_search_results")
 
         # The return value is not used in this example.
         return subtasks
@@ -43,7 +53,6 @@ class SubtaskingExample_SearchOrchestrator(GraphAutoma):
     def search_by_subtask(self, sub_task: SeachSubtask) -> SearchResult:
         # TODO: call search engine to search the results
         # Here we hardcode the search result just for testing.
-        print(f"\n*********************************** in search_by_subtask(): sub_task={sub_task}\n")
         search_result = SearchResult(
             title=f"title_{sub_task.aspect}",
             content=f"content_{sub_task.aspect}",
@@ -57,7 +66,7 @@ class SubtaskingExample_SearchOrchestrator(GraphAutoma):
     # Not annotated with @worker, intentionally; serves as dynamic workers.
     def synthesize_search_results(self, search_results: List[SearchResult]) -> str:
         # TODO: call LLM to synthesize the search results
-        return "The answer is: xxx"
+        return f"The answer is: content synthesized from {'#'.join([result.content for result in search_results])}"
     
 @pytest.fixture
 def search_orchestrator():
@@ -67,7 +76,8 @@ def search_orchestrator():
 
 @pytest.mark.asyncio
 async def test_search_orchestrator(search_orchestrator):
-    await search_orchestrator.process_async(
+    answer = await search_orchestrator.process_async(
         user_input="Please search for the latest news about Bridgic.",
     )
+    assert answer == "The answer is: content synthesized from content_aspect1#content_aspect2#content_aspect3"
     
