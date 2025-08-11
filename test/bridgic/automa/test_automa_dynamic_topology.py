@@ -223,6 +223,7 @@ def dynamic_flow_5():
 async def test_dynamic_flow_5(dynamic_flow_5):
     coord = await dynamic_flow_5.process_async(x=2, y=3)
     assert coord == (4, {"x": 43, "y": 84})
+    assert dynamic_flow_5.all_workers() == [f"func_{i}" for i in range(1, 7)]
 
 #############################################################
 

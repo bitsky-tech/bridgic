@@ -47,7 +47,7 @@ class Automa(Worker, metaclass=ABCMeta):
         List[str]
             A list of worker keys.
         """
-        raise NotImplementedError("process_async() is not implemented for Automa")
+        return list(self._workers.keys())
 
     def set_running_options(self, debug: bool = None):
         """
