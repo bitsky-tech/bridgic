@@ -4,16 +4,14 @@ from bridgic.automa import (
     GraphAutoma,
     worker,
     AutomaCompilationError,
-    AutomaDeclarationError,
     WorkerSignatureError,
-    AutomaRuntimeError,
 )
 from bridgic.automa.worker import Worker
 from bridgic.utils.console import printer
 
 # TODO: This file need to be refactored later...
 def test_automa_declaration_dag_check():
-    with pytest.raises(AutomaDeclarationError):
+    with pytest.raises(AutomaCompilationError):
         class AutomaLayerStatic(GraphAutoma):
             @worker(is_start=True, dependencies=["worker_3"])
             def worker_0(self, *args, **kwargs) -> int:
@@ -32,7 +30,7 @@ def test_automa_declaration_dag_check():
                 return 3
 
 def test_automa_compilation_dag_check():
-    with pytest.raises(AutomaDeclarationError):
+    with pytest.raises(AutomaCompilationError):
         automa_obj = GraphAutoma()
 
         @automa_obj.worker(dependencies=["worker_1"])
