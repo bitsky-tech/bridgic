@@ -11,18 +11,16 @@ class RunningOptions(BaseModel):
     debug: bool = False
 
 class Automa(Worker, metaclass=ABCMeta):
+    _running_options: RunningOptions
+
     def __init__(self, name: str = None, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
         # Set the name of the Automa instance.
         self.name = name or f"automa-{uuid.uuid4().hex[:8]}"
 
-        # Define the shared running options.
-        self.running_options: RunningOptions = RunningOptions()
-
-        self._loop: asyncio.AbstractEventLoop = None
-        self._finish_event: asyncio.Event = None
-        self._future_list: List[asyncio.Future] = []
+        # Initialize the shared running options.
+        self._running_options = RunningOptions()
 
     async def process_async(self, *args, **kwargs) -> Any:
         raise NotImplementedError("process_async() is not implemented for Automa")
@@ -66,13 +64,13 @@ class Automa(Worker, metaclass=ABCMeta):
             Whether to enable debug mode. If not set, the effect is the same as setting `debug = False` by default.
         """
         if debug is not None:
-            self.running_options.debug = debug
+            self._running_options.debug = debug
 
-    def _penetrate_running_options(self):
-        for worker_obj in self._workers.values():
-            if isinstance(worker_obj, AdaptableMixin) and isinstance(worker_obj.core_worker, Automa):
-                worker_obj.core_worker.set_running_options(**(self.running_options.model_dump()))
-                worker_obj.core_worker._penetrate_running_options()
+    def _get_top_running_options(self) -> RunningOptions:
+        if self.parent is None:
+            # Here we are at the top-level automa.
+            return self._running_options
+        return self.parent._get_top_running_options()
 
     def _get_top_level_automa(self) -> "Automa":
         """

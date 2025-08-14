@@ -1,6 +1,10 @@
 import copy
+from asyncio import Future
 
 from typing import Any, Dict, get_type_hints, TYPE_CHECKING, Optional, Tuple
+from bridgic.automa.interaction import Event, InteractionFeedback, Feedback
+
+from bridgic.types.error import WorkerRuntimeError
 
 if TYPE_CHECKING:
     from bridgic.automa.automa import Automa
@@ -45,3 +49,20 @@ class Worker:
     @local_space.setter
     def local_space(self, value: Dict[str, Any]):
         self.__local_space = value
+
+    def post_event(self, event: Event) -> Future[Feedback]:
+        """
+        Post an event to the application layer outside the Automa.
+
+        Parameters
+        ----------
+        event: Event
+            The event to be posted.
+        """
+        if self.parent is None:
+            raise WorkerRuntimeError(f"`post_event` method can only be called by a worker inside an Automa")
+        return self.parent.post_event(event)
+
+    def interact_with_human(self, event: Event) -> InteractionFeedback:
+        ...
+        #TODO: implement...

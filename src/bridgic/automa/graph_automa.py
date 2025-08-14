@@ -1,4 +1,5 @@
 import asyncio
+from asyncio import Future, AbstractEventLoop
 import inspect
 from inspect import Parameter
 import json
@@ -19,6 +20,7 @@ from bridgic.utils.inspect_tools import get_param_names_by_kind
 from bridgic.automa import Automa
 from bridgic.automa.worker_decorator import packup_worker_decorator_rumtime_args, WorkerDecoratorType, ArgsMappingRule
 from bridgic.automa.worker.callable_worker import CallableWorker
+from bridgic.automa.interaction import Event, FeedbackSender, EventHandlerType, InteractionFeedback, Feedback
 
 class _GraphAdaptedWorker(WithKeyMixin, AdaptableMixin, LandableMixin, Worker):
     """
@@ -306,6 +308,9 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
     _set_output_worker_deferred_task: _SetOutputWorkerDeferredTask
     _ferry_deferred_tasks: List[_FerryDeferredTask]
 
+    _event_handlers: Dict[str, EventHandlerType]
+    _default_event_handler: EventHandlerType
+
     def __init__(
         self,
         name: Optional[str] = None,
@@ -384,6 +389,9 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         ###############################################################################
         # Initialization of [Part Two: Task-Related Runtime States] ####### End #######
         ###############################################################################
+
+        self._event_handlers = {}
+        self._default_event_handler = None
 
     def _init_from_state_dict(
             self,
@@ -744,9 +752,6 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
                 f"output_worker_key={self._output_worker_key}"
             )
 
-        # Penetrate the running options to all levels below.
-        self._penetrate_running_options()
-
         # Find all connected components of the whole automa graph.
         self._find_connected_components()
 
@@ -808,17 +813,20 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
                 elif topology_task.task_type == "remove_worker":
                     self._remove_worker_incrementally(topology_task.key)
 
+        running_options = self._get_top_running_options()
+
         if not self._running_started:
             # Here is the last chance to compile and check the DDG in the end of the [Initialization Phase] (phase 1 just before the first DS).
             self._compile_graph_and_detect_risks()
             self._running_started = True
+            # TODO: automa needs to be re-run with _current_kickoff_workers reinitialized and some states maintained. Minor changes needed here...
 
-        if self.running_options.debug:
+        if running_options.debug:
             printer.print(f"\nGraphAutoma-[{self.name}] is getting started.", color="green")
 
         # Task loop divided into many dynamic steps (DS).
         while self._current_kickoff_workers:
-            if self.running_options.debug:
+            if running_options.debug:
                 kickoff_worker_keys = [kickoff_info.worker_key for kickoff_info in self._current_kickoff_workers]
                 printer.print(f"[DS][Before Tasks Started] kickoff workers: {kickoff_worker_keys}", color="purple")
             for kickoff_info in self._current_kickoff_workers:
@@ -834,7 +842,7 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
                         current_worker_key=kickoff_info.worker_key,
                     )
 
-                if self.running_options.debug:
+                if running_options.debug:
                     kickoff_name = kickoff_info.last_kickoff
                     if kickoff_name == "__automa__":
                         kickoff_name = f"{kickoff_name}:({self.name})"
@@ -880,13 +888,14 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
                     for successor_key in self._worker_forwards.get(task.worker_key, []):
                         self._workers_dynamic_states[successor_key].dependency_triggers.remove(task.worker_key)
 
-            # Graph topology validation and risk detection.
-            # Guarantee the graph topology is valid and consistent after each DS.
-            # 1. Validate the canonical graph.
-            self._validate_canonical_graph()
-            # 2. Validate the DAG constraints.
-            GraphAutomaMeta.validate_dag_constraints(self._worker_forwards)
-            # TODO: more validations can be added here...
+            if len(self._topology_change_deferred_tasks) > 0:
+                # Graph topology validation and risk detection. Only needed when topology changes.
+                # Guarantee the graph topology is valid and consistent after each DS.
+                # 1. Validate the canonical graph.
+                self._validate_canonical_graph()
+                # 2. Validate the DAG constraints.
+                GraphAutomaMeta.validate_dag_constraints(self._worker_forwards)
+                # TODO: more validations can be added here...
 
             # Process set_output_worker() deferred task.
             if self._set_output_worker_deferred_task and self._set_output_worker_deferred_task.output_worker_key in self._workers:
@@ -922,7 +931,7 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
                                 last_kickoff=task.worker_key,
                             ))
                         successor_keys.add(successor_key)
-            if self.running_options.debug:
+            if running_options.debug:
                 deferred_ferrys = [ferry_task.ferry_to_worker_key for ferry_task in self._ferry_deferred_tasks]
                 printer.print(f"[DS][After Tasks Finished] successor workers: {successor_keys}, deferred ferrys: {deferred_ferrys}", color="purple")
 
@@ -934,7 +943,7 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
 
             # TODO: Can serialize and interrupt here...
 
-        if self.running_options.debug:
+        if running_options.debug:
             printer.print(f"GraphAutoma-[{self.name}] is finished.", color="green")
 
         # If the output-worker is specified, return its output as the return value of the automa.
@@ -942,6 +951,122 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
             return self._workers[self._output_worker_key].output_buffer
         else:
             return None
+
+    ###############################################################
+    ########## [Bridgic Event Handling Mechanism] starts ##########
+    ###############################################################
+
+    def register_event_handler(self, event_type: Optional[str], event_handler: EventHandlerType) -> None:
+        """
+        Register an event handler for the specified event type.
+
+        Note: Only event handlers registered on the top-level Automa will be invoked to handle events.
+
+        Parameters
+        ----------
+        event_type: Optional[str]
+            The type of event to be handled. If set to None, the event handler will be registered as the default handler and will be used to handle all event types.
+        event_handler: EventHandlerType
+            The event handler to be registered.
+        """
+        if event_type is None:
+            self._default_event_handler = event_handler
+        else:
+            self._event_handlers[event_type] = event_handler
+
+    def unregister_event_handler(self, event_type: Optional[str]) -> None:
+        """
+        Unregister an event handler for the specified event type.
+
+        Parameters
+        ----------
+        event_type: Optional[str]
+            The type of event to be unregistered. If set to None, the default event handler will be unregistered.
+        """
+        if event_type in self._event_handlers:
+            del self._event_handlers[event_type]
+        if event_type is None:
+            self._default_event_handler = None
+
+    def unregister_all_event_handlers(self) -> None:
+        """
+        Unregister all event handlers.
+        """
+        self._event_handlers.clear()
+        self._default_event_handler = None
+
+    class _FeedbackSender(FeedbackSender):
+        def __init__(
+                self, 
+                future: Future[Feedback],
+                post_loop: AbstractEventLoop,
+                ):
+            self._future = future
+            self._post_loop = post_loop
+        
+        def send(self, feedback: Feedback) -> None:
+            try:
+                current_loop = asyncio.get_running_loop()
+            except Exception:
+                current_loop = None
+            if current_loop is self._post_loop:
+                self._future.set_result(feedback)
+            else:
+                self._post_loop.call_soon_threadsafe(self._future.set_result, feedback)
+
+    @override
+    def post_event(self, event: Event) -> Future[Feedback]:
+        """
+        Post an event to the application layer outside the Automa.
+
+        The event will be bubbled up to the top-level Automa, where it will be processed by the event handler registered with the event type.
+
+        Parameters
+        ----------
+        event: Event
+            The event to be posted.
+        """
+        def _handler_need_feedback_sender(handler: EventHandlerType):
+            positional_param_names = get_param_names_by_kind(handler, Parameter.POSITIONAL_ONLY) + get_param_names_by_kind(handler, Parameter.POSITIONAL_OR_KEYWORD)
+            var_positional_param_names = get_param_names_by_kind(handler, Parameter.VAR_POSITIONAL)
+            return len(var_positional_param_names) > 0 or len(positional_param_names) > 1
+
+        if self.parent is not None:
+            # Bubble up the event to the top-level Automa.
+            return self.parent.post_event(event)
+
+        # Here is the top-level Automa.
+        event_loop = asyncio.get_event_loop()
+        future = event_loop.create_future()
+        feedback_sender = self._FeedbackSender(future, event_loop)
+        # Call event handlers
+        if event.event_type in self._event_handlers:
+            if _handler_need_feedback_sender(self._event_handlers[event.event_type]):
+                self._event_handlers[event.event_type](event, feedback_sender)
+            else:
+                self._event_handlers[event.event_type](event)
+        if self._default_event_handler is not None:
+            if _handler_need_feedback_sender(self._default_event_handler):
+                self._default_event_handler(event, feedback_sender)
+            else:
+                self._default_event_handler(event)
+        return future
+
+    ###############################################################
+    ########### [Bridgic Event Handling Mechanism] ends ###########
+    ###############################################################
+
+    ###############################################################
+    ######## [Bridgic Human Interaction Mechanism] starts #########
+    ###############################################################
+
+    def interact_with_human(self, event: Event) -> InteractionFeedback:
+        ...
+        #TODO: implement...
+
+    ###############################################################
+    ######### [Bridgic Human Interaction Mechanism] ends ##########
+    ###############################################################
 
     def _get_worker_dependencies(self, worker_key: str) -> List[str]:
         """

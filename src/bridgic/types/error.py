@@ -4,6 +4,9 @@ class WorkerSignatureError(Exception):
 class WorkerArgsMappingError(Exception):
     pass
 
+class WorkerRuntimeError(RuntimeError):
+    pass
+
 class AutomaDeclarationError(Exception):
     pass
 

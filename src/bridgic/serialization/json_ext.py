@@ -20,7 +20,7 @@ class JsonExtSerializer:
     def __init__(self, pickle_fallback: bool = False):
         self.pickle_fallback = pickle_fallback
 
-    def custom_encode(self, obj: Any) -> Any:
+    def _custom_encode(self, obj: Any) -> Any:
         ser_type: Optional[str] = None
         ser_data: Optional[bytes] = None
         # If both Serializable and Picklable are implemented, prefer using the implementation of Serializable.
@@ -39,7 +39,7 @@ class JsonExtSerializer:
             }
         return obj
 
-    def custom_decode(self, obj: Any) -> Any:
+    def _custom_decode(self, obj: Any) -> Any:
         if "t" in obj and "b" in obj:
             if obj["t"] == "pickled":
                 return pickle.loads(obj["b"])
@@ -51,8 +51,8 @@ class JsonExtSerializer:
         return obj
 
     def dumps(self, obj: Any) -> bytes:
-        return msgpack.packb(obj, default=self.custom_encode)
+        return msgpack.packb(obj, default=self._custom_encode)
 
     def loads(self, data: bytes) -> Any:
-        return msgpack.unpackb(data, object_hook=self.custom_decode)
+        return msgpack.unpackb(data, object_hook=self._custom_decode)
 
