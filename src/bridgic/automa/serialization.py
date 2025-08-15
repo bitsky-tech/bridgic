@@ -1,11 +1,8 @@
+from pydantic import BaseModel
 
-class Snapshot:
-    @property
-    def serialized_bytes(self) -> bytes:
-        ...
-        # TODO: implement...
-
-    @property
-    def serialization_version(self) -> str:
-        ...
-        # TODO: implement...
+class Snapshot(BaseModel):
+    """
+    Snapshot is a class that represents the current state of an Automa.
+    """
+    serialized_bytes: bytes
+    serialization_version: str

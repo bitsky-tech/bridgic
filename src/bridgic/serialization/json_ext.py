@@ -24,9 +24,11 @@ class JsonExtSerializer:
         ser_type: Optional[str] = None
         ser_data: Optional[bytes] = None
         # If both Serializable and Picklable are implemented, prefer using the implementation of Serializable.
-        if isinstance(obj, Serializable):
+        if hasattr(obj, "dump_bytes") and hasattr(obj, "load_bytes"):
+            # Use hasattr() instead of isinstance(obj, Serializable) for performance reasons.
+            # Refer to: https://docs.python.org/3/library/typing.html#typing.runtime_checkable
             ser_type = type(obj).__module__ + "." + type(obj).__qualname__
-            ser_data = obj.dumps()
+            ser_data = obj.dump_bytes()
         elif self.pickle_fallback or isinstance(obj, Picklable):
             # The type information is INCLUDED in the serialized data when pickle is used.
             ser_type = "pickled"
@@ -47,7 +49,7 @@ class JsonExtSerializer:
                 # Serializable is assumed here
                 qualified_class_name = obj["t"]
                 cls: Serializable = load_qualified_class(qualified_class_name)
-                return cls.loads(obj["b"])
+                return cls.load_bytes(obj["b"])
         return obj
 
     def dumps(self, obj: Any) -> bytes:

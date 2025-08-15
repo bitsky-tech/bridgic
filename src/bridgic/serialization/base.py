@@ -4,18 +4,18 @@ from abc import abstractmethod
 T = TypeVar('T', covariant=True)
 
 @runtime_checkable
-class Serializable(Generic[T], Protocol):
+class Serializable(Protocol[T]):
     """
     Serializable is a protocol that defines the interface for objects that customizes serialization.
     The type parameter T is the type of the object to be serialized and deserialized, typically the subclass itself that implements Serializable.
     """
     @abstractmethod
-    def dumps(self) -> bytes:
+    def dump_bytes(self) -> bytes:
         ...
 
     @classmethod
     @abstractmethod
-    def loads(cls, data: bytes) -> T:
+    def load_bytes(cls, data: bytes) -> T:
         ...
 
 @runtime_checkable
@@ -32,4 +32,3 @@ class Picklable(Protocol):
         Since it is not necessary to implement this method in the subclass, no @abstractmethod is used here.
         """
         ...
-

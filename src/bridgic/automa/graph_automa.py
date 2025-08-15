@@ -11,8 +11,7 @@ from collections import defaultdict, deque
 from dataclasses import dataclass
 from pydantic import BaseModel, Field, ConfigDict
 from typing_extensions import override
-
-from bridgic.utils.console import printer, colored
+from bridgic.utils.console import printer
 from bridgic.automa.worker import Worker
 from bridgic.types.error import *
 from bridgic.types.mixin import WithKeyMixin, AdaptableMixin, LandableMixin
@@ -21,6 +20,7 @@ from bridgic.automa import Automa
 from bridgic.automa.worker_decorator import packup_worker_decorator_rumtime_args, WorkerDecoratorType, ArgsMappingRule
 from bridgic.automa.worker.callable_worker import CallableWorker
 from bridgic.automa.interaction import Event, FeedbackSender, EventHandlerType, InteractionFeedback, Feedback
+from bridgic.automa.serialization import Snapshot
 
 class _GraphAdaptedWorker(WithKeyMixin, AdaptableMixin, LandableMixin, Worker):
     """
@@ -399,6 +399,37 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
     ):
         ...
         # TODO: deserialize from the state_dict
+
+
+    ###############################################################
+    ########## [Bridgic Serialization Mechanism] starts ###########
+    ###############################################################
+
+    @property
+    def serialization_version(self) -> str:
+        ...
+        # TODO: implement...
+
+    @override
+    def dump_bytes(self) -> bytes:
+        ...
+        # TODO: implement...
+
+    @classmethod
+    def load_bytes(cls, data: bytes) -> "GraphAutoma":
+        ...
+        # TODO: implement...
+
+    @classmethod
+    def load_from_snapshot(cls, snapshot: Snapshot) -> "GraphAutoma":
+        ...
+        # TODO: implement...
+
+
+    ###############################################################
+    ########### [Bridgic Serialization Mechanism] ends ############
+    ###############################################################
+
 
     def _add_worker_incrementally(
         self,

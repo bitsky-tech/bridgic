@@ -61,14 +61,14 @@ def test_basic_types_serialization(serder: JsonExtSerializer):
 
 # Test a custom Serializable object
 class MyWorker1(Worker, Serializable):
-    def dumps(self) -> bytes:
+    def dump_bytes(self) -> bytes:
         return json.dumps({
             "outbuf": self.output_buffer,
             "local_space": self.local_space,
         }).encode("utf-8")
     
     @classmethod
-    def loads(cls, data: bytes) -> "MyWorker1":
+    def load_bytes(cls, data: bytes) -> "MyWorker1":
         obj_dict = json.loads(data.decode("utf-8"))
         w = MyWorker1()
         w.output_buffer = obj_dict["outbuf"]

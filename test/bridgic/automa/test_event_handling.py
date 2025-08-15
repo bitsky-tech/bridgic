@@ -3,6 +3,7 @@ import asyncio
 
 from bridgic.automa import GraphAutoma
 from bridgic.automa import worker
+from bridgic.automa.worker import Worker
 from bridgic.automa.interaction.event_handling import ProgressEvent, Event, Feedback, FeedbackSender
 
 class TopGraph(GraphAutoma):
@@ -112,7 +113,8 @@ class Graph_2_TestFeedback(GraphAutoma):
         return x
 
     @worker(dependencies=["start"])
-    async def func_2(self, x: int):
+    def func_2(self, x: int):
+        # Test posting a progress event in a non-async method.
         progress_event = ProgressEvent(
             progress=0.7,
         )
@@ -330,3 +332,94 @@ def graph_3_with_two_feedbacks(graph_3):
 async def test_graph_3_two_simultaneous_feedbacks(graph_3_with_two_feedbacks):
     result = await graph_3_with_two_feedbacks.process_async(x=5)
     assert result == 770 - 200 + 35
+
+#############################################################################
+
+class MyWorker1(Worker):
+    async def process_async(self, x: int):
+        event = Event(
+            event_type="if_add",
+            data={
+                "prompt_to_user": f"Current value is {x}, do you want to add another 200 to it (yes/no) ?"
+            }
+        )
+        feedback = await self.post_event(event)
+        if feedback.data == "yes":
+            return x + 200
+        return x
+
+class MyWorker2(Worker):
+    async def process_async(self, x: int):
+        progress_event = ProgressEvent(
+            progress=0.7,
+        )
+        self.post_event(progress_event)
+        return x + 300
+
+class Graph_4_TestFeedback_CustomWorkers(GraphAutoma):
+    @worker(is_start=True)
+    async def start(self, x: int):
+        return x + 100
+
+    @worker(dependencies=["worker_1", "worker_2"])
+    async def end(self, x1: int, x2: int):
+        return x1 + x2
+
+@pytest.fixture
+def graph_4_third_layer():
+    graph = Graph_4_TestFeedback_CustomWorkers(output_worker_key="end")
+    worker1 = MyWorker1()
+    worker2 = MyWorker2()
+    graph.add_worker("worker_1", worker1, dependencies=["start"])
+    graph.add_worker("worker_2", worker2, dependencies=["start"])
+    return graph
+
+@pytest.fixture
+def graph_4_second_layer(graph_4_third_layer):
+    graph = SecondLayerGraph(output_worker_key="end")
+    graph.add_worker(
+        "func_2", 
+        graph_4_third_layer,
+        dependencies=["start"]
+    )
+    return graph
+
+@pytest.fixture
+def graph_4(graph_4_second_layer):
+    graph = TopGraph(output_worker_key="end")
+    graph.add_worker(
+        "middle", 
+        graph_4_second_layer,
+        dependencies=["start"]
+    )
+    return graph
+
+@pytest.fixture
+def graph_4_feedback_no(graph_4):
+    async def give_feedback_no(feedback_sender: FeedbackSender):
+        await asyncio.sleep(0.1)
+        feedback_sender.send(Feedback(data="no"))
+
+    def event_handler_if_add(event: Event, feedback_sender: FeedbackSender):
+        assert event.event_type == "if_add"
+        assert "(yes/no)" in event.data["prompt_to_user"]
+
+        # This simulates the application layer code. Normally, at this point, the event content would be displayed to the user, and the user would provide feedback based on the event. After the user gives feedback, typically in a different task within the same event loop, the FeedbackSender would be called. This code here provides a basic simulation of that process.
+        asyncio.create_task(give_feedback_no(feedback_sender))
+    
+    graph_4.register_event_handler("if_add", event_handler_if_add)
+
+    def event_handler_default(event: Event):
+        if event.event_type is None:
+            assert isinstance(event, ProgressEvent)
+            assert event.progress == 0.7
+
+    # Test the default event handler.
+    graph_4.register_event_handler(None, event_handler_default)
+    graph_4.set_running_options(debug=True)
+    return graph_4
+
+@pytest.mark.asyncio
+async def test_graph_4_feedback_no(graph_4_feedback_no):
+    result = await graph_4_feedback_no.process_async(x=5)
+    assert result == 570
