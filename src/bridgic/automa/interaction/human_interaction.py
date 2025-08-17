@@ -21,7 +21,7 @@ When the application layer catches an `InteractionException`, it receives a list
 
 When user feedback is received, the Automa's state is restored from the `Snapshot` retrived from external storage. The application layer should then call the `Automa.load_from_snapshot()` method to deserialize the Automa instance. After deserialization, the Automa's `process_async` method is called to resume execution.
 
-When `process_async` is called, the application layer should provide an argument named `interaction_feedback` to this method. This argument must contain both the feedback data supplied by the user and the `interaction_id`, which uniquely identifies the specific interaction. If multiple interactions occurred during the most recent event loop, the application layer should instead provide an argument named `interaction_feedbacks`, which should be a list of `InteractionFeedback` objects, allowing all feedback to be returned at once.
+When `process_async` is called, the application layer should provide an argument named `interaction_feedback` to this method. This argument must contain both the feedback data supplied by the user and the `interaction_id`, which uniquely identifies the specific interaction. If multiple interactions occurred simultaneously before the Automa was paused, the application layer should instead provide an argument named `interaction_feedbacks`, which should be a list of `InteractionFeedback` objects, allowing all feedback to be returned at once.
 
 After that, the Automa will resume execution from the worker that was previously paused. However, it is important to note that the paused worker will be re-executed from the beginning. As a result, any code in the worker that appears before the call to `interact_with_human` will be executed again, so this part of the code must be idempotent. When `interact_with_human` is re-executed, it will return the correct `InteractionFeedback` as its return value. The worker can then use this feedback to continue executing the subsequent logic.
 
@@ -51,6 +51,13 @@ class InteractionException(Exception):
     """
     Exception raised when the `interact_with_human` method is called and a human interaction is triggered.
     """
+    _interactions: List[Interaction]
+    _snapshot: Snapshot
+
+    def __init__(self, interactions: List[Interaction], snapshot: Snapshot):
+        self._interactions = interactions
+        self._snapshot = snapshot
+
     @property
     def interactions(self) -> List[Interaction]:
         """
@@ -58,8 +65,7 @@ class InteractionException(Exception):
 
         Multiple `Interaction` objects may be generated because, within the same event loop, several workers calling the `interact_with_human` method might be running concurrently in parallel branches of the graph.
         """
-        ...
-        #TODO: implement...
+        return self._interactions
 
     @property
     def snapshot(self) -> Snapshot:
@@ -67,8 +73,7 @@ class InteractionException(Exception):
         Returns a `Snapshot` of the Automa's current state.
         The serialization is automatically triggered by the `interact_with_human` method.
         """
-        ...
-        #TODO: implement...
+        return self._snapshot
 
 class InteractionFeedback(Feedback):
     """

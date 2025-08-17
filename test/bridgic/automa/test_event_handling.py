@@ -416,7 +416,6 @@ def graph_4_feedback_no(graph_4):
 
     # Test the default event handler.
     graph_4.register_event_handler(None, event_handler_default)
-    graph_4.set_running_options(debug=True)
     return graph_4
 
 @pytest.mark.asyncio
