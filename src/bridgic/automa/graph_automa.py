@@ -963,7 +963,7 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
             match_left_feedbacks = []
             for feedback in rx_feedbacks:
                 matched = False
-                for interaction_and_feedbacks in self._ongoing_interactions.values:
+                for interaction_and_feedbacks in self._ongoing_interactions.values():
                     for interaction_and_feedback in interaction_and_feedbacks:
                         if interaction_and_feedback.interaction.interaction_id == feedback.interaction_id and interaction_and_feedback.feedback is None:
                             interaction_and_feedback.feedback = feedback
@@ -1046,7 +1046,13 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
                 undone_tasks = [t.task for t in self._running_tasks if not t.task.done()]
                 if not undone_tasks:
                     break
-                await undone_tasks[0]
+                try:
+                    await undone_tasks[0]
+                except Exception as e:
+                    ...
+                    # The same exception will be raised again in the following task.result().
+                    # Note: A Task is done when the wrapped coroutine either returned a value, raised an exception, or the Task was cancelled.
+                    # Refer to: https://docs.python.org/3/library/asyncio-task.html#task-object
             
             # Process graph topology change deferred tasks triggered by add_worker() and remove_worker().
             _execute_topology_change_deferred_tasks(self._topology_change_deferred_tasks)
@@ -1070,7 +1076,7 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
                             self._workers_dynamic_states[successor_key].dependency_triggers.remove(task.worker_key)
                 except _InteractionEventException as e:
                     interaction_exceptions.append(e)
-                    if task.worker_key in self._workers and self._workers[task.worker_key].is_automa():
+                    if task.worker_key in self._workers and not self._workers[task.worker_key].is_automa():
                         if task.worker_key not in self._ongoing_interactions:
                             self._ongoing_interactions[task.worker_key] = []
                         self._ongoing_interactions[task.worker_key].append(_InteractionAndFeedback(
@@ -1316,7 +1322,6 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
                 event=event,
             ))
         else:
-            ...
             # Match interaction_feedback succeeded, return it.
             return matched_feedback.feedback
 
@@ -1382,7 +1387,8 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
             frame = frame_info.frame
             if frame_info.function == "process_async" and 'self' in frame.f_locals:
                 self_obj = frame.f_locals['self']
-                return getattr(self_obj, "key", self.name)
+                if isinstance(self_obj, _GraphAdaptedWorker):
+                    return getattr(self_obj, "key", self.name)
         return None # TODO: how to process?
 
     def _mapping_args(
