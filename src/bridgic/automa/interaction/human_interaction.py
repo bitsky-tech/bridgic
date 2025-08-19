@@ -28,6 +28,7 @@ After that, the Automa will resume execution from the worker that was previously
 """
 
 from typing import List
+from datetime import datetime
 from bridgic.automa.serialization import Snapshot
 from bridgic.automa.interaction.event_handling import Feedback, Event
 from pydantic import BaseModel
@@ -80,3 +81,4 @@ class InteractionFeedback(Feedback):
     A feedback object that contains both the data provided by the user and the `interaction_id`, which uniquely identifies the corresponding interaction.
     """
     interaction_id: str
+    timestamp: datetime = datetime.now()

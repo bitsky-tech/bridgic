@@ -3,14 +3,14 @@ from asyncio import Future
 
 from typing import Any, Dict, get_type_hints, TYPE_CHECKING, Optional, Tuple
 from bridgic.automa.interaction import Event, InteractionFeedback, Feedback
-
+from bridgic.serialization import Serializable
 from bridgic.types.error import WorkerRuntimeError
 
 if TYPE_CHECKING:
     from bridgic.automa.automa import Automa
 
 class Worker:
-    def __init__(self, *args, **kwargs):
+    def __init__(self):
         self.__parent: Automa = None
         self.__output_buffer: Any = None
         self.__output_setted: bool = False
@@ -49,6 +49,9 @@ class Worker:
     @local_space.setter
     def local_space(self, value: Dict[str, Any]):
         self.__local_space = value
+
+    def dump_to_dict(self) -> Dict[str, Any]:
+        ...
 
     def post_event(self, event: Event) -> Future[Feedback]:
         """

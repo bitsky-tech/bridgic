@@ -21,7 +21,7 @@ from bridgic.automa.worker_decorator import packup_worker_decorator_rumtime_args
 from bridgic.automa.worker.callable_worker import CallableWorker
 from bridgic.automa.interaction import Event, FeedbackSender, EventHandlerType, InteractionFeedback, Feedback, Interaction, InteractionException
 from bridgic.automa.serialization import Snapshot
-from bridgic.serialization import JsonExtSerializer
+import bridgic.serialization.msgpackx as msgpackx
 
 class _GraphAdaptedWorker(WithKeyMixin, AdaptableMixin, LandableMixin, Worker):
     """
@@ -291,7 +291,6 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
 
     # The initial topology defined by @worker functions.
     _registered_worker_funcs: Dict[str, Callable] = {}
-    _serder: JsonExtSerializer = JsonExtSerializer()
 
     # [IMPORTANT] 
     # The whole states of the Automa are divided into two main parts:
@@ -432,9 +431,16 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
             self,
             state_dict: Dict[str, Any],
     ):
-        ...
-        # TODO: deserialize from the state_dict
-
+        # Deserialize from the state_dict
+        self._workers = state_dict["workers"]
+        for worker in self._workers.values():
+            worker.parent = self
+        self._running_started = state_dict["running_started"]
+        self._worker_forwards = state_dict["worker_forwards"]
+        self._workers_dynamic_states = state_dict["workers_dynamic_states"]
+        self._output_worker_key = state_dict["output_worker_key"]
+        self._current_kickoff_workers = state_dict["current_kickoff_workers"]
+        self._ongoing_interactions = state_dict["ongoing_interactions"]
 
     ###############################################################
     ########## [Bridgic Serialization Mechanism] starts ###########
@@ -444,25 +450,34 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
     SERIALIZATION_VERSION: str = "1.0"
 
     @override
-    def dump_bytes(self) -> bytes:
-        state_dict = {}
-        # TODO: collect states to serialize 
-        return GraphAutoma._serder.dumps(state_dict)
+    def dump_to_dict(self) -> Dict[str, Any]:
+        state_dict = super().dump_to_dict()
+        # collect states to serialize 
+        state_dict["name"] = self.name
+        # TODO: serialize the workers, including the outbuf && local_space of each worker
+        state_dict["workers"] = self._workers
+        state_dict["running_started"] = self._running_started
+        state_dict["worker_forwards"] = self._worker_forwards
+        state_dict["workers_dynamic_states"] = self._workers_dynamic_states
+        state_dict["output_worker_key"] = self._output_worker_key
+        # TODO: args && kwargs must be serializable in order to serialize _current_kickoff_workers
+        state_dict["current_kickoff_workers"] = self._current_kickoff_workers
+        # TODO: the data field of Event and Feedback must be serializable in order to serialize _ongoing_interactions
+        state_dict["ongoing_interactions"] = self._ongoing_interactions
+        return state_dict
 
     @classmethod
-    def load_bytes(cls, data: bytes) -> "GraphAutoma":
-        state_dict: Dict[str, Any] = cls._serder.loads(data)
+    def load_from_dict(cls, state_dict: Dict[str, Any]) -> "GraphAutoma":
         return cls(state_dict=state_dict)
 
     @classmethod
     def load_from_snapshot(cls, snapshot: Snapshot) -> "GraphAutoma":
         # Here you can compare snapshot.serialization_version with SERIALIZATION_VERSION, and handle any necessary version compatibility issues if needed.
-        return GraphAutoma._serder.loads(snapshot.serialized_bytes)
+        return msgpackx.loads(snapshot.serialized_bytes)
 
     ###############################################################
     ########### [Bridgic Serialization Mechanism] ends ############
     ###############################################################
-
 
     def _add_worker_incrementally(
         self,
@@ -1005,7 +1020,6 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
                     break
                 await undone_tasks[0]
             
-
             # Process graph topology change deferred tasks triggered by add_worker() and remove_worker().
             _execute_topology_change_deferred_tasks(self._topology_change_deferred_tasks)
 
@@ -1055,7 +1069,7 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
                 all_interactions: List[Interaction] = [interaction for e in interaction_exceptions for interaction in e.args]
                 if self.parent is None:
                     # This is the top-level Automa. Serialize the Automa and raise InteractionException to the application layer.
-                    serialized_automa = GraphAutoma._serder.dumps(self)
+                    serialized_automa = msgpackx.dumps(self)
                     snapshot = Snapshot(
                         serialized_bytes=serialized_automa,
                         serialization_version=GraphAutoma.SERIALIZATION_VERSION,

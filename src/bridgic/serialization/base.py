@@ -1,4 +1,4 @@
-from typing import Generic, Protocol, TypeVar, runtime_checkable
+from typing import Protocol, TypeVar, runtime_checkable, Dict, Any
 from abc import abstractmethod
 
 T = TypeVar('T', covariant=True)
@@ -10,12 +10,18 @@ class Serializable(Protocol[T]):
     The type parameter T is the type of the object to be serialized and deserialized, typically the subclass itself that implements Serializable.
     """
     @abstractmethod
-    def dump_bytes(self) -> bytes:
+    def dump_to_dict(self) -> Dict[str, Any]:
+        """
+        Dump the object to a dictionary, which will finally be serialized to bytes.
+        """
         ...
 
     @classmethod
     @abstractmethod
-    def load_bytes(cls, data: bytes) -> T:
+    def load_from_dict(cls, state_dict: Dict[str, Any]) -> T:
+        """
+        Load the object from a dictionary, which is deserialized from bytes.
+        """
         ...
 
 @runtime_checkable

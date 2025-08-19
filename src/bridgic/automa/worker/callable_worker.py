@@ -9,7 +9,7 @@ class CallableWorker(Worker):
     _callable: Callable
 
     def __init__(self, func_or_method: Callable):
-        super().__init__(func_or_method)
+        super().__init__()
         self._is_async = inspect.iscoroutinefunction(func_or_method)
         self._callable = func_or_method
 
