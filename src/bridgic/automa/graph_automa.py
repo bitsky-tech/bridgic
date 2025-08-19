@@ -14,7 +14,6 @@ from typing_extensions import override
 from bridgic.utils.console import printer
 from bridgic.automa.worker import Worker
 from bridgic.types.error import *
-from bridgic.types.mixin import WithKeyMixin, AdaptableMixin, LandableMixin
 from bridgic.utils.inspect_tools import get_param_names_by_kind
 from bridgic.automa import Automa
 from bridgic.automa.worker_decorator import packup_worker_decorator_rumtime_args, WorkerDecoratorType, ArgsMappingRule
@@ -23,7 +22,7 @@ from bridgic.automa.interaction import Event, FeedbackSender, EventHandlerType, 
 from bridgic.automa.serialization import Snapshot
 import bridgic.serialization.msgpackx as msgpackx
 
-class _GraphAdaptedWorker(WithKeyMixin, AdaptableMixin, LandableMixin, Worker):
+class _GraphAdaptedWorker(Worker):
     """
     A decorated worker used for GraphAutoma orchestration and scheduling. Not intended for external use.
     Follows the `Decorator` design pattern:
@@ -31,25 +30,45 @@ class _GraphAdaptedWorker(WithKeyMixin, AdaptableMixin, LandableMixin, Worker):
     - https://en.wikipedia.org/wiki/Decorator_pattern
     New Behavior Added: In addition to the original Worker functionality, maintains configuration and state variables related to dynamic scheduling and graph topology.
     """
+    key: str
+    dependencies: List[str]
+    is_start: bool
+    args_mapping_rule: str
+    _decorated_worker: Worker
+
     def __init__(
         self,
         *,
-        key: str,
-        worker: Worker,
+        key: Optional[str] = None,
+        worker: Optional[Worker] = None,
         dependencies: List[str] = [],
         is_start: bool = False,
         args_mapping_rule: ArgsMappingRule = ArgsMappingRule.AS_IS,
-        **kwargs,
+        state_dict: Optional[Dict[str, Any]] = None
     ):
-        super().__init__(
-            key=key,
-            dependencies=dependencies,
-            is_start=is_start,
-            args_mapping_rule=args_mapping_rule,
-            **kwargs,
-        )
-        self._decorated_worker = worker
+        super().__init__(state_dict=state_dict)
+        if state_dict is None:
+            self.key = key or f"autokey-{uuid.uuid4().hex[:8]}"
+            self.dependencies = dependencies
+            self.is_start = is_start
+            self.args_mapping_rule = args_mapping_rule
+            self._decorated_worker = worker
+        else:
+            self.key = state_dict["key"]
+            self.dependencies = state_dict["dependencies"]
+            self.is_start = state_dict["is_start"]
+            self.args_mapping_rule = state_dict["args_mapping_rule"]
+            self._decorated_worker = state_dict["decorated_worker"]
 
+    @override
+    def dump_to_dict(self) -> Dict[str, Any]:
+        state_dict = super().dump_to_dict()
+        state_dict["key"] = self.key
+        state_dict["dependencies"] = self.dependencies
+        state_dict["is_start"] = self.is_start
+        state_dict["args_mapping_rule"] = self.args_mapping_rule
+        state_dict["decorated_worker"] = self._decorated_worker
+        return state_dict
     #
     # Delegate all the properties and methods of _GraphAdaptedWorker to the decorated worker.
     # TODO: Maybe 'Worker' should be a Protocol.
@@ -58,10 +77,6 @@ class _GraphAdaptedWorker(WithKeyMixin, AdaptableMixin, LandableMixin, Worker):
     @override
     async def process_async(self, *args, **kwargs) -> Any:
         return await self._decorated_worker.process_async(*args, **kwargs)
-
-    @property
-    def return_type(self) -> type:
-        return self._decorated_worker.return_type
 
     @property
     def parent(self) -> "Automa":
@@ -355,8 +370,10 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         state_dict : Optional[Dict[str, Any]] (default = None)
             A dictionary for initializing the automa's runtime state. This parameter is intended for internal framework use only, specifically for deserialization, and should not be used by developers.
         """
-        super().__init__(name=name or f"{type(self).__name__}-{uuid.uuid4().hex[:8]}")
         self._workers = {} #TODO: __getattribute__() refactoring
+        super().__init__(
+            name=name,
+            state_dict=state_dict)
         self._running_started = False
 
         # Start to initialize the states of the Automa.
@@ -466,14 +483,13 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         state_dict["ongoing_interactions"] = self._ongoing_interactions
         return state_dict
 
-    @classmethod
-    def load_from_dict(cls, state_dict: Dict[str, Any]) -> "GraphAutoma":
-        return cls(state_dict=state_dict)
+    # Note: load_from_dict() is not implemented here.
+    # It is implemented in the base class Worker.
 
     @classmethod
     def load_from_snapshot(cls, snapshot: Snapshot) -> "GraphAutoma":
         # Here you can compare snapshot.serialization_version with SERIALIZATION_VERSION, and handle any necessary version compatibility issues if needed.
-        return msgpackx.loads(snapshot.serialized_bytes)
+        return msgpackx.load_bytes(snapshot.serialized_bytes)
 
     ###############################################################
     ########### [Bridgic Serialization Mechanism] ends ############
@@ -674,8 +690,12 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         if not isinstance(func, MethodType):
             func = MethodType(func, self)
         else:
-            # TODO: validate whether self is Automa?
-            ...
+            # Validate: bounded __self__ of `func` must be self when add_func_as_worker() is called.
+            if func.__self__ is not self:
+                raise AutomaRuntimeError(
+                    f"the bounded instance of `func` must be the same as the instance of the GraphAutoma, "
+                    f"but got {func.__self__}"
+                )
         func_worker = CallableWorker(func)
 
         self.add_worker(
@@ -774,6 +794,14 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         if key in workers:
             return workers[key]
         return super().__getattribute__(key)
+
+    # def __getattr__(self, key):
+    #     """
+    #     Used to get the worker object by its key (self.<key>).
+    #     """
+    #     if key in self._workers:
+    #         return self._workers[key]
+    #     return super().__getattr__(key)
 
     def _validate_canonical_graph(self):
         """
@@ -1069,7 +1097,7 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
                 all_interactions: List[Interaction] = [interaction for e in interaction_exceptions for interaction in e.args]
                 if self.parent is None:
                     # This is the top-level Automa. Serialize the Automa and raise InteractionException to the application layer.
-                    serialized_automa = msgpackx.dumps(self)
+                    serialized_automa = msgpackx.dump_bytes(self)
                     snapshot = Snapshot(
                         serialized_bytes=serialized_automa,
                         serialization_version=GraphAutoma.SERIALIZATION_VERSION,
@@ -1354,8 +1382,7 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
             frame = frame_info.frame
             if frame_info.function == "process_async" and 'self' in frame.f_locals:
                 self_obj = frame.f_locals['self']
-                if isinstance(self_obj, WithKeyMixin):
-                    return getattr(self_obj, "key", self.name)
+                return getattr(self_obj, "key", self.name)
         return None # TODO: how to process?
 
     def _mapping_args(

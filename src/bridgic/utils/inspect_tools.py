@@ -56,7 +56,7 @@ def get_default_paramaps_of_overloaded_funcs(func: Callable) -> List[Dict[str, A
     return params_defaults_list
 
 
-def load_qualified_class(full_qualified_name: str):
+def load_qualified_class_or_func(full_qualified_name: str):
     parts = full_qualified_name.split('.')
     if len(parts) < 2:
         raise ValueError(f"Invalid qualified name: '{full_qualified_name}'. Two parts needed at least.")
