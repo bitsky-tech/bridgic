@@ -132,6 +132,10 @@ class _RunnningTask:
     worker_key: str
     task: asyncio.Task
 
+class _AutomaInputBuffer(BaseModel):
+    args: Tuple[Any, ...] = ()
+    kwargs: Dict[str, Any] = {}
+
 class _KickoffInfo(BaseModel):
     worker_key: str
     # Worker key or the container "__automa__"
@@ -320,6 +324,7 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
     # [Part Two: Task-Related Runtime States] The runtime states related to task execution.
     # -- Current kickoff workers list. {_current_kickoff_workers}
     # -- Running & Ferry Tasks list. {_running_tasks, _ferry_deferred_tasks}
+    # -- Automa input buffer. {_input_buffer}
     # -- Output buffer and local space for each worker. {in _workers}
     # -- Ongoing human interactions... {_ongoing_interactions}
     # -- Other runtime states...
@@ -331,6 +336,7 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
     _output_worker_key: Optional[str]
 
     _current_kickoff_workers: List[_KickoffInfo]
+    _input_buffer: _AutomaInputBuffer
     _workers_dynamic_states: Dict[str, _WorkerDynamicState]
     # The whole running process of the DDG is divided into two main phases:
     # 1. [Initialization Phase] The first phase (when _running_started is False): the initial topology of DDG was constructed.
@@ -436,6 +442,8 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         # -- Current kickoff workers list.
         # The key list of the workers that are ready to be immediately executed in the next DS (Dynamic Step). It will be lazily initialized in _compile_graph_and_detect_risks().
         self._current_kickoff_workers = []
+        # -- Automa input buffer.
+        self._input_buffer = _AutomaInputBuffer()
         # -- Ongoing human interactions
         self._ongoing_interactions = {}
 
@@ -457,6 +465,7 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         self._workers_dynamic_states = state_dict["workers_dynamic_states"]
         self._output_worker_key = state_dict["output_worker_key"]
         self._current_kickoff_workers = state_dict["current_kickoff_workers"]
+        self._input_buffer = state_dict["input_buffer"]
         self._ongoing_interactions = state_dict["ongoing_interactions"]
 
     ###############################################################
@@ -479,6 +488,7 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         state_dict["output_worker_key"] = self._output_worker_key
         # TODO: args && kwargs must be serializable in order to serialize _current_kickoff_workers
         state_dict["current_kickoff_workers"] = self._current_kickoff_workers
+        state_dict["input_buffer"] = self._input_buffer
         # TODO: the data field of Event and Feedback must be serializable in order to serialize _ongoing_interactions
         state_dict["ongoing_interactions"] = self._ongoing_interactions
         return state_dict
@@ -888,10 +898,10 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
 
     async def process_async(
             self, 
-            *args,
+            *args: Tuple[Any],
             interaction_feedback: Optional[InteractionFeedback] = None,
             interaction_feedbacks: Optional[List[InteractionFeedback]] = None,
-            **kwargs
+            **kwargs: Dict[str, Any]
     ) -> Any:
         """
         The entry point of the automa.
@@ -965,20 +975,28 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
                 matched = False
                 for interaction_and_feedbacks in self._ongoing_interactions.values():
                     for interaction_and_feedback in interaction_and_feedbacks:
-                        if interaction_and_feedback.interaction.interaction_id == feedback.interaction_id and interaction_and_feedback.feedback is None:
-                            interaction_and_feedback.feedback = feedback
+                        if interaction_and_feedback.interaction.interaction_id == feedback.interaction_id:
                             matched = True
+                            # Note: Only one feedback is allowed for each interaction. Here we assume that only the first feedback is valid, which is a choice of implementation.
+                            if interaction_and_feedback.feedback is None:
+                                # Set feedback to self._ongoing_interactions
+                                interaction_and_feedback.feedback = feedback
                             break
                     if matched:
                         break
                 if not matched:
                     match_left_feedbacks.append(feedback)
+            return match_left_feedbacks
                 
-
         running_options = self._get_top_running_options()
+
         rx_feedbacks = _check_and_normalize_interaction_params(interaction_feedback, interaction_feedbacks)
         if rx_feedbacks:
             rx_feedbacks = _match_ongoing_interaction_and_feedbacks(rx_feedbacks)
+        else:
+            # Each time, as long as the input arguments have not been restored from the interaction feedbacks, buffer them here.
+            self._input_buffer.args = args
+            self._input_buffer.kwargs = kwargs
 
         if not self._running_started:
             # Here is the last chance to compile and check the DDG in the end of the [Initialization Phase] (phase 1 just before the first DS).
@@ -987,7 +1005,7 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
             # TODO: automa needs to be re-run with _current_kickoff_workers reinitialized and some states maintained. Minor changes needed here...
 
         if running_options.debug:
-            printer.print(f"\nGraphAutoma-[{self.name}] is getting started.", color="green")
+            printer.print(f"\n{type(self).__name__}-[{self.name}] is getting started.", color="green")
 
         # Task loop divided into many dynamic steps (DS).
         while self._current_kickoff_workers:
@@ -1004,7 +1022,7 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
                 # Args mapping:
                 # TODO: add top-down args mapping here...
                 if kickoff_info.last_kickoff == "__automa__":
-                    next_args, next_kwargs = args, kwargs
+                    next_args, next_kwargs = self._input_buffer.args, self._input_buffer.kwargs
                 elif kickoff_info.from_ferry:
                     next_args, next_kwargs = kickoff_info.args, kickoff_info.kwargs
                 else:
@@ -1079,9 +1097,17 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
                     if task.worker_key in self._workers and not self._workers[task.worker_key].is_automa():
                         if task.worker_key not in self._ongoing_interactions:
                             self._ongoing_interactions[task.worker_key] = []
-                        self._ongoing_interactions[task.worker_key].append(_InteractionAndFeedback(
-                            interaction=e.args[0],
-                        ))
+                        interaction=e.args[0]
+                        # Make sure the interaction_id is unique for each human interaction.
+                        found = False
+                        for iaf in self._ongoing_interactions[task.worker_key]:
+                            if iaf.interaction.interaction_id == interaction.interaction_id:
+                                found = True
+                                break
+                        if not found:
+                            self._ongoing_interactions[task.worker_key].append(_InteractionAndFeedback(
+                                interaction=interaction,
+                            ))
 
             if len(self._topology_change_deferred_tasks) > 0:
                 # Graph topology validation and risk detection. Only needed when topology changes.
@@ -1158,7 +1184,7 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
             self._set_output_worker_deferred_task = None
 
         if running_options.debug:
-            printer.print(f"GraphAutoma-[{self.name}] is finished.", color="green")
+            printer.print(f"{type(self).__name__}-[{self.name}] is finished.", color="green")
 
         # If the output-worker is specified, return its output as the return value of the automa.
         if self._output_worker_key:
@@ -1315,10 +1341,12 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
                         f"interact_with_human passed-in event: {event}\n"
                         f"ongoing interaction && feedback: {matched_feedback}\n"
                     )
-        if matched_feedback is None:
+        if matched_feedback is None or matched_feedback.feedback is None:
+            # Important: The interaction_id should be unique for each human interaction.
+            interaction_id = uuid.uuid4().hex if matched_feedback is None else matched_feedback.interaction.interaction_id
             # Match interaction_feedback failed, raise an exception to go into the human interactioin process.
             raise _InteractionEventException(Interaction(
-                interaction_id=uuid.uuid4().hex,
+                interaction_id=interaction_id,
                 event=event,
             ))
         else:
