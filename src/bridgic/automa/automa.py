@@ -1,28 +1,35 @@
 import asyncio
 import uuid
 
-from typing import List, Any
+from typing import List, Any, Optional, Dict
+from typing_extensions import override
 from abc import ABCMeta, abstractmethod
 from pydantic import BaseModel
 from bridgic.automa.worker import Worker
-from bridgic.types.mixin import AdaptableMixin
 
 class RunningOptions(BaseModel):
     debug: bool = False
 
 class Automa(Worker, metaclass=ABCMeta):
-    def __init__(self, name: str = None, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+    _running_options: RunningOptions
+
+    def __init__(self, name: str = None, state_dict: Optional[Dict[str, Any]] = None):
+        super().__init__(state_dict=state_dict)
 
         # Set the name of the Automa instance.
-        self.name = name or f"automa-{uuid.uuid4().hex[:8]}"
+        if state_dict is None:
+            self.name = name or f"automa-{uuid.uuid4().hex[:8]}"
+        else:
+            self.name = state_dict["name"]
 
-        # Define the shared running options.
-        self.running_options: RunningOptions = RunningOptions()
+        # Initialize the shared running options.
+        self._running_options = RunningOptions()
 
-        self._loop: asyncio.AbstractEventLoop = None
-        self._finish_event: asyncio.Event = None
-        self._future_list: List[asyncio.Future] = []
+    @override
+    def dump_to_dict(self) -> Dict[str, Any]:
+        state_dict = super().dump_to_dict()
+        state_dict["name"] = self.name
+        return state_dict
 
     async def process_async(self, *args, **kwargs) -> Any:
         raise NotImplementedError("process_async() is not implemented for Automa")
@@ -66,13 +73,13 @@ class Automa(Worker, metaclass=ABCMeta):
             Whether to enable debug mode. If not set, the effect is the same as setting `debug = False` by default.
         """
         if debug is not None:
-            self.running_options.debug = debug
+            self._running_options.debug = debug
 
-    def _penetrate_running_options(self):
-        for worker_obj in self._workers.values():
-            if isinstance(worker_obj, AdaptableMixin) and isinstance(worker_obj.core_worker, Automa):
-                worker_obj.core_worker.set_running_options(**(self.running_options.model_dump()))
-                worker_obj.core_worker._penetrate_running_options()
+    def _get_top_running_options(self) -> RunningOptions:
+        if self.parent is None:
+            # Here we are at the top-level automa.
+            return self._running_options
+        return self.parent._get_top_running_options()
 
     def _get_top_level_automa(self) -> "Automa":
         """

@@ -1,19 +1,63 @@
-from typing import Callable
+from typing import Callable, Dict, Optional, TYPE_CHECKING
 from bridgic.automa.worker import Worker
 from typing import Any
+from types import MethodType
 import inspect
 from typing_extensions import override
+import pickle
+from bridgic.types.error import WorkerRuntimeError
+from bridgic.utils.inspect_tools import load_qualified_class_or_func
+
+if TYPE_CHECKING:
+    from bridgic.automa.automa import Automa
 
 class CallableWorker(Worker):
     _is_async: bool
     _callable: Callable
+    # Used to deserialization.
+    _expected_bound_parent: bool
 
-    def __init__(self, func_or_method: Callable):
-        super().__init__(func_or_method)
-        self._is_async = inspect.iscoroutinefunction(func_or_method)
-        self._callable = func_or_method
+    def __init__(
+        self, 
+        func_or_method: Optional[Callable] = None,
+        state_dict: Optional[Dict[str, Any]] = None
+    ):
+        """
+        Parameters
+        ----------
+        func_or_method : Optional[Callable] (default = None)
+            The callable to be wrapped by the worker. If `func_or_method` is None, `state_dict` must be provided.
+        state_dict : Optional[Dict[str, Any]] (default = None)
+            A dictionary for initializing the worker's runtime state. This parameter is intended for internal framework use only, specifically for deserialization, and should not be used by developers.
+        """
+        super().__init__(state_dict=state_dict)
+        if state_dict is None:
+            self._is_async = inspect.iscoroutinefunction(func_or_method)
+            self._callable = func_or_method
+            self._expected_bound_parent = False
+        else:
+            # Deserialize from the state_dict.
+            self._is_async = state_dict["is_async"]
+            bounded = state_dict["bounded"]
+            if bounded:
+                pickled_callable = state_dict.get("pickled_callable", None)
+                if pickled_callable is None:
+                    self._callable = load_qualified_class_or_func(state_dict["callable_name"])
+                    # Partially deserialized, need to be bound to the parent.
+                    self._expected_bound_parent = True
+                else:
+                    self._callable = pickle.loads(pickled_callable)
+                    self._expected_bound_parent = False
+            else:
+                self._callable = load_qualified_class_or_func(state_dict["callable_name"])
+                self._expected_bound_parent = False
 
     async def process_async(self, *args, **kwargs) -> Any:
+        if self._expected_bound_parent:
+            raise WorkerRuntimeError(
+                f"The callable is expected to be bound to the parent, "
+                f"but not bounded yet: {self._callable}"
+            )
         result_or_coroutine = self._callable(*args, **kwargs)
         if self._is_async:
             result = await result_or_coroutine
@@ -21,9 +65,37 @@ class CallableWorker(Worker):
             result = result_or_coroutine
         return result
 
+    @override
+    def dump_to_dict(self) -> Dict[str, Any]:
+        state_dict = super().dump_to_dict()
+        state_dict["is_async"] = self._is_async
+        # Note: Not to use pickle to serialize the callable here.
+        # We customize the serialization method of the callable to avoid creating instance multiple times and to minimize side effects.
+        bounded = isinstance(self._callable, MethodType)
+        state_dict["bounded"] = bounded
+        if bounded:
+            if self._callable.__self__ is self.parent:
+                state_dict["callable_name"] = self._callable.__module__ + "." + self._callable.__qualname__
+            else:
+                state_dict["pickled_callable"] = pickle.dumps(self._callable)
+        else:
+            state_dict["callable_name"] = self._callable.__module__ + "." + self._callable.__qualname__
+        return state_dict
+
     @property
     def callable(self):
         return self._callable
+
+    @property
+    def parent(self) -> "Automa":
+        return super().parent
+
+    @parent.setter
+    def parent(self, value: "Automa"):
+        if self._expected_bound_parent:
+            self._callable = MethodType(self._callable, value)
+            self._expected_bound_parent = False
+        Worker.parent.fset(self, value)
 
     @override
     def __str__(self) -> str:
