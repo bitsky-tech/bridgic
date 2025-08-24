@@ -821,7 +821,7 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
             for dependency_key in worker_obj.dependencies:
                 if dependency_key not in self._workers:
                     raise AutomaCompilationError(
-                        f"the dependency {dependency_key} of worker {worker_key} does not exist"
+                        f"the dependency `{dependency_key}` of worker `{worker_key}` does not exist"
                     )
         assert set(self._workers.keys()) == set(self._workers_dynamic_states.keys())
         for worker_key, worker_dynamic_state in self._workers_dynamic_states.items():
@@ -853,14 +853,6 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         # Validate the DAG constraints.
         GraphAutomaMeta.validate_dag_constraints(self._worker_forwards)
         # TODO: More validations can be added here...
-
-        self._current_kickoff_workers = [
-            _KickoffInfo(
-                worker_key=worker_key,
-                last_kickoff="__automa__"
-            ) for worker_key, worker_obj in self._workers.items()
-            if getattr(worker_obj, "is_start", False)
-        ]
 
         # Validate if the output worker exists.
         if self._output_worker_key and self._output_worker_key not in self._workers:
@@ -934,6 +926,18 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
             If the Automa is not the top-level Automa and the `interact_with_human()` method is called by one or more workers, this exception will be raised to the upper level Automa.
         """
 
+        def _reinit_current_kickoff_workers_if_needed():
+            # Note: After deserialization, the _current_kickoff_workers must not be empty!
+            # Therefore, _current_kickoff_workers will only be reinitialized when the Automa is run for the first time or rerun. It is guaranteed that _current_kickoff_workers will not be reinitialized when the Automa is resumed after deserialization.
+            if not self._current_kickoff_workers:
+                self._current_kickoff_workers = [
+                    _KickoffInfo(
+                        worker_key=worker_key,
+                        last_kickoff="__automa__"
+                    ) for worker_key, worker_obj in self._workers.items()
+                    if getattr(worker_obj, "is_start", False)
+                ]
+
         def _execute_topology_change_deferred_tasks(tc_tasks: List[Union[_AddWorkerDeferredTask, _RemoveWorkerDeferredTask]]):
             for topology_task in tc_tasks:
                 if topology_task.task_type == "add_worker":
@@ -989,6 +993,13 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
             return match_left_feedbacks
                 
         running_options = self._get_top_running_options()
+        if not self._running_started:
+            # Here is the last chance to compile and check the DDG in the end of the [Initialization Phase] (phase 1 just before the first DS).
+            self._compile_graph_and_detect_risks()
+            self._running_started = True
+
+        # An Automa needs to be re-run with _current_kickoff_workers reinitialized.
+        _reinit_current_kickoff_workers_if_needed()
 
         rx_feedbacks = _check_and_normalize_interaction_params(interaction_feedback, interaction_feedbacks)
         if rx_feedbacks:
@@ -998,11 +1009,6 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
             self._input_buffer.args = args
             self._input_buffer.kwargs = kwargs
 
-        if not self._running_started:
-            # Here is the last chance to compile and check the DDG in the end of the [Initialization Phase] (phase 1 just before the first DS).
-            self._compile_graph_and_detect_risks()
-            self._running_started = True
-            # TODO: automa needs to be re-run with _current_kickoff_workers reinitialized and some states maintained. Minor changes needed here...
 
         if running_options.debug:
             printer.print(f"\n{type(self).__name__}-[{self.name}] is getting started.", color="green")
@@ -1186,6 +1192,9 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         if running_options.debug:
             printer.print(f"{type(self).__name__}-[{self.name}] is finished.", color="green")
 
+        # After a complete run, reset the input buffer.
+        # Therefore, if the same Automa re-runs, the input arguments must be provided once again.
+        self._input_buffer = _AutomaInputBuffer()
         # If the output-worker is specified, return its output as the return value of the automa.
         if self._output_worker_key:
             return self._workers[self._output_worker_key].output_buffer

@@ -488,11 +488,11 @@ async def test_graph_2_deserialized_again(feedback_no_for_graph_2, feedback_yes_
     assert result == 1286 - 20
 
     # The second feedback with the same interaction_id should be ignored.
-    # TODO: Fix this in another PR.
-    # result = await graph_2_deserialized_again.process_async(
-    #     interaction_feedback=feedback_yes_for_graph_2
-    # )
-    # assert result == 1286 - 20
+    # Here is actually a total Automa rerun. Therefore, the input arguments must be provided once again.
+    with pytest.raises(Exception, match="required positional argument"):
+        result = await graph_2_deserialized_again.process_async(
+            interaction_feedback=feedback_yes_for_graph_2
+        )
 
 ##### Test cases for nested Automas: Multiple human interactions in a worker. #####
 
