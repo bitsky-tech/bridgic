@@ -51,11 +51,6 @@ def my_browser():
 
 @pytest.mark.asyncio
 async def test_my_browser(my_browser):
-    # result = await my_browser.process_async(
-    #     automa_context={
-    #         "person_name": "Elon Musk"
-    #     }
-    # )
     pass
 
 

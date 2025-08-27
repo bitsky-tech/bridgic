@@ -7,19 +7,19 @@ from bridgic.utils.console import printer
 
 class AutomaLayerA(GraphAutoma):
     @worker(key="defined_start_worker_0", is_start=True)
-    def worker_0(self, greeting: str = "hi", loop_back: bool = False) -> tuple[int, int]:
+    async def worker_0(self, greeting: str = "hi", loop_back: bool = False) -> tuple[int, int]:
         printer.print("  defined_start_worker_0:", "greeting =>", greeting, "loop_back =>", loop_back)
         assert (greeting != "hi" and loop_back) or (greeting == "hi" and not loop_back)
         return (1, 2)
 
     @worker(dependencies=["defined_start_worker_0"], args_mapping_rule=ArgsMappingRule.SUPPRESSED)
-    def worker_1(self) -> int:
+    async def worker_1(self) -> int:
         printer.print(f"  worker_1:", "self is GraphAutoma =>", isinstance(self, GraphAutoma))
         zero_output = self.defined_start_worker_0.output_buffer
         return zero_output[0]
 
     @worker(dependencies=["defined_start_worker_0"], args_mapping_rule=ArgsMappingRule.SUPPRESSED)
-    def worker_2(self, *args, **kwargs) -> int:
+    async def worker_2(self, *args, **kwargs) -> int:
         printer.print("  worker_2:", "self is GraphAutoma =>", isinstance(self, GraphAutoma))
         zero_output = self.defined_start_worker_0.output_buffer
         return zero_output[1]

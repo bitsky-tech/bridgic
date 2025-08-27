@@ -89,7 +89,7 @@ def graph_1(graph_1_second_layer):
 
 @pytest.mark.asyncio
 async def test_graph_1(graph_1):
-    result = await graph_1.process_async(x=5)
+    result = await graph_1.arun(x=5)
     assert result == 770
 
 #############################################################################
@@ -107,7 +107,7 @@ class Graph_2_TestFeedback(GraphAutoma):
                 "prompt_to_user": f"Current value is {x}, do you want to add another 200 to it (yes/no) ?"
             }
         )
-        feedback = await self.post_event(event)
+        feedback = await self.request_feedback_async(event)
         if feedback.data == "yes":
             return x + 200
         return x
@@ -168,7 +168,7 @@ def graph_2_feedback_yes(graph_2):
 
 @pytest.mark.asyncio
 async def test_graph_2_feedback_yes(graph_2_feedback_yes):
-    result = await graph_2_feedback_yes.process_async(x=5)
+    result = await graph_2_feedback_yes.arun(x=5)
     assert result == 770
 
 @pytest.fixture
@@ -186,7 +186,7 @@ def graph_2_feedback_no(graph_2):
     
     graph_2.register_event_handler("if_add", event_handler_if_add)
 
-    def event_handler_default(event: Event):
+    def event_handler_default(event: Event, feedback_sender: FeedbackSender=None):
         if event.event_type is None:
             assert isinstance(event, ProgressEvent)
             assert event.progress == 0.7
@@ -197,7 +197,7 @@ def graph_2_feedback_no(graph_2):
 
 @pytest.mark.asyncio
 async def test_graph_2_feedback_no(graph_2_feedback_no):
-    result = await graph_2_feedback_no.process_async(x=5)
+    result = await graph_2_feedback_no.arun(x=5)
     assert result == 570
 
 @pytest.fixture
@@ -213,7 +213,7 @@ def graph_2_feedback_no_in_same_task(graph_2):
 
 @pytest.mark.asyncio
 async def test_graph_2_feedback_no_in_same_task(graph_2_feedback_no_in_same_task):
-    result = await graph_2_feedback_no_in_same_task.process_async(x=5)
+    result = await graph_2_feedback_no_in_same_task.arun(x=5)
     assert result == 570
 
 @pytest.fixture
@@ -235,7 +235,7 @@ def graph_2_feedback_no_in_different_thread(graph_2):
 
 @pytest.mark.asyncio
 async def test_graph_2_feedback_no_in_different_thread(graph_2_feedback_no_in_different_thread):
-    result = await graph_2_feedback_no_in_different_thread.process_async(x=5)
+    result = await graph_2_feedback_no_in_different_thread.arun(x=5)
     assert result == 570
 
 #############################################################################
@@ -253,7 +253,7 @@ class Graph_3_TestTwoSimultaneousFeedback(GraphAutoma):
                 "prompt_to_user": f"Current value is {x}, do you want to add another 200 to it (yes/no) ?"
             }
         )
-        feedback = await self.post_event(event)
+        feedback = await self.request_feedback_async(event)
         if feedback.data == "yes":
             return x + 200
         return x
@@ -266,7 +266,7 @@ class Graph_3_TestTwoSimultaneousFeedback(GraphAutoma):
                 "prompt_to_user": f"Current value is {x}, how much do you want to add to it? Please input a number."
             }
         )
-        feedback = await self.post_event(event)
+        feedback = await self.request_feedback_async(event)
         return x + feedback.data
 
     @worker(dependencies=["func_1", "func_2"])
@@ -330,26 +330,26 @@ def graph_3_with_two_feedbacks(graph_3):
 
 @pytest.mark.asyncio
 async def test_graph_3_two_simultaneous_feedbacks(graph_3_with_two_feedbacks):
-    result = await graph_3_with_two_feedbacks.process_async(x=5)
+    result = await graph_3_with_two_feedbacks.arun(x=5)
     assert result == 770 - 200 + 35
 
 #############################################################################
 
 class MyWorker1(Worker):
-    async def process_async(self, x: int):
+    async def arun(self, x: int):
         event = Event(
             event_type="if_add",
             data={
                 "prompt_to_user": f"Current value is {x}, do you want to add another 200 to it (yes/no) ?"
             }
         )
-        feedback = await self.post_event(event)
+        feedback = await self.request_feedback_async(event)
         if feedback.data == "yes":
             return x + 200
         return x
 
 class MyWorker2(Worker):
-    async def process_async(self, x: int):
+    async def arun(self, x: int):
         progress_event = ProgressEvent(
             progress=0.7,
         )
@@ -409,7 +409,7 @@ def graph_4_feedback_no(graph_4):
     
     graph_4.register_event_handler("if_add", event_handler_if_add)
 
-    def event_handler_default(event: Event):
+    def event_handler_default(event: Event, feedback_sender: FeedbackSender):
         if event.event_type is None:
             assert isinstance(event, ProgressEvent)
             assert event.progress == 0.7
@@ -420,5 +420,5 @@ def graph_4_feedback_no(graph_4):
 
 @pytest.mark.asyncio
 async def test_graph_4_feedback_no(graph_4_feedback_no):
-    result = await graph_4_feedback_no.process_async(x=5)
+    result = await graph_4_feedback_no.arun(x=5)
     assert result == 570

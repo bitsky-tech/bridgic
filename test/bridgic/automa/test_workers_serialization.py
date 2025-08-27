@@ -141,10 +141,10 @@ def test_callable_worker_serialization_3(worker_5: CallableWorker, my_obj: MyCla
 
 class TopAutoma(GraphAutoma):
     @worker(is_start=True)
-    def add1(self, x: int):
+    async def add1(self, x: int):
         return x + 1
     
-    def add2(self, x: int):
+    async def add2(self, x: int):
         return x + 2
 
 @pytest.fixture
@@ -173,7 +173,7 @@ def worker_6_partially_deserialized(worker_6: CallableWorker, top_automa: TopAut
 @pytest.mark.asyncio
 async def test_callable_worker_serialization_4(worker_6_partially_deserialized: CallableWorker):
     with pytest.raises(WorkerRuntimeError, match="not bounded yet"):
-        await worker_6_partially_deserialized.process_async(x=90)
+        await worker_6_partially_deserialized.arun(x=90)
 
 @pytest.fixture
 def automa_and_worker(worker_6_partially_deserialized: CallableWorker):
@@ -190,21 +190,21 @@ async def test_callable_worker_serialization_5(automa_and_worker):
     assert worker_6_deserialized._expected_bound_parent is False
     # assert worker_6_deserialized.callable is top_automa2.add2 # TODO: fix this maybe later
     assert worker_6_deserialized.callable.__self__ is top_automa2
-    result = await top_automa2.process_async(x=90)
+    result = await top_automa2.arun(x=90)
     assert result == 93
 
 ################## Test cases GraphAutoma ####################
 
 class AdderAutoma(GraphAutoma):
     @worker(is_start=True)
-    def add1(self, x: int, y: int):
+    async def add1(self, x: int, y: int):
         return {
             "x": x + 1,
             "y": y + 1
         }
     
     @worker(dependencies=["add1"], args_mapping_rule=ArgsMappingRule.UNPACK)
-    def add2(self, x: int, y: int):
+    async def add2(self, x: int, y: int):
         return x + 2, y + 2
 
 @pytest.fixture
@@ -221,5 +221,5 @@ def deserialized_adder_automa(adder_automa: AdderAutoma):
 
 @pytest.mark.asyncio
 async def test_automa_serialization(deserialized_adder_automa: AdderAutoma):
-    result = await deserialized_adder_automa.process_async(x=10, y=20)
+    result = await deserialized_adder_automa.arun(x=10, y=20)
     assert result == (13, 23)

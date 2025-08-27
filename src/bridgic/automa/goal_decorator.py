@@ -19,7 +19,7 @@ def goal(
     preconditions : List[str]
         The preconditions required for achieving the current goal, expressed as a list of precondition IDs. The framework will automatically extract preconditions from the decorated method, and the preconditions specified here will be merged with the extracted ones.
     final : bool
-        Indicates if this goal is a final goal. When set to True, it has two effects: 1) The Automa will stop executing immediately once this goal is achieved, and 2) The return value from the decorated method will be used as the Automa's output (via process_async()).
+        Indicates if this goal is a final goal. When set to True, it has two effects: 1) The Automa will stop executing immediately once this goal is achieved, and 2) The return value from the decorated method will be used as the Automa's output (via arun()).
     priority : int
         Specifies the priority of this goal. Goals with higher priority numbers will be planned and achieved first.
    """

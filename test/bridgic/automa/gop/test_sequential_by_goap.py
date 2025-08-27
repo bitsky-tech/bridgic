@@ -40,5 +40,4 @@ def query_summarizer():
 
 @pytest.mark.asyncio
 async def test_query_summarizer(query_summarizer):
-    # summary = await query_summarizer.process_async(text_in_chinese="xxx")
     pass

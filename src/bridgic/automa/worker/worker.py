@@ -1,10 +1,22 @@
+"""
+A worker is the basic building block of an Automa, responsible for executing tasks.
+
+[The Concurrency Model of Worker]
+
+A worker has two types of methods for running tasks:
+
+1. `arun()`: This method is used for running tasks asynchronously. It is driven by the event loop of the main thread.
+2. `run()`: This method is used for running tasks that are I/O-bound or CPU-bound. It is driven by the thread pool or the process pool (TODO:) of the Automa. More specifically, I/O-bound tasks are handled by the thread pool, while CPU-bound tasks are handled by the process pool.
+
+"""
+
 import copy
-from asyncio import Future
-from typing_extensions import override
-from typing import Any, Dict, get_type_hints, TYPE_CHECKING, Optional, Tuple
+import asyncio
+from typing import Any, Dict, TYPE_CHECKING, Optional, Tuple
+from functools import partial
 from bridgic.automa.interaction import Event, InteractionFeedback, Feedback
-from bridgic.serialization import Serializable
 from bridgic.types.error import WorkerRuntimeError
+from concurrent.futures import ThreadPoolExecutor
 
 if TYPE_CHECKING:
     from bridgic.automa.automa import Automa
@@ -31,8 +43,31 @@ class Worker:
                 self.__output_buffer = state_dict["output_buffer"]
             self.__local_space = state_dict["local_space"]
 
-    async def process_async(self, *args: Optional[Tuple[Any]], **kwargs: Optional[Dict[str, Any]]) -> Any:
-        raise NotImplementedError(f"process_async is not implemented in {type(self)}")
+    async def arun(self, *args: Tuple[Any, ...], **kwargs: Dict[str, Any]) -> Any:
+        loop = asyncio.get_running_loop()
+        topest_automa = self._get_top_level_automa()
+        if topest_automa:
+            thread_pool = topest_automa.get_thread_pool()
+            if thread_pool:
+                # kwargs can only be passed by functools.partial.
+                return await loop.run_in_executor(thread_pool, partial(self.run, *args, **kwargs))
+
+        # Unexpected: No thread pool is available.
+        # Case 1: the worker is not inside an Automa (uncommon case).
+        # Case 2: no thread pool is setup by the top-level automa.
+        raise WorkerRuntimeError(f"No thread pool is available for the worker {type(self)}")
+
+    def run(self, *args: Tuple[Any, ...], **kwargs: Dict[str, Any]) -> Any:
+        raise NotImplementedError(f"run() is not implemented in {type(self)}")
+
+    def _get_top_level_automa(self) -> Optional["Automa"]:
+        """
+        Get the top-level automa instance reference.
+        """
+        top_level_automa = self.parent
+        while top_level_automa and (not top_level_automa.is_top_level()):
+            top_level_automa = top_level_automa.parent
+        return top_level_automa
 
     @property
     def parent(self) -> "Automa":
@@ -73,9 +108,33 @@ class Worker:
     def load_from_dict(cls, state_dict: Dict[str, Any]) -> "Worker":
         return cls(state_dict=state_dict)
 
-    def post_event(self, event: Event) -> Future[Feedback]:
+    def ferry_to(self, worker_key: str, /, *args, **kwargs):
+        """
+        Handoff control flow to the specified worker, passing along any arguments as needed.
+        The specified worker will always start to run asynchronously in the next event loop, regardless of its dependencies.
+
+        Parameters
+        ----------
+        worker_key : str
+            The key of the worker to run.
+        args : optional
+            Positional arguments to be passed.
+        kwargs : optional
+            Keyword arguments to be passed.
+        """
+        if self.parent is None:
+            raise WorkerRuntimeError(f"`ferry_to` method can only be called by a worker inside an Automa")
+        self.parent.ferry_to(worker_key, *args, **kwargs)
+
+    def post_event(self, event: Event) -> None:
         """
         Post an event to the application layer outside the Automa.
+
+        The event handler implemented by the application layer will be called in the same thread as the worker (maybe the main thread or a new thread from the thread pool).
+        
+        Note that `post_event` can be called in a non-async method or an async method.
+
+        The event will be bubbled up to the top-level Automa, where it will be processed by the event handler registered with the event type.
 
         Parameters
         ----------
@@ -84,7 +143,39 @@ class Worker:
         """
         if self.parent is None:
             raise WorkerRuntimeError(f"`post_event` method can only be called by a worker inside an Automa")
-        return self.parent.post_event(event)
+        self.parent.post_event(event)
+
+    def request_feedback(self, event: Event) -> Feedback:
+        """
+        Request feedback for the specified event from the application layer outside the Automa. This method blocks the caller until the feedback is received.
+
+        Note that `post_event` should only be called from within a non-async method running in the new thread of the Automa thread pool.
+
+        Parameters
+        ----------
+        event: Event
+            The event to be posted to the event handler implemented by the application layer.
+        """
+        if self.parent is None:
+            raise WorkerRuntimeError(f"`request_feedback` method can only be called by a worker inside an Automa")
+        return self.parent.request_feedback(event)
+
+    async def request_feedback_async(self, event: Event) -> Feedback:
+        """
+        Request feedback for the specified event from the application layer outside the Automa. This method blocks the caller until the feedback is received.
+
+        The event handler implemented by the application layer will be called in the next event loop, in the main thread.
+
+        Note that `post_event` should only be called from within an asynchronous method running in the main event loop of the top-level Automa.
+
+        Parameters
+        ----------
+        event: Event
+            The event to be posted to the event handler implemented by the application layer.
+        """
+        if self.parent is None:
+            raise WorkerRuntimeError(f"`request_feedback_async` method can only be called by a worker inside an Automa")
+        return await self.parent.request_feedback_async(event)
 
     def interact_with_human(self, event: Event) -> InteractionFeedback:
         if self.parent is None:

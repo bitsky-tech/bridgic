@@ -15,7 +15,7 @@ class SearchResult(BaseModel):
 
 class SubtaskingExample_SearchOrchestrator(GraphAutoma):
     @worker(is_start=True)
-    def divide_search_subtask(self, user_input: str) -> List[SeachSubtask]:
+    async def divide_search_subtask(self, user_input: str) -> List[SeachSubtask]:
         # TODO: call LLM to divide the search task into subtasks.
         # Before dividing into subtasks, the exact number of subtasks is uncertain.
         # Here we hardcode the subtasks just for testing.
@@ -50,7 +50,7 @@ class SubtaskingExample_SearchOrchestrator(GraphAutoma):
 
     # Not annotated with @worker, intentionally; serves as dynamic workers.
     # Multiple instances will be created as needed.
-    def search_by_subtask(self, sub_task: SeachSubtask) -> SearchResult:
+    async def search_by_subtask(self, sub_task: SeachSubtask) -> SearchResult:
         # TODO: call search engine to search the results
         # Here we hardcode the search result just for testing.
         search_result = SearchResult(
@@ -64,7 +64,7 @@ class SubtaskingExample_SearchOrchestrator(GraphAutoma):
 
     
     # Not annotated with @worker, intentionally; serves as dynamic workers.
-    def synthesize_search_results(self, search_results: List[SearchResult]) -> str:
+    async def synthesize_search_results(self, search_results: List[SearchResult]) -> str:
         # TODO: call LLM to synthesize the search results
         return f"The answer is: content synthesized from {'#'.join([result.content for result in search_results])}"
     
@@ -76,7 +76,7 @@ def search_orchestrator():
 
 @pytest.mark.asyncio
 async def test_search_orchestrator(search_orchestrator):
-    answer = await search_orchestrator.process_async(
+    answer = await search_orchestrator.arun(
         user_input="Please search for the latest news about Bridgic.",
     )
     assert answer == "The answer is: content synthesized from content_aspect1#content_aspect2#content_aspect3"

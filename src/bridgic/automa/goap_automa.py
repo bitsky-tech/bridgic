@@ -76,8 +76,8 @@ class GoapWorker(Worker):
         super().__init__(name=f"goap-worker-{decorated_worker.name}")
         self.decorated_worker = decorated_worker
 
-    async def process_async(self, *args: Optional[Tuple[Any]], **kwargs: Optional[Dict[str, Any]]) -> Any:
-        return self.decorated_worker.process_async(*args, **kwargs)
+    async def arun(self, *args: Optional[Tuple[Any]], **kwargs: Optional[Dict[str, Any]]) -> Any:
+        return self.decorated_worker.arun(*args, **kwargs)
 
 class GoapAutoma(GoalOrientedAutoma, metaclass=GoapAutomaMeta):
     """
@@ -115,7 +115,7 @@ class GoapAutoma(GoalOrientedAutoma, metaclass=GoapAutomaMeta):
                 if func_config.goal_config:
                     self._goals_config_map[worker_name] = copy.deepcopy(func_config.goal_config)
 
-    async def process_async(self, *args: Optional[Tuple[Any]], automa_context: Dict[str, Any] = None, **kwargs: Optional[Dict[str, Any]]) -> Any:
+    async def arun(self, *args: Optional[Tuple[Any]], automa_context: Dict[str, Any] = None, **kwargs: Optional[Dict[str, Any]]) -> Any:
         # Dynamically determine the starting state
         pass
         # TODO: Implement GOAP logic here.
@@ -229,7 +229,7 @@ class GoapAutoma(GoalOrientedAutoma, metaclass=GoapAutomaMeta):
         preconditions : List[str]
             The preconditions required for achieving the current goal, expressed as a list of precondition IDs. The framework will try to automatically extract preconditions from the worker named `worker_name`, and the preconditions specified here will be merged with the extracted ones.
         final : bool
-            Indicates if this goal is a final goal. When set to True, it has two effects: 1) The Automa will stop executing immediately once this goal is achieved, and 2) The return value from the decorated method will be used as the Automa's output (via process_async()).
+            Indicates if this goal is a final goal. When set to True, it has two effects: 1) The Automa will stop executing immediately once this goal is achieved, and 2) The return value from the decorated method will be used as the Automa's output (via arun()).
         priority : int
             Specifies the priority of this goal. Goals with higher priority numbers will be planned and achieved first.
 

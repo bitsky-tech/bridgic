@@ -31,9 +31,6 @@ class Automa(Worker, metaclass=ABCMeta):
         state_dict["name"] = self.name
         return state_dict
 
-    async def process_async(self, *args, **kwargs) -> Any:
-        raise NotImplementedError("process_async() is not implemented for Automa")
-
     def is_top_level(self) -> bool:
         """
         Check if the current automa is the top-level automa.
@@ -80,15 +77,6 @@ class Automa(Worker, metaclass=ABCMeta):
             # Here we are at the top-level automa.
             return self._running_options
         return self.parent._get_top_running_options()
-
-    def _get_top_level_automa(self) -> "Automa":
-        """
-        Get the top-level automa instance reference.
-        """
-        top_level_automa = self
-        while not top_level_automa.is_top_level():
-            top_level_automa = top_level_automa.parent
-        return top_level_automa
 
 class GoalOrientedAutoma(Automa):
     @abstractmethod

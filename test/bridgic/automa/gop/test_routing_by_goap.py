@@ -64,8 +64,4 @@ def chatbot():
 
 @pytest.mark.asyncio
 async def test_rag_chatbot(chatbot):
-    # answer = await chatbot.process_async(
-    #     user_input="How does monetary policy influence inflation and economic growth?"
-    # )
-    # assert answer == "The answer to the question is: xxx"
     pass

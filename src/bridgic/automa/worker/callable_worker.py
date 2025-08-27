@@ -1,4 +1,4 @@
-from typing import Callable, Dict, Optional, TYPE_CHECKING
+from typing import Callable, Dict, Optional, TYPE_CHECKING, Tuple
 from bridgic.automa.worker import Worker
 from typing import Any
 from types import MethodType
@@ -52,18 +52,19 @@ class CallableWorker(Worker):
                 self._callable = load_qualified_class_or_func(state_dict["callable_name"])
                 self._expected_bound_parent = False
 
-    async def process_async(self, *args, **kwargs) -> Any:
+    async def arun(self, *args: Tuple[Any, ...], **kwargs: Dict[str, Any]) -> Any:
         if self._expected_bound_parent:
             raise WorkerRuntimeError(
                 f"The callable is expected to be bound to the parent, "
                 f"but not bounded yet: {self._callable}"
             )
-        result_or_coroutine = self._callable(*args, **kwargs)
         if self._is_async:
-            result = await result_or_coroutine
-        else:
-            result = result_or_coroutine
-        return result
+            return await self._callable(*args, **kwargs)
+        return await super().arun(*args, **kwargs)
+
+    def run(self, *args: Tuple[Any, ...], **kwargs: Dict[str, Any]) -> Any:
+        assert self._is_async is False
+        return self._callable(*args, **kwargs)
 
     @override
     def dump_to_dict(self) -> Dict[str, Any]:

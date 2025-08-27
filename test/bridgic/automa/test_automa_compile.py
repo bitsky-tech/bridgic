@@ -14,15 +14,15 @@ def test_automa_declaration_dag_check():
     with pytest.raises(AutomaCompilationError):
         class AutomaLayerStatic(GraphAutoma):
             @worker(is_start=True, dependencies=["worker_3"])
-            def worker_0(self, *args, **kwargs) -> int:
+            async def worker_0(self, *args, **kwargs) -> int:
                 return 0
 
             @worker(dependencies=["worker_0"])
-            def worker_1(self, *args, **kwargs) -> int:
+            async def worker_1(self, *args, **kwargs) -> int:
                 return 1
 
             @worker(dependencies=["worker_0"])
-            def worker_2(self, *args, **kwargs) -> int:
+            async def worker_2(self, *args, **kwargs) -> int:
                 return 2
 
             @worker(dependencies=["worker_1", "worker_2"])
@@ -34,18 +34,18 @@ def test_automa_compilation_dag_check():
         automa_obj = GraphAutoma()
 
         @automa_obj.worker(dependencies=["worker_1"])
-        def worker_0(atm: GraphAutoma, *args, **kwargs):
+        async def worker_0(atm: GraphAutoma, *args, **kwargs):
             assert atm is automa_obj
 
         @automa_obj.worker(dependencies=["worker_0"])
-        def worker_1(atm: GraphAutoma, *args, **kwargs):
+        async def worker_1(atm: GraphAutoma, *args, **kwargs):
             assert atm is automa_obj
 
         automa_obj._compile_graph_and_detect_risks()
 
 def test_customized_worker_signature_check():
     class IncorrectWorker(Worker):
-        def process_async(self, *args, **kwargs) -> None:
+        def arun(self, *args, **kwargs) -> None:
             pass
 
     with pytest.raises(WorkerSignatureError):

@@ -8,7 +8,7 @@ from .automa_layer_a import AutomaLayerA
 from .automa_layer_b import AutomaLayerB
 
 class PrintWorker(Worker):
-    async def process_async(self, *args, **kwargs) -> None:
+    async def arun(self, *args, **kwargs) -> None:
         assert isinstance(self.parent, GraphAutoma)
         printer.print(
             f"  parent_automa is GraphAutoma =>",
@@ -16,7 +16,7 @@ class PrintWorker(Worker):
         )
 
 class EndWorker(Worker):
-    async def process_async(self, time_str: str) -> str:
+    async def arun(self, time_str: str) -> str:
         assert isinstance(time_str, str)
         return "happy_ending"
 

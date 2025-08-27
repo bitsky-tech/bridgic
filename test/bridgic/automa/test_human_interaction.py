@@ -39,7 +39,7 @@ def adder_automa1():
 @pytest.mark.asyncio
 async def test_adder_automa_1_interact_serialized(adder_automa1: AdderAutoma1, request, db_base_path):
     try:
-        result = await adder_automa1.process_async(x=100)
+        result = await adder_automa1.arun(x=100)
     except InteractionException as e:
         assert e.interactions[0].event.event_type == "if_add"
         assert e.interactions[0].event.data["prompt_to_user"] == "Current value is 101, do you want to add another 200 to it (yes/no) ?"
@@ -82,7 +82,7 @@ def interaction_feedback_1_yes(request):
 @pytest.mark.asyncio
 async def test_adder_automa_1_interact_with_yes_feedback(interaction_feedback_1_yes, deserialized_adder_automa1):
     # Note: no need to pass the original argument x=100, because the deserialized_adder_automa1 is restored from the snapshot.
-    result = await deserialized_adder_automa1.process_async(
+    result = await deserialized_adder_automa1.arun(
         interaction_feedback=interaction_feedback_1_yes
     )
     assert result == 303
@@ -98,7 +98,7 @@ def interaction_feedback_1_no(request):
 
 @pytest.mark.asyncio
 async def test_adder_automa_1_interact_with_no_feedback(interaction_feedback_1_no, deserialized_adder_automa1):
-    result = await deserialized_adder_automa1.process_async(
+    result = await deserialized_adder_automa1.arun(
         interaction_feedback=interaction_feedback_1_no
     )
     assert result == 103
@@ -130,7 +130,7 @@ def adder_automa2():
 @pytest.mark.asyncio
 async def test_adder_automa_2_interact_serialized(adder_automa2: AdderAutoma2, request, db_base_path):
     try:
-        result = await adder_automa2.process_async(x=100)
+        result = await adder_automa2.arun(x=100)
     except InteractionException as e:
         assert e.interactions[0].event.event_type == "if_add"
         assert e.interactions[0].event.data["prompt_to_user"] == "Current value is 100, do you want to add another 200 to it (yes/no) ?"
@@ -172,7 +172,7 @@ def interaction_feedback_2_yes(request):
 
 @pytest.mark.asyncio
 async def test_adder_automa_2_interact_with_yes_feedback(interaction_feedback_2_yes, deserialized_adder_automa2):
-    result = await deserialized_adder_automa2.process_async(
+    result = await deserialized_adder_automa2.arun(
         interaction_feedback=interaction_feedback_2_yes
     )
     assert result == 303
@@ -287,7 +287,7 @@ def graph_1(graph_1_second_layer):
 @pytest.mark.asyncio
 async def test_graph_1_serialized(graph_1: TopGraph, request, db_base_path):
     try:
-        result = await graph_1.process_async(x=5)
+        result = await graph_1.arun(x=5)
     except InteractionException as e:
         assert len(e.interactions) == 2
         for interaction in e.interactions:
@@ -327,7 +327,7 @@ def interaction_feedbacks_for_graph_1(request):
 
 @pytest.mark.asyncio
 async def test_graph_1_deserialized(interaction_feedbacks_for_graph_1, graph_1_deserialized):
-    result = await graph_1_deserialized.process_async(
+    result = await graph_1_deserialized.arun(
         interaction_feedbacks=interaction_feedbacks_for_graph_1
     )
     assert result == 1286 - 200
@@ -409,7 +409,7 @@ def graph_2(graph_2_second_layer):
 @pytest.mark.asyncio
 async def test_graph_2_serialized(graph_2: TopGraph, request, db_base_path):
     try:
-        result = await graph_2.process_async(x=5)
+        result = await graph_2.arun(x=5)
     except InteractionException as e:
         assert len(e.interactions) == 1
         for interaction in e.interactions:
@@ -436,7 +436,7 @@ def graph_2_deserialized(db_base_path):
 async def test_graph_2_deserialized_without_feedback(graph_2_deserialized: TopGraph, request, db_base_path):
     # This case is uncommon.
     try:
-        result = await graph_2_deserialized.process_async(x=5)
+        result = await graph_2_deserialized.arun(x=5)
     except InteractionException as e:
         assert len(e.interactions) == 1
         for interaction in e.interactions:
@@ -482,7 +482,7 @@ def feedback_yes_for_graph_2(request):
 
 @pytest.mark.asyncio
 async def test_graph_2_deserialized_again(feedback_no_for_graph_2, feedback_yes_for_graph_2, graph_2_deserialized_again):
-    result = await graph_2_deserialized_again.process_async(
+    result = await graph_2_deserialized_again.arun(
         interaction_feedback=feedback_no_for_graph_2
     )
     assert result == 1286 - 20
@@ -490,7 +490,7 @@ async def test_graph_2_deserialized_again(feedback_no_for_graph_2, feedback_yes_
     # The second feedback with the same interaction_id should be ignored.
     # Here is actually a total Automa rerun. Therefore, the input arguments must be provided once again.
     with pytest.raises(Exception, match="required positional argument"):
-        result = await graph_2_deserialized_again.process_async(
+        result = await graph_2_deserialized_again.arun(
             interaction_feedback=feedback_yes_for_graph_2
         )
 
@@ -568,7 +568,7 @@ def graph_3(graph_3_second_layer):
 @pytest.mark.asyncio
 async def test_graph_3_serialized_first(graph_3: TopGraph, request, db_base_path):
     try:
-        result = await graph_3.process_async(x=5)
+        result = await graph_3.arun(x=5)
     except InteractionException as e:
         assert len(e.interactions) == 1
         for interaction in e.interactions:
@@ -608,7 +608,7 @@ async def test_graph_3_deserialized_first(
     db_base_path
 ):
     try:
-        result = await graph_3_deserialized_first.process_async(
+        result = await graph_3_deserialized_first.arun(
             interaction_feedback=feedback_yes_for_graph_3_first_interaction
         )
     except InteractionException as e:
@@ -638,7 +638,7 @@ def graph_3_deserialized_second(db_base_path):
 async def test_graph_3_deserialized_second_without_feedback(graph_3_deserialized_second: TopGraph, request, db_base_path):
     # This case is uncommon.
     try:
-        result = await graph_3_deserialized_second.process_async(
+        result = await graph_3_deserialized_second.arun(
             interaction_feedback=None
         )
     except InteractionException as e:
@@ -683,7 +683,7 @@ async def test_graph_3_deserialized_second_with_feedback(
     db_base_path
 ):
     try:
-        result = await graph_3_deserialized_second_again.process_async(
+        result = await graph_3_deserialized_second_again.arun(
             interaction_feedback=feedback_no_for_graph_3_second_interaction
         )
     except InteractionException as e:
@@ -722,7 +722,7 @@ async def test_graph_3_deserialized_third(
     feedback_yes_for_graph_3_third_interaction,
     graph_3_deserialized_third
 ):
-    result = await graph_3_deserialized_third.process_async(
+    result = await graph_3_deserialized_third.arun(
         interaction_feedback=feedback_yes_for_graph_3_third_interaction
     )
     assert result == 1286 + 40
@@ -813,7 +813,7 @@ def graph_4(graph_4_second_layer):
 @pytest.mark.asyncio
 async def test_graph_4_serialized(graph_4: TopGraph, request, db_base_path):
     try:
-        result = await graph_4.process_async(x=5)
+        result = await graph_4.arun(x=5)
     except InteractionException as e:
         assert len(e.interactions) == 2
         assert e.interactions[0].event.event_type == "if_add_in_second_layer"
@@ -853,7 +853,7 @@ def interaction_feedbacks_for_graph_4(request):
 
 @pytest.mark.asyncio
 async def test_graph_4_deserialized(interaction_feedbacks_for_graph_4, graph_4_deserialized):
-    result = await graph_4_deserialized.process_async(
+    result = await graph_4_deserialized.arun(
         interaction_feedbacks=interaction_feedbacks_for_graph_4
     )
     assert result == 1286
@@ -940,7 +940,7 @@ def graph_5(graph_5_second_layer):
 @pytest.mark.asyncio
 async def test_graph_5_serialized(graph_5: TopGraph_5, request, db_base_path):
     try:
-        result = await graph_5.process_async(x=5)
+        result = await graph_5.arun(x=5)
     except InteractionException as e:
         assert len(e.interactions) == 1
         assert e.interactions[0].event.event_type == "if_add_in_third_layer"
@@ -989,7 +989,7 @@ async def test_graph_5_deserialized_first(
     db_base_path
 ):
     try:
-        result = await graph_5_deserialized_first.process_async(
+        result = await graph_5_deserialized_first.arun(
             interaction_feedback=feedback_yes_for_graph_5_interaction_in_third_layer
         )
     except InteractionException as e:
@@ -1037,7 +1037,7 @@ async def test_graph_5_deserialized_second(
     feedback_yes_for_graph_5_interaction_in_top_layer, 
     graph_5_deserialized_second
 ):
-    result = await graph_5_deserialized_second.process_async(
+    result = await graph_5_deserialized_second.arun(
         interaction_feedback=feedback_yes_for_graph_5_interaction_in_top_layer
     )
     assert result == 1286

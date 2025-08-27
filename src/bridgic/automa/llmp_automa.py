@@ -57,7 +57,7 @@ class LlmpAutoma(GoalOrientedAutoma, metaclass=LlmpAutomaMeta):
             # TODO:
        
 
-    async def process_async(self, *args: Optional[Tuple[Any]], automa_context: Dict[str, Any] = None, **kwargs: Optional[Dict[str, Any]]) -> Any:
+    async def arun(self, *args: Optional[Tuple[Any]], automa_context: Dict[str, Any] = None, **kwargs: Optional[Dict[str, Any]]) -> Any:
         pass
 
     def add_worker(
