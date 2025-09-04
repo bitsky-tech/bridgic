@@ -37,7 +37,7 @@ done
 
 # Run unit tests.
 echo "🚦 Running unit tests..."
-uv run pytest
+make test-all
 if [ $? -ne 0 ]; then
     echo "❌ Unit tests failed. Please fix the tests before pushing."
     exit 1
