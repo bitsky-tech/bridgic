@@ -4,10 +4,10 @@ package_name := $(notdir $(CURDIR))
 repo ?= btsk
 
 venv-init:
-	@echo "Initializing virtual environment for [${package_name}]..."
+	@echo "\n==> Initializing virtual environment for [${package_name}]..."
 	@if [ -d .venv ]; then echo ".venv already exists, removing..."; rm -rf .venv; fi
-	@echo "Creating virtual environment for [${package_name}]..."
-	@uv venv --python=python3.9 .venv
+	@uv venv --python=python3.9 .venv && echo ".venv created."
+	@echo "\n==> Installing dependencies for [${package_name}]..."
 	@uv pip install -e .
 
 test:
