@@ -1,30 +1,35 @@
 [project]
-name = "bridgic"
+name = "bridgic-integration"
 version = "0.1.0.dev1"
 classifiers = [
     "Private :: Do Not Upload",
     "Programming Language :: Python :: 3",
 ]
-description = "Bridgic is a project that enables developers to develop agents/workflows in a more natural and flexible way, consisting of several Python packages."
-keywords = ["LLM", "devtools", "workflow", "agent"]
+description = "Integration components and adapters for Bridgic, enabling connectivity with external systems and services."
 readme = "README.md"
 requires-python = ">=3.9"
 authors = [
     { name = "Tielei Zhang", email = "43289893@qq.com" },
 ]
 dependencies = [
-    "bridgic-core>=0.1.0.dev1,<0.2.0",
+    "bridgic-core==0.1.0.dev1",
 ]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.4.0",
+    "pytest-asyncio>=1.0.0",
+]
+
+[tool.pytest.ini_options]
+addopts = ["--tb=short", "--verbose"]
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build]
-include = ["/meta/bridgic/"]
-
-[tool.hatch.build.targets.wheel.sources]
-"/meta/bridgic" = "bridgic"
+include = ["bridgic/"]
 
 [tool.uv.sources]
 bridgic-core = { index = "btsk-repo" }

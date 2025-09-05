@@ -1,0 +1,16 @@
+from bridgic.core.automa import GraphAutoma, worker
+from bridgic.core.utils.console import printer
+
+class AutomaLayerB(GraphAutoma):
+    @worker(is_start=True)
+    async def worker_4(self, *args, **kwargs):
+        pass
+
+    @worker(is_start=True)
+    async def worker_5(self, *args, **kwargs):
+        pass
+
+    @worker(dependencies=["worker_4", "worker_5"])
+    async def worker_6(self, *args, **kwargs):
+        if type(self) != AutomaLayerB:
+            self.ferry_to("entry_point_worker_8", *args, **kwargs)
