@@ -6,10 +6,13 @@ repo ?= btsk
 init-dev:
 	@test -d .git || (echo "Not a git repo"; exit 1)
 	@git config --local core.hooksPath .githooks
-	@echo "Successfully installed git hooks."
-	@for dir in bridgic-*; do \
+	@echo "\n==> Successfully installed git hooks."
+	@echo "\n==> Preparing virtual environment for project."
+	@if [ -d .venv ]; then echo ".venv already exists, removing..."; rm -rf .venv; fi
+	@uv venv --python=python3.9 .venv && echo ".venv created."
+	@echo "\n==> Initializing virtual environment for subpackages..."
+	@source .venv/bin/activate && for dir in bridgic-*; do \
 		if [ -d "$$dir" ] && [ -f "$$dir/pyproject.toml" ]; then \
-			echo "==> Initializing virtual environment for [$$dir]..."; \
 			$(MAKE) -C "$$dir" venv-init; \
 		fi \
 	done
