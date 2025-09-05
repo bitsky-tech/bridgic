@@ -1,5 +1,5 @@
 from inspect import Parameter
-from bridgic.core.utils.inspect_tools import load_qualified_class_or_func, get_param_names_by_kind
+from bridgic.core.utils.inspect_tools import load_qualified_class_or_func, get_param_names_by_kind, get_param_names_all_kinds
 
 class A:
     def func_1(self, a: int, b: str, c=5, d=6) -> int:
@@ -11,10 +11,10 @@ class A:
     def func_3(self, a: int, /, b: str, c=5, d=6, *, e: str, f:int=7, g, h="", **kwargs) -> int:
         pass
 
-    def func_4(self, a: int, /, b: str, c=5, d=6, *args, **kwargs) -> int:
+    def func_4(self, a: int, /, b: str, c=5, d=6, *args, e=7, f, g, **kwargs) -> int:
         pass
 
-def test_get_arg_names_without_defaults():
+def test_get_param_names_by_kind():
     a = A()
 
     assert get_param_names_by_kind(a.func_1, Parameter.POSITIONAL_ONLY) == []
@@ -38,8 +38,34 @@ def test_get_arg_names_without_defaults():
     assert get_param_names_by_kind(a.func_4, Parameter.POSITIONAL_ONLY, exclude_default=True) == ["a"]
     assert get_param_names_by_kind(a.func_4, Parameter.POSITIONAL_OR_KEYWORD) == ["b", "c", "d"]
     assert get_param_names_by_kind(a.func_4, Parameter.POSITIONAL_OR_KEYWORD, exclude_default=True) == ["b"]
+    assert get_param_names_by_kind(a.func_4, Parameter.KEYWORD_ONLY) == ["e", "f", "g"]
+    assert get_param_names_by_kind(a.func_4, Parameter.KEYWORD_ONLY, exclude_default=True) == ["f", "g"]
     assert get_param_names_by_kind(a.func_4, Parameter.VAR_POSITIONAL) == ["args"]
     assert get_param_names_by_kind(a.func_4, Parameter.VAR_KEYWORD) == ["kwargs"]
+
+def test_get_param_names_all_kinds():
+    a = A()
+    
+    assert get_param_names_all_kinds(a.func_1) == {
+        Parameter.POSITIONAL_OR_KEYWORD: ["a", "b", "c", "d"],
+    }
+    assert get_param_names_all_kinds(a.func_2) == {
+        Parameter.POSITIONAL_ONLY: ["a"],
+        Parameter.POSITIONAL_OR_KEYWORD: ["b", "c", "d"],
+    }
+    assert get_param_names_all_kinds(a.func_3) == {
+        Parameter.POSITIONAL_ONLY: ["a"],
+        Parameter.POSITIONAL_OR_KEYWORD: ["b", "c", "d"],
+        Parameter.KEYWORD_ONLY: ["e", "f", "g", "h"],
+        Parameter.VAR_KEYWORD: ["kwargs"],
+    }
+    assert get_param_names_all_kinds(a.func_4) == {
+        Parameter.POSITIONAL_ONLY: ["a"],
+        Parameter.POSITIONAL_OR_KEYWORD: ["b", "c", "d"],
+        Parameter.KEYWORD_ONLY: ["e", "f", "g"],
+        Parameter.VAR_POSITIONAL: ["args"],
+        Parameter.VAR_KEYWORD: ["kwargs"],
+    }
 
 class C:
     class D:
@@ -52,7 +78,6 @@ class C:
 def test_load_qualified_class():
     from bridgic.core.automa.worker import Worker
     qualified_name = Worker.__module__ + "." + Worker.__qualname__
-    # "bridgic.core.automa.worker.worker.Worker"
     cls = load_qualified_class_or_func(qualified_name)
     assert cls is Worker
 
@@ -78,6 +103,5 @@ def test_load_functions_or_methods():
 
     # Test loading a nomal function defined in a module.
     func_qualified_name = load_qualified_class_or_func.__module__ + "." + load_qualified_class_or_func.__qualname__
-    # "bridgic.core.utils.inspect_tools.load_qualified_class"
     func = load_qualified_class_or_func(func_qualified_name)
     assert func is load_qualified_class_or_func

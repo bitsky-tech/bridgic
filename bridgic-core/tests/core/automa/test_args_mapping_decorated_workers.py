@@ -1,16 +1,22 @@
+"""
+Test cases for the arguments mapping mechanism of Bridgic framework.
+
+This file only covers test cases for workers decorated by @worker, while test cases for custom workers are in another file, i.e., test_args_mapping_custom_workers.py.
+"""
 import pytest
+import re
 
 from bridgic.core.automa import GraphAutoma, worker, WorkerArgsMappingError, ArgsMappingRule
-from typing import List
-
-########################################################
-######### Part One: Test ArgsMappingRule.AS_IS #########
-########################################################
+from typing import List, Tuple
 
 class Coordinate:
     def __init__(self, x: int, y: int):
         self.x = x
         self.y = y
+
+########################################################
+######### Part One: Test ArgsMappingRule.AS_IS #########
+########################################################
 
 class Flow_1_Test_AS_IS(GraphAutoma):
     @worker(is_start=True)
@@ -91,6 +97,10 @@ def flow_1():
 
 @pytest.mark.asyncio
 async def test_flow_1(flow_1):
+    # Test case for positional input arguments.
+    result = await flow_1.arun(1, 3)
+    assert result is None
+    # Test case for keyword input arguments.
     result = await flow_1.arun(x=1, y=3)
     assert result is None
 
@@ -136,6 +146,10 @@ def flow_2():
 
 @pytest.mark.asyncio
 async def test_flow_2(flow_2):
+    # Test case for positional input arguments.
+    result = await flow_2.arun(2, 3)
+    assert result == (None, 5, 6)
+    # Test case for keyword input arguments.
     result = await flow_2.arun(x=2, y=3)
     assert result == (None, 5, 6)
 
@@ -182,7 +196,20 @@ def flow_3():
     return flow
 
 @pytest.mark.asyncio
-async def test_flow_3(flow_3):
+async def test_flow_3_positional_inputs(flow_3):
+    # Test case for positional input arguments.
+    coordinates = await flow_3.arun(2, 3)
+    coord1, coord2, coord3 = coordinates
+    assert coord1.x == 2
+    assert coord1.y == 3
+    assert coord2.x == 3
+    assert coord2.y == 4
+    assert coord3.x == 1
+    assert coord3.y == 2
+
+@pytest.mark.asyncio
+async def test_flow_3_keyword_inputs(flow_3):
+    # Test case for keyword input arguments.
     coordinates = await flow_3.arun(x=2, y=3)
     coord1, coord2, coord3 = coordinates
     assert coord1.x == 2
@@ -198,9 +225,9 @@ class Flow_4_ErrorTest_AS_IS(GraphAutoma):
         return {"x": x, "y": y}
 
     @worker(dependencies=["func_1"])
-    async def func_2(self, x: int, y: int):
+    async def func_2(self, x2: int, y2: int):
         # This will raise an error due to too much non-default parameters.
-        return [x, y]
+        return [x2, y2]
 
 @pytest.fixture
 def flow_4():
@@ -209,7 +236,11 @@ def flow_4():
 
 @pytest.mark.asyncio
 async def test_flow_4(flow_4):
-    with pytest.raises(WorkerArgsMappingError, match="expects at least 2 arguments"):
+    # Test case for positional input arguments.
+    with pytest.raises(TypeError, match=re.escape("func_2() missing 1 required positional argument: 'y2'")):
+        await flow_4.arun(2, 3)
+    # Test case for keyword input arguments.
+    with pytest.raises(TypeError, match=re.escape("func_2() missing 1 required positional argument: 'y2'")):
         await flow_4.arun(x=2, y=3)
 
 class Flow_5_ErrorTest_AS_IS(GraphAutoma):
@@ -239,9 +270,12 @@ def flow_5():
 
 @pytest.mark.asyncio
 async def test_flow_5(flow_5):
-    with pytest.raises(WorkerArgsMappingError, match="expects at least 0 arguments"):
+    # Test case for positional input arguments.
+    with pytest.raises(TypeError, match=re.escape("end() takes 1 positional argument but 3 were given")):
+        await flow_5.arun(2, 3)
+    # Test case for keyword input arguments.
+    with pytest.raises(TypeError, match=re.escape("end() takes 1 positional argument but 3 were given")):
         await flow_5.arun(x=2, y=3)
-
 
 ########################################################
 ######### Part Two: Test ArgsMappingRule.UNPACK ########
@@ -250,7 +284,7 @@ async def test_flow_5(flow_5):
 class Flow_A_Test_UNPACK(GraphAutoma):
     @worker(is_start=True)
     async def func_1(self, x: int, y: int):
-        # Return a dict which is unpackable.
+        # Return a dict which is unpack-able.
         return {"x": x+1, "y": y+1}
 
     @worker(dependencies=["func_1"], args_mapping_rule=ArgsMappingRule.UNPACK)
@@ -317,6 +351,10 @@ def flow_A():
 
 @pytest.mark.asyncio
 async def test_flow_A(flow_A):
+    # Test case for positional input arguments.
+    coordinates = await flow_A.arun(2, 3)
+    assert coordinates == [103, 203, 303]
+    # Test case for keyword input arguments.
     coordinates = await flow_A.arun(x=2, y=3)
     assert coordinates == [103, 203, 303]
 
@@ -341,18 +379,22 @@ def flow_B():
 
 @pytest.mark.asyncio
 async def test_flow_B(flow_B):
-    with pytest.raises(WorkerArgsMappingError, match="must has exatly one dependency"):
+    # Test case for positional input arguments.
+    with pytest.raises(WorkerArgsMappingError, match="must has exactly one dependency"):
+        await flow_B.arun(2, 3)
+    # Test case for keyword input arguments.
+    with pytest.raises(WorkerArgsMappingError, match="must has exactly one dependency"):
         await flow_B.arun(x=2, y=3)
 
 class Flow_C_ErrorTest_UNPACK(GraphAutoma):
     @worker(is_start=True)
     async def func_1(self, x: int, y: int):
-        # Return a value that is not unpackable.
+        # Return a value that is not unpack-able.
         return x
 
     @worker(dependencies=["func_1"], args_mapping_rule=ArgsMappingRule.UNPACK)
     async def func_2(self, x: int):
-        # This will raise an error because the return value is not unpackable.
+        # This will raise an error because the return value is not unpack-able.
         return x
 
 @pytest.fixture
@@ -362,9 +404,12 @@ def flow_C():
 
 @pytest.mark.asyncio
 async def test_flow_C(flow_C):
+    # Test case for positional input arguments.
+    with pytest.raises(WorkerArgsMappingError, match="only valid for tuple/list, or dict"):
+        await flow_C.arun(2, 3)
+    # Test case for keyword input arguments.
     with pytest.raises(WorkerArgsMappingError, match="only valid for tuple/list, or dict"):
         await flow_C.arun(x=2, y=3)
-
 
 ########################################################
 ######## Part Three: Test ArgsMappingRule.MERGE ########
@@ -423,6 +468,15 @@ def flow_I():
 
 @pytest.mark.asyncio
 async def test_flow_I(flow_I):
+    # Test case for positional input arguments.
+    coordinates = await flow_I.arun(2, 3)
+    assert len(coordinates) == 3
+    assert coordinates[0].x == 3
+    assert coordinates[0].y == 4
+    assert coordinates[1] is None
+    assert coordinates[2].x == 6
+    assert coordinates[2].y == 6
+    # Test case for keyword input arguments.
     coordinates = await flow_I.arun(x=2, y=3)
     assert len(coordinates) == 3
     assert coordinates[0].x == 3
@@ -473,7 +527,18 @@ def flow_II():
     return flow
 
 @pytest.mark.asyncio
-async def test_flow_II(flow_II):
+async def test_flow_II_positional_inputs(flow_II):
+    coordinates = await flow_II.arun(2, 3)
+    coord1, coord2, coord3 = coordinates
+    assert coord1.x == 2
+    assert coord1.y == 3
+    assert coord2.x == 3
+    assert coord2.y == 4
+    assert coord3.x == 1
+    assert coord3.y == 2
+
+@pytest.mark.asyncio
+async def test_flow_II_keyword_inputs(flow_II):
     coordinates = await flow_II.arun(x=2, y=3)
     coord1, coord2, coord3 = coordinates
     assert coord1.x == 2
@@ -489,7 +554,7 @@ class Flow_III_ErrorTest_MERGE(GraphAutoma):
         return [x, y]
 
     @worker(dependencies=["start"], args_mapping_rule=ArgsMappingRule.MERGE)
-    async def end(self, my_list: List[int]):
+    async def end(self, my_list: Tuple[int, int]):
         # This will raise an error due to only one dependency.
         return Coordinate(my_list[0], my_list[1])
 
@@ -500,6 +565,10 @@ def flow_III():
 
 @pytest.mark.asyncio
 async def test_flow_III(flow_III):
+    # Test case for positional input arguments.
+    with pytest.raises(WorkerArgsMappingError, match="must has at least 2 dependencies"):
+        await flow_III.arun(2, 3)
+    # Test case for keyword input arguments.
     with pytest.raises(WorkerArgsMappingError, match="must has at least 2 dependencies"):
         await flow_III.arun(x=2, y=3)
 
@@ -513,9 +582,9 @@ class Flow_IV_ErrorTest_MERGE(GraphAutoma):
         return [x, y]
 
     @worker(dependencies=["start1", "start2"], args_mapping_rule=ArgsMappingRule.MERGE)
-    async def end(self, x: int, y: int):
+    async def end(self, x2: int, y2: int):
         # This will raise an error due to too many parameters (x, y).
-        return Coordinate(x, y)
+        return Coordinate(x2, y2)
 
 @pytest.fixture
 def flow_IV():
@@ -524,9 +593,12 @@ def flow_IV():
 
 @pytest.mark.asyncio
 async def test_flow_IV(flow_IV):
-    with pytest.raises(WorkerArgsMappingError, match="at least one positional parameter"):
+    # Test case for positional input arguments.
+    with pytest.raises(TypeError, match=re.escape("end() missing 1 required positional argument: 'y2'")):
+        await flow_IV.arun(2, 3)
+    # Test case for keyword input arguments.
+    with pytest.raises(TypeError, match=re.escape("end() missing 1 required positional argument: 'y2'")):
         await flow_IV.arun(x=2, y=3)
-
 
 ########################################################
 ##### Part Four: Test ArgsMappingRule.SUPPRESSED #######
@@ -549,5 +621,9 @@ def flow_101():
 
 @pytest.mark.asyncio
 async def test_flow_101(flow_101):
+    # Test case for positional input arguments.
+    result = await flow_101.arun(2, 3)
+    assert result == (2, 3)
+    # Test case for keyword input arguments.
     result = await flow_101.arun(x=2, y=3)
     assert result == (2, 3)
