@@ -32,13 +32,49 @@ def get_param_names_by_kind(
         A list of parameter names.
     """
     sig = inspect.signature(func)
-    arg_names = []
+    param_names = []
     for name, param in sig.parameters.items():
         if param.kind == param_kind:
             if exclude_default and param.default is not inspect.Parameter.empty:
                 continue
-            arg_names.append(name)
-    return arg_names
+            param_names.append(name)
+    return param_names
+
+def get_param_names_all_kinds(
+        func: Callable, 
+        exclude_default: bool = False,
+    ) -> Dict[enum.IntEnum, List[str]]:
+    """
+    Get the names of parameters of a function.
+
+    Parameters
+    ----------
+    func : Callable
+        The function to get the parameter names from.
+    exclude_default : bool
+        Whether to exclude the default parameters.
+
+    Returns
+    -------
+    Dict[enum.IntEnum, List[str]]
+        A dictionary of parameter names by the kind of the parameter.
+        The key is the kind of the parameter, which is one of five possible values:
+        - inspect.Parameter.POSITIONAL_ONLY
+        - inspect.Parameter.POSITIONAL_OR_KEYWORD
+        - inspect.Parameter.VAR_POSITIONAL
+        - inspect.Parameter.KEYWORD_ONLY
+        - inspect.Parameter.VAR_KEYWORD
+    """
+    sig = inspect.signature(func)
+    param_names_dict = {}
+    for name, param in sig.parameters.items():
+        if exclude_default and param.default is not inspect.Parameter.empty:
+            continue
+        if param.kind not in param_names_dict:
+            param_names_dict[param.kind] = []
+        param_names_dict[param.kind].append(name)
+    return param_names_dict
+
 
 def get_default_paramaps_of_overloaded_funcs(func: Callable) -> List[Dict[str, Any]]:
     """

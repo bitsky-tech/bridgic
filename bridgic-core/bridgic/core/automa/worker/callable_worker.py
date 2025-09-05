@@ -1,12 +1,14 @@
-from typing import Callable, Dict, Optional, TYPE_CHECKING, Tuple
+from typing import Callable, Dict, Optional, TYPE_CHECKING, Tuple, List
 from bridgic.core.automa.worker import Worker
 from typing import Any
 from types import MethodType
 import inspect
+from inspect import Parameter
 from typing_extensions import override
 import pickle
 from bridgic.core.types.error import WorkerRuntimeError
 from bridgic.core.utils.inspect_tools import load_qualified_class_or_func
+from bridgic.core.utils.inspect_tools import get_param_names_all_kinds
 
 if TYPE_CHECKING:
     from bridgic.core.automa.automa import Automa
@@ -16,6 +18,9 @@ class CallableWorker(Worker):
     _callable: Callable
     # Used to deserialization.
     _expected_bound_parent: bool
+
+    # Cached method signatures, with no need for serialization.
+    __cached_param_names_of_callable: Dict[Parameter, List[str]]
 
     def __init__(
         self, 
@@ -51,6 +56,9 @@ class CallableWorker(Worker):
             else:
                 self._callable = load_qualified_class_or_func(state_dict["callable_name"])
                 self._expected_bound_parent = False
+        
+        # Cached method signatures, with no need for serialization.
+        self.__cached_param_names_of_callable = None
 
     async def arun(self, *args: Tuple[Any, ...], **kwargs: Dict[str, Any]) -> Any:
         if self._expected_bound_parent:
@@ -65,6 +73,27 @@ class CallableWorker(Worker):
     def run(self, *args: Tuple[Any, ...], **kwargs: Dict[str, Any]) -> Any:
         assert self._is_async is False
         return self._callable(*args, **kwargs)
+
+    @override
+    def get_input_param_names(self) -> Dict[Parameter, List[str]]:
+        """
+        Get the names of input parameters of this callable worker.
+        Use cached result if available in order to improve performance.
+
+        Returns
+        -------
+        Dict[Parameter, List[str]]
+            A dictionary of input parameter names by the kind of the parameter.
+            The key is the kind of the parameter, which is one of five possible values:
+            - inspect.Parameter.POSITIONAL_ONLY
+            - inspect.Parameter.POSITIONAL_OR_KEYWORD
+            - inspect.Parameter.VAR_POSITIONAL
+            - inspect.Parameter.KEYWORD_ONLY
+            - inspect.Parameter.VAR_KEYWORD
+        """
+        if self.__cached_param_names_of_callable is None:
+            self.__cached_param_names_of_callable = get_param_names_all_kinds(self._callable)
+        return self.__cached_param_names_of_callable
 
     @override
     def dump_to_dict(self) -> Dict[str, Any]:
