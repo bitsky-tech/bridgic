@@ -9,7 +9,7 @@ description = "Core classes and abstractions of Bridgic, as well as basic implem
 readme = "README.md"
 requires-python = ">=3.9"
 authors = [
-    { name = "Tielei Zhang", email = "43289893@qq.com" },
+    { name = "Tielei Zhang", email = "zhangtl04@gmail.com" },
 ]
 dependencies = [
     "msgpack>=1.1.1",
