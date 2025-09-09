@@ -12,11 +12,12 @@ A worker has two types of methods for running tasks:
 
 import copy
 import asyncio
-from typing import Any, Dict, TYPE_CHECKING, Optional, Tuple
+from typing import Any, Dict, List, TYPE_CHECKING, Optional, Tuple, Callable
 from functools import partial
+from inspect import Parameter
 from bridgic.core.automa.interaction import Event, InteractionFeedback, Feedback
 from bridgic.core.types.error import WorkerRuntimeError
-from concurrent.futures import ThreadPoolExecutor
+from bridgic.core.utils.inspect_tools import get_param_names_by_kind, get_param_names_all_kinds
 
 if TYPE_CHECKING:
     from bridgic.core.automa.automa import Automa
@@ -25,6 +26,44 @@ class Worker:
     __output_buffer: Any
     __output_setted: bool
     __local_space: Dict[str, Any]
+
+    # Cached method signatures, with no need for serialization.
+    __cached_param_names_of_arun: Dict[Parameter, List[str]]
+    __cached_param_names_of_run: Dict[Parameter, List[str]]
+
+    @staticmethod
+    def safely_map_args(
+            in_args: Tuple[Any, ...], 
+            in_kwargs: Dict[str, Any],
+            rx_param_names_dict: Dict[Parameter, List[str]],
+    ) -> Tuple[Tuple[Any, ...], Dict[str, Any]]:
+        positional_only_param_names = rx_param_names_dict.get(Parameter.POSITIONAL_ONLY, [])
+        positional_or_keyword_param_names = rx_param_names_dict.get(Parameter.POSITIONAL_OR_KEYWORD, [])
+
+        # Resolve the positional arguments `rx_args`.
+        positional_param_names = positional_only_param_names + positional_or_keyword_param_names
+        var_positional_param_names = rx_param_names_dict.get(Parameter.VAR_POSITIONAL, [])
+        if len(in_args) == 1 and in_args[0] is None and len(positional_param_names) == 0 and len(var_positional_param_names) == 0:
+            # The special case of the predecessor returning None and the successor has no arguments expected.
+            rx_args = ()
+        else:
+            # In normal cases, positional arguments are unchanged.
+            rx_args = in_args
+
+        # Resolve the keyword arguments `rx_kwargs`.
+        # keyword arguments are firstly filtered by `masked_keyword_param_names`.
+        if len(in_args) > len(positional_only_param_names):
+            masked_keyword_param_names = positional_or_keyword_param_names[:len(in_args)-len(positional_only_param_names)]
+        else:
+            masked_keyword_param_names = []
+        rx_kwargs = {k:v for k,v in in_kwargs.items() if k not in masked_keyword_param_names}
+        var_keyword_param_names = rx_param_names_dict.get(Parameter.VAR_KEYWORD, [])
+        if not var_keyword_param_names:
+            # keyword arguments are secondly filtered by `keyword_param_names`.
+            keyword_only_param_names = rx_param_names_dict.get(Parameter.KEYWORD_ONLY, [])
+            keyword_param_names = positional_or_keyword_param_names + keyword_only_param_names
+            rx_kwargs = {k:v for k,v in rx_kwargs.items() if k in keyword_param_names}
+        return rx_args, rx_kwargs
 
     def __init__(self, state_dict: Optional[Dict[str, Any]] = None):
         """
@@ -42,6 +81,10 @@ class Worker:
             if self.__output_setted:
                 self.__output_buffer = state_dict["output_buffer"]
             self.__local_space = state_dict["local_space"]
+        
+        # Cached method signatures, with no need for serialization.
+        self.__cached_param_names_of_arun = None
+        self.__cached_param_names_of_run = None
 
     async def arun(self, *args: Tuple[Any, ...], **kwargs: Dict[str, Any]) -> Any:
         loop = asyncio.get_running_loop()
@@ -49,8 +92,10 @@ class Worker:
         if topest_automa:
             thread_pool = topest_automa.get_thread_pool()
             if thread_pool:
+                rx_param_names_dict = self._get_param_names_of_run()
+                rx_args, rx_kwargs = Worker.safely_map_args(args, kwargs, rx_param_names_dict)
                 # kwargs can only be passed by functools.partial.
-                return await loop.run_in_executor(thread_pool, partial(self.run, *args, **kwargs))
+                return await loop.run_in_executor(thread_pool, partial(self.run, *rx_args, **rx_kwargs))
 
         # Unexpected: No thread pool is available.
         # Case 1: the worker is not inside an Automa (uncommon case).
@@ -68,6 +113,34 @@ class Worker:
         while top_level_automa and (not top_level_automa.is_top_level()):
             top_level_automa = top_level_automa.parent
         return top_level_automa
+    
+    def get_input_param_names(self) -> Dict[Parameter, List[str]]:
+        """
+        Get the names of input parameters of the worker.
+        Use cached result if available in order to improve performance.
+
+        Returns
+        -------
+        Dict[Parameter, List[str]]
+            A dictionary of input parameter names by the kind of the parameter.
+            The key is the kind of the parameter, which is one of five possible values:
+            - inspect.Parameter.POSITIONAL_ONLY
+            - inspect.Parameter.POSITIONAL_OR_KEYWORD
+            - inspect.Parameter.VAR_POSITIONAL
+            - inspect.Parameter.KEYWORD_ONLY
+            - inspect.Parameter.VAR_KEYWORD
+        """
+        if self.__cached_param_names_of_arun is None:
+            self.__cached_param_names_of_arun = get_param_names_all_kinds(self.arun)
+        return self.__cached_param_names_of_arun
+
+    def _get_param_names_of_run(self) -> Dict[Parameter, List[str]]:
+        """
+        The symmetric method of `get_input_param_names` for the `run` method. For internal use only.
+        """
+        if self.__cached_param_names_of_run is None:
+            self.__cached_param_names_of_run = get_param_names_all_kinds(self.run)
+        return self.__cached_param_names_of_run
 
     @property
     def parent(self) -> "Automa":

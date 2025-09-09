@@ -9,7 +9,7 @@ description = "Integration components and adapters for Bridgic, enabling connect
 readme = "README.md"
 requires-python = ">=3.9"
 authors = [
-    { name = "Tielei Zhang", email = "43289893@qq.com" },
+    { name = "Tielei Zhang", email = "zhangtl04@gmail.com" },
 ]
 dependencies = [
     "bridgic-core==0.1.0.dev1",
