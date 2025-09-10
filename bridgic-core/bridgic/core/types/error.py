@@ -1,3 +1,7 @@
+###########################################################
+# Worker Errors
+###########################################################
+
 class WorkerSignatureError(Exception):
     pass
 
@@ -7,6 +11,10 @@ class WorkerArgsMappingError(Exception):
 class WorkerRuntimeError(RuntimeError):
     pass
 
+###########################################################
+# Automa Errors
+###########################################################
+
 class AutomaDeclarationError(Exception):
     pass
 
@@ -14,4 +22,14 @@ class AutomaCompilationError(Exception):
     pass
 
 class AutomaRuntimeError(RuntimeError):
+    pass
+
+###########################################################
+# Prompt Errors
+###########################################################
+
+class PromptSyntaxError(Exception):
+    pass
+
+class PromptRenderError(RuntimeError):
     pass

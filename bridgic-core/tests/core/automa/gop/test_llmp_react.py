@@ -1,6 +1,6 @@
 import pytest
 from bridgic.core.automa import LlmpAutoma, worker, goal
-from bridgic.core.llm.llm import MockLLM
+from bridgic.core.llm.llm import MockLlm
 from pydantic import BaseModel
 from typing import List
 import random
@@ -14,7 +14,7 @@ class File(BaseModel):
 class ReActExample_IntelligentFileBrowser(LlmpAutoma):
     def __init__(self):
         super().__init__(
-            planning_llm=MockLLM(), # TODO: upgrade to a specific LLM model implementation
+            planning_llm=MockLlm(), # TODO: upgrade to a specific LLM model implementation
             expected_output_format=LLMOutputFormat.Json,
         )
 
