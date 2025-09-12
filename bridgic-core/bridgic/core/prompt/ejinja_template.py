@@ -5,7 +5,7 @@ from jinja2 import Environment, Template, nodes
 from jinja2.ext import Extension
 
 from bridgic.core.types.error import PromptRenderError, PromptSyntaxError
-from bridgic.core.types.llm_basic import Message, Role, ContentBlock, TextBlock
+from bridgic.core.intelligence.base_llm import Message, Role, ContentBlock, TextBlock
 from bridgic.core.prompt.base_template import BasePromptTemplate
 from bridgic.core.utils.cache import MemoryCache
 

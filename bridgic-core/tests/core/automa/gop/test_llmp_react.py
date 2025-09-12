@@ -1,10 +1,11 @@
 import pytest
+import random
 from bridgic.core.automa import LlmpAutoma, worker, goal
-from bridgic.core.llm.llm import MockLlm
+from bridgic.core.types.common import LLMOutputFormat
 from pydantic import BaseModel
 from typing import List
-import random
-from bridgic.core.types.common import LLMOutputFormat
+
+from tests.core.intelligence.mock_llm import MockLlm
 
 class File(BaseModel):
     file_path: str

@@ -2,7 +2,7 @@ from bridgic.core.automa import GoalOrientedAutoma
 from typing import Optional, Tuple, Any, Dict, Callable, List
 from enum import Enum
 from bridgic.core.types.common import ZeroToOne, LLMOutputFormat, PromptTemplate
-from bridgic.core.llm.llm import LLM
+from bridgic.core.intelligence.base_llm import BaseLlm
 from bridgic.core.automa.worker import Worker
 from typing_extensions import override
 from abc import ABCMeta
@@ -32,13 +32,13 @@ class PlanningStrategy(Enum):
 
 class LlmpAutoma(GoalOrientedAutoma, metaclass=LlmpAutomaMeta):
     descriptive_goal: str
-    planning_llm: LLM
+    planning_llm: BaseLlm
     planning_strategy: PlanningStrategy
     canonical_planning_prompt: Optional[str]
 
     def __init__(
         self,
-        planning_llm: LLM, # TODO: provide a default LLM model?
+        planning_llm: BaseLlm, # TODO: provide a default LLM model?
         expected_output_format: LLMOutputFormat = LLMOutputFormat.FreeText,
         expected_output_json_schema: Optional[str] = None,
         name: Optional[str] = None, 
