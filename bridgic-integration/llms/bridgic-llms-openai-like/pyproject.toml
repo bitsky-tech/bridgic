@@ -1,18 +1,19 @@
 [project]
-name = "bridgic-integration"
+name = "bridgic-llms-openai-like"
 version = "0.1.0.dev1"
 classifiers = [
     "Private :: Do Not Upload",
     "Programming Language :: Python :: 3",
 ]
-description = "Integration components and adapters for Bridgic, enabling connectivity with external systems and services."
+description = "OpenAI-like LLM adapters for Bridgic, enabling connectivity with external LLM providers."
 readme = "README.md"
 requires-python = ">=3.9"
 authors = [
     { name = "Tielei Zhang", email = "zhangtl04@gmail.com" },
 ]
 dependencies = [
-    "bridgic-core==0.1.0.dev1",
+    "bridgic-core==0.1.0.dev2",
+    "openai>=1.60.0",
 ]
 
 [dependency-groups]

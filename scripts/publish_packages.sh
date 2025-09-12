@@ -14,9 +14,11 @@ echo "Publishing to repository [$repo]."
 main_package=$(basename "$PWD")
 failures=()
 
-for dir in bridgic-*; do
-    if [ -d "$dir" ] && [ -f "$dir/pyproject.toml" ]; then
-        echo "==> Publishing subpackage [$dir]..."
+find . -maxdepth 4 -type d -name "bridgic-*" | while read dir; do
+    if [ -f "$dir/Makefile" ] && [ -f "$dir/pyproject.toml" ]; then
+        sub_package=$(basename "$dir")
+        echo "==> Found Bridgic subpackage: $sub_package"
+        echo "==> Publishing subpackage [$sub_package]..."
         if ! make -C "$dir" publish repo="$repo"; then
             failures+=("$dir")
         else
