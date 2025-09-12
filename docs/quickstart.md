@@ -1,1 +1,0 @@
-![](./images/classic-10-worker-automa.png)
