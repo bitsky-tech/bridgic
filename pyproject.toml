@@ -1,6 +1,6 @@
 [project]
 name = "bridgic"
-version = "0.1.0.dev1"
+version = "0.1.0.dev2"
 classifiers = [
     "Private :: Do Not Upload",
     "Programming Language :: Python :: 3",
@@ -13,7 +13,7 @@ authors = [
     { name = "Tielei Zhang", email = "zhangtl04@gmail.com" },
 ]
 dependencies = [
-    "bridgic-core>=0.1.0.dev1,<0.2.0",
+    "bridgic-core>=0.1.0.dev2,<0.2.0",
 ]
 
 [build-system]

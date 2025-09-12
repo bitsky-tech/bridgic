@@ -11,15 +11,17 @@ init-dev:
 	@if [ -d .venv ]; then echo ".venv already exists, removing..."; rm -rf .venv; fi
 	@uv venv --python=python3.9 .venv && echo ".venv created."
 	@echo "\n==> Initializing virtual environment for subpackages..."
-	@source .venv/bin/activate && for dir in bridgic-*; do \
-		if [ -d "$$dir" ] && [ -f "$$dir/pyproject.toml" ]; then \
+	@source .venv/bin/activate && \
+	find . -maxdepth 4 -type d -name "bridgic-*" | while read dir; do \
+		if [ -f "$$dir/Makefile" ] && [ -f "$$dir/pyproject.toml" ]; then \
+			echo "==> Found Bridgic subpackage: $$dir"; \
 			$(MAKE) -C "$$dir" venv-init; \
 		fi \
 	done
 
 test-all:
-	@for dir in bridgic-*; do \
-		if [ -d "$$dir" ] && [ -f "$$dir/Makefile" ]; then \
+	@find . -maxdepth 4 -type d -name "bridgic-*" | while read dir; do \
+		if [ -f "$$dir/Makefile" ] && [ -f "$$dir/pyproject.toml" ]; then \
 			echo "==> Testing subpackage [$$dir]..."; \
 			$(MAKE) -C "$$dir" test; \
 		fi \
@@ -31,8 +33,8 @@ build:
 	@uv build
 
 build-all:
-	@for dir in bridgic-*; do \
-		if [ -d "$$dir" ] && [ -f "$$dir/pyproject.toml" ]; then \
+	@find . -maxdepth 4 -type d -name "bridgic-*" | while read dir; do \
+		if [ -f "$$dir/Makefile" ] && [ -f "$$dir/pyproject.toml" ]; then \
 			echo "==> Building subpackage [$$dir]..."; \
 			$(MAKE) -C "$$dir" build; \
 		fi \
