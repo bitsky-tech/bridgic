@@ -1,0 +1,48 @@
+[project]
+name = "bridgic-asl"
+version = "0.1.0.dev1"
+classifiers = [
+    "Private :: Do Not Upload",
+    "Programming Language :: Python :: 3",
+]
+description = "ASL(Agent Structure Language) -- An DSL(Domain Special Language) for descriping agent applications based on bridgic-core"
+readme = "README.md"
+requires-python = ">=3.9"
+authors = [
+    { name = "Tielei Zhang", email = "43289893@qq.com" },
+]
+dependencies = [
+    "bridgic-core==0.1.0.dev1",
+    "lark==1.2.2"
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.4.0",
+    "pytest-asyncio>=1.0.0",
+]
+
+[tool.pytest.ini_options]
+addopts = ["--tb=short", "--verbose"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build]
+include = ["bridgic/"]
+
+[tool.uv.sources]
+bridgic-core = { index = "btsk-repo" }
+
+[[tool.uv.index]]
+name = "btsk-repo"
+url = "http://8.130.156.165:3141/btsk/test/+simple"
+publish-url = "http://8.130.156.165:3141/btsk/test/"
+explicit = true
+
+# [[tool.uv.index]]
+# name = "test-pypi"
+# url = "https://test.pypi.org/project/+simple"
+# publish-url = "https://test.pypi.org/project/"
+# explicit = true
