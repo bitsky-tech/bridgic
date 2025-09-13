@@ -46,21 +46,13 @@ class _GraphAdaptedWorker(Worker):
         dependencies: List[str] = [],
         is_start: bool = False,
         args_mapping_rule: ArgsMappingRule = ArgsMappingRule.AS_IS,
-        state_dict: Optional[Dict[str, Any]] = None
     ):
-        super().__init__(state_dict=state_dict)
-        if state_dict is None:
-            self.key = key or f"autokey-{uuid.uuid4().hex[:8]}"
-            self.dependencies = dependencies
-            self.is_start = is_start
-            self.args_mapping_rule = args_mapping_rule
-            self._decorated_worker = worker
-        else:
-            self.key = state_dict["key"]
-            self.dependencies = state_dict["dependencies"]
-            self.is_start = state_dict["is_start"]
-            self.args_mapping_rule = state_dict["args_mapping_rule"]
-            self._decorated_worker = state_dict["decorated_worker"]
+        super().__init__()
+        self.key = key or f"autokey-{uuid.uuid4().hex[:8]}"
+        self.dependencies = dependencies
+        self.is_start = is_start
+        self.args_mapping_rule = args_mapping_rule
+        self._decorated_worker = worker
 
     @override
     def dump_to_dict(self) -> Dict[str, Any]:
@@ -71,6 +63,16 @@ class _GraphAdaptedWorker(Worker):
         state_dict["args_mapping_rule"] = self.args_mapping_rule
         state_dict["decorated_worker"] = self._decorated_worker
         return state_dict
+
+    @override
+    def load_from_dict(self, state_dict: Dict[str, Any]) -> None:
+        super().load_from_dict(state_dict)
+        self.key = state_dict["key"]
+        self.dependencies = state_dict["dependencies"]
+        self.is_start = state_dict["is_start"]
+        self.args_mapping_rule = state_dict["args_mapping_rule"]
+        self._decorated_worker = state_dict["decorated_worker"]
+
     #
     # Delegate all the properties and methods of _GraphAdaptedWorker to the decorated worker.
     # TODO: Maybe 'Worker' should be a Protocol.
@@ -383,7 +385,6 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         name: Optional[str] = None,
         output_worker_key: Optional[str] = None,
         thread_pool: Optional[ThreadPoolExecutor] = None,
-        state_dict: Optional[Dict[str, Any]] = None,
     ):
         """
         Parameters
@@ -406,21 +407,15 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
             A dictionary for initializing the automa's runtime state. This parameter is intended for internal framework use only, specifically for deserialization, and should not be used by developers.
         """
         self._workers = {} #TODO: __getattribute__() refactoring
-        super().__init__(
-            name=name,
-            state_dict=state_dict)
+        super().__init__(name=name)
         self._running_started = False
 
-        # Start to initialize the states of the Automa.
-        # The whole states of the Automa can be from two sources:
-        if state_dict:
-            # 1. One source: from the state_dict serialized previously.
-            self._init_from_state_dict(state_dict)
-        else:
-            # 2. Another source: from the class definition.
-            self._normal_init(output_worker_key)
+        # Initialize the states that need to be serialized.
+        self._normal_init(output_worker_key)
 
-        # The following need not to be serialized.
+        ########
+        # The following states need not to be serialized.
+        ########
         # The list of the tasks that are currently being executed.
         self._running_tasks = []
         # deferred tasks
@@ -482,22 +477,6 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         # Initialization of [Part Two: Task-Related Runtime States] ####### End #######
         ###############################################################################
 
-    def _init_from_state_dict(
-            self,
-            state_dict: Dict[str, Any],
-    ):
-        # Deserialize from the state_dict
-        self._workers = state_dict["workers"]
-        for worker in self._workers.values():
-            worker.parent = self
-        self._running_started = state_dict["running_started"]
-        self._worker_forwards = state_dict["worker_forwards"]
-        self._workers_dynamic_states = state_dict["workers_dynamic_states"]
-        self._output_worker_key = state_dict["output_worker_key"]
-        self._current_kickoff_workers = state_dict["current_kickoff_workers"]
-        self._input_buffer = state_dict["input_buffer"]
-        self._ongoing_interactions = state_dict["ongoing_interactions"]
-
     ###############################################################
     ########## [Bridgic Serialization Mechanism] starts ###########
     ###############################################################
@@ -523,8 +502,20 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         state_dict["ongoing_interactions"] = self._ongoing_interactions
         return state_dict
 
-    # Note: load_from_dict() is not implemented here.
-    # It is implemented in the base class Worker.
+    @override
+    def load_from_dict(self, state_dict: Dict[str, Any]) -> None:
+        super().load_from_dict(state_dict)
+        # Deserialize from the state_dict
+        self._workers = state_dict["workers"]
+        for worker in self._workers.values():
+            worker.parent = self
+        self._running_started = state_dict["running_started"]
+        self._worker_forwards = state_dict["worker_forwards"]
+        self._workers_dynamic_states = state_dict["workers_dynamic_states"]
+        self._output_worker_key = state_dict["output_worker_key"]
+        self._current_kickoff_workers = state_dict["current_kickoff_workers"]
+        self._input_buffer = state_dict["input_buffer"]
+        self._ongoing_interactions = state_dict["ongoing_interactions"]
 
     @classmethod
     def load_from_snapshot(
@@ -535,23 +526,25 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         # Here you can compare snapshot.serialization_version with SERIALIZATION_VERSION, and handle any necessary version compatibility issues if needed.
         automa = msgpackx.load_bytes(snapshot.serialized_bytes)
         if thread_pool:
-            automa.set_thread_pool(thread_pool)
+            automa.thread_pool = thread_pool
         return automa
 
     ###############################################################
     ########### [Bridgic Serialization Mechanism] ends ############
     ###############################################################
 
-    def get_thread_pool(self) -> Optional[ThreadPoolExecutor]:
+    @property
+    def thread_pool(self) -> Optional[ThreadPoolExecutor]:
         return self._thread_pool
 
-    def set_thread_pool(self, thread_pool: ThreadPoolExecutor) -> None:
+    @thread_pool.setter
+    def thread_pool(self, executor: ThreadPoolExecutor) -> None:
         """
         Set the thread pool for parallel running of I/O-bound tasks.
 
         If an Automa is nested within another Automa, the thread pool of the top-level Automa will be used, rather than the thread pool of the nested Automa.
         """
-        self._thread_pool = thread_pool
+        self._thread_pool = executor
 
     def _add_worker_incrementally(
         self,
@@ -832,17 +825,22 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
             # Note: the execution order of topology change deferred tasks is important and is determined by the order of the calls of add_worker(), remove_worker() in one DS.
             self._topology_change_deferred_tasks.append(deferred_task)
 
-    def set_output_worker(self, output_worker_key: str):
+    @property
+    def output_worker_key(self) -> Optional[str]:
+        return self._output_worker_key
+    
+    @output_worker_key.setter
+    def output_worker_key(self, worker_key: str):
         """
         This method is used to set the output worker of the automa dynamically.
         """
         if not self._running_started:
-            self._output_worker_key = output_worker_key
+            self._output_worker_key = worker_key
         else:
             deferred_task = _SetOutputWorkerDeferredTask(
-                output_worker_key=output_worker_key,
+                output_worker_key=worker_key,
             )
-            # Note: Only the last _SetOutputWorkerDeferredTask is valid if set_output_worker() is called multiple times in one DS.
+            # Note: Only the last _SetOutputWorkerDeferredTask is valid if self.output_worker_key is set multiple times in one DS.
             self._set_output_worker_deferred_task = deferred_task
 
     def __getattribute__(self, key):
@@ -1049,11 +1047,11 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         running_options = self._get_top_running_options()
         self._main_loop = asyncio.get_running_loop()
         self._main_thread_id = threading.get_ident()
-        if self._thread_pool is None:
+        if self.thread_pool is None:
             # Initialize the default thread pool as needed.
             # Maximum number of threads in the default thread pool:
             # https://docs.python.org/3/library/concurrent.futures.html#threadpoolexecutor
-            self.set_thread_pool(ThreadPoolExecutor(thread_name_prefix="bridgic-thread"))
+            self.thread_pool = ThreadPoolExecutor(thread_name_prefix="bridgic-thread")
         if not self._running_started:
             # Here is the last chance to compile and check the DDG in the end of the [Initialization Phase] (phase 1 just before the first DS).
             self._compile_graph_and_detect_risks()
@@ -1187,7 +1185,7 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
                 GraphAutomaMeta.validate_dag_constraints(self._worker_forwards)
                 # TODO: more validations can be added here...
 
-            # Process set_output_worker() deferred task.
+            # Process the output_worker_key setting deferred task.
             if self._set_output_worker_deferred_task and self._set_output_worker_deferred_task.output_worker_key in self._workers:
                 self._output_worker_key = self._set_output_worker_deferred_task.output_worker_key
 

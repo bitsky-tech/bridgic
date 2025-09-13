@@ -74,7 +74,7 @@ def flow_1_and_thread_name_prefix(request):
         dependencies=["func_1", "func_2"],
         args_mapping_rule=ArgsMappingRule.AS_IS
     )
-    flow.set_output_worker("merge")
+    flow.output_worker_key = "merge"
     yield flow, thread_name_prefix
     # clear up the thread pool
     if thread_pool:
@@ -142,7 +142,7 @@ def flow_2_and_thread_name_prefix(request):
         "func_4", 
         Func4AsyncWorker(),
     )
-    flow.set_output_worker("func_1")
+    flow.output_worker_key = "func_1"
     yield flow, thread_name_prefix
     # clear up the thread pool
     if thread_pool:
@@ -214,7 +214,7 @@ class Func5SyncWorkerV2(Worker):
     def run(self, input_x: int, context_for_test: Dict[str, Any]) -> int:
         assert threading.get_ident() != context_for_test["main_thread_id"]
         assert threading.current_thread().name.startswith(context_for_test["thread_name_prefix_in_thread_pool"])
-        self.parent.set_output_worker("func_5")
+        self.parent.output_worker_key = "func_5"
         return input_x + 5
 
 @pytest.fixture(params=[True, False])
@@ -327,7 +327,7 @@ def flow_4_and_thread_name_prefix(request):
         dependencies=["func_3"],
         args_mapping_rule=ArgsMappingRule.UNPACK
     )
-    flow.set_output_worker("func_4")
+    flow.output_worker_key = "func_4"
     yield flow, thread_name_prefix
     # clear up the thread pool
     if thread_pool:
@@ -449,7 +449,7 @@ def flow_5_and_thread_name_prefix(request):
         dependencies=["func_3"],
         args_mapping_rule=ArgsMappingRule.UNPACK
     )
-    flow.set_output_worker("func_4")
+    flow.output_worker_key = "func_4"
     yield flow, thread_name_prefix
     # clear up the thread pool
     if thread_pool:

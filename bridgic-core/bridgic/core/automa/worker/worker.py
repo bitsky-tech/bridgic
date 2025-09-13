@@ -24,7 +24,7 @@ if TYPE_CHECKING:
 
 class Worker:
     __output_buffer: Any
-    __output_setted: bool
+    __output_has_set: bool
     __local_space: Dict[str, Any]
 
     # Cached method signatures, with no need for serialization.
@@ -65,7 +65,7 @@ class Worker:
             rx_kwargs = {k:v for k,v in rx_kwargs.items() if k in keyword_param_names}
         return rx_args, rx_kwargs
 
-    def __init__(self, state_dict: Optional[Dict[str, Any]] = None):
+    def __init__(self):
         """
         Parameters
         ----------
@@ -73,14 +73,8 @@ class Worker:
             A dictionary for initializing the worker's runtime state. This parameter is intended for internal framework use only, specifically for deserialization, and should not be used by developers.
         """
         self.__parent: Automa = None
-        if state_dict is None:
-            self.__output_setted = False
-            self.__local_space = {}
-        else:
-            self.__output_setted = state_dict["output_setted"]
-            if self.__output_setted:
-                self.__output_buffer = state_dict["output_buffer"]
-            self.__local_space = state_dict["local_space"]
+        self.__output_has_set = False
+        self.__local_space = {}
         
         # Cached method signatures, with no need for serialization.
         self.__cached_param_names_of_arun = None
@@ -90,7 +84,7 @@ class Worker:
         loop = asyncio.get_running_loop()
         topest_automa = self._get_top_level_automa()
         if topest_automa:
-            thread_pool = topest_automa.get_thread_pool()
+            thread_pool = topest_automa.thread_pool
             if thread_pool:
                 rx_param_names_dict = self._get_param_names_of_run()
                 rx_args, rx_kwargs = Worker.safely_map_args(args, kwargs, rx_param_names_dict)
@@ -152,14 +146,14 @@ class Worker:
 
     @property
     def output_buffer(self) -> Any:
-        if not self.__output_setted:
+        if not self.__output_has_set:
             raise RuntimeError(f"output of worker is not ready yet")
         return copy.deepcopy(self.__output_buffer)
     
     @output_buffer.setter
     def output_buffer(self, value: Any):
         self.__output_buffer = value
-        self.__output_setted = True
+        self.__output_has_set = True
 
     @property
     def local_space(self) -> Dict[str, Any]:
@@ -171,15 +165,17 @@ class Worker:
 
     def dump_to_dict(self) -> Dict[str, Any]:
         state_dict = {}
-        state_dict["output_setted"] = self.__output_setted
-        if self.__output_setted:
+        state_dict["output_has_set"] = self.__output_has_set
+        if self.__output_has_set:
             state_dict["output_buffer"] = self.__output_buffer
         state_dict["local_space"] = self.__local_space
         return state_dict
 
-    @classmethod
-    def load_from_dict(cls, state_dict: Dict[str, Any]) -> "Worker":
-        return cls(state_dict=state_dict)
+    def load_from_dict(self, state_dict: Dict[str, Any]) -> None:
+        self.__output_has_set = state_dict["output_has_set"]
+        if self.__output_has_set:
+            self.__output_buffer = state_dict["output_buffer"]
+        self.__local_space = state_dict["local_space"]
 
     def ferry_to(self, worker_key: str, /, *args, **kwargs):
         """

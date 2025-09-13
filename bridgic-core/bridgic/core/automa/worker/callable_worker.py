@@ -25,7 +25,6 @@ class CallableWorker(Worker):
     def __init__(
         self, 
         func_or_method: Optional[Callable] = None,
-        state_dict: Optional[Dict[str, Any]] = None
     ):
         """
         Parameters
@@ -35,27 +34,10 @@ class CallableWorker(Worker):
         state_dict : Optional[Dict[str, Any]] (default = None)
             A dictionary for initializing the worker's runtime state. This parameter is intended for internal framework use only, specifically for deserialization, and should not be used by developers.
         """
-        super().__init__(state_dict=state_dict)
-        if state_dict is None:
-            self._is_async = inspect.iscoroutinefunction(func_or_method)
-            self._callable = func_or_method
-            self._expected_bound_parent = False
-        else:
-            # Deserialize from the state_dict.
-            self._is_async = state_dict["is_async"]
-            bounded = state_dict["bounded"]
-            if bounded:
-                pickled_callable = state_dict.get("pickled_callable", None)
-                if pickled_callable is None:
-                    self._callable = load_qualified_class_or_func(state_dict["callable_name"])
-                    # Partially deserialized, need to be bound to the parent.
-                    self._expected_bound_parent = True
-                else:
-                    self._callable = pickle.loads(pickled_callable)
-                    self._expected_bound_parent = False
-            else:
-                self._callable = load_qualified_class_or_func(state_dict["callable_name"])
-                self._expected_bound_parent = False
+        super().__init__()
+        self._is_async = inspect.iscoroutinefunction(func_or_method)
+        self._callable = func_or_method
+        self._expected_bound_parent = False
         
         # Cached method signatures, with no need for serialization.
         self.__cached_param_names_of_callable = None
@@ -111,6 +93,25 @@ class CallableWorker(Worker):
         else:
             state_dict["callable_name"] = self._callable.__module__ + "." + self._callable.__qualname__
         return state_dict
+
+    @override
+    def load_from_dict(self, state_dict: Dict[str, Any]) -> None:
+        super().load_from_dict(state_dict)
+        # Deserialize from the state_dict.
+        self._is_async = state_dict["is_async"]
+        bounded = state_dict["bounded"]
+        if bounded:
+            pickled_callable = state_dict.get("pickled_callable", None)
+            if pickled_callable is None:
+                self._callable = load_qualified_class_or_func(state_dict["callable_name"])
+                # Partially deserialized, need to be bound to the parent.
+                self._expected_bound_parent = True
+            else:
+                self._callable = pickle.loads(pickled_callable)
+                self._expected_bound_parent = False
+        else:
+            self._callable = load_qualified_class_or_func(state_dict["callable_name"])
+            self._expected_bound_parent = False
 
     @property
     def callable(self):
