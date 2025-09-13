@@ -63,28 +63,31 @@ def dump_bytes(obj: Any, pickle_fallback: bool = False) -> bytes:
     return msgpack.packb(obj, default=_custom_encode)
 
 def load_bytes(data: bytes) -> Any:
-    def _custom_decode(obj: Any) -> Any:
-        if "t" in obj and "d" in obj:
-            if obj["t"] == "datetime":
-                return datetime.fromisoformat(obj["d"])
-            elif obj["t"] == "pydantic":
-                qualified_class_name = obj["ot"]
+    def _custom_decode(dict_obj: Any) -> Any:
+        if "t" in dict_obj and "d" in dict_obj:
+            if dict_obj["t"] == "datetime":
+                return datetime.fromisoformat(dict_obj["d"])
+            elif dict_obj["t"] == "pydantic":
+                qualified_class_name = dict_obj["ot"]
                 cls: BaseModel = load_qualified_class_or_func(qualified_class_name)
-                return cls.model_validate(obj["d"])
-            elif obj["t"] == "enum":
-                qualified_class_name = obj["ot"]
+                return cls.model_validate(dict_obj["d"])
+            elif dict_obj["t"] == "enum":
+                qualified_class_name = dict_obj["ot"]
                 cls: BaseModel = load_qualified_class_or_func(qualified_class_name)
-                return cls(obj["d"])
-            elif obj["t"] == "set":
+                return cls(dict_obj["d"])
+            elif dict_obj["t"] == "set":
                 # list => set
-                return set(obj["d"])
-            elif obj["t"] == "pickled":
-                return pickle.loads(obj["d"])
+                return set(dict_obj["d"])
+            elif dict_obj["t"] == "pickled":
+                return pickle.loads(dict_obj["d"])
             else:
                 # Serializable is assumed here
-                qualified_class_name = obj["t"]
+                qualified_class_name = dict_obj["t"]
                 cls: Serializable = load_qualified_class_or_func(qualified_class_name)
-                return cls.load_from_dict(obj["d"])
-        return obj
+                # Note: Use the __init__ method with all default arguments to initialize the object.
+                obj = cls()
+                obj.load_from_dict(dict_obj["d"])
+                return obj
+        return dict_obj
 
     return msgpack.unpackb(data, object_hook=_custom_decode)
