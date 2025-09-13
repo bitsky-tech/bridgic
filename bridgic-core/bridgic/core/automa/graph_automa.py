@@ -825,17 +825,22 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
             # Note: the execution order of topology change deferred tasks is important and is determined by the order of the calls of add_worker(), remove_worker() in one DS.
             self._topology_change_deferred_tasks.append(deferred_task)
 
-    def set_output_worker(self, output_worker_key: str):
+    @property
+    def output_worker_key(self) -> Optional[str]:
+        return self._output_worker_key
+    
+    @output_worker_key.setter
+    def output_worker_key(self, worker_key: str):
         """
         This method is used to set the output worker of the automa dynamically.
         """
         if not self._running_started:
-            self._output_worker_key = output_worker_key
+            self._output_worker_key = worker_key
         else:
             deferred_task = _SetOutputWorkerDeferredTask(
-                output_worker_key=output_worker_key,
+                output_worker_key=worker_key,
             )
-            # Note: Only the last _SetOutputWorkerDeferredTask is valid if set_output_worker() is called multiple times in one DS.
+            # Note: Only the last _SetOutputWorkerDeferredTask is valid if self.output_worker_key is set multiple times in one DS.
             self._set_output_worker_deferred_task = deferred_task
 
     def __getattribute__(self, key):
@@ -1180,7 +1185,7 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
                 GraphAutomaMeta.validate_dag_constraints(self._worker_forwards)
                 # TODO: more validations can be added here...
 
-            # Process set_output_worker() deferred task.
+            # Process the output_worker_key setting deferred task.
             if self._set_output_worker_deferred_task and self._set_output_worker_deferred_task.output_worker_key in self._workers:
                 self._output_worker_key = self._set_output_worker_deferred_task.output_worker_key
 
