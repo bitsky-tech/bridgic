@@ -214,7 +214,11 @@ class Worker:
             raise WorkerRuntimeError(f"`post_event` method can only be called by a worker inside an Automa")
         self.parent.post_event(event)
 
-    def request_feedback(self, event: Event) -> Feedback:
+    def request_feedback(
+        self, 
+        event: Event,
+        timeout: Optional[float] = None
+    ) -> Feedback:
         """
         Request feedback for the specified event from the application layer outside the Automa. This method blocks the caller until the feedback is received.
 
@@ -224,12 +228,28 @@ class Worker:
         ----------
         event: Event
             The event to be posted to the event handler implemented by the application layer.
+        timeout: Optional[float]
+            A float or int number of seconds to wait for if the feedback is not received. If None, then there is no limit on the wait time.
+
+        Returns
+        -------
+        Feedback
+            The feedback received from the application layer.
+
+        Raises
+        ------
+        TimeoutError
+            If the feedback is not received before the timeout. Note that the raised exception is the built-in `TimeoutError` exception, instead of asyncio.TimeoutError or concurrent.futures.TimeoutError!
         """
         if self.parent is None:
             raise WorkerRuntimeError(f"`request_feedback` method can only be called by a worker inside an Automa")
-        return self.parent.request_feedback(event)
+        return self.parent.request_feedback(event, timeout)
 
-    async def request_feedback_async(self, event: Event) -> Feedback:
+    async def request_feedback_async(
+        self, 
+        event: Event,
+        timeout: Optional[float] = None
+    ) -> Feedback:
         """
         Request feedback for the specified event from the application layer outside the Automa. This method blocks the caller until the feedback is received.
 
@@ -241,10 +261,22 @@ class Worker:
         ----------
         event: Event
             The event to be posted to the event handler implemented by the application layer.
+        timeout: Optional[float]
+            A float or int number of seconds to wait for if the feedback is not received. If None, then there is no limit on the wait time.
+
+        Returns
+        -------
+        Feedback
+            The feedback received from the application layer.
+
+        Raises
+        ------
+        TimeoutError
+            If the feedback is not received before the timeout. Note that the raised exception is the built-in `TimeoutError` exception, instead of asyncio.TimeoutError!
         """
         if self.parent is None:
             raise WorkerRuntimeError(f"`request_feedback_async` method can only be called by a worker inside an Automa")
-        return await self.parent.request_feedback_async(event)
+        return await self.parent.request_feedback_async(event, timeout)
 
     def interact_with_human(self, event: Event) -> InteractionFeedback:
         if self.parent is None:
