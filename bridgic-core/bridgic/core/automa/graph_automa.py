@@ -7,7 +7,7 @@ import json
 import threading
 import uuid
 from abc import ABCMeta
-from typing import Any, List, Dict, Set, Mapping, Callable, Tuple, Optional, Literal, Union
+from typing import Any, List, Dict, Set, Mapping, Callable, Tuple, Optional, Literal, Union, MutableMapping
 from types import MethodType
 from collections import defaultdict, deque
 from dataclasses import dataclass
@@ -101,14 +101,6 @@ class _GraphAdaptedWorker(Worker):
     @output_buffer.setter
     def output_buffer(self, value: Any):
         self._decorated_worker.output_buffer = value
-
-    @property
-    def local_space(self) -> Dict[str, Any]:
-        return self._decorated_worker.local_space
-    
-    @local_space.setter
-    def local_space(self, value: Dict[str, Any]):
-        self._decorated_worker.local_space = value
 
     @property
     def func(self):
@@ -343,6 +335,7 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
     # Note: Just declarations, NOT instances!!!
     # So do not initialize them here!!!
     _workers: Dict[str, _GraphAdaptedWorker]
+    _worker_keys: List[str]
     _worker_forwards: Dict[str, List[str]]
     _output_worker_key: Optional[str]
 
@@ -407,6 +400,7 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
             A dictionary for initializing the automa's runtime state. This parameter is intended for internal framework use only, specifically for deserialization, and should not be used by developers.
         """
         self._workers = {} #TODO: __getattribute__() refactoring
+        self._worker_keys = [] # for better __getattribute__() performance
         super().__init__(name=name)
         self._running_started = False
 
@@ -709,6 +703,7 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
             # Note1: the execution order of topology change deferred tasks is important and is determined by the order of the calls of add_worker(), remove_worker() in one DS.
             # Note2: add_worker() and remove_worker() may be called in a new thread. But _topology_change_deferred_tasks is not necessary to be thread-safe due to Visibility Guarantees of the Bridgic Concurrency Model.
             self._topology_change_deferred_tasks.append(deferred_task)
+        self._worker_keys.append(key)
 
     def add_func_as_worker(
         self,
@@ -824,6 +819,7 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
             )
             # Note: the execution order of topology change deferred tasks is important and is determined by the order of the calls of add_worker(), remove_worker() in one DS.
             self._topology_change_deferred_tasks.append(deferred_task)
+        self._worker_keys.remove(key)
 
     @property
     def output_worker_key(self) -> Optional[str]:
@@ -847,9 +843,12 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         """
         Used to get the worker object by its key (self.<key>).
         """
-        workers = super().__getattribute__('_workers')
-        if key in workers:
-            return workers[key]
+        if key != "_worker_keys" and key in self._worker_keys:
+            try:
+                workers = super().__getattribute__('_workers')
+                return workers[key]
+            except AttributeError:
+                return super().__getattribute__(key)
         return super().__getattribute__(key)
 
     # def __getattr__(self, key):
