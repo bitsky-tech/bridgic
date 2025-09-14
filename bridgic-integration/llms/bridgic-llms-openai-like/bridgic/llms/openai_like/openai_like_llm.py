@@ -142,7 +142,7 @@ class OpenAILikeLlm(BaseLlm):
             stop=stop,
             **kwargs,
         )
-        for chunk in response:
+        async for chunk in response:
             delta_content = chunk.choices[0].delta.content
             delta_content = delta_content if delta_content else ""
             yield MessageChunk(delta=delta_content, raw=chunk)
