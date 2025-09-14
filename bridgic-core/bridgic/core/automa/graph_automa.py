@@ -1319,10 +1319,15 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
                 current_loop = asyncio.get_running_loop()
             except Exception:
                 current_loop = None
-            if current_loop is self._post_loop:
-                self._future.set_result(feedback)
-            else:
-                self._post_loop.call_soon_threadsafe(self._future.set_result, feedback)
+            try:
+                if current_loop is self._post_loop:
+                    self._future.set_result(feedback)
+                else:
+                    self._post_loop.call_soon_threadsafe(self._future.set_result, feedback)
+            except asyncio.InvalidStateError:
+                # Suppress the InvalidStateError to be raised, maybe due to timeout.
+                import warnings
+                warnings.warn(f"Feedback future already set. feedback: {feedback}", FutureWarning)
 
     @override
     def post_event(self, event: Event) -> None:
@@ -1363,7 +1368,11 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
                 self._default_event_handler(event)
 
 
-    def request_feedback(self, event: Event) -> Feedback:
+    def request_feedback(
+        self, 
+        event: Event,
+        timeout: Optional[float] = None
+    ) -> Feedback:
         """
         Request feedback for the specified event from the application layer outside the Automa. This method blocks the caller until the feedback is received.
 
@@ -1373,17 +1382,33 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         ----------
         event: Event
             The event to be posted to the event handler implemented by the application layer.
+        timeout: Optional[float]
+            A float or int number of seconds to wait for if the feedback is not received. If None, then there is no limit on the wait time.
+
+        Returns
+        -------
+        Feedback
+            The feedback received from the application layer.
+
+        Raises
+        ------
+        TimeoutError
+            If the feedback is not received before the timeout. Note that the raised exception is the built-in `TimeoutError` exception, instead of asyncio.TimeoutError or concurrent.futures.TimeoutError!
         """
         if threading.get_ident() == self._main_thread_id:
             raise AutomaRuntimeError(
                 f"`request_feedback` should only be called in a different thread from the main thread of the {self.name}. "
             )
         return asyncio.run_coroutine_threadsafe(
-            self.request_feedback_async(event),
+            self.request_feedback_async(event, timeout),
             self._main_loop
         ).result()
 
-    async def request_feedback_async(self, event: Event) -> Feedback:
+    async def request_feedback_async(
+        self, 
+        event: Event,
+        timeout: Optional[float] = None
+    ) -> Feedback:
         """
         Request feedback for the specified event from the application layer outside the Automa. This method blocks the caller until the feedback is received.
 
@@ -1393,10 +1418,22 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         ----------
         event: Event
             The event to be posted to the event handler implemented by the application layer.
+        timeout: Optional[float]
+            A float or int number of seconds to wait for if the feedback is not received. If None, then there is no limit on the wait time.
+
+        Returns
+        -------
+        Feedback
+            The feedback received from the application layer.
+
+        Raises
+        ------
+        TimeoutError
+            If the feedback is not received before the timeout. Note that the raised exception is the built-in `TimeoutError` exception, instead of asyncio.TimeoutError!
         """
         if self.parent is not None:
             # Bubble up the event to the top-level Automa.
-            return await self.parent.request_feedback_async(event)
+            return await self.parent.request_feedback_async(event, timeout)
         
         # Here is the top-level Automa.
         event_loop = asyncio.get_running_loop()
@@ -1407,7 +1444,16 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
             self._event_handlers[event.event_type](event, feedback_sender)
         if self._default_event_handler is not None:
             self._default_event_handler(event, feedback_sender)
-        return await future
+
+        try:
+            return await asyncio.wait_for(future, timeout)
+        except TimeoutError as e:
+            # When python >= 3.11 here.
+            raise TimeoutError(f"No feedback is received before timeout in Automa[{self.name}]") from e
+        except asyncio.TimeoutError as e:
+            # Version compatibility resolution: asyncio.wait_for raises asyncio.TimeoutError before python 3.11.
+            # https://docs.python.org/3/library/asyncio-task.html#asyncio.wait_for
+            raise TimeoutError(f"No feedback is received before timeout in Automa[{self.name}]") from e
 
     ###############################################################
     ########### [Bridgic Event Handling Mechanism] ends ###########
