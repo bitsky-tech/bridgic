@@ -16,11 +16,10 @@ class Serializable(Protocol[T]):
         """
         ...
 
-    @classmethod
     @abstractmethod
-    def load_from_dict(cls, state_dict: Dict[str, Any]) -> T:
+    def load_from_dict(self, state_dict: Dict[str, Any]) -> None:
         """
-        Load the object from a dictionary, which is deserialized from bytes.
+        Load the object state from a dictionary, which is previously deserialized from bytes.
         """
         ...
 
