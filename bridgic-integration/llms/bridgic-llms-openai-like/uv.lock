@@ -37,16 +37,16 @@ wheels = [
 
 [[package]]
 name = "bridgic-core"
-version = "0.1.0.dev2"
+version = "0.1.0.dev3"
 source = { registry = "http://8.130.156.165:3141/btsk/test/+simple" }
 dependencies = [
     { name = "jinja2" },
     { name = "msgpack" },
     { name = "pydantic" },
 ]
-sdist = { url = "http://8.130.156.165:3141/btsk/test/+f/7f2/b9301460afdeb/bridgic_core-0.1.0.dev2.tar.gz", hash = "sha256:7f2b9301460afdeb6dd31651dfa75c0b27a2b7c199aca8e0140c9085d6bc7bc3" }
+sdist = { url = "http://8.130.156.165:3141/btsk/test/+f/158/9a4f91887e99f/bridgic_core-0.1.0.dev3.tar.gz", hash = "sha256:1589a4f91887e99f4dbc5fa8cb528c803ae60d84ce83cb60a593e22283813b8d" }
 wheels = [
-    { url = "http://8.130.156.165:3141/btsk/test/+f/0e9/7abd976955712/bridgic_core-0.1.0.dev2-py3-none-any.whl", hash = "sha256:0e97abd976955712abfebbef2233dad90e2af0894c4f87364f911869dfed1dca" },
+    { url = "http://8.130.156.165:3141/btsk/test/+f/b3d/279ddc91bdd8a/bridgic_core-0.1.0.dev3-py3-none-any.whl", hash = "sha256:b3d279ddc91bdd8aef37ed441b1946d1c2fc3d131c9a79193b366e892cc983e9" },
 ]
 
 [[package]]
@@ -66,7 +66,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "bridgic-core", specifier = "==0.1.0.dev2", index = "http://8.130.156.165:3141/btsk/test/+simple" },
+    { name = "bridgic-core", specifier = "==0.1.0.dev3", index = "http://8.130.156.165:3141/btsk/test/+simple" },
     { name = "openai", specifier = ">=1.60.0" },
 ]
 

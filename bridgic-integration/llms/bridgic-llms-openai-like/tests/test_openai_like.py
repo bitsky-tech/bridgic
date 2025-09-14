@@ -1,0 +1,85 @@
+import pytest
+import os
+
+from bridgic.core.intelligence.base_llm import *
+from bridgic.core.utils.console import printer
+from bridgic.llms.openai_like.openai_like_llm import OpenAILikeLlm
+
+_api_base = os.environ.get("OPENAI_LIKE_API_BASE")
+_api_key = os.environ.get("OPENAI_LIKE_API_KEY")
+
+@pytest.mark.skipif(
+    (_api_key is None) or (_api_base is None),
+    reason="OPENAI_LIKE_API_KEY or OPENAI_LIKE_API_BASE is not set",
+)
+def test_openai_like_chat():
+    llm = OpenAILikeLlm(
+        api_base=_api_base,
+        api_key=_api_key,
+    )
+    response = llm.chat(
+        model="gpt-4.1-mini",
+        messages=[Message.from_text(text="Hello, how are you?", role=Role.USER)],
+    )
+    printer.print(response)
+    assert response.message.role == Role.AI
+    assert response.message.content is not None
+
+@pytest.mark.skipif(
+    (_api_key is None) or (_api_base is None),
+    reason="OPENAI_LIKE_API_KEY or OPENAI_LIKE_API_BASE is not set",
+)
+def test_openai_like_stream():
+    llm = OpenAILikeLlm(
+        api_base=_api_base,
+        api_key=_api_key,
+    )
+    response = llm.stream(
+        model="gpt-4.1-mini",
+        messages=[Message.from_text(text="Hello, how are you?", role=Role.USER)],
+    )
+    result = ""
+    for chunk in response:
+        result += chunk.delta
+        assert chunk.delta is not None
+        assert chunk.raw is not None
+    assert len(result) > 0
+
+@pytest.mark.skipif(
+    (_api_key is None) or (_api_base is None),
+    reason="OPENAI_LIKE_API_KEY or OPENAI_LIKE_API_BASE is not set",
+)
+@pytest.mark.asyncio
+async def test_openai_like_achat():
+    llm = OpenAILikeLlm(
+        api_base=_api_base,
+        api_key=_api_key,
+    )
+    response = await llm.achat(
+        model="gpt-4.1-mini",
+        messages=[Message.from_text(text="Hello, how are you?", role=Role.USER)],
+    )
+    printer.print(response)
+    assert response.message.role == Role.AI
+    assert response.message.content is not None
+
+@pytest.mark.skipif(
+    (_api_key is None) or (_api_base is None),
+    reason="OPENAI_LIKE_API_KEY or OPENAI_LIKE_API_BASE is not set",
+)
+@pytest.mark.asyncio
+async def test_openai_like_astream():
+    llm = OpenAILikeLlm(
+        api_base=_api_base,
+        api_key=_api_key,
+    )
+    response = llm.astream(
+        model="gpt-4.1-mini",
+        messages=[Message.from_text(text="Hello, how are you?", role=Role.USER)],
+    )
+    result = ""
+    async for chunk in response:
+        result += chunk.delta
+        assert chunk.delta is not None
+        assert chunk.raw is not None
+    assert len(result) > 0
