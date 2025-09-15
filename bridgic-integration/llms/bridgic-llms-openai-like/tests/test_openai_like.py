@@ -1,5 +1,7 @@
 import pytest
 import os
+import httpx
+import httpx_aiohttp
 
 from bridgic.core.intelligence.base_llm import *
 from bridgic.core.utils.console import printer
@@ -83,3 +85,46 @@ async def test_openai_like_astream():
         assert chunk.delta is not None
         assert chunk.raw is not None
     assert len(result) > 0
+
+@pytest.mark.skipif(
+    (_api_key is None) or (_api_base is None),
+    reason="OPENAI_LIKE_API_KEY or OPENAI_LIKE_API_BASE is not set",
+)
+@pytest.mark.asyncio
+async def test_openai_like_achat_with_aiohttp():
+    async with httpx_aiohttp.HttpxAiohttpClient() as aio_client:
+        llm = OpenAILikeLlm(
+            api_base=_api_base,
+            api_key=_api_key,
+            http_async_client=aio_client,
+        )
+        response = await llm.achat(
+            model="gpt-4.1-mini",
+            messages=[Message.from_text(text="Hello, how are you?", role=Role.USER)],
+        )
+        printer.print(response)
+        assert response.message.role == Role.AI
+        assert response.message.content is not None
+
+@pytest.mark.skipif(
+    (_api_key is None) or (_api_base is None),
+    reason="OPENAI_LIKE_API_KEY or OPENAI_LIKE_API_BASE is not set",
+)
+@pytest.mark.asyncio
+async def test_openai_like_astream_with_aiohttp():
+    async with httpx_aiohttp.HttpxAiohttpClient() as aio_client:
+        llm = OpenAILikeLlm(
+            api_base=_api_base,
+            api_key=_api_key,
+            http_async_client=aio_client,
+        )
+        response = llm.astream(
+            model="gpt-4.1-mini",
+            messages=[Message.from_text(text="Hello, how are you?", role=Role.USER)],
+        )
+        result = ""
+        async for chunk in response:
+            result += chunk.delta
+            assert chunk.delta is not None
+            assert chunk.raw is not None
+        assert len(result) > 0

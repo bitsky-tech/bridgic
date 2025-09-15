@@ -1,3 +1,5 @@
+import httpx
+
 from typing import List
 from openai import OpenAI, AsyncOpenAI
 from openai.resources.chat.completions.completions import ChatCompletionMessageParam
@@ -25,9 +27,16 @@ class OpenAILikeLlm(BaseLlm):
         The timeout in seconds.
     """
 
-    def __init__(self, api_base: str, api_key: str, timeout: Optional[float] = None):
-        self.client = OpenAI(base_url=api_base, api_key=api_key, timeout=timeout)
-        self.async_client = AsyncOpenAI(base_url=api_base, api_key=api_key, timeout=timeout)
+    def __init__(
+        self,
+        api_base: str,
+        api_key: str,
+        timeout: Optional[float] = None,
+        http_client: Optional[httpx.Client] = None,
+        http_async_client: Optional[httpx.AsyncClient] = None,
+    ):
+        self.client = OpenAI(base_url=api_base, api_key=api_key, timeout=timeout, http_client=http_client)
+        self.async_client = AsyncOpenAI(base_url=api_base, api_key=api_key, timeout=timeout, http_client=http_async_client)
 
     def chat(
         self,
