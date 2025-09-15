@@ -4,7 +4,7 @@ Test cases for serializing and deserializing various types of workers, using msg
 
 import pytest
 from typing import Optional, Dict, Any
-
+from typing_extensions import override
 from bridgic.core.automa import GraphAutoma, worker, ArgsMappingRule
 from bridgic.core.automa.worker import Worker, CallableWorker
 from bridgic.core.serialization import msgpackx
@@ -37,23 +37,24 @@ class MyCustomWorker(Worker):
             self, 
             x: int = 0,
             y: int = 0,
-            state_dict: Optional[Dict[str, Any]] = None
         ):
-        super().__init__(state_dict=state_dict)
-        if state_dict is None:
-            self._x = x
-            self._y = y
-        else:
-            # Deserialize from the state_dict.
-            self._x = state_dict["x"]
-            self._y = state_dict["y"]
+        super().__init__()
+        self._x = x
+        self._y = y
     
+    @override
     def dump_to_dict(self) -> Dict[str, Any]:
         state_dict = super().dump_to_dict()
         state_dict["x"] = self._x
         state_dict["y"] = self._y
         return state_dict
-    
+
+    @override
+    def load_from_dict(self, state_dict: Dict[str, Any]) -> None:
+        super().load_from_dict(state_dict)
+        self._x = state_dict["x"]
+        self._y = state_dict["y"]
+   
 @pytest.fixture
 def worker_2():
     # Test a customized Worker object.
@@ -156,7 +157,7 @@ def worker_6(top_automa: TopAutoma):
     # Test a CallableWorker with a parent of Automa.
     w = CallableWorker(top_automa.add2)
     top_automa.add_worker("add2", w, dependencies=["add1"])
-    top_automa.set_output_worker("add2")
+    top_automa.output_worker_key = "add2"
     return w
 
 @pytest.fixture
@@ -179,7 +180,7 @@ async def test_callable_worker_serialization_4(worker_6_partially_deserialized: 
 def automa_and_worker(worker_6_partially_deserialized: CallableWorker):
     top_automa2 = TopAutoma()
     top_automa2.add_worker("add2", worker_6_partially_deserialized, dependencies=["add1"])
-    top_automa2.set_output_worker("add2")
+    top_automa2.output_worker_key = "add2"
     # Fully deserialized after being added to a Automa.
     worker_6_deserialized = worker_6_partially_deserialized
     return top_automa2, worker_6_deserialized

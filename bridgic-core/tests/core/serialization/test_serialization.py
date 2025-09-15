@@ -1,5 +1,6 @@
 import msgpack
 from typing import Dict, List, Any, Set
+from typing_extensions import override
 import pytest
 from bridgic.core.automa.worker import Worker
 from bridgic.core.serialization import Serializable, Picklable
@@ -87,18 +88,14 @@ def test_enum_serialization():
 # Test a custom Serializable object.
 # Worker is serializable.
 class MyWorker1(Worker):
+    @override
     def dump_to_dict(self) -> Dict[str, Any]:
-        return {
-            "outbuf": self.output_buffer,
-            "local_space": self.local_space,
-        }
-    
-    @classmethod
-    def load_from_dict(cls, state_dict: Dict[str, Any]) -> "MyWorker1":
-        w = MyWorker1()
-        w.output_buffer = state_dict["outbuf"]
-        w.local_space = state_dict["local_space"]
-        return w
+        state_dict = super().dump_to_dict()
+        return state_dict
+
+    @override
+    def load_from_dict(self, state_dict: Dict[str, Any]) -> None:
+        super().load_from_dict(state_dict)
 
 
 @pytest.fixture

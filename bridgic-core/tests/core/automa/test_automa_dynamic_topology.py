@@ -48,7 +48,7 @@ def dynamic_flow_1():
         args_mapping_rule=ArgsMappingRule.UNPACK,
     )
     # Specify the output worker.
-    flow.set_output_worker("func_4")
+    flow.output_worker_key = "func_4"
     # Final flow topology (expected): func_1 -> func_3 -> func_4.
     return flow
 
@@ -88,7 +88,7 @@ class DynamicFlow_2(GraphAutoma):
             args_mapping_rule=ArgsMappingRule.UNPACK,
         )
         # Specify the output worker.
-        self.set_output_worker("func_4")
+        self.output_worker_key = "func_4"
         # Final flow topology (expected): func_1 -> func_3 -> func_4.
         return {"x": x+1, "y": y+1}
 
@@ -155,7 +155,7 @@ class DynamicFlow_4(GraphAutoma):
                 func=self.func_resusable,
                 dependencies=[f"func_{i-1}"],
             )
-        self.set_output_worker("func_6")
+        self.output_worker_key = "func_6"
         return {"x": x+1, "y": y+1}
 
     async def func_2(self, x: int, y: int):
@@ -186,7 +186,7 @@ class DynamicFlow_5_AddWorkerStepByStep(GraphAutoma):
             dependencies=["func_1"],
             args_mapping_rule=ArgsMappingRule.UNPACK,
         )
-        self.set_output_worker("func_2")
+        self.output_worker_key = "func_2"
         return {"x": x+1, "y": y+1}
 
     async def func_2(self, x: int, y: int):
@@ -211,7 +211,7 @@ class DynamicFlow_5_AddWorkerStepByStep(GraphAutoma):
                 args_mapping_rule=ArgsMappingRule.UNPACK,
             )
         else:
-            self.set_output_worker("func_6")
+            self.output_worker_key = "func_6"
         return count_run + 1, {"x": coord["x"]+10, "y": coord["y"]+20}
 
 @pytest.fixture

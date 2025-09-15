@@ -107,7 +107,7 @@ def flow_1():
         "end",
         flow_nested,
     )
-    flow.set_output_worker("end")
+    flow.output_worker_key = "end"
     return flow
 
 @pytest.mark.asyncio
@@ -214,7 +214,7 @@ def flow_2():
         "end",
         flow_nested,
     )
-    flow.set_output_worker("end")
+    flow.output_worker_key = "end"
     return flow
 
 @pytest.mark.asyncio
@@ -324,7 +324,7 @@ def flow_3_nested():
         dependencies=["func_1"],
         args_mapping_rule=ArgsMappingRule.UNPACK,
     )
-    flow.set_output_worker("func_2")
+    flow.output_worker_key = "func_2"
     return flow
 
 @pytest.fixture
@@ -370,7 +370,7 @@ def flow_3(flow_3_nested):
         "end",
         flow_3_nested,
     )
-    flow.set_output_worker("end")
+    flow.output_worker_key = "end"
     return flow
 
 @pytest.mark.asyncio
@@ -480,7 +480,7 @@ def flow_4_nested():
         dependencies=["func_1"],
         args_mapping_rule=ArgsMappingRule.UNPACK,
     )
-    flow.set_output_worker("func_2")
+    flow.output_worker_key = "func_2"
     return flow
 
 @pytest.fixture
@@ -526,7 +526,7 @@ def flow_4(flow_4_nested):
         "end",
         flow_4_nested,
     )
-    flow.set_output_worker("end")
+    flow.output_worker_key = "end"
     return flow
 
 @pytest.mark.asyncio
