@@ -1,7 +1,9 @@
 import httpx
+import warnings
 
 from typing import List
 from openai import OpenAI, AsyncOpenAI
+from openai.types.chat.chat_completion_message import ChatCompletionMessage
 from openai.resources.chat.completions.completions import ChatCompletionMessageParam
 from openai.types.chat.chat_completion_system_message_param import ChatCompletionSystemMessageParam
 from openai.types.chat.chat_completion_user_message_param import ChatCompletionUserMessageParam
@@ -62,8 +64,14 @@ class OpenAILikeLlm(BaseLlm):
             stop=stop,
             **kwargs,
         )
+        openai_message: ChatCompletionMessage = response.choices[0].message
+        text: str = openai_message.content if openai_message.content else ""
+
+        if openai_message.refusal:
+            warnings.warn(openai_message.refusal, RuntimeWarning)
+
         return Response(
-            message=Message.from_text(response.choices[0].message.content, role=Role.AI),
+            message=Message.from_text(text, role=Role.AI),
             raw=response,
         )
 
@@ -121,8 +129,14 @@ class OpenAILikeLlm(BaseLlm):
             stop=stop,
             **kwargs,
         )
+        openai_message: ChatCompletionMessage = response.choices[0].message
+        text: str = openai_message.content if openai_message.content else ""
+
+        if openai_message.refusal:
+            warnings.warn(openai_message.refusal, RuntimeWarning)
+
         return Response(
-            message=Message.from_text(response.choices[0].message.content, role=Role.AI),
+            message=Message.from_text(text, role=Role.AI),
             raw=response,
         )
 
