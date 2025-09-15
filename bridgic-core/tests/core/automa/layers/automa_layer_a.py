@@ -4,6 +4,7 @@ from typing import Any, Dict
 
 from bridgic.core.automa import GraphAutoma, worker, ArgsMappingRule
 from bridgic.core.utils.console import printer
+from bridgic.core.utils.state_tools import useState
 
 class AutomaLayerA(GraphAutoma):
     @worker(key="defined_start_worker_0", is_start=True)
@@ -33,14 +34,13 @@ class AutomaLayerA(GraphAutoma):
         one_two_sum = one_output + two_output
 
         assert one_two_sum == 3
+        cnt, setCnt = useState(0)
+        setCnt(cnt + 1)
+        printer.print("  loop_worker_3:", "cnt =>", cnt)
 
-        local_space: Dict[str, Any] = self.loop_worker_3.local_space
-        local_space["cnt"] = local_space.get("cnt", 0) + 1
-        printer.print("  loop_worker_3:", "local_space =>", local_space)
-
-        if local_space["cnt"] < one_two_sum:
+        if cnt < one_two_sum:
             greetings = [None, "good morning", "good afternoon", "good evening"]
-            self.ferry_to("defined_start_worker_0", greeting=greetings[local_space["cnt"]], loop_back=True, *args, **kwargs)
+            self.ferry_to("defined_start_worker_0", greeting=greetings[cnt], loop_back=True, *args, **kwargs)
         else:
             if type(self) != AutomaLayerA:
                 self.ferry_to("entry_point_worker_7", *args, **kwargs)
