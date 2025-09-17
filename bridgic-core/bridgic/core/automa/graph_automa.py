@@ -7,7 +7,7 @@ import json
 import threading
 import uuid
 from abc import ABCMeta
-from typing import Any, List, Dict, Set, Mapping, Callable, Tuple, Optional, Literal, TypeVar, Union, MutableMapping
+from typing import Any, List, Dict, Set, Mapping, Callable, Tuple, Optional, Literal, TypeVar, Union
 from types import MethodType
 from collections import defaultdict, deque
 from dataclasses import dataclass
@@ -23,6 +23,8 @@ from bridgic.core.automa.worker.callable_worker import CallableWorker
 from bridgic.core.automa.interaction import Event, FeedbackSender, EventHandlerType, InteractionFeedback, Feedback, Interaction, InteractionException
 from bridgic.core.automa.serialization import Snapshot
 import bridgic.core.serialization.msgpackx as msgpackx
+
+T = TypeVar('T')
 
 class _GraphAdaptedWorker(Worker):
     """
@@ -304,9 +306,6 @@ class _InteractionEventException(Exception):
 class _InteractionAndFeedback(BaseModel):
     interaction: Interaction
     feedback: Optional[InteractionFeedback] = None
-
-T = TypeVar('T')
-
 class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
     """
     DDG (Dynamic Directed Graph) implementation of Automa.
@@ -964,7 +963,29 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
             self._worker_runtime_state["current_loop_run_keys"].remove(worker_key)
 
     def worker_state(self, initial_value: T, runtime_context: Dict[str, Any], auto_clear: bool = False) -> Tuple[T, Callable[[T], None]]:
+        """Get the worker state.
 
+        Parameters
+        ----------
+        initial_value : T
+            The initial value of the worker state.
+        runtime_context : Dict[str, Any]
+            The runtime context of the worker state.
+        auto_clear : bool, optional
+            TODO: add description after post_arun is implemented, by default False
+
+        Returns
+        -------
+        Tuple[T, Callable[[T], None]]
+            The worker state and the setter function.
+
+        Raises
+        ------
+        AutomaRuntimeError
+            The worker_key is not found in the runtime_context.
+        AutomaRuntimeError
+            The worker_key has been run more than once by the same worker_state call.
+        """
         worker_key = runtime_context.get("worker_key")
         if not worker_key:
             raise AutomaRuntimeError(
@@ -1057,6 +1078,7 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
                     self._remove_worker_incrementally(topology_task.key)
 
         def _set_worker_run_finished(worker_key: str):
+            # TODO: move this to post_arun method
             self._delete_current_loop_run_keys(worker_key)
             for kickoff_info in self._current_kickoff_workers:
                 if kickoff_info.worker_key == worker_key:

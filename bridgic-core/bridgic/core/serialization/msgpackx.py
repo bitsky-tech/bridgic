@@ -24,11 +24,7 @@ def dump_bytes(obj: Any, pickle_fallback: bool = False) -> bytes:
         ser_data: Optional[bytes] = None
         obj_type: Optional[str] = None
         # If both Serializable and Picklable are implemented, prefer using the implementation of Serializable.
-        # Handle StateAccessor objects from use_state()
-        if hasattr(obj, 'value') and hasattr(obj.__class__, '__name__') and 'StateAccessorBase' in str(type(obj).__bases__ if hasattr(type(obj), '__bases__') else []):
-            # This is a StateAccessor object, serialize its underlying value instead
-            return _custom_encode(obj.value)
-        elif isinstance(obj, datetime):
+        if isinstance(obj, datetime):
             # TODO: Try serializing using Unix timestamp + timezone offset, and check if there is any loss of precision
             ser_type = "datetime"
             ser_data = obj.isoformat()
