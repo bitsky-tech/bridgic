@@ -18,7 +18,6 @@ from inspect import Parameter
 from bridgic.core.automa.interaction import Event, InteractionFeedback, Feedback
 from bridgic.core.types.error import WorkerRuntimeError
 from bridgic.core.utils.inspect_tools import get_param_names_by_kind, get_param_names_all_kinds
-from bridgic.core.utils.property_tools import create_property_factory
 
 if TYPE_CHECKING:
     from bridgic.core.automa.automa import Automa
@@ -78,7 +77,6 @@ class Worker:
         # Cached method signatures, with no need for serialization.
         self.__cached_param_names_of_arun = None
         self.__cached_param_names_of_run = None
-        create_property_factory(self, "local_space", dict)
 
     async def arun(self, *args: Tuple[Any, ...], **kwargs: Dict[str, Any]) -> Any:
         loop = asyncio.get_running_loop()
@@ -160,14 +158,12 @@ class Worker:
         state_dict["output_has_set"] = self.__output_has_set
         if self.__output_has_set:
             state_dict["output_buffer"] = self.__output_buffer
-        state_dict["local_space"] = self.local_space
         return state_dict
 
     def load_from_dict(self, state_dict: Dict[str, Any]) -> None:
         self.__output_has_set = state_dict["output_has_set"]
         if self.__output_has_set:
             self.__output_buffer = state_dict["output_buffer"]
-        self.local_space = state_dict["local_space"]
 
     def ferry_to(self, worker_key: str, /, *args, **kwargs):
         """

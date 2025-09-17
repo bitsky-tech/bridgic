@@ -3,7 +3,6 @@ Test cases for rerunning an Automa instance.
 """
 
 from bridgic.core.automa import worker, GraphAutoma
-from bridgic.core.utils.state_tools import useState
 import pytest
 
 #### Test case: rerun an Automa instance.
@@ -49,8 +48,10 @@ class TopAutoma(GraphAutoma):
 class NestedAutoma(GraphAutoma):
     @worker(is_start=True)
     async def counter(self):
-        count, setCount = useState(0)
-        setCount(count + 1)
+        count, set_count = self.worker_state(0, runtime_context={
+            "worker_key": "counter"
+        })
+        set_count(count + 1)
         return count
 
     @worker(dependencies=["counter"])

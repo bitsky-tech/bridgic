@@ -4,7 +4,6 @@ from typing import Any, Dict
 
 from bridgic.core.automa import GraphAutoma, worker, ArgsMappingRule
 from bridgic.core.utils.console import printer
-from bridgic.core.utils.state_tools import useState
 
 class AutomaLayerA(GraphAutoma):
     @worker(key="defined_start_worker_0", is_start=True)
@@ -34,8 +33,10 @@ class AutomaLayerA(GraphAutoma):
         one_two_sum = one_output + two_output
 
         assert one_two_sum == 3
-        cnt, setCnt = useState(0)
-        setCnt(cnt + 1)
+        cnt, set_cnt = self.worker_state(0, runtime_context={
+            "worker_key": "loop_worker_3"
+        })
+        set_cnt(cnt + 1)
         printer.print("  loop_worker_3:", "cnt =>", cnt)
 
         if cnt < one_two_sum:

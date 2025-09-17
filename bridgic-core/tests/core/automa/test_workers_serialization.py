@@ -17,7 +17,6 @@ def worker_1():
     # Test a basic Worker object.
     w = Worker()
     w.output_buffer = "Hello, Bridgic in Output Buffer!"
-    w.local_space = {"a": 1, "b": 2}
     return w
 
 def test_basic_worker_serialization(worker_1: Worker):
@@ -26,7 +25,6 @@ def test_basic_worker_serialization(worker_1: Worker):
     obj = msgpackx.load_bytes(data)
     assert type(obj) is Worker
     assert obj.output_buffer == "Hello, Bridgic in Output Buffer!"
-    assert obj.local_space == {"a": 1, "b": 2}
 
 class MyCustomWorker(Worker):
     # Custom fields needs to be processed to support serialization.
@@ -60,7 +58,6 @@ def worker_2():
     # Test a customized Worker object.
     w = MyCustomWorker(x=11, y=23)
     w.output_buffer = "Hello, Bridgic in Output Buffer!"
-    w.local_space = {"a": 1, "b": 2}
     return w
 
 def test_customized_worker_serialization(worker_2: MyCustomWorker):
@@ -69,7 +66,6 @@ def test_customized_worker_serialization(worker_2: MyCustomWorker):
     obj = msgpackx.load_bytes(data)
     assert type(obj) is MyCustomWorker
     assert obj.output_buffer == "Hello, Bridgic in Output Buffer!"
-    assert obj.local_space == {"a": 1, "b": 2}
     assert obj._x == 11
     assert obj._y == 23
 
@@ -83,7 +79,6 @@ def worker_3():
     # Test a CallableWorker with a normal function.
     w = CallableWorker(func_a)
     w.output_buffer = "Hello, Bridgic in Output Buffer!"
-    w.local_space = {"a": 1, "b": 2}
     return w
 
 def test_callable_worker_serialization_1(worker_3: CallableWorker):
@@ -92,7 +87,6 @@ def test_callable_worker_serialization_1(worker_3: CallableWorker):
     obj = msgpackx.load_bytes(data)
     assert type(obj) is CallableWorker
     assert obj.output_buffer == "Hello, Bridgic in Output Buffer!"
-    assert obj.local_space == {"a": 1, "b": 2}
     assert obj.callable is func_a
 
 class MyClass:
@@ -108,7 +102,6 @@ def worker_4():
     # Test a CallableWorker with a unbound method of a class.
     w = CallableWorker(MyClass.func_a)
     w.output_buffer = "Hello, Bridgic in Output Buffer!"
-    w.local_space = {"a": 1, "b": 2}
     return w
 
 def test_callable_worker_serialization_2(worker_4: CallableWorker):
@@ -117,7 +110,6 @@ def test_callable_worker_serialization_2(worker_4: CallableWorker):
     obj = msgpackx.load_bytes(data)
     assert type(obj) is CallableWorker
     assert obj.output_buffer == "Hello, Bridgic in Output Buffer!"
-    assert obj.local_space == {"a": 1, "b": 2}
     assert obj.callable is MyClass.func_a
 
 @pytest.fixture
@@ -125,7 +117,6 @@ def worker_5(my_obj: MyClass):
     # Test a CallableWorker with a bound method of a class.
     w = CallableWorker(my_obj.func_a)
     w.output_buffer = "Hello, Bridgic in Output Buffer!"
-    w.local_space = {"a": 1, "b": 2}
     return w
 
 def test_callable_worker_serialization_3(worker_5: CallableWorker, my_obj: MyClass):
@@ -134,7 +125,6 @@ def test_callable_worker_serialization_3(worker_5: CallableWorker, my_obj: MyCla
     obj = msgpackx.load_bytes(data)
     assert type(obj) is CallableWorker
     assert obj.output_buffer == "Hello, Bridgic in Output Buffer!"
-    assert obj.local_space == {"a": 1, "b": 2}
     # Note: the bounded object is not the same as the original object.
     assert obj.callable != my_obj.func_a
     assert obj.callable.__func__ is my_obj.func_a.__func__
