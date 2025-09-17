@@ -83,7 +83,7 @@ class _GraphAdaptedWorker(Worker):
         return await self._decorated_worker.arun(*args, **kwargs)
 
     @override
-    def get_input_param_names(self) -> Dict[Parameter, List[str]]:
+    def get_input_param_names(self) -> Dict[Parameter, List[Tuple[str, Any]]]:
         return self._decorated_worker.get_input_param_names()
 
     @property
@@ -313,6 +313,70 @@ class _InteractionAndFeedback(BaseModel):
     interaction: Interaction
     feedback: Optional[InteractionFeedback] = None
 
+@dataclass
+class From:
+    key: str
+
+class Injector:
+    """
+    Dependency injection container for resolving dependency data injection.
+
+    This class manages providers for dependency injection, allowing you to register
+    and resolve dependencies by key, and to inject dependencies into function parameters
+    based on their default values. It is used with the `From` class to implement 
+    dependency injection.
+
+    Attributes
+    ----------
+    _providers : dict
+        Internal dictionary mapping keys to provided results.
+
+    Main Methods
+    ------------
+    provide(key: str, result: Any)
+        Register a provider result for a given key.
+
+    resolve(dep: From) -> Any
+        Resolve and return the result for a given dependency key.
+
+    inject(param_list: List[Tuple[str, Optional[Any]]]) -> dict
+        Inject dependencies into parameters whose default value is a `From` instance.
+    """
+    def __init__(self):
+        self._providers = {}
+
+    def provide(self, key: str, result: Any):
+        """
+        Register a provider result for a given key.
+        """
+        self._providers[key] = result
+
+    def resolve(self, dep: From):
+        """
+        Resolve and return the result for a given dependency key.
+        """
+        if dep.key not in self._providers:
+            raise KeyError(f"No provider registered for key: {dep.key}")
+        return self._providers[dep.key]
+
+    def inject(self, param_list: List[Tuple[str, Optional[Any]]]):
+        """
+        Inject dependencies into parameters whose default value is a `From` instance.
+        """
+        inject_kwargs = {}
+        for name, default_value in param_list:
+            if isinstance(default_value, From):
+                value = self.resolve(default_value)
+                inject_kwargs[name] = value
+        return inject_kwargs
+
+    def dump_to_dict(self) -> Dict[str, Any]:
+        return {"providers": self._providers}
+    
+    def load_from_dict(self, state_dict: Dict[str, Any]) -> None:
+        self._providers = state_dict["providers"]
+
+
 class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
     """
     DDG (Dynamic Directed Graph) implementation of Automa.
@@ -357,6 +421,7 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
     # Ongoing human interactions triggered by the `interact_with_human()` call from workers of the current Automa.
     # worker_key -> list of interactions.
     _ongoing_interactions: Dict[str, List[_InteractionAndFeedback]]
+    _injector: Injector
 
     #########################################################
     #### The following fields need not to be serialized. ####
@@ -409,6 +474,7 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         self._workers = {} #TODO: __getattribute__() refactoring
         super().__init__(name=name)
         self._running_started = False
+        self._injector = Injector()
 
         # Initialize the states that need to be serialized.
         self._normal_init(output_worker_key)
@@ -500,6 +566,7 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         state_dict["input_buffer"] = self._input_buffer
         # TODO: the data field of Event and Feedback must be serializable in order to serialize _ongoing_interactions
         state_dict["ongoing_interactions"] = self._ongoing_interactions
+        state_dict["injector"] = self._injector
         return state_dict
 
     @override
@@ -516,6 +583,7 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         self._current_kickoff_workers = state_dict["current_kickoff_workers"]
         self._input_buffer = state_dict["input_buffer"]
         self._ongoing_interactions = state_dict["ongoing_interactions"]
+        self._injector = state_dict["injector"]
 
     @classmethod
     def load_from_snapshot(
@@ -1103,10 +1171,15 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
                     next_kwargs=next_kwargs,
                     input_kwargs=self._input_buffer.kwargs,
                 )
-
+                # Third, Resolve dependency data injection.
+                worker_obj = self._workers[kickoff_info.worker_key]
+                next_args, next_kwargs = self._resolve_dependency_data_injection(
+                    sig=worker_obj.get_input_param_names(),
+                    next_args=next_args,
+                    next_kwargs=next_kwargs,
+                )
 
                 # Schedule task for each kickoff worker.
-                worker_obj = self._workers[kickoff_info.worker_key]
                 if worker_obj.is_automa():
                     coro = worker_obj.arun(
                         *next_args, 
@@ -1154,6 +1227,9 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
                         worker_obj = self._workers[task.worker_key]
                         # Collect results of the finished tasks.
                         worker_obj.output_buffer = task_result 
+                        # register the output of the worker.
+                        # TODO: The output of the worker was recorded repeatedly. Can be optimized.
+                        self._injector.provide(worker_obj.key, task_result)
                         # reset dynamic states of finished workers.
                         self._workers_dynamic_states[task.worker_key].dependency_triggers = set(getattr(worker_obj, "dependencies", []))
                         # Update the dynamic states of successor workers.
@@ -1703,3 +1779,35 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         for k, v in self._workers.items():
             d[k] = f"{v} depends on {getattr(v, 'dependencies', [])}"
         return json.dumps(d, ensure_ascii=False, indent=4)
+
+    def _resolve_dependency_data_injection(
+            self,
+            sig: Dict[Parameter, List],
+            next_args: Tuple[Any, ...],
+            next_kwargs: Dict[str, Any],
+    ):
+        param_list = [
+            param
+            for _, param_list in sig.items()
+            for param in param_list
+        ]
+        print(f'param_list: {param_list}')
+        inject_kwargs = self._injector.inject(param_list)
+
+        # If the number of parameters is less than or equal to the number of positional arguments, raise an error.
+        # TODO: add more details errors
+        if len(param_list) <= len(next_args) and len(inject_kwargs):
+            raise WorkerArgsMappingError(
+                f"The number of parameters is less than or equal to the number of positional arguments, "
+                f"but got {len(param_list)} parameters and {len(next_args)} positional arguments"
+            )
+
+        # From kwargs will cover original kwargs
+        current_kwargs = {}
+        for k, v in next_kwargs.items():
+            current_kwargs[k] = v
+        for k, v in inject_kwargs.items():
+            current_kwargs[k] = v
+
+        next_args, next_kwargs = Worker.safely_map_args(next_args, current_kwargs, sig)
+        return next_args, next_kwargs

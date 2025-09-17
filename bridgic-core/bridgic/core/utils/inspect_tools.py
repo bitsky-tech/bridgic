@@ -1,5 +1,5 @@
 import inspect
-from typing import Callable, List, Dict, Any
+from typing import Callable, List, Dict, Any, Tuple
 from typing_extensions import get_overloads
 import importlib
 import enum
@@ -43,7 +43,7 @@ def get_param_names_by_kind(
 def get_param_names_all_kinds(
         func: Callable, 
         exclude_default: bool = False,
-    ) -> Dict[enum.IntEnum, List[str]]:
+    ) -> Dict[enum.IntEnum, List[Tuple[str, Any]]]:
     """
     Get the names of parameters of a function.
 
@@ -56,7 +56,7 @@ def get_param_names_all_kinds(
 
     Returns
     -------
-    Dict[enum.IntEnum, List[str]]
+    Dict[enum.IntEnum, List[Tuple[str, Any]]]
         A dictionary of parameter names by the kind of the parameter.
         The key is the kind of the parameter, which is one of five possible values:
         - inspect.Parameter.POSITIONAL_ONLY
@@ -72,7 +72,11 @@ def get_param_names_all_kinds(
             continue
         if param.kind not in param_names_dict:
             param_names_dict[param.kind] = []
-        param_names_dict[param.kind].append(name)
+        
+        if param.default is inspect.Parameter.empty:
+            param_names_dict[param.kind].append((name, inspect._empty))
+        else:
+            param_names_dict[param.kind].append((name, param.default))
     return param_names_dict
 
 
