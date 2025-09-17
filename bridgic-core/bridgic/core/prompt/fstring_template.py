@@ -22,7 +22,7 @@ class FstringPromptTemplate(BasePromptTemplate):
             raise PromptRenderError(f"Missing variables that are required to render the prompt template: {', '.join(missing_vars)}")
 
         rendered = self.template_str.format(**kwargs)
-        return Message(role=role, content=rendered)
+        return Message.from_text(text=rendered, role=role)
 
     def _find_variables(self) -> List[str]:
         var_list = re.findall(r'{([^}]+)}', self.template_str)

@@ -2,3 +2,4 @@ __pycache__/
 .vscode/
 logs/
 dist/
+.DS_Store

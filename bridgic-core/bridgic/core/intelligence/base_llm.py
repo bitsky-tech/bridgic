@@ -36,6 +36,22 @@ class Message(BaseModel):
             role = Role(role)
         return cls(role=role, blocks=[TextBlock(text=text)], extras=extras)
 
+    @property
+    def content(self) -> str:
+        return "\n\n".join([block.text for block in self.blocks if isinstance(block, TextBlock)])
+
+    @content.setter
+    def content(self, text: str):
+        if not self.blocks:
+            self.blocks = [TextBlock(text=text)]
+        elif len(self.blocks) == 1 and isinstance(self.blocks[0], TextBlock):
+            self.blocks = [TextBlock(text=text)]
+        else:
+            raise ValueError(
+                "Message contains multiple blocks or contains a non-text block, thus it could not be "
+                "easily set by the property \"Message.content\". Use \"Message.blocks\" instead."
+            )
+
 class Response(BaseModel):
     """
     LLM response.
