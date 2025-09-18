@@ -33,9 +33,9 @@ class Worker:
 
     @staticmethod
     def safely_map_args(
-            in_args: Tuple[Any, ...], 
-            in_kwargs: Dict[str, Any],
-            rx_param_names_dict: Dict[Parameter, List[Tuple[str, Any]]],
+        in_args: Tuple[Any, ...], 
+        in_kwargs: Dict[str, Any],
+        rx_param_names_dict: Dict[Parameter, List[str]],
     ) -> Tuple[Tuple[Any, ...], Dict[str, Any]]:
         
         def get_param_names(param_names_dict: List[Tuple[str, Any]]) -> List[str]:
