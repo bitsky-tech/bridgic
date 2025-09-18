@@ -22,6 +22,7 @@ from bridgic.core.automa.worker_decorator import packup_worker_decorator_rumtime
 from bridgic.core.automa.worker.callable_worker import CallableWorker
 from bridgic.core.automa.interaction import Event, FeedbackSender, EventHandlerType, InteractionFeedback, Feedback, Interaction, InteractionException
 from bridgic.core.automa.serialization import Snapshot
+from bridgic.core.automa.parameter_inject import WorkerInjector
 import bridgic.core.serialization.msgpackx as msgpackx
 
 class _GraphAdaptedWorker(Worker):
@@ -83,7 +84,7 @@ class _GraphAdaptedWorker(Worker):
         return await self._decorated_worker.arun(*args, **kwargs)
 
     @override
-    def get_input_param_names(self) -> Dict[Parameter, List[str]]:
+    def get_input_param_names(self) -> Dict[Parameter, List[Tuple[str, Any]]]:
         return self._decorated_worker.get_input_param_names()
 
     @property
@@ -348,6 +349,7 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
     # Ongoing human interactions triggered by the `interact_with_human()` call from workers of the current Automa.
     # worker_key -> list of interactions.
     _ongoing_interactions: Dict[str, List[_InteractionAndFeedback]]
+    _injector: WorkerInjector
 
     #########################################################
     #### The following fields need not to be serialized. ####
@@ -401,6 +403,7 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         self._worker_keys = [] # for better __getattribute__() performance
         super().__init__(name=name)
         self._running_started = False
+        self._injector = WorkerInjector()
 
         # Initialize the states that need to be serialized.
         self._normal_init(output_worker_key)
@@ -492,6 +495,7 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         state_dict["input_buffer"] = self._input_buffer
         # TODO: the data field of Event and Feedback must be serializable in order to serialize _ongoing_interactions
         state_dict["ongoing_interactions"] = self._ongoing_interactions
+        state_dict["injector"] = self._injector
         return state_dict
 
     @override
@@ -508,6 +512,7 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         self._current_kickoff_workers = state_dict["current_kickoff_workers"]
         self._input_buffer = state_dict["input_buffer"]
         self._ongoing_interactions = state_dict["ongoing_interactions"]
+        self._injector = state_dict["injector"]
 
     @classmethod
     def load_from_snapshot(
@@ -1148,10 +1153,15 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
                     next_kwargs=next_kwargs,
                     input_kwargs=self._input_buffer.kwargs,
                 )
-
+                # Third, Resolve dependency data injection.
+                worker_obj = self._workers[kickoff_info.worker_key]
+                next_args, next_kwargs = self._resolve_dependency_data_injection(
+                    sig=worker_obj.get_input_param_names(),
+                    next_args=next_args,
+                    next_kwargs=next_kwargs,
+                )
 
                 # Schedule task for each kickoff worker.
-                worker_obj = self._workers[kickoff_info.worker_key]
                 if worker_obj.is_automa():
                     coro = worker_obj.arun(
                         *next_args, 
@@ -1366,10 +1376,15 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
                 current_loop = asyncio.get_running_loop()
             except Exception:
                 current_loop = None
-            if current_loop is self._post_loop:
-                self._future.set_result(feedback)
-            else:
-                self._post_loop.call_soon_threadsafe(self._future.set_result, feedback)
+            try:
+                if current_loop is self._post_loop:
+                    self._future.set_result(feedback)
+                else:
+                    self._post_loop.call_soon_threadsafe(self._future.set_result, feedback)
+            except asyncio.InvalidStateError:
+                # Suppress the InvalidStateError to be raised, maybe due to timeout.
+                import warnings
+                warnings.warn(f"Feedback future already set. feedback: {feedback}", FutureWarning)
 
     @override
     def post_event(self, event: Event) -> None:
@@ -1410,7 +1425,11 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
                 self._default_event_handler(event)
 
 
-    def request_feedback(self, event: Event) -> Feedback:
+    def request_feedback(
+        self, 
+        event: Event,
+        timeout: Optional[float] = None
+    ) -> Feedback:
         """
         Request feedback for the specified event from the application layer outside the Automa. This method blocks the caller until the feedback is received.
 
@@ -1420,17 +1439,33 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         ----------
         event: Event
             The event to be posted to the event handler implemented by the application layer.
+        timeout: Optional[float]
+            A float or int number of seconds to wait for if the feedback is not received. If None, then there is no limit on the wait time.
+
+        Returns
+        -------
+        Feedback
+            The feedback received from the application layer.
+
+        Raises
+        ------
+        TimeoutError
+            If the feedback is not received before the timeout. Note that the raised exception is the built-in `TimeoutError` exception, instead of asyncio.TimeoutError or concurrent.futures.TimeoutError!
         """
         if threading.get_ident() == self._main_thread_id:
             raise AutomaRuntimeError(
                 f"`request_feedback` should only be called in a different thread from the main thread of the {self.name}. "
             )
         return asyncio.run_coroutine_threadsafe(
-            self.request_feedback_async(event),
+            self.request_feedback_async(event, timeout),
             self._main_loop
         ).result()
 
-    async def request_feedback_async(self, event: Event) -> Feedback:
+    async def request_feedback_async(
+        self, 
+        event: Event,
+        timeout: Optional[float] = None
+    ) -> Feedback:
         """
         Request feedback for the specified event from the application layer outside the Automa. This method blocks the caller until the feedback is received.
 
@@ -1440,10 +1475,22 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         ----------
         event: Event
             The event to be posted to the event handler implemented by the application layer.
+        timeout: Optional[float]
+            A float or int number of seconds to wait for if the feedback is not received. If None, then there is no limit on the wait time.
+
+        Returns
+        -------
+        Feedback
+            The feedback received from the application layer.
+
+        Raises
+        ------
+        TimeoutError
+            If the feedback is not received before the timeout. Note that the raised exception is the built-in `TimeoutError` exception, instead of asyncio.TimeoutError!
         """
         if self.parent is not None:
             # Bubble up the event to the top-level Automa.
-            return await self.parent.request_feedback_async(event)
+            return await self.parent.request_feedback_async(event, timeout)
         
         # Here is the top-level Automa.
         event_loop = asyncio.get_running_loop()
@@ -1454,7 +1501,16 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
             self._event_handlers[event.event_type](event, feedback_sender)
         if self._default_event_handler is not None:
             self._default_event_handler(event, feedback_sender)
-        return await future
+
+        try:
+            return await asyncio.wait_for(future, timeout)
+        except TimeoutError as e:
+            # When python >= 3.11 here.
+            raise TimeoutError(f"No feedback is received before timeout in Automa[{self.name}]") from e
+        except asyncio.TimeoutError as e:
+            # Version compatibility resolution: asyncio.wait_for raises asyncio.TimeoutError before python 3.11.
+            # https://docs.python.org/3/library/asyncio-task.html#asyncio.wait_for
+            raise TimeoutError(f"No feedback is received before timeout in Automa[{self.name}]") from e
 
     ###############################################################
     ########### [Bridgic Event Handling Mechanism] ends ###########
@@ -1704,3 +1760,34 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         for k, v in self._workers.items():
             d[k] = f"{v} depends on {getattr(v, 'dependencies', [])}"
         return json.dumps(d, ensure_ascii=False, indent=4)
+
+    def _resolve_dependency_data_injection(
+            self,
+            sig: Dict[Parameter, List],
+            next_args: Tuple[Any, ...],
+            next_kwargs: Dict[str, Any],
+    ):
+        param_list = [
+            param
+            for _, param_list in sig.items()
+            for param in param_list
+        ]
+        inject_kwargs = self._injector.inject(param_list, self._workers)
+
+        # If the number of parameters is less than or equal to the number of positional arguments, raise an error.
+        # TODO: add more details errors
+        if len(param_list) <= len(next_args) and len(inject_kwargs):
+            raise WorkerArgsMappingError(
+                f"The number of parameters is less than or equal to the number of positional arguments, "
+                f"but got {len(param_list)} parameters and {len(next_args)} positional arguments"
+            )
+
+        # From kwargs will cover original kwargs
+        current_kwargs = {}
+        for k, v in next_kwargs.items():
+            current_kwargs[k] = v
+        for k, v in inject_kwargs.items():
+            current_kwargs[k] = v
+
+        next_args, next_kwargs = Worker.safely_map_args(next_args, current_kwargs, sig)
+        return next_args, next_kwargs
