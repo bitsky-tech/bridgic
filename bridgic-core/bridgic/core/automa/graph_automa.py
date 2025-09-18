@@ -940,7 +940,7 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         self._ferry_deferred_tasks.append(deferred_task)
     
 
-    def get_local_space(self, runtime_context: Dict[str, Any]) -> Dict[str, Any]:
+    def get_local_space(self, runtime_context: Dict[str, Any] = None) -> Dict[str, Any]:
         """Get the local space, if you want to clean the local space after automa.arun(), you can override the should_reset_local_space() method.
 
         Parameters
@@ -956,13 +956,13 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         Raises
         ------
         AutomaRuntimeError
-            The worker_key is not found in the runtime_context.
+            The worker_key is not found in the runtime_context or get_local_space function need runtime_context parameter
         """
-        worker_key = runtime_context.get("worker_key")
+        worker_key = runtime_context.get("worker_key") if runtime_context is not None else None
         if not worker_key:
             raise AutomaRuntimeError(
                 f"the worker_key is not found in the runtime_context: "
-                f"runtime_context={runtime_context}"
+                f"runtime_context={runtime_context}" if runtime_context is not None else "get_local_space function need runtime_context parameter"
             )
         worker_obj = self._workers[worker_key]
         return worker_obj.local_space

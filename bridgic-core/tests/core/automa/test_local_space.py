@@ -3,6 +3,29 @@ from bridgic.core.automa import ArgsMappingRule, AutomaRuntimeError, GraphAutoma
 import pytest
 
 #### Test case: get_local_space runtime_context must contain worker_key
+
+class MissingWorkerKeyStateAutomaRuntimeContextNone(GraphAutoma):
+    @worker(is_start=True)
+    async def start(self):
+        local_space = self.get_local_space()
+        loop_index = local_space.get("loop_index", 1)
+        local_space["loop_index"] = loop_index + 1
+        return loop_index
+    
+    @worker(dependencies=["start"])
+    async def end(self, loop_index: int):
+        return loop_index + 5
+
+@pytest.fixture
+def missing_worker_key_state_automa_runtime_context_none():
+    graph = MissingWorkerKeyStateAutomaRuntimeContextNone(output_worker_key="end")
+    return graph
+
+@pytest.mark.asyncio
+async def test_get_local_space_runtime_context_none(missing_worker_key_state_automa_runtime_context_none: MissingWorkerKeyStateAutomaRuntimeContextNone):
+    with pytest.raises(AutomaRuntimeError, match="get_local_space function need runtime_context parameter"):
+        await missing_worker_key_state_automa_runtime_context_none.arun()
+
 class MissingWorkerKeyStateAutoma(GraphAutoma):
     @worker(is_start=True)
     async def start(self):
@@ -21,8 +44,8 @@ def missing_worker_key_state_automa():
     return graph
 
 @pytest.mark.asyncio
-async def test_get_local_space_requires_worker_key(missing_worker_key_state_automa: MissingWorkerKeyStateAutoma):
-    with pytest.raises(AutomaRuntimeError, match=r"the worker_key is not found in the runtime_context:"):
+async def test_get_local_space_runtime_context_empty(missing_worker_key_state_automa: MissingWorkerKeyStateAutoma):
+    with pytest.raises(AutomaRuntimeError, match="the worker_key is not found in the runtime_context: runtime_context={}"):
         await missing_worker_key_state_automa.arun()
 
 #### Test case: get_local_space can be called multiple times
