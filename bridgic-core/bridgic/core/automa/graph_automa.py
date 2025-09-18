@@ -22,6 +22,7 @@ from bridgic.core.automa.worker_decorator import packup_worker_decorator_rumtime
 from bridgic.core.automa.worker.callable_worker import CallableWorker
 from bridgic.core.automa.interaction import Event, FeedbackSender, EventHandlerType, InteractionFeedback, Feedback, Interaction, InteractionException
 from bridgic.core.automa.serialization import Snapshot
+from bridgic.core.automa.dependence_inject import WorkerInjector
 import bridgic.core.serialization.msgpackx as msgpackx
 
 class _GraphAdaptedWorker(Worker):
@@ -313,70 +314,6 @@ class _InteractionAndFeedback(BaseModel):
     interaction: Interaction
     feedback: Optional[InteractionFeedback] = None
 
-@dataclass
-class From:
-    key: str
-
-class Injector:
-    """
-    Dependency injection container for resolving dependency data injection.
-
-    This class manages providers for dependency injection, allowing you to register
-    and resolve dependencies by key, and to inject dependencies into function parameters
-    based on their default values. It is used with the `From` class to implement 
-    dependency injection.
-
-    Attributes
-    ----------
-    _providers : dict
-        Internal dictionary mapping keys to provided results.
-
-    Main Methods
-    ------------
-    provide(key: str, result: Any)
-        Register a provider result for a given key.
-
-    resolve(dep: From) -> Any
-        Resolve and return the result for a given dependency key.
-
-    inject(param_list: List[Tuple[str, Optional[Any]]]) -> dict
-        Inject dependencies into parameters whose default value is a `From` instance.
-    """
-    def __init__(self):
-        self._providers = {}
-
-    def provide(self, key: str, result: Any):
-        """
-        Register a provider result for a given key.
-        """
-        self._providers[key] = result
-
-    def resolve(self, dep: From):
-        """
-        Resolve and return the result for a given dependency key.
-        """
-        if dep.key not in self._providers:
-            raise KeyError(f"No provider registered for key: {dep.key}")
-        return self._providers[dep.key]
-
-    def inject(self, param_list: List[Tuple[str, Optional[Any]]]):
-        """
-        Inject dependencies into parameters whose default value is a `From` instance.
-        """
-        inject_kwargs = {}
-        for name, default_value in param_list:
-            if isinstance(default_value, From):
-                value = self.resolve(default_value)
-                inject_kwargs[name] = value
-        return inject_kwargs
-
-    def dump_to_dict(self) -> Dict[str, Any]:
-        return {"providers": self._providers}
-    
-    def load_from_dict(self, state_dict: Dict[str, Any]) -> None:
-        self._providers = state_dict["providers"]
-
-
 class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
     """
     DDG (Dynamic Directed Graph) implementation of Automa.
@@ -421,7 +358,7 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
     # Ongoing human interactions triggered by the `interact_with_human()` call from workers of the current Automa.
     # worker_key -> list of interactions.
     _ongoing_interactions: Dict[str, List[_InteractionAndFeedback]]
-    _injector: Injector
+    _injector: WorkerInjector
 
     #########################################################
     #### The following fields need not to be serialized. ####
@@ -474,7 +411,7 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         self._workers = {} #TODO: __getattribute__() refactoring
         super().__init__(name=name)
         self._running_started = False
-        self._injector = Injector()
+        self._injector = WorkerInjector()
 
         # Initialize the states that need to be serialized.
         self._normal_init(output_worker_key)
@@ -1227,9 +1164,6 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
                         worker_obj = self._workers[task.worker_key]
                         # Collect results of the finished tasks.
                         worker_obj.output_buffer = task_result 
-                        # register the output of the worker.
-                        # TODO: The output of the worker was recorded repeatedly. Can be optimized.
-                        self._injector.provide(worker_obj.key, task_result)
                         # reset dynamic states of finished workers.
                         self._workers_dynamic_states[task.worker_key].dependency_triggers = set(getattr(worker_obj, "dependencies", []))
                         # Update the dynamic states of successor workers.
@@ -1791,8 +1725,7 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
             for _, param_list in sig.items()
             for param in param_list
         ]
-        print(f'param_list: {param_list}')
-        inject_kwargs = self._injector.inject(param_list)
+        inject_kwargs = self._injector.inject(param_list, self._workers)
 
         # If the number of parameters is less than or equal to the number of positional arguments, raise an error.
         # TODO: add more details errors
