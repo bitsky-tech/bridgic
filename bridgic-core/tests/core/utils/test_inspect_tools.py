@@ -1,3 +1,4 @@
+import inspect
 from inspect import Parameter
 from bridgic.core.utils.inspect_tools import load_qualified_class_or_func, get_param_names_by_kind, get_param_names_all_kinds
 
@@ -47,24 +48,24 @@ def test_get_param_names_all_kinds():
     a = A()
     
     assert get_param_names_all_kinds(a.func_1) == {
-        Parameter.POSITIONAL_OR_KEYWORD: ["a", "b", "c", "d"],
+        Parameter.POSITIONAL_OR_KEYWORD: [("a", inspect._empty), ("b", inspect._empty), ("c", 5), ("d", 6)],
     }
     assert get_param_names_all_kinds(a.func_2) == {
-        Parameter.POSITIONAL_ONLY: ["a"],
-        Parameter.POSITIONAL_OR_KEYWORD: ["b", "c", "d"],
+        Parameter.POSITIONAL_ONLY: [("a", inspect._empty)],
+        Parameter.POSITIONAL_OR_KEYWORD: [("b", inspect._empty), ("c", 5), ("d", 6)],
     }
     assert get_param_names_all_kinds(a.func_3) == {
-        Parameter.POSITIONAL_ONLY: ["a"],
-        Parameter.POSITIONAL_OR_KEYWORD: ["b", "c", "d"],
-        Parameter.KEYWORD_ONLY: ["e", "f", "g", "h"],
-        Parameter.VAR_KEYWORD: ["kwargs"],
+        Parameter.POSITIONAL_ONLY: [("a", inspect._empty)],
+        Parameter.POSITIONAL_OR_KEYWORD: [("b", inspect._empty), ("c", 5), ("d", 6)],
+        Parameter.KEYWORD_ONLY: [("e", inspect._empty), ("f", 7), ("g", inspect._empty), ("h", "")],
+        Parameter.VAR_KEYWORD: [("kwargs", inspect._empty)],
     }
     assert get_param_names_all_kinds(a.func_4) == {
-        Parameter.POSITIONAL_ONLY: ["a"],
-        Parameter.POSITIONAL_OR_KEYWORD: ["b", "c", "d"],
-        Parameter.KEYWORD_ONLY: ["e", "f", "g"],
-        Parameter.VAR_POSITIONAL: ["args"],
-        Parameter.VAR_KEYWORD: ["kwargs"],
+        Parameter.POSITIONAL_ONLY: [("a", inspect._empty)],
+        Parameter.POSITIONAL_OR_KEYWORD: [("b", inspect._empty), ("c", 5), ("d", 6)],
+        Parameter.KEYWORD_ONLY: [("e", 7), ("f", inspect._empty), ("g", inspect._empty)],
+        Parameter.VAR_POSITIONAL: [("args", inspect._empty)],
+        Parameter.VAR_KEYWORD: [("kwargs", inspect._empty)],
     }
 
 class C:
