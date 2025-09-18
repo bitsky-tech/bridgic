@@ -33,10 +33,11 @@ class AutomaLayerA(GraphAutoma):
         one_two_sum = one_output + two_output
 
         assert one_two_sum == 3
-        cnt, set_cnt = self.worker_state(0, runtime_context={
+        local_space = self.get_local_space(runtime_context={
             "worker_key": "loop_worker_3"
         })
-        set_cnt(cnt + 1)
+        local_space["cnt"] = local_space.get("cnt", 0) + 1
+        cnt = local_space["cnt"]
         printer.print("  loop_worker_3:", "cnt =>", cnt)
 
         if cnt < one_two_sum:

@@ -46,13 +46,16 @@ class TopAutoma(GraphAutoma):
             return my_list
 
 class NestedAutoma(GraphAutoma):
+    def should_reset_local_space(self) -> bool:
+        return False
+    
     @worker(is_start=True)
     async def counter(self):
-        count, set_count = self.worker_state(0, runtime_context={
+        local_space = self.get_local_space(runtime_context={
             "worker_key": "counter"
         })
-        set_count(count + 1)
-        return count
+        local_space["count"] = local_space.get("count", 0) + 1
+        return local_space["count"]
 
     @worker(dependencies=["counter"])
     async def end(self, count: int):

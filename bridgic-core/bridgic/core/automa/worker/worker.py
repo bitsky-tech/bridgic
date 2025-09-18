@@ -25,7 +25,8 @@ if TYPE_CHECKING:
 class Worker:
     __output_buffer: Any
     __output_has_set: bool
-
+    __local_space: Dict[str, Any]
+    
     # Cached method signatures, with no need for serialization.
     __cached_param_names_of_arun: Dict[Parameter, List[str]]
     __cached_param_names_of_run: Dict[Parameter, List[str]]
@@ -73,7 +74,8 @@ class Worker:
         """
         self.__parent: Automa = None
         self.__output_has_set = False
-        
+        self.__local_space = {}
+
         # Cached method signatures, with no need for serialization.
         self.__cached_param_names_of_arun = None
         self.__cached_param_names_of_run = None
@@ -152,6 +154,13 @@ class Worker:
     def output_buffer(self, value: Any):
         self.__output_buffer = value
         self.__output_has_set = True
+    @property
+    def local_space(self) -> Dict[str, Any]:
+        return self.__local_space
+    
+    @local_space.setter
+    def local_space(self, value: Dict[str, Any]):
+        self.__local_space = value
 
     def dump_to_dict(self) -> Dict[str, Any]:
         state_dict = {}

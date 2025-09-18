@@ -7,7 +7,7 @@ import json
 import threading
 import uuid
 from abc import ABCMeta
-from typing import Any, List, Dict, Set, Mapping, Callable, Tuple, Optional, Literal, TypeVar, Union
+from typing import Any, List, Dict, Set, Mapping, Callable, Tuple, Optional, Literal, Union
 from types import MethodType
 from collections import defaultdict, deque
 from dataclasses import dataclass
@@ -23,8 +23,6 @@ from bridgic.core.automa.worker.callable_worker import CallableWorker
 from bridgic.core.automa.interaction import Event, FeedbackSender, EventHandlerType, InteractionFeedback, Feedback, Interaction, InteractionException
 from bridgic.core.automa.serialization import Snapshot
 import bridgic.core.serialization.msgpackx as msgpackx
-
-T = TypeVar('T')
 
 class _GraphAdaptedWorker(Worker):
     """
@@ -336,7 +334,6 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
     # Note: Just declarations, NOT instances!!!
     # So do not initialize them here!!!
     _workers: Dict[str, _GraphAdaptedWorker]
-    _worker_runtime_state: Dict[str, Dict[str, Any]]
     _worker_forwards: Dict[str, List[str]]
     _output_worker_key: Optional[str]
 
@@ -402,11 +399,6 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         """
         self._workers = {} #TODO: __getattribute__() refactoring
         self._worker_keys = [] # for better __getattribute__() performance
-        # Tracks last run results to restore state in the next loop
-        self._worker_runtime_state = {
-            "current_loop_run_keys": [],
-            "worker_data": {},
-        }
         super().__init__(name=name)
         self._running_started = False
 
@@ -491,7 +483,6 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         state_dict["name"] = self.name
         # TODO: serialize the workers, including the outbuf of each worker
         state_dict["workers"] = self._workers
-        state_dict["worker_runtime_state"] = self._worker_runtime_state
         state_dict["running_started"] = self._running_started
         state_dict["worker_forwards"] = self._worker_forwards
         state_dict["workers_dynamic_states"] = self._workers_dynamic_states
@@ -510,7 +501,6 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         self._workers = state_dict["workers"]
         for worker in self._workers.values():
             worker.parent = self
-        self._worker_runtime_state = state_dict["worker_runtime_state"]
         self._running_started = state_dict["running_started"]
         self._worker_forwards = state_dict["worker_forwards"]
         self._workers_dynamic_states = state_dict["workers_dynamic_states"]
@@ -944,47 +934,24 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         # But _ferry_deferred_tasks is not necessary to be thread-safe due to Visibility Guarantees of the Bridgic Concurrency Model.
         self._ferry_deferred_tasks.append(deferred_task)
     
-    def _set_worker_runtime_state(self, worker_key):
-        def set_state(value):
-            self._worker_runtime_state["worker_data"][worker_key]["state"] = value
-        return set_state
 
-    def _get_worker_runtime_state(self):
-        """get the worker runtime state"""
-        return {
-            "state": None,
-        }
-
-    def _add_finished_worker_key(self, worker_key):
-        self._worker_runtime_state["current_loop_run_keys"].append(worker_key)
-
-    def _delete_current_loop_run_keys(self, worker_key):
-        if worker_key in self._worker_runtime_state["current_loop_run_keys"]:
-            self._worker_runtime_state["current_loop_run_keys"].remove(worker_key)
-
-    def worker_state(self, initial_value: T, runtime_context: Dict[str, Any], auto_clear: bool = False) -> Tuple[T, Callable[[T], None]]:
-        """Get the worker state.
+    def get_local_space(self, runtime_context: Dict[str, Any]) -> Dict[str, Any]:
+        """Get the local space, if you want to clean the local space after automa.arun(), you can override the should_reset_local_space() method.
 
         Parameters
         ----------
-        initial_value : T
-            The initial value of the worker state.
         runtime_context : Dict[str, Any]
-            The runtime context of the worker state.
-        auto_clear : bool, optional
-            TODO: add description after post_arun is implemented, by default False
+            The runtime context.
 
         Returns
         -------
-        Tuple[T, Callable[[T], None]]
-            The worker state and the setter function.
+        Dict[str, Any]
+            The local space.
 
         Raises
         ------
         AutomaRuntimeError
             The worker_key is not found in the runtime_context.
-        AutomaRuntimeError
-            The worker_key has been run more than once by the same worker_state call.
         """
         worker_key = runtime_context.get("worker_key")
         if not worker_key:
@@ -992,24 +959,28 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
                 f"the worker_key is not found in the runtime_context: "
                 f"runtime_context={runtime_context}"
             )
-        # worker_key in the worker_data means that it has been run, but we cannot know how many times it has been run, otherwise we need to initialize the data for the current worker
-        is_first_run = worker_key not in self._worker_runtime_state["worker_data"]
-        # need to check if this worker is running more than once in the current loop
-        is_run_times_more_than_once = worker_key in self._worker_runtime_state["current_loop_run_keys"]
-        if is_run_times_more_than_once:
-            raise AutomaRuntimeError(
-                f"the worker_key {worker_key} has been run more than once by the same worker_state call"
-            )
-        current_worker_state = self._get_worker_runtime_state()
-        if is_first_run:
-            current_worker_state["state"] = initial_value
-            current_worker_state["auto_clear"] = auto_clear
-            self._worker_runtime_state["worker_data"][worker_key] = current_worker_state
-        else:
-            current_worker_state = self._worker_runtime_state["worker_data"][worker_key]
-        self._add_finished_worker_key(worker_key)
-        return current_worker_state["state"], self._set_worker_runtime_state(worker_key)
+        worker_obj = self._workers[worker_key]
+        return worker_obj.local_space
 
+    def _clean_all_worker_local_space(self):
+        """
+        Clean the local space of all workers.
+        """
+        for worker_obj in self._workers.values():
+            worker_obj.local_space = {}
+
+    def should_reset_local_space(self) -> bool:
+        """
+        Whether to reset the local space after automa.arun(). By default, it is True, will reset the local space after automa.arun().
+        If you want to keep the local space after automa.arun(), you can override this method.
+        For example:
+        ```python
+        class MyAutoma(GraphAutoma):
+            def should_reset_local_space(self) -> bool:
+                return False
+        ```
+        """
+        return True
 
     async def arun(
             self, 
@@ -1078,8 +1049,6 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
                     self._remove_worker_incrementally(topology_task.key)
 
         def _set_worker_run_finished(worker_key: str):
-            # TODO: move this to post_arun method
-            self._delete_current_loop_run_keys(worker_key)
             for kickoff_info in self._current_kickoff_workers:
                 if kickoff_info.worker_key == worker_key:
                     kickoff_info.run_finished = True
@@ -1332,6 +1301,8 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         # After a complete run, reset the input buffer.
         # Therefore, if the same Automa re-runs, the input arguments must be provided once again.
         self._input_buffer = _AutomaInputBuffer()
+        if self.should_reset_local_space():
+            self._clean_all_worker_local_space()
         # If the output-worker is specified, return its output as the return value of the automa.
         if self._output_worker_key:
             return self._workers[self._output_worker_key].output_buffer
