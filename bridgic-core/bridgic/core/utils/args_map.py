@@ -1,11 +1,11 @@
 from typing import Tuple, Dict, Any, List
-from inspect import Parameter
+from inspect import Parameter, _ParameterKind
 
 
 def safely_map_args(
         in_args: Tuple[Any, ...], 
         in_kwargs: Dict[str, Any],
-        rx_param_names_dict: Dict[Parameter, List[Tuple[str, Any]]],
+        rx_param_names_dict: Dict[_ParameterKind, List[Tuple[str, Any]]],
     ) -> Tuple[Tuple[Any, ...], Dict[str, Any]]:
         
         def get_param_names(param_names_dict: List[Tuple[str, Any]]) -> List[str]:

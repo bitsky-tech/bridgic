@@ -14,7 +14,7 @@ import copy
 import asyncio
 from typing import Any, Dict, List, TYPE_CHECKING, Optional, Tuple
 from functools import partial
-from inspect import Parameter
+from inspect import _ParameterKind
 from bridgic.core.automa.interaction import Event, InteractionFeedback, Feedback
 from bridgic.core.types.error import WorkerRuntimeError
 from bridgic.core.utils.inspect_tools import get_param_names_all_kinds
@@ -29,8 +29,8 @@ class Worker:
     __local_space: Dict[str, Any]
     
     # Cached method signatures, with no need for serialization.
-    __cached_param_names_of_arun: Dict[Parameter, List[Tuple[str, Any]]]
-    __cached_param_names_of_run: Dict[Parameter, List[Tuple[str, Any]]]
+    __cached_param_names_of_arun: Dict[_ParameterKind, List[Tuple[str, Any]]]
+    __cached_param_names_of_run: Dict[_ParameterKind, List[Tuple[str, Any]]]
 
     def __init__(self):
         """
@@ -75,7 +75,7 @@ class Worker:
             top_level_automa = top_level_automa.parent
         return top_level_automa
     
-    def get_input_param_names(self) -> Dict[Parameter, List[Tuple[str, Any]]]:
+    def get_input_param_names(self) -> Dict[_ParameterKind, List[Tuple[str, Any]]]:
         """
         Get the names of input parameters of the worker.
         Use cached result if available in order to improve performance.
@@ -85,7 +85,7 @@ class Worker:
 
         Returns
         -------
-        Dict[Parameter, List[str]]
+        Dict[_ParameterKind, List[str]]
             A dictionary of input parameter names by the kind of the parameter.
             The key is the kind of the parameter, which is one of five possible values:
             - inspect.Parameter.POSITIONAL_ONLY
@@ -94,24 +94,24 @@ class Worker:
             - inspect.Parameter.KEYWORD_ONLY
             - inspect.Parameter.VAR_KEYWORD
         """
-        # Check if user has overridden the run method
-        if self._is_run_method_overridden():
-            # User overrode run method, return run method parameters
-            if self.__cached_param_names_of_run is None:
-                self.__cached_param_names_of_run = get_param_names_all_kinds(self.run)
-            return self.__cached_param_names_of_run
-        else:
-            # User is using arun method, return arun method parameters
+        # Check if user has overridden the arun method
+        if self._is_arun_overridden():
+            # User overrode arun method, return arun method parameters
             if self.__cached_param_names_of_arun is None:
                 self.__cached_param_names_of_arun = get_param_names_all_kinds(self.arun)
             return self.__cached_param_names_of_arun
+        else:
+            # User is using run method, return run method parameters
+            if self.__cached_param_names_of_run is None:
+                self.__cached_param_names_of_run = get_param_names_all_kinds(self.run)
+            return self.__cached_param_names_of_run
 
-    def _is_run_method_overridden(self) -> bool:
+    def _is_arun_overridden(self) -> bool:
         """
-        Check if the user has overridden the run method.
+        Check if the user has overridden the arun method.
         """
         # Compare method references - much faster than inspect.getsource()
-        return self.run.__func__ is not Worker.run
+        return self.arun.__func__ is not Worker.arun
 
     @property
     def parent(self) -> "Automa":

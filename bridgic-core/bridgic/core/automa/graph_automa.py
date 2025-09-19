@@ -2,7 +2,7 @@ import asyncio
 from asyncio import AbstractEventLoop
 from concurrent.futures import ThreadPoolExecutor
 import inspect
-from inspect import Parameter
+from inspect import Parameter, _ParameterKind
 import json
 import threading
 import uuid
@@ -85,7 +85,7 @@ class _GraphAdaptedWorker(Worker):
         return await self._decorated_worker.arun(*args, **kwargs)
 
     @override
-    def get_input_param_names(self) -> Dict[Parameter, List[Tuple[str, Any]]]:
+    def get_input_param_names(self) -> Dict[_ParameterKind, List[Tuple[str, Any]]]:
         return self._decorated_worker.get_input_param_names()
 
     @property

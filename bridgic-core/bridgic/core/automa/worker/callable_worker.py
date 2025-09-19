@@ -3,7 +3,7 @@ from bridgic.core.automa.worker import Worker
 from typing import Any
 from types import MethodType
 import inspect
-from inspect import Parameter
+from inspect import _ParameterKind
 from typing_extensions import override
 import pickle
 from bridgic.core.types.error import WorkerRuntimeError
@@ -20,7 +20,7 @@ class CallableWorker(Worker):
     _expected_bound_parent: bool
 
     # Cached method signatures, with no need for serialization.
-    __cached_param_names_of_callable: Dict[Parameter, List[str]]
+    __cached_param_names_of_callable: Dict[_ParameterKind, List[str]]
 
     def __init__(
         self, 
@@ -57,14 +57,14 @@ class CallableWorker(Worker):
         return self._callable(*args, **kwargs)
 
     @override
-    def get_input_param_names(self) -> Dict[Parameter, List[str]]:
+    def get_input_param_names(self) -> Dict[_ParameterKind, List[str]]:
         """
         Get the names of input parameters of this callable worker.
         Use cached result if available in order to improve performance.
 
         Returns
         -------
-        Dict[Parameter, List[str]]
+        Dict[_ParameterKind, List[str]]
             A dictionary of input parameter names by the kind of the parameter.
             The key is the kind of the parameter, which is one of five possible values:
             - inspect.Parameter.POSITIONAL_ONLY

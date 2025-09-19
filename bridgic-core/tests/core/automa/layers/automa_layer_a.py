@@ -3,7 +3,7 @@ import asyncio
 from typing import Any, Dict
 
 from bridgic.core.automa import GraphAutoma, worker, ArgsMappingRule
-from bridgic.core.automa.graph_automa import RuntimeContext
+from bridgic.core.automa.arguments_inject import System
 from bridgic.core.utils.console import printer
 
 class AutomaLayerA(GraphAutoma):
@@ -26,7 +26,7 @@ class AutomaLayerA(GraphAutoma):
         return zero_output[1]
 
     @worker(key="loop_worker_3", dependencies=["worker_1", "worker_2"], args_mapping_rule=ArgsMappingRule.SUPPRESSED)
-    async def worker_3(self, *args, **kwargs) -> int:
+    async def worker_3(self, rtx = System("runtime_context"), *args, **kwargs) -> int:
         await asyncio.sleep(0.25)
 
         one_output: int = self.worker_1.output_buffer
@@ -34,7 +34,7 @@ class AutomaLayerA(GraphAutoma):
         one_two_sum = one_output + two_output
 
         assert one_two_sum == 3
-        local_space = self.get_local_space(runtime_context=RuntimeContext(worker_key="loop_worker_3"))
+        local_space = self.get_local_space(runtime_context=rtx)
         local_space["cnt"] = local_space.get("cnt", 0) + 1
         cnt = local_space["cnt"]
         printer.print("  loop_worker_3:", "cnt =>", cnt)

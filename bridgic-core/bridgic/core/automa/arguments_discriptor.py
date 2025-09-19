@@ -1,12 +1,11 @@
-from enum import Enum
-from inspect import Parameter
+from inspect import _ParameterKind
+from pydantic import BaseModel
 from dataclasses import dataclass
-from typing import List, Tuple, Optional, Any, Dict
+from typing import List, Tuple, Optional, Any, Dict, Literal
 
 from bridgic.core.automa.worker import Worker
 from bridgic.core.types.error import AutomaDataInjectionError
 from bridgic.core.utils.args_map import safely_map_args
-from pydantic import BaseModel
 
 
 class InjectorNone: 
@@ -14,19 +13,28 @@ class InjectorNone:
     Marker object for Injector.inject() when the default value is None.
     """
 
-@dataclass
-class From:
+class ArgumentsDescriptor:
     """
-    A declarative object for dependency injection.
+    A descriptor for arguments that can be injected.
+    """
+    ...
+
+@dataclass
+class From(ArgumentsDescriptor):
+    """
+    worker dependency data from other workers.
     """
     key: str
     default: Optional[Any] = InjectorNone()
 
-class System(Enum):
+@dataclass
+class System(ArgumentsDescriptor):
     """
-    A declarative object for system injection.
+    worker dependency data from the automa.
     """
-    RUNTIME_CONTEXT: str = "runtime_context"
+    key: Literal[
+        "runtime_context"
+    ]
 
 class RuntimeContext(BaseModel):
     worker_key: str
@@ -69,20 +77,15 @@ class WorkerInjector:
             return inject_res
 
     def _resolve_system(self, dep: System, current_worker_key: str, worker_dict: Dict[str, Worker]) -> Any:
-        if dep == System.RUNTIME_CONTEXT:
+        if dep.key == "runtime_context":
             inject_res = RuntimeContext(worker_key=current_worker_key)
-        else:
-            raise AutomaDataInjectionError(
-                f"the system type: `{dep}` is not supported. "
-                "You may need to set the default value of the parameter to a `System` instance with the key of the system."
-            )
         
         return inject_res
 
     def inject(
         self, 
         current_worker_key: str,
-        current_worker_sig: Dict[Parameter, List],
+        current_worker_sig: Dict[_ParameterKind, List],
         worker_dict: Dict[str, Worker],
         next_args: Tuple[Any, ...],
         next_kwargs: Dict[str, Any],
@@ -94,7 +97,7 @@ class WorkerInjector:
         ----------
         current_worker_key : str
             The key of the current worker being processed.
-        current_worker_sig : Dict[Parameter, List]
+        current_worker_sig : Dict[_ParameterKind, List]
             Dictionary mapping parameters to their signature information of the current worker.
         worker_dict : Dict[str, Worker]
             Dictionary containing all available workers in the automa.
