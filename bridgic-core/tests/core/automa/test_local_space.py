@@ -588,8 +588,7 @@ async def test_adder_automa_1_interact_with_2_yes_feedback(interaction_feedback_
     result = await deserialized_adder_automa1_no.arun(
         interaction_feedback=interaction_feedback_2_yes
     )
-    # FIXME: the result currently is 305, but the expected result is 304
-    assert result == 305
+    assert result == 304
 
 if __name__ == "__main__":
     pytest.main(["-v", __file__])

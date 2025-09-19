@@ -608,6 +608,11 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         # TODO: check the comment above.
         for trigger in worker_to_remove.dependencies:
             self._worker_forwards[trigger].remove(key)
+        if key in self._worker_interaction_indices:
+            del self._worker_interaction_indices[key]
+        if key in self._ongoing_interactions:
+            del self._ongoing_interactions[key]
+
         # clear the output worker key if needed.
         if key == self._output_worker_key:
             self._output_worker_key = None
@@ -1196,6 +1201,12 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
                         # Update the dynamic states of successor workers.
                         for successor_key in self._worker_forwards.get(task.worker_key, []):
                             self._workers_dynamic_states[successor_key].dependency_triggers.remove(task.worker_key)
+                        # Each time a worker is finished running, the ongoing interaction states should be cleared. Once it is re-run, the human interactions in the worker can be triggered again.
+                        if task.worker_key in self._worker_interaction_indices:
+                            del self._worker_interaction_indices[task.worker_key]
+                        if task.worker_key in self._ongoing_interactions:
+                            del self._ongoing_interactions[task.worker_key]
+
                 except _InteractionEventException as e:
                     interaction_exceptions.append(e)
                     if task.worker_key in self._workers and not self._workers[task.worker_key].is_automa():
@@ -1290,11 +1301,13 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         if running_options.debug:
             printer.print(f"{type(self).__name__}-[{self.name}] is finished.", color="green")
 
-        # After a complete run, reset the input buffer.
-        # Therefore, if the same Automa re-runs, the input arguments must be provided once again.
+        # After a complete run, reset all necessary states to allow the automa to re-run.
         self._input_buffer = _AutomaInputBuffer()
         if self.should_reset_local_space():
             self._clean_all_worker_local_space()
+        self._ongoing_interactions.clear()
+        self._worker_interaction_indices.clear()
+
         # If the output-worker is specified, return its output as the return value of the automa.
         if self._output_worker_key:
             return self._workers[self._output_worker_key].output_buffer
