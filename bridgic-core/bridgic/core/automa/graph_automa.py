@@ -22,7 +22,7 @@ from bridgic.core.automa.worker_decorator import packup_worker_decorator_rumtime
 from bridgic.core.automa.worker.callable_worker import CallableWorker
 from bridgic.core.automa.interaction import Event, FeedbackSender, EventHandlerType, InteractionFeedback, Feedback, Interaction, InteractionException
 from bridgic.core.automa.serialization import Snapshot
-from bridgic.core.automa.parameter_inject import WorkerInjector
+from bridgic.core.automa.arguments_inject import WorkerInjector
 import bridgic.core.serialization.msgpackx as msgpackx
 
 class _GraphAdaptedWorker(Worker):
@@ -305,6 +305,7 @@ class _InteractionEventException(Exception):
 class _InteractionAndFeedback(BaseModel):
     interaction: Interaction
     feedback: Optional[InteractionFeedback] = None
+
 class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
     """
     DDG (Dynamic Directed Graph) implementation of Automa.
@@ -1762,10 +1763,10 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         return json.dumps(d, ensure_ascii=False, indent=4)
 
     def _resolve_dependency_data_injection(
-            self,
-            sig: Dict[Parameter, List],
-            next_args: Tuple[Any, ...],
-            next_kwargs: Dict[str, Any],
+        self,
+        sig: Dict[Parameter, List],
+        next_args: Tuple[Any, ...],
+        next_kwargs: Dict[str, Any],
     ):
         param_list = [
             param
