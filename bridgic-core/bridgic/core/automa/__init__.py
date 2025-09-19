@@ -20,6 +20,7 @@ __all__ = [
     "WorkerSignatureError",
     "WorkerArgsMappingError",
     "AutomaRuntimeError",
+    "AutomaDataInjectionError",
     "PlanningStrategy",
     "StaticOutputEffect",
     "DynamicOutputEffect",

@@ -24,6 +24,9 @@ class AutomaCompilationError(Exception):
 class AutomaRuntimeError(RuntimeError):
     pass
 
+class AutomaDataInjectionError(Exception):
+    pass
+
 ###########################################################
 # Prompt Errors
 ###########################################################

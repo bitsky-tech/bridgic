@@ -17,7 +17,8 @@ from functools import partial
 from inspect import Parameter
 from bridgic.core.automa.interaction import Event, InteractionFeedback, Feedback
 from bridgic.core.types.error import WorkerRuntimeError
-from bridgic.core.utils.inspect_tools import get_param_names_by_kind, get_param_names_all_kinds
+from bridgic.core.utils.inspect_tools import get_param_names_all_kinds
+from bridgic.core.utils.args_map import safely_map_args
 
 if TYPE_CHECKING:
     from bridgic.core.automa.automa import Automa
@@ -30,44 +31,6 @@ class Worker:
     # Cached method signatures, with no need for serialization.
     __cached_param_names_of_arun: Dict[Parameter, List[Tuple[str, Any]]]
     __cached_param_names_of_run: Dict[Parameter, List[Tuple[str, Any]]]
-
-    @staticmethod
-    def safely_map_args(
-            in_args: Tuple[Any, ...], 
-            in_kwargs: Dict[str, Any],
-            rx_param_names_dict: Dict[Parameter, List[Tuple[str, Any]]],
-    ) -> Tuple[Tuple[Any, ...], Dict[str, Any]]:
-        
-        def get_param_names(param_names_dict: List[Tuple[str, Any]]) -> List[str]:
-            return [name for name, _ in param_names_dict]
-            
-        positional_only_param_names = get_param_names(rx_param_names_dict.get(Parameter.POSITIONAL_ONLY, []))
-        positional_or_keyword_param_names = get_param_names(rx_param_names_dict.get(Parameter.POSITIONAL_OR_KEYWORD, []))
-
-        # Resolve the positional arguments `rx_args`.
-        positional_param_names = positional_only_param_names + positional_or_keyword_param_names
-        var_positional_param_names = get_param_names(rx_param_names_dict.get(Parameter.VAR_POSITIONAL, []))
-        if len(in_args) == 1 and in_args[0] is None and len(positional_param_names) == 0 and len(var_positional_param_names) == 0:
-            # The special case of the predecessor returning None and the successor has no arguments expected.
-            rx_args = ()
-        else:
-            # In normal cases, positional arguments are unchanged.
-            rx_args = in_args
-
-        # Resolve the keyword arguments `rx_kwargs`.
-        # keyword arguments are firstly filtered by `masked_keyword_param_names`.
-        if len(in_args) > len(positional_only_param_names):
-            masked_keyword_param_names = positional_or_keyword_param_names[:len(in_args)-len(positional_only_param_names)]
-        else:
-            masked_keyword_param_names = []
-        rx_kwargs = {k:v for k,v in in_kwargs.items() if k not in masked_keyword_param_names}
-        var_keyword_param_names = get_param_names(rx_param_names_dict.get(Parameter.VAR_KEYWORD, []))
-        if not var_keyword_param_names:
-            # keyword arguments are secondly filtered by `keyword_param_names`.
-            keyword_only_param_names = get_param_names(rx_param_names_dict.get(Parameter.KEYWORD_ONLY, []))
-            keyword_param_names = positional_or_keyword_param_names + keyword_only_param_names
-            rx_kwargs = {k:v for k,v in rx_kwargs.items() if k in keyword_param_names}
-        return rx_args, rx_kwargs
 
     def __init__(self):
         """
@@ -90,10 +53,8 @@ class Worker:
         if topest_automa:
             thread_pool = topest_automa.thread_pool
             if thread_pool:
-                # Resolve dependency data injection of worker.run() defined by overriding class worker.
-                rx_param_names_dict = self._get_param_names_of_run()
-                args, kwargs = self.parent._resolve_dependency_data_injection(rx_param_names_dict, args, kwargs)
-                rx_args, rx_kwargs = Worker.safely_map_args(args, kwargs, rx_param_names_dict)
+                rx_param_names_dict = self.get_input_param_names()
+                rx_args, rx_kwargs = safely_map_args(args, kwargs, rx_param_names_dict)
                 # kwargs can only be passed by functools.partial.
                 return await loop.run_in_executor(thread_pool, partial(self.run, *rx_args, **rx_kwargs))
 
@@ -118,6 +79,9 @@ class Worker:
         """
         Get the names of input parameters of the worker.
         Use cached result if available in order to improve performance.
+        
+        This method intelligently detects whether the user has overridden the `run` method
+        or is using the default `arun` method, and returns the appropriate parameter signature.
 
         Returns
         -------
@@ -130,17 +94,24 @@ class Worker:
             - inspect.Parameter.KEYWORD_ONLY
             - inspect.Parameter.VAR_KEYWORD
         """
-        if self.__cached_param_names_of_arun is None:
-            self.__cached_param_names_of_arun = get_param_names_all_kinds(self.arun)
-        return self.__cached_param_names_of_arun
+        # Check if user has overridden the run method
+        if self._is_run_method_overridden():
+            # User overrode run method, return run method parameters
+            if self.__cached_param_names_of_run is None:
+                self.__cached_param_names_of_run = get_param_names_all_kinds(self.run)
+            return self.__cached_param_names_of_run
+        else:
+            # User is using arun method, return arun method parameters
+            if self.__cached_param_names_of_arun is None:
+                self.__cached_param_names_of_arun = get_param_names_all_kinds(self.arun)
+            return self.__cached_param_names_of_arun
 
-    def _get_param_names_of_run(self) -> Dict[Parameter, List[Tuple[str, Any]]]:
+    def _is_run_method_overridden(self) -> bool:
         """
-        The symmetric method of `get_input_param_names` for the `run` method. For internal use only.
+        Check if the user has overridden the run method.
         """
-        if self.__cached_param_names_of_run is None:
-            self.__cached_param_names_of_run = get_param_names_all_kinds(self.run)
-        return self.__cached_param_names_of_run
+        # Compare method references - much faster than inspect.getsource()
+        return self.run.__func__ is not Worker.run
 
     @property
     def parent(self) -> "Automa":

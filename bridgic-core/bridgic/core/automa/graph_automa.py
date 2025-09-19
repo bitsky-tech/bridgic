@@ -17,6 +17,7 @@ from bridgic.core.utils.console import printer
 from bridgic.core.automa.worker import Worker
 from bridgic.core.types.error import *
 from bridgic.core.utils.inspect_tools import get_param_names_by_kind
+from bridgic.core.utils.args_map import safely_map_args
 from bridgic.core.automa import Automa
 from bridgic.core.automa.worker_decorator import packup_worker_decorator_rumtime_args, WorkerDecoratorType, ArgsMappingRule
 from bridgic.core.automa.worker.callable_worker import CallableWorker
@@ -102,15 +103,6 @@ class _GraphAdaptedWorker(Worker):
     @output_buffer.setter
     def output_buffer(self, value: Any):
         self._decorated_worker.output_buffer = value
-
-    @property
-    def func(self):
-        """
-        Readonly property for getting the original/real function of the worker.
-        """
-        if isinstance(self._decorated_worker, CallableWorker):
-            return self._decorated_worker.callable
-        return self._decorated_worker.arun
 
     @override
     def __str__(self) -> str:
@@ -1154,12 +1146,14 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
                     next_kwargs=next_kwargs,
                     input_kwargs=self._input_buffer.kwargs,
                 )
-                # Third, Resolve dependency data injection.
+                # Third, Resolve data injection.
                 worker_obj = self._workers[kickoff_info.worker_key]
-                next_args, next_kwargs = self._resolve_dependency_data_injection(
-                    sig=worker_obj.get_input_param_names(),
-                    next_args=next_args,
-                    next_kwargs=next_kwargs,
+                next_args, next_kwargs = self._injector.inject(
+                    current_worker_key=kickoff_info.worker_key, 
+                    current_worker_sig=worker_obj.get_input_param_names(), 
+                    worker_dict=self._workers, 
+                    next_args=next_args, 
+                    next_kwargs=next_kwargs
                 )
 
                 # Schedule task for each kickoff worker.
@@ -1746,7 +1740,7 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         input_kwargs = {k:v for k,v in input_kwargs.items() if k not in next_kwargs}
         next_kwargs = {**next_kwargs, **input_kwargs}
         rx_param_names_dict = current_worker_obj.get_input_param_names()
-        next_args, next_kwargs = Worker.safely_map_args(next_args, next_kwargs, rx_param_names_dict)
+        next_args, next_kwargs = safely_map_args(next_args, next_kwargs, rx_param_names_dict)
         return next_args, next_kwargs
 
     def __repr__(self) -> str:
@@ -1761,34 +1755,4 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         for k, v in self._workers.items():
             d[k] = f"{v} depends on {getattr(v, 'dependencies', [])}"
         return json.dumps(d, ensure_ascii=False, indent=4)
-
-    def _resolve_dependency_data_injection(
-        self,
-        sig: Dict[Parameter, List],
-        next_args: Tuple[Any, ...],
-        next_kwargs: Dict[str, Any],
-    ):
-        param_list = [
-            param
-            for _, param_list in sig.items()
-            for param in param_list
-        ]
-        inject_kwargs = self._injector.inject(param_list, self._workers)
-
-        # If the number of parameters is less than or equal to the number of positional arguments, raise an error.
-        # TODO: add more details errors
-        if len(param_list) <= len(next_args) and len(inject_kwargs):
-            raise WorkerArgsMappingError(
-                f"The number of parameters is less than or equal to the number of positional arguments, "
-                f"but got {len(param_list)} parameters and {len(next_args)} positional arguments"
-            )
-
-        # From kwargs will cover original kwargs
-        current_kwargs = {}
-        for k, v in next_kwargs.items():
-            current_kwargs[k] = v
-        for k, v in inject_kwargs.items():
-            current_kwargs[k] = v
-
-        next_args, next_kwargs = Worker.safely_map_args(next_args, current_kwargs, sig)
-        return next_args, next_kwargs
+        
