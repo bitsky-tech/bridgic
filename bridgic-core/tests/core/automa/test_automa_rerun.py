@@ -3,6 +3,7 @@ Test cases for rerunning an Automa instance.
 """
 
 from bridgic.core.automa import worker, GraphAutoma
+from bridgic.core.automa.graph_automa import RuntimeContext
 import pytest
 
 #### Test case: rerun an Automa instance.
@@ -51,9 +52,7 @@ class NestedAutoma(GraphAutoma):
     
     @worker(is_start=True)
     async def counter(self):
-        local_space = self.get_local_space(runtime_context={
-            "worker_key": "counter"
-        })
+        local_space = self.get_local_space(runtime_context=RuntimeContext(worker_key="counter"))
         local_space["count"] = local_space.get("count", 0) + 1
         return local_space["count"]
 
