@@ -1,6 +1,6 @@
 from typing import Any, Dict
 import pytest
-from bridgic.core.automa import GraphAutoma, ArgsMappingRule, AutomaRuntimeError, GraphAutoma, worker, RuntimeContext
+from bridgic.core.automa import GraphAutoma, ArgsMappingRule, AutomaRuntimeError, GraphAutoma, worker, RuntimeContext, System, SystemType
 from bridgic.core.automa.interaction import Event
 from bridgic.core.automa.interaction import InteractionFeedback, InteractionException
 from bridgic.core.automa.serialization import Snapshot
@@ -33,12 +33,12 @@ async def test_get_local_space_runtime_context_none(missing_worker_key_state_aut
 
 class DuplicateLocalSpaceCallAutoma(GraphAutoma):
     @worker(is_start=True)
-    async def start(self):
-        local_space = self.get_local_space(runtime_context = RuntimeContext(worker_key="start"))
+    async def start(self, rtx=System(SystemType.RUNTIME_CONTEXT)):
+        local_space = self.get_local_space(rtx)
         loop_index = local_space.get("loop_index", 1)
         # first add 1
         local_space["loop_index"] = loop_index + 1
-        local_space = self.get_local_space(runtime_context = RuntimeContext(worker_key="start"))
+        local_space = self.get_local_space(runtime_context = rtx)
         loop_index = local_space.get("loop_index", 1)
         # second add 1
         local_space["loop_index"] = loop_index + 1
@@ -63,8 +63,8 @@ async def test_get_local_space_called_multiple_times_works(duplicate_local_space
 
 class ArithmeticAutomaWithLocalSpace(GraphAutoma):
     @worker(is_start=True)
-    async def start(self, x: int):
-        local_space = self.get_local_space(runtime_context = RuntimeContext(worker_key="start"))
+    async def start(self, x: int, rtx=System(SystemType.RUNTIME_CONTEXT)):
+        local_space = self.get_local_space(rtx)
         start_state = local_space.get("start_state", x)
         # start_state first run is the default value 2; second run reads from local space 3*2; third run reads from local space 3 * (3*2)
         new_start_state = 3 * start_state
@@ -73,8 +73,8 @@ class ArithmeticAutomaWithLocalSpace(GraphAutoma):
         return new_start_state
 
     @worker(dependencies=["start"])
-    async def end(self, start_state: int):
-        local_space = self.get_local_space(runtime_context = RuntimeContext(worker_key="end"))
+    async def end(self, start_state: int, rtx=System(SystemType.RUNTIME_CONTEXT)):
+        local_space = self.get_local_space(rtx)
         end_state = local_space.get("end_state", start_state)
         # end_state first run is the default value 3 * 2; second run reads from local space 3*2 + 5; third run reads from local space 3*2 + 5 + 5
         new_end_state = end_state + 5
@@ -108,8 +108,8 @@ class ArithmeticAutomaWithPersistentLocalSpace(GraphAutoma):
         return False
 
     @worker(is_start=True)
-    async def start(self, x: int):
-        local_space = self.get_local_space(runtime_context = RuntimeContext(worker_key="start"))
+    async def start(self, x: int, rtx=System(SystemType.RUNTIME_CONTEXT)):
+        local_space = self.get_local_space(rtx)
         start_state = local_space.get("start_state", x)
         # start_state first run is the default value 2; second run reads from local space 3*2; third run reads from local space 3 * (3*2)
         new_start_state = 3 * start_state
@@ -118,8 +118,8 @@ class ArithmeticAutomaWithPersistentLocalSpace(GraphAutoma):
         return new_start_state
 
     @worker(dependencies=["start"])
-    async def end(self, start_state: int):
-        local_space = self.get_local_space(runtime_context = RuntimeContext(worker_key="end"))
+    async def end(self, start_state: int, rtx=System(SystemType.RUNTIME_CONTEXT)):
+        local_space = self.get_local_space(rtx)
         end_state = local_space.get("end_state", start_state)
         # end_state first run is the default value 3 * 2; second run reads from local space 3*2 + 5; third run reads from local space 3*2 + 5 + 5
         new_end_state = end_state + 5
@@ -193,15 +193,15 @@ class NestedAutoma(GraphAutoma):
         return False
     
     @worker(is_start=True)
-    async def start(self):
-        local_space = self.get_local_space(runtime_context = RuntimeContext(worker_key="start"))
+    async def start(self, rtx=System(SystemType.RUNTIME_CONTEXT)):
+        local_space = self.get_local_space(rtx)
         loop_index = local_space.get("loop_index", 1)
         local_space["loop_index"] = loop_index + 1
         return loop_index
     
     @worker(dependencies=["start"])
-    async def test_local_space_str(self, loop_index):
-        local_space = self.get_local_space(runtime_context = RuntimeContext(worker_key="test_local_space_str"))
+    async def test_local_space_str(self, loop_index, rtx=System(SystemType.RUNTIME_CONTEXT)):
+        local_space = self.get_local_space(rtx)
         hi = local_space.get("hi", "hi")
         hi = hi + str(loop_index)
         local_space["hi"] = hi
@@ -218,8 +218,8 @@ class NestedAutoma(GraphAutoma):
         return loop_index
 
     @worker(dependencies=["test_local_space_str"])
-    async def test_local_space_obj(self, loop_index):
-        local_space = self.get_local_space(runtime_context = RuntimeContext(worker_key="test_local_space_obj"))
+    async def test_local_space_obj(self, loop_index, rtx=System(SystemType.RUNTIME_CONTEXT)):
+        local_space = self.get_local_space(rtx)
         count_obj = local_space.get("count_obj", {"count": 1})
         local_space["count_obj"] = {
             "count": count_obj.get("count") + 1
@@ -229,9 +229,8 @@ class NestedAutoma(GraphAutoma):
 
     
     @worker(dependencies=["test_local_space_obj"])
-    async def test_local_space_class(self,loop_index):
-
-        local_space = self.get_local_space(runtime_context = RuntimeContext(worker_key="test_local_space_class"))
+    async def test_local_space_class(self,loop_index, rtx=System(SystemType.RUNTIME_CONTEXT)):
+        local_space = self.get_local_space(rtx)
         todo = local_space.get("todo", TodoItem("Learn Bridgic"))
         assert todo.text == "Learn Bridgic"
         assert type(todo).__name__ == "TodoItem"
@@ -251,8 +250,8 @@ class NestedAutoma(GraphAutoma):
         local_space["todo"] = completed_todo
 
     @worker(dependencies=["test_local_space_class"], args_mapping_rule=ArgsMappingRule.SUPPRESSED)
-    async def test_local_space_int(self):
-        local_space = self.get_local_space(runtime_context = RuntimeContext(worker_key="test_local_space_int"))
+    async def test_local_space_int(self, rtx=System(SystemType.RUNTIME_CONTEXT)):
+        local_space = self.get_local_space(rtx)
         count = local_space.get("count", 0)
         local_space["count"] = count + 1
         return count
@@ -292,15 +291,15 @@ async def test_nested_ferry_to_automa_rerun_clear_local_space(top_automa_with_ne
 
 class ComplexObjectLocalSpaceAutoma(GraphAutoma):
     @worker(is_start=True)
-    async def start(self):
-        local_space = self.get_local_space(runtime_context = RuntimeContext(worker_key="start"))
+    async def start(self, rtx=System(SystemType.RUNTIME_CONTEXT)):
+        local_space = self.get_local_space(rtx)
         loop_index = local_space.get("loop_index", 1)
         local_space["loop_index"] = loop_index + 1
         return loop_index
     
     @worker(dependencies=["start"])
-    async def test_local_space_dict(self, loop_index: int):
-        local_space_dict = self.get_local_space(runtime_context = RuntimeContext(worker_key="test_local_space_dict"))
+    async def test_local_space_dict(self, loop_index: int, rtx=System(SystemType.RUNTIME_CONTEXT)):
+        local_space_dict = self.get_local_space(rtx)
         if loop_index != 1:
             assert local_space_dict == {}
         # set local_space_dict["loop_index"] to loop_index
@@ -311,8 +310,8 @@ class ComplexObjectLocalSpaceAutoma(GraphAutoma):
         return loop_index
     
     @worker(dependencies=["test_local_space_dict"])
-    async def test_item(self, loop_index: int):
-        local_space = self.get_local_space(runtime_context = RuntimeContext(worker_key="test_item"))
+    async def test_item(self, loop_index: int, rtx=System(SystemType.RUNTIME_CONTEXT)):
+        local_space = self.get_local_space(rtx)
         item = local_space.get("item", TodoItem("Learn Bridgic"))
         new_item = TodoItem("Learn Bridgic" + str(loop_index), loop_index % 2 == 0, loop_index + 1)
         local_space["item"] = new_item
@@ -442,8 +441,8 @@ def db_base_path(tmp_path_factory):
 
 class AdderAutoma1(GraphAutoma):
     @worker(is_start=True)
-    async def func_1(self, x: int):
-        local_space = self.get_local_space(runtime_context = RuntimeContext(worker_key="func_1"))
+    async def func_1(self, x: int, rtx=System(SystemType.RUNTIME_CONTEXT)):
+        local_space = self.get_local_space(rtx)
         x = local_space.get("x", x)
         print("func_1 before add 1:", x)
         local_space["x"] = x + 1

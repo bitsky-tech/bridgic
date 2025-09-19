@@ -6,6 +6,7 @@ from typing import List, Tuple, Optional, Any, Dict
 from bridgic.core.automa.worker import Worker
 from bridgic.core.types.error import AutomaDataInjectionError
 from bridgic.core.utils.args_map import safely_map_args
+from pydantic import BaseModel
 
 
 class InjectorNone: 
@@ -33,6 +34,9 @@ class System:
     A declarative object for system injection.
     """
     type: str
+
+class RuntimeContext(BaseModel):
+    worker_key: str
 
 class WorkerInjector:
     """
@@ -82,7 +86,7 @@ class WorkerInjector:
     def _resolve_system(self, dep: System, current_worker_key: str, worker_dict: Dict[str, Worker]) -> Any:
         system_type = dep.type
         if system_type == SystemType.RUNTIME_CONTEXT:
-            inject_res = {'worker_key': current_worker_key}
+            inject_res = RuntimeContext(worker_key=current_worker_key)
         else:
             raise AutomaDataInjectionError(
                 f"the system type: `{system_type}` is not supported. "

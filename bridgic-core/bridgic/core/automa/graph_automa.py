@@ -23,7 +23,7 @@ from bridgic.core.automa.worker_decorator import packup_worker_decorator_rumtime
 from bridgic.core.automa.worker.callable_worker import CallableWorker
 from bridgic.core.automa.interaction import Event, FeedbackSender, EventHandlerType, InteractionFeedback, Feedback, Interaction, InteractionException
 from bridgic.core.automa.serialization import Snapshot
-from bridgic.core.automa.arguments_inject import WorkerInjector
+from bridgic.core.automa.arguments_inject import RuntimeContext, WorkerInjector
 import bridgic.core.serialization.msgpackx as msgpackx
 
 class _GraphAdaptedWorker(Worker):
@@ -297,9 +297,6 @@ class _InteractionEventException(Exception):
 class _InteractionAndFeedback(BaseModel):
     interaction: Interaction
     feedback: Optional[InteractionFeedback] = None
-
-class RuntimeContext(BaseModel):
-    worker_key: str
 
 class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
     """
