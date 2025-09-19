@@ -1299,11 +1299,13 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         if running_options.debug:
             printer.print(f"{type(self).__name__}-[{self.name}] is finished.", color="green")
 
-        # After a complete run, reset the input buffer.
-        # Therefore, if the same Automa re-runs, the input arguments must be provided once again.
+        # After a complete run, reset all necessary states to allow the automa to re-run.
         self._input_buffer = _AutomaInputBuffer()
         if self.should_reset_local_space():
             self._clean_all_worker_local_space()
+        self._ongoing_interactions.clear()
+        self._worker_interaction_indices.clear()
+
         # If the output-worker is specified, return its output as the return value of the automa.
         if self._output_worker_key:
             return self._workers[self._output_worker_key].output_buffer
