@@ -2,7 +2,7 @@ import asyncio
 from asyncio import AbstractEventLoop
 from concurrent.futures import ThreadPoolExecutor
 import inspect
-from inspect import Parameter
+from inspect import Parameter, _ParameterKind
 import json
 import threading
 import uuid
@@ -17,12 +17,13 @@ from bridgic.core.utils.console import printer
 from bridgic.core.automa.worker import Worker
 from bridgic.core.types.error import *
 from bridgic.core.utils.inspect_tools import get_param_names_by_kind
+from bridgic.core.utils.args_map import safely_map_args
 from bridgic.core.automa import Automa
 from bridgic.core.automa.worker_decorator import packup_worker_decorator_rumtime_args, WorkerDecoratorType, ArgsMappingRule
 from bridgic.core.automa.worker.callable_worker import CallableWorker
 from bridgic.core.automa.interaction import Event, FeedbackSender, EventHandlerType, InteractionFeedback, Feedback, Interaction, InteractionException
 from bridgic.core.automa.serialization import Snapshot
-from bridgic.core.automa.parameter_inject import WorkerInjector
+from bridgic.core.automa.arguments_descriptor import RuntimeContext, WorkerInjector
 import bridgic.core.serialization.msgpackx as msgpackx
 
 class _GraphAdaptedWorker(Worker):
@@ -84,7 +85,7 @@ class _GraphAdaptedWorker(Worker):
         return await self._decorated_worker.arun(*args, **kwargs)
 
     @override
-    def get_input_param_names(self) -> Dict[Parameter, List[Tuple[str, Any]]]:
+    def get_input_param_names(self) -> Dict[_ParameterKind, List[Tuple[str, Any]]]:
         return self._decorated_worker.get_input_param_names()
 
     @property
@@ -102,23 +103,6 @@ class _GraphAdaptedWorker(Worker):
     @output_buffer.setter
     def output_buffer(self, value: Any):
         self._decorated_worker.output_buffer = value
-
-    @property
-    def local_space(self) -> Dict[str, Any]:
-        return self._decorated_worker.local_space
-    
-    @local_space.setter
-    def local_space(self, value: Dict[str, Any]):
-        self._decorated_worker.local_space = value
-
-    @property
-    def func(self):
-        """
-        Readonly property for getting the original/real function of the worker.
-        """
-        if isinstance(self._decorated_worker, CallableWorker):
-            return self._decorated_worker.callable
-        return self._decorated_worker.arun
 
     @override
     def __str__(self) -> str:
@@ -546,7 +530,7 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         state_dict = super().dump_to_dict()
         # collect states to serialize 
         state_dict["name"] = self.name
-        # TODO: serialize the workers, including the outbuf && local_space of each worker
+        # TODO: serialize the workers, including the outbuf of each worker
         state_dict["workers"] = self._workers
         state_dict["running_started"] = self._running_started
         state_dict["worker_forwards"] = self._worker_forwards
@@ -681,6 +665,10 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         # Remove from the forwards list of all dependencies worker.
         for trigger in worker_to_remove.dependencies:
             self._worker_forwards[trigger].remove(key)
+        if key in self._worker_interaction_indices:
+            del self._worker_interaction_indices[key]
+        if key in self._ongoing_interactions:
+            del self._ongoing_interactions[key]
 
         # clear the output worker key if needed.
         if key == self._output_worker_key:
@@ -1031,6 +1019,47 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         # Note: ferry_to() may be called in a new thread.
         # But _ferry_deferred_tasks is not necessary to be thread-safe due to Visibility Guarantees of the Bridgic Concurrency Model.
         self._ferry_deferred_tasks.append(deferred_task)
+    
+
+    def get_local_space(self, runtime_context: RuntimeContext) -> Dict[str, Any]:
+        """
+        Get the local space, if you want to clean the local space after automa.arun(), you can override the should_reset_local_space() method.
+
+        Parameters
+        ----------
+        runtime_context : RuntimeContext
+            The runtime context.
+
+        Returns
+        -------
+        Dict[str, Any]
+            The local space.
+        """
+        worker_key = runtime_context.worker_key
+        worker_obj = self._workers[worker_key]
+        return worker_obj.local_space
+
+    def _clean_all_worker_local_space(self):
+        """
+        Clean the local space of all workers.
+        """
+        for worker_obj in self._workers.values():
+            worker_obj.local_space = {}
+
+    def should_reset_local_space(self) -> bool:
+        """
+        This method indicates whether to reset the local space at the end of the arun method of GraphAutoma. 
+        By default, it returns True, standing for resetting. Otherwise, it means doing nothing.
+        
+        Examples:
+        --------
+        ```python
+        class MyAutoma(GraphAutoma):
+            def should_reset_local_space(self) -> bool:
+                return False
+        ```
+        """
+        return True
 
     async def arun(
         self, 
@@ -1204,12 +1233,14 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
                     next_kwargs=next_kwargs,
                     input_kwargs=self._input_buffer.kwargs,
                 )
-                # Third, Resolve dependency data injection.
+                # Third, Resolve data injection.
                 worker_obj = self._workers[kickoff_info.worker_key]
-                next_args, next_kwargs = self._resolve_dependency_data_injection(
-                    sig=worker_obj.get_input_param_names(),
-                    next_args=next_args,
-                    next_kwargs=next_kwargs,
+                next_args, next_kwargs = self._injector.inject(
+                    current_worker_key=kickoff_info.worker_key, 
+                    current_worker_sig=worker_obj.get_input_param_names(), 
+                    worker_dict=self._workers, 
+                    next_args=next_args, 
+                    next_kwargs=next_kwargs
                 )
 
                 # Schedule task for each kickoff worker.
@@ -1265,6 +1296,12 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
                         # Update the dynamic states of successor workers.
                         for successor_key in self._worker_forwards.get(task.worker_key, []):
                             self._workers_dynamic_states[successor_key].dependency_triggers.remove(task.worker_key)
+                        # Each time a worker is finished running, the ongoing interaction states should be cleared. Once it is re-run, the human interactions in the worker can be triggered again.
+                        if task.worker_key in self._worker_interaction_indices:
+                            del self._worker_interaction_indices[task.worker_key]
+                        if task.worker_key in self._ongoing_interactions:
+                            del self._ongoing_interactions[task.worker_key]
+
                 except _InteractionEventException as e:
                     interaction_exceptions.append(e)
                     if task.worker_key in self._workers and not self._workers[task.worker_key].is_automa():
@@ -1359,9 +1396,13 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         if running_options.debug:
             printer.print(f"{type(self).__name__}-[{self.name}] is finished.", color="green")
 
-        # After a complete run, reset the input buffer.
-        # Therefore, if the same Automa re-runs, the input arguments must be provided once again.
+        # After a complete run, reset all necessary states to allow the automa to re-run.
         self._input_buffer = _AutomaInputBuffer()
+        if self.should_reset_local_space():
+            self._clean_all_worker_local_space()
+        self._ongoing_interactions.clear()
+        self._worker_interaction_indices.clear()
+
         # If the output-worker is specified, return its output as the return value of the automa.
         if self._output_worker_key:
             return self._workers[self._output_worker_key].output_buffer
@@ -1794,7 +1835,7 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         input_kwargs = {k:v for k,v in input_kwargs.items() if k not in next_kwargs}
         next_kwargs = {**next_kwargs, **input_kwargs}
         rx_param_names_dict = current_worker_obj.get_input_param_names()
-        next_args, next_kwargs = Worker.safely_map_args(next_args, next_kwargs, rx_param_names_dict)
+        next_args, next_kwargs = safely_map_args(next_args, next_kwargs, rx_param_names_dict)
         return next_args, next_kwargs
 
     def __repr__(self) -> str:
@@ -1809,34 +1850,4 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         for k, v in self._workers.items():
             d[k] = f"{v} depends on {getattr(v, 'dependencies', [])}"
         return json.dumps(d, ensure_ascii=False, indent=4)
-
-    def _resolve_dependency_data_injection(
-            self,
-            sig: Dict[Parameter, List],
-            next_args: Tuple[Any, ...],
-            next_kwargs: Dict[str, Any],
-    ):
-        param_list = [
-            param
-            for _, param_list in sig.items()
-            for param in param_list
-        ]
-        inject_kwargs = self._injector.inject(param_list, self._workers)
-
-        # If the number of parameters is less than or equal to the number of positional arguments, raise an error.
-        # TODO: add more details errors
-        if len(param_list) <= len(next_args) and len(inject_kwargs):
-            raise WorkerArgsMappingError(
-                f"The number of parameters is less than or equal to the number of positional arguments, "
-                f"but got {len(param_list)} parameters and {len(next_args)} positional arguments"
-            )
-
-        # From kwargs will cover original kwargs
-        current_kwargs = {}
-        for k, v in next_kwargs.items():
-            current_kwargs[k] = v
-        for k, v in inject_kwargs.items():
-            current_kwargs[k] = v
-
-        next_args, next_kwargs = Worker.safely_map_args(next_args, current_kwargs, sig)
-        return next_args, next_kwargs
+        
