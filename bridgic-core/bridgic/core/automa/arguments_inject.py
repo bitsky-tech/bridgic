@@ -35,17 +35,9 @@ class WorkerInjector:
     """
     Worker Dependency injection container for resolving dependency data injection of workers.
 
-    This class manages workers for dependency injection, allowing you to  inject 
+    This class manages workers for dependency injection, allowing you to inject 
     dependencies into function parameters based on their default values. 
-    It is used with the `From` class to implement dependency injection of workers.
-
-    Main Methods
-    ------------
-    resolve(dep: From, worker_dict: Dict[str, Worker]) -> Any
-        Resolve and return the result for a given dependency key.
-
-    inject(param_list: List[Tuple[str, Optional[Any]]], worker_dict: Dict[str, Worker]) -> dict
-        Inject dependencies into parameters whose default value is a `From` instance.
+    It is used with the `From` and `System` classes to implement dependency injection of workers.
     """
     
     def dump_to_dict(self) -> Dict[str, Any]:
@@ -96,7 +88,25 @@ class WorkerInjector:
         next_kwargs: Dict[str, Any],
     ) -> Any:
         """
-        Inject dependencies into parameters whose default value is a `From` instance.
+        Inject dependencies into parameters whose default value is a `From` or `System`.
+
+        Parameters
+        ----------
+        current_worker_key : str
+            The key of the current worker being processed.
+        current_worker_sig : Dict[Parameter, List]
+            Dictionary mapping parameters to their signature information of the current worker.
+        worker_dict : Dict[str, Worker]
+            Dictionary containing all available workers in the automa.
+        next_args : Tuple[Any, ...]
+            Positional arguments to be passed to the current worker.
+        next_kwargs : Dict[str, Any]
+            Keyword arguments to be passed to the current worker.
+            
+        Returns
+        -------
+        Tuple[Tuple[Any, ...], Dict[str, Any]]
+            A tuple containing the processed positional and keyword arguments for the current worker.
         """
         param_list = [
             param
