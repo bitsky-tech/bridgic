@@ -22,18 +22,11 @@ class From:
     key: str
     default: Optional[Any] = InjectorNone()
 
-class SystemType(Enum):
-    """
-    The type of the system injection.
-    """
-    RUNTIME_CONTEXT = "runtime_context"
-
-@dataclass
-class System:
+class System(Enum):
     """
     A declarative object for system injection.
     """
-    type: str
+    RUNTIME_CONTEXT: str = "runtime_context"
 
 class RuntimeContext(BaseModel):
     worker_key: str
@@ -84,12 +77,11 @@ class WorkerInjector:
             return inject_res
 
     def _resolve_system(self, dep: System, current_worker_key: str, worker_dict: Dict[str, Worker]) -> Any:
-        system_type = dep.type
-        if system_type == SystemType.RUNTIME_CONTEXT:
+        if dep == System.RUNTIME_CONTEXT:
             inject_res = RuntimeContext(worker_key=current_worker_key)
         else:
             raise AutomaDataInjectionError(
-                f"the system type: `{system_type}` is not supported. "
+                f"the system type: `{dep}` is not supported. "
                 "You may need to set the default value of the parameter to a `System` instance with the key of the system."
             )
         
