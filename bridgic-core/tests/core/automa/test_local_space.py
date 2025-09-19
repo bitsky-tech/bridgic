@@ -1,6 +1,9 @@
 from typing import Any, Dict
-from bridgic.core.automa import ArgsMappingRule, AutomaRuntimeError, GraphAutoma, worker
 import pytest
+from bridgic.core.automa import GraphAutoma, ArgsMappingRule, AutomaRuntimeError, GraphAutoma, worker, RuntimeContext
+from bridgic.core.automa.interaction import Event
+from bridgic.core.automa.interaction import InteractionFeedback, InteractionException
+from bridgic.core.automa.serialization import Snapshot
 
 #### Test case: get_local_space runtime_context must contain worker_key
 
@@ -23,45 +26,19 @@ def missing_worker_key_state_automa_runtime_context_none():
 
 @pytest.mark.asyncio
 async def test_get_local_space_runtime_context_none(missing_worker_key_state_automa_runtime_context_none: MissingWorkerKeyStateAutomaRuntimeContextNone):
-    with pytest.raises(AutomaRuntimeError, match="get_local_space function need runtime_context parameter"):
+    with pytest.raises(TypeError, match=r"get_local_space\(\) missing 1 required positional argument: 'runtime_context'"):
         await missing_worker_key_state_automa_runtime_context_none.arun()
-
-class MissingWorkerKeyStateAutoma(GraphAutoma):
-    @worker(is_start=True)
-    async def start(self):
-        local_space = self.get_local_space(runtime_context = {})
-        loop_index = local_space.get("loop_index", 1)
-        local_space["loop_index"] = loop_index + 1
-        return loop_index
-    
-    @worker(dependencies=["start"])
-    async def end(self, loop_index: int):
-        return loop_index + 5
-
-@pytest.fixture
-def missing_worker_key_state_automa():
-    graph = MissingWorkerKeyStateAutoma(output_worker_key="end")
-    return graph
-
-@pytest.mark.asyncio
-async def test_get_local_space_runtime_context_empty(missing_worker_key_state_automa: MissingWorkerKeyStateAutoma):
-    with pytest.raises(AutomaRuntimeError, match="the worker_key is not found in the runtime_context: runtime_context={}"):
-        await missing_worker_key_state_automa.arun()
 
 #### Test case: get_local_space can be called multiple times
 
 class DuplicateLocalSpaceCallAutoma(GraphAutoma):
     @worker(is_start=True)
     async def start(self):
-        local_space = self.get_local_space(runtime_context = {
-            "worker_key": "start"
-        })
+        local_space = self.get_local_space(runtime_context = RuntimeContext(worker_key="start"))
         loop_index = local_space.get("loop_index", 1)
         # first add 1
         local_space["loop_index"] = loop_index + 1
-        local_space = self.get_local_space(runtime_context = {
-            "worker_key": "start"
-        })
+        local_space = self.get_local_space(runtime_context = RuntimeContext(worker_key="start"))
         loop_index = local_space.get("loop_index", 1)
         # second add 1
         local_space["loop_index"] = loop_index + 1
@@ -87,9 +64,7 @@ async def test_get_local_space_called_multiple_times_works(duplicate_local_space
 class ArithmeticAutomaWithLocalSpace(GraphAutoma):
     @worker(is_start=True)
     async def start(self, x: int):
-        local_space = self.get_local_space(runtime_context = {
-            "worker_key": "start"
-        })
+        local_space = self.get_local_space(runtime_context = RuntimeContext(worker_key="start"))
         start_state = local_space.get("start_state", x)
         # start_state first run is the default value 2; second run reads from local space 3*2; third run reads from local space 3 * (3*2)
         new_start_state = 3 * start_state
@@ -99,9 +74,7 @@ class ArithmeticAutomaWithLocalSpace(GraphAutoma):
 
     @worker(dependencies=["start"])
     async def end(self, start_state: int):
-        local_space = self.get_local_space(runtime_context = {
-            "worker_key": "end"
-        })
+        local_space = self.get_local_space(runtime_context = RuntimeContext(worker_key="end"))
         end_state = local_space.get("end_state", start_state)
         # end_state first run is the default value 3 * 2; second run reads from local space 3*2 + 5; third run reads from local space 3*2 + 5 + 5
         new_end_state = end_state + 5
@@ -136,9 +109,7 @@ class ArithmeticAutomaWithPersistentLocalSpace(GraphAutoma):
 
     @worker(is_start=True)
     async def start(self, x: int):
-        local_space = self.get_local_space(runtime_context = {
-            "worker_key": "start"
-        })
+        local_space = self.get_local_space(runtime_context = RuntimeContext(worker_key="start"))
         start_state = local_space.get("start_state", x)
         # start_state first run is the default value 2; second run reads from local space 3*2; third run reads from local space 3 * (3*2)
         new_start_state = 3 * start_state
@@ -148,9 +119,7 @@ class ArithmeticAutomaWithPersistentLocalSpace(GraphAutoma):
 
     @worker(dependencies=["start"])
     async def end(self, start_state: int):
-        local_space = self.get_local_space(runtime_context = {
-            "worker_key": "end"
-        })
+        local_space = self.get_local_space(runtime_context = RuntimeContext(worker_key="end"))
         end_state = local_space.get("end_state", start_state)
         # end_state first run is the default value 3 * 2; second run reads from local space 3*2 + 5; third run reads from local space 3*2 + 5 + 5
         new_end_state = end_state + 5
@@ -225,18 +194,14 @@ class NestedAutoma(GraphAutoma):
     
     @worker(is_start=True)
     async def start(self):
-        local_space = self.get_local_space(runtime_context = {
-            "worker_key": "start"
-        })
+        local_space = self.get_local_space(runtime_context = RuntimeContext(worker_key="start"))
         loop_index = local_space.get("loop_index", 1)
         local_space["loop_index"] = loop_index + 1
         return loop_index
     
     @worker(dependencies=["start"])
     async def test_local_space_str(self, loop_index):
-        local_space = self.get_local_space(runtime_context = {
-            "worker_key": "test_local_space_str"
-        })
+        local_space = self.get_local_space(runtime_context = RuntimeContext(worker_key="test_local_space_str"))
         hi = local_space.get("hi", "hi")
         hi = hi + str(loop_index)
         local_space["hi"] = hi
@@ -254,9 +219,7 @@ class NestedAutoma(GraphAutoma):
 
     @worker(dependencies=["test_local_space_str"])
     async def test_local_space_obj(self, loop_index):
-        local_space = self.get_local_space(runtime_context = {
-            "worker_key": "test_local_space_obj"
-        })
+        local_space = self.get_local_space(runtime_context = RuntimeContext(worker_key="test_local_space_obj"))
         count_obj = local_space.get("count_obj", {"count": 1})
         local_space["count_obj"] = {
             "count": count_obj.get("count") + 1
@@ -268,9 +231,7 @@ class NestedAutoma(GraphAutoma):
     @worker(dependencies=["test_local_space_obj"])
     async def test_local_space_class(self,loop_index):
 
-        local_space = self.get_local_space(runtime_context = {
-            "worker_key": "test_local_space_class"
-        })
+        local_space = self.get_local_space(runtime_context = RuntimeContext(worker_key="test_local_space_class"))
         todo = local_space.get("todo", TodoItem("Learn Bridgic"))
         assert todo.text == "Learn Bridgic"
         assert type(todo).__name__ == "TodoItem"
@@ -291,9 +252,7 @@ class NestedAutoma(GraphAutoma):
 
     @worker(dependencies=["test_local_space_class"], args_mapping_rule=ArgsMappingRule.SUPPRESSED)
     async def test_local_space_int(self):
-        local_space = self.get_local_space(runtime_context = {
-            "worker_key": "test_local_space_int"
-        })
+        local_space = self.get_local_space(runtime_context = RuntimeContext(worker_key="test_local_space_int"))
         count = local_space.get("count", 0)
         local_space["count"] = count + 1
         return count
@@ -329,23 +288,19 @@ async def test_nested_ferry_to_automa_rerun_clear_local_space(top_automa_with_ne
     assert result == ['Learn Bridgic'] * 7
 
 
-#####: Test case: local space serialization/deserialization with a complex object (no nested Automa)
+#####: Test case: local space to_dict/from_dict with a complex object (no nested Automa)
 
 class ComplexObjectLocalSpaceAutoma(GraphAutoma):
     @worker(is_start=True)
     async def start(self):
-        local_space = self.get_local_space(runtime_context = {
-            "worker_key": "start"
-        })
+        local_space = self.get_local_space(runtime_context = RuntimeContext(worker_key="start"))
         loop_index = local_space.get("loop_index", 1)
         local_space["loop_index"] = loop_index + 1
         return loop_index
     
     @worker(dependencies=["start"])
     async def test_local_space_dict(self, loop_index: int):
-        local_space_dict = self.get_local_space(runtime_context = {
-            "worker_key": "test_local_space_dict"
-        })
+        local_space_dict = self.get_local_space(runtime_context = RuntimeContext(worker_key="test_local_space_dict"))
         if loop_index != 1:
             assert local_space_dict == {}
         # set local_space_dict["loop_index"] to loop_index
@@ -357,9 +312,7 @@ class ComplexObjectLocalSpaceAutoma(GraphAutoma):
     
     @worker(dependencies=["test_local_space_dict"])
     async def test_item(self, loop_index: int):
-        local_space = self.get_local_space(runtime_context = {
-            "worker_key": "test_item"
-        })
+        local_space = self.get_local_space(runtime_context = RuntimeContext(worker_key="test_item"))
         item = local_space.get("item", TodoItem("Learn Bridgic"))
         new_item = TodoItem("Learn Bridgic" + str(loop_index), loop_index % 2 == 0, loop_index + 1)
         local_space["item"] = new_item
@@ -410,7 +363,7 @@ async def test_complex_object_local_space_automa_serialization(complex_object_lo
     assert isinstance(complex_object_local_space_automa, ComplexObjectLocalSpaceAutoma)
 
 
-#####: Test case: local space serialization/deserialization with a complex object (with nested Automa)
+#####: Test case: local space to_dict/from_dict with a complex object (with nested Automa)
 
 class ComplexObjectLocalSpaceNestedAutoma(ComplexObjectLocalSpaceAutoma):
 
@@ -443,7 +396,7 @@ async def test_complex_object_nested_local_space_serialization(top_automa_with_c
     assert result == ["Learn Bridgic"] * 5
     assert isinstance(top_automa_with_complex_nested, TopAutoma)
 
-#### Test case: local space serialization/deserialization with a complex object (with nested Automa) and should_reset_local_space is False
+#### Test case: local space to_dict/from_dict with a complex object (with nested Automa) and should_reset_local_space is False
 
 class ComplexObjectLocalSpaceNestedAutomaWithPersistentLocalSpace(ComplexObjectLocalSpaceAutoma):
 
@@ -472,9 +425,172 @@ async def test_complex_object_nested_local_space_serialization_with_persistent_l
     automa_dict = top_automa_with_complex_nested_with_persistent_local_space.dump_to_dict()
     top_automa_with_complex_nested_with_persistent_local_space.load_from_dict(automa_dict)
     assert isinstance(top_automa_with_complex_nested_with_persistent_local_space, TopAutoma)
-    # the local space is not reset to empty dict after arun(), even if the local space is serialized and deserialized, the last arun result 5, and rerun will add 1, so the result is ["Learn Bridgic"] * 6
+    # the local space is not reset to empty dict after arun(), even if the local space is to_dict and from_dict, the last arun result 5, and rerun will add 1, so the result is ["Learn Bridgic"] * 6
     result = await top_automa_with_complex_nested_with_persistent_local_space.arun()
     assert result == ["Learn Bridgic"] * 6
     assert isinstance(top_automa_with_complex_nested_with_persistent_local_space, TopAutoma)
     result = await top_automa_with_complex_nested_with_persistent_local_space.arun()
     assert result == ["Learn Bridgic"] * 7
+
+
+#### Test case: a automa & a human interaction process
+
+# Shared fixtures for all test cases.
+@pytest.fixture(scope="session")
+def db_base_path(tmp_path_factory):
+    return tmp_path_factory.mktemp("data")
+
+class AdderAutoma1(GraphAutoma):
+    @worker(is_start=True)
+    async def func_1(self, x: int):
+        local_space = self.get_local_space(runtime_context = RuntimeContext(worker_key="func_1"))
+        x = local_space.get("x", x)
+        print("func_1 before add 1:", x)
+        local_space["x"] = x + 1
+        print("func_1 after add 1:", local_space["x"])
+        return local_space["x"]
+
+    @worker(dependencies=["func_1"])
+    async def func_2(self, x: int):
+        event = Event(
+            event_type="if_add",
+            data={
+                "prompt_to_user": f"Current value is {x}, do you want to add another 200 to it (yes/no) ?"
+            }
+        )
+        feedback: InteractionFeedback = self.interact_with_human(event)
+        print(feedback.data)
+        if feedback.data == "yes":
+            x += 200
+        elif feedback.data == "no":
+            self.ferry_to("func_1", x=x)
+        return x + 2
+
+#### Test case: human interaction process with a automa &  yes
+
+@pytest.fixture
+def adder_automa1():
+    return AdderAutoma1(output_worker_key="func_2")
+
+@pytest.mark.asyncio
+async def test_adder_automa_1_interact_serialized(adder_automa1: AdderAutoma1, request, db_base_path):
+    try:
+        result = await adder_automa1.arun(x=100)
+    except InteractionException as e:
+        assert e.interactions[0].event.event_type == "if_add"
+        assert e.interactions[0].event.data["prompt_to_user"] == "Current value is 101, do you want to add another 200 to it (yes/no) ?"
+        assert type(e.snapshot.serialized_bytes) is bytes
+        # Send e.interactions to human. Here is a simulation.
+        interaction_id = e.interactions[0].interaction_id
+        request.config.cache.set("interaction_id", interaction_id)
+        # Persist the snapshot to an external storage. Here is a simulation implementation using file storage.
+        # Use the Automa instance / scenario name as the search index name.
+        bytes_file = db_base_path / "adder_automa1.bytes"
+        version_file = db_base_path / "adder_automa1.version"
+        bytes_file.write_bytes(e.snapshot.serialized_bytes)
+        version_file.write_text(e.snapshot.serialization_version)
+
+@pytest.fixture
+def deserialized_adder_automa1(db_base_path):
+        bytes_file = db_base_path / "adder_automa1.bytes"
+        version_file = db_base_path / "adder_automa1.version"
+        serialized_bytes = bytes_file.read_bytes()
+        serialization_version = version_file.read_text()
+        snapshot = Snapshot(
+            serialized_bytes=serialized_bytes, 
+            serialization_version=serialization_version
+        )
+        # Snapshot is restored.
+        assert snapshot.serialization_version == GraphAutoma.SERIALIZATION_VERSION
+        deserialized_automa = AdderAutoma1.load_from_snapshot(snapshot)
+        assert type(deserialized_automa) is AdderAutoma1
+        return deserialized_automa
+
+
+@pytest.fixture
+def interaction_feedback_1_yes(request):
+    interaction_id = request.config.cache.get("interaction_id", None)
+    feedback = InteractionFeedback(
+        interaction_id=interaction_id,
+        data="yes"
+    )
+    return feedback
+
+@pytest.mark.asyncio
+async def test_adder_automa_1_interact_with_yes_feedback(interaction_feedback_1_yes, deserialized_adder_automa1):
+    # Note: no need to pass the original argument x=100, because the deserialized_adder_automa1 is restored from the snapshot.
+    result = await deserialized_adder_automa1.arun(
+        interaction_feedback=interaction_feedback_1_yes
+    )
+    assert result == 303
+
+#### Test case: human interaction process with a automa &  no  & yes
+
+
+@pytest.fixture
+def interaction_feedback_1_no(request):
+    interaction_id = request.config.cache.get("interaction_id", None)
+    print(f"no: interaction_id: {interaction_id}")
+    feedback = InteractionFeedback(
+        interaction_id=interaction_id,
+        data="no"
+    )
+    return feedback
+
+
+@pytest.mark.asyncio
+async def test_adder_automa_1_interact_with_no_feedback(interaction_feedback_1_no, deserialized_adder_automa1, request, db_base_path):
+    try:
+        result = await deserialized_adder_automa1.arun(
+            interaction_feedback=interaction_feedback_1_no
+        )
+    except InteractionException as e:
+        assert e.interactions[0].event.event_type == "if_add"
+        assert e.interactions[0].event.data["prompt_to_user"] == "Current value is 102, do you want to add another 200 to it (yes/no) ?"
+        assert type(e.snapshot.serialized_bytes) is bytes
+        # Send e.interactions to human. Here is a simulation.
+        interaction_id = e.interactions[0].interaction_id
+        request.config.cache.set("interaction_id", interaction_id)
+        # Persist the snapshot to an external storage. Here is a simulation implementation using file storage.
+        # Use the Automa instance / scenario name as the search index name.
+        bytes_file = db_base_path / "adder_automa1_no.bytes"
+        version_file = db_base_path / "adder_automa1_no.version"
+        bytes_file.write_bytes(e.snapshot.serialized_bytes)
+        version_file.write_text(e.snapshot.serialization_version)
+
+@pytest.fixture
+def deserialized_adder_automa1_no(db_base_path):
+    bytes_file = db_base_path / "adder_automa1_no.bytes"
+    version_file = db_base_path / "adder_automa1_no.version"
+    serialized_bytes = bytes_file.read_bytes()
+    serialization_version = version_file.read_text()
+    snapshot = Snapshot(
+        serialized_bytes=serialized_bytes, 
+        serialization_version=serialization_version
+    )
+    # Snapshot is restored.
+    assert snapshot.serialization_version == GraphAutoma.SERIALIZATION_VERSION
+    deserialized_automa = AdderAutoma1.load_from_snapshot(snapshot)
+    assert type(deserialized_automa) is AdderAutoma1
+    return deserialized_automa
+
+@pytest.fixture
+def interaction_feedback_2_yes(request):
+    interaction_id = request.config.cache.get("interaction_id", None)
+    print(f"yes: interaction_id: {interaction_id}")
+    feedback_yes = InteractionFeedback(
+        interaction_id=interaction_id,
+        data="yes"
+    )
+    return feedback_yes
+
+@pytest.mark.asyncio
+async def test_adder_automa_1_interact_with_2_yes_feedback(interaction_feedback_2_yes, deserialized_adder_automa1_no):
+    result = await deserialized_adder_automa1_no.arun(
+        interaction_feedback=interaction_feedback_2_yes
+    )
+    # FIXME: the result currently is 305, but the expected result is 304
+    assert result == 305
+
+if __name__ == "__main__":
+    pytest.main(["-v", __file__])

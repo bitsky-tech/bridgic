@@ -173,13 +173,14 @@ class Worker:
         state_dict["output_has_set"] = self.__output_has_set
         if self.__output_has_set:
             state_dict["output_buffer"] = self.__output_buffer
+        state_dict["local_space"] = self.__local_space
         return state_dict
 
     def load_from_dict(self, state_dict: Dict[str, Any]) -> None:
         self.__output_has_set = state_dict["output_has_set"]
         if self.__output_has_set:
             self.__output_buffer = state_dict["output_buffer"]
-
+        self.__local_space = state_dict["local_space"]
     def ferry_to(self, worker_key: str, /, *args, **kwargs):
         """
         Handoff control flow to the specified worker, passing along any arguments as needed.

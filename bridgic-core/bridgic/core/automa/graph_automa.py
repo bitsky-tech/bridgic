@@ -305,6 +305,10 @@ class _InteractionEventException(Exception):
 class _InteractionAndFeedback(BaseModel):
     interaction: Interaction
     feedback: Optional[InteractionFeedback] = None
+
+class RuntimeContext(BaseModel):
+    worker_key: str
+
 class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
     """
     DDG (Dynamic Directed Graph) implementation of Automa.
@@ -400,7 +404,6 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
             A dictionary for initializing the automa's runtime state. This parameter is intended for internal framework use only, specifically for deserialization, and should not be used by developers.
         """
         self._workers = {} #TODO: __getattribute__() refactoring
-        self._worker_keys = [] # for better __getattribute__() performance
         super().__init__(name=name)
         self._running_started = False
         self._injector = WorkerInjector()
@@ -706,7 +709,6 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
             # Note1: the execution order of topology change deferred tasks is important and is determined by the order of the calls of add_worker(), remove_worker() in one DS.
             # Note2: add_worker() and remove_worker() may be called in a new thread. But _topology_change_deferred_tasks is not necessary to be thread-safe due to Visibility Guarantees of the Bridgic Concurrency Model.
             self._topology_change_deferred_tasks.append(deferred_task)
-        self._worker_keys.append(key)
 
     def add_func_as_worker(
         self,
@@ -822,7 +824,6 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
             )
             # Note: the execution order of topology change deferred tasks is important and is determined by the order of the calls of add_worker(), remove_worker() in one DS.
             self._topology_change_deferred_tasks.append(deferred_task)
-        self._worker_keys.remove(key)
 
     @property
     def output_worker_key(self) -> Optional[str]:
@@ -846,12 +847,9 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         """
         Used to get the worker object by its key (self.<key>).
         """
-        if key != "_worker_keys" and key in self._worker_keys:
-            try:
-                workers = super().__getattribute__('_workers')
-                return workers[key]
-            except AttributeError:
-                return super().__getattribute__(key)
+        workers = super().__getattribute__('_workers')
+        if key in workers:
+            return workers[key]
         return super().__getattribute__(key)
 
     # def __getattr__(self, key):
@@ -940,30 +938,21 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         self._ferry_deferred_tasks.append(deferred_task)
     
 
-    def get_local_space(self, runtime_context: Dict[str, Any] = None) -> Dict[str, Any]:
-        """Get the local space, if you want to clean the local space after automa.arun(), you can override the should_reset_local_space() method.
+    def get_local_space(self, runtime_context: RuntimeContext) -> Dict[str, Any]:
+        """
+        Get the local space, if you want to clean the local space after automa.arun(), you can override the should_reset_local_space() method.
 
         Parameters
         ----------
-        runtime_context : Dict[str, Any]
+        runtime_context : RuntimeContext
             The runtime context.
 
         Returns
         -------
         Dict[str, Any]
             The local space.
-
-        Raises
-        ------
-        AutomaRuntimeError
-            The worker_key is not found in the runtime_context or get_local_space function need runtime_context parameter
         """
-        worker_key = runtime_context.get("worker_key") if runtime_context is not None else None
-        if not worker_key:
-            raise AutomaRuntimeError(
-                f"the worker_key is not found in the runtime_context: "
-                f"runtime_context={runtime_context}" if runtime_context is not None else "get_local_space function need runtime_context parameter"
-            )
+        worker_key = runtime_context.worker_key
         worker_obj = self._workers[worker_key]
         return worker_obj.local_space
 
@@ -976,9 +965,11 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
 
     def should_reset_local_space(self) -> bool:
         """
-        Whether to reset the local space after automa.arun(). By default, it is True, will reset the local space after automa.arun().
-        If you want to keep the local space after automa.arun(), you can override this method.
-        For example:
+        This method indicates whether to reset the local space at the end of the arun method of GraphAutoma. 
+        By default, it returns True, standing for resetting. Otherwise, it means doing nothing.
+        
+        Examples:
+        --------
         ```python
         class MyAutoma(GraphAutoma):
             def should_reset_local_space(self) -> bool:
