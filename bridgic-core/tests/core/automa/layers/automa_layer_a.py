@@ -3,7 +3,7 @@ import asyncio
 from typing import Any, Dict
 
 from bridgic.core.automa import GraphAutoma, worker, ArgsMappingRule
-from bridgic.core.automa.arguments_inject import System
+from bridgic.core.automa.arguments_descriptor import System
 from bridgic.core.utils.console import printer
 
 class AutomaLayerA(GraphAutoma):
