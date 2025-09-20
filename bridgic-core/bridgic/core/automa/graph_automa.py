@@ -164,6 +164,11 @@ class _RemoveWorkerDeferredTask(BaseModel):
     task_type: Literal["remove_worker"] = Field(default="remove_worker")
     key: str
 
+class _AddDependencyDeferredTask(BaseModel):
+    task_type: Literal["add_dependency"] = Field(default="add_dependency")
+    key: str
+    depends: str
+
 class _SetOutputWorkerDeferredTask(BaseModel):
     output_worker_key: str
 
@@ -674,6 +679,37 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         if key == self._output_worker_key:
             self._output_worker_key = None
 
+    def _add_dependency_incrementally(
+        self,
+        key: str,
+        depends: str,
+    ) -> None:
+        """
+        Incrementally add a dependency from `key` to `depends`. For internal use only.
+        This method is one of the very basic primitives of DDG for dynamic topology changes.
+        """
+        if key not in self._workers:
+            raise AutomaRuntimeError(
+                f"fail to add dependency from a worker that does not exist: `{key}`!"
+            )
+        if depends not in self._workers:
+            raise AutomaRuntimeError(
+                f"fail to add dependency to a worker that does not exist: `{depends}`!"
+            )
+        if depends in self._workers[key].dependencies:
+            raise AutomaRuntimeError(
+                f"dependency from '{key}' to '{depends}' already exists!"
+            )
+
+        self._workers[key].dependencies.append(depends)
+        # Note this detail here for dynamic states change:
+        # The new dependency added here may be removed right away if the dependency is just the next kickoff worker. This is a valid behavior.
+        self._workers_dynamic_states[key].dependency_triggers.add(depends)
+
+        if depends not in self._worker_forwards:
+            self._worker_forwards[depends] = []
+        self._worker_forwards[depends].append(key)
+
     def add_worker(
         self,
         key: str,
@@ -688,9 +724,11 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
 
         If this method is called during the [Initialization Phase], the worker will be added immediately. If this method is called during the [Running Phase], the worker will be added as a deferred task which will be executed in the next DS.
 
-        In DDG, dependencies can only be added together with a worker. However, you can add a worker without any dependencies.
+        The dependencies can be added together with a worker. However, you can add a worker without any dependencies.
 
-        Note: A worker that is added during the [Running Phase] is not allowed to be a start worker.
+        Note 1: A worker that is added during the [Running Phase] is not allowed to be a start worker.
+
+        Note 2: The args_mapping_rule can only be set together with adding a worker, even if the worker has no any dependencies.
 
         Parameters
         ----------
@@ -757,7 +795,7 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
                 is_start=is_start,
                 args_mapping_rule=args_mapping_rule,
             )
-            # Note1: the execution order of topology change deferred tasks is important and is determined by the order of the calls of add_worker(), remove_worker() in one DS.
+            # Note1: the execution order of topology change deferred tasks is important and is determined by the order of the calls of add_worker(), remove_worker() and add_dependency() in one DS.
             # Note2: add_worker() and remove_worker() may be called in a new thread. But _topology_change_deferred_tasks is not necessary to be thread-safe due to Visibility Guarantees of the Bridgic Concurrency Model.
             self._topology_change_deferred_tasks.append(deferred_task)
 
@@ -804,7 +842,7 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         self.add_worker(
             key=key,
             worker_obj=func_worker,
-            dependencies=dependencies,
+            dependencies=list(dependencies),
             is_start=is_start,
             args_mapping_rule=args_mapping_rule,
         )
@@ -873,8 +911,38 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
             deferred_task = _RemoveWorkerDeferredTask(
                 key=key,
             )
-            # Note: the execution order of topology change deferred tasks is important and is determined by the order of the calls of add_worker(), remove_worker() in one DS.
+            # Note: the execution order of topology change deferred tasks is important and is determined by the order of the calls of add_worker(), remove_worker() and add_dependency() in one DS.
             self._topology_change_deferred_tasks.append(deferred_task)
+
+    def add_dependency(
+        self,
+        key: str,
+        depends: str,
+    ) -> None:
+        """
+        This method is used to dynamically add a dependency from `key` to `depends`.
+
+        Note: args_mapping_rule is not allowed to be set by this method, instead it should be set together with add_worker() or add_func_as_worker().
+
+        Parameters
+        ----------
+        key : str
+            The key of the worker that will depend on the worker with key `depends`.
+        depends : str
+            The key of the worker on which the worker with key `key` will depend.
+        """
+        ...
+        if not self._running_started:
+            # add the dependency immediately
+            self._add_dependency_incrementally(key, depends)
+        else:
+            deferred_task = _AddDependencyDeferredTask(
+                key=key,
+                depends=depends,
+            )
+            # Note: the execution order of topology change deferred tasks is important and is determined by the order of the calls of add_worker(), remove_worker() and add_dependency() in one DS.
+            self._topology_change_deferred_tasks.append(deferred_task)
+
 
     @property
     def output_worker_key(self) -> Optional[str]:
@@ -1119,7 +1187,7 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
                 self._input_buffer.args = args
                 self._input_buffer.kwargs = kwargs
 
-        def _execute_topology_change_deferred_tasks(tc_tasks: List[Union[_AddWorkerDeferredTask, _RemoveWorkerDeferredTask]]):
+        def _execute_topology_change_deferred_tasks(tc_tasks: List[Union[_AddWorkerDeferredTask, _RemoveWorkerDeferredTask, _AddDependencyDeferredTask]]):
             for topology_task in tc_tasks:
                 if topology_task.task_type == "add_worker":
                     self._add_worker_incrementally(
@@ -1131,6 +1199,8 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
                     )
                 elif topology_task.task_type == "remove_worker":
                     self._remove_worker_incrementally(topology_task.key)
+                elif topology_task.task_type == "add_dependency":
+                    self._add_dependency_incrementally(topology_task.key, topology_task.depends)
 
         def _set_worker_run_finished(worker_key: str):
             for kickoff_info in self._current_kickoff_workers:
@@ -1287,7 +1357,7 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
                     task_result = task.task.result()
                     _set_worker_run_finished(task.worker_key)
                     if task.worker_key in self._workers:
-                        # The current running task may be removed.
+                        # The current running worker may be removed.
                         worker_obj = self._workers[task.worker_key]
                         # Collect results of the finished tasks.
                         worker_obj.output_buffer = task_result 
