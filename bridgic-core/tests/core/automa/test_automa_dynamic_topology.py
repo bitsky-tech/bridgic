@@ -723,3 +723,43 @@ def dynamic_flow_e():
 async def test_dynamic_flow_e(dynamic_flow_e):
     with pytest.raises(AutomaCompilationError, match=r".* not meet the DAG constraints, .* in cycle: .*"):
         await dynamic_flow_e.arun(x=1, y=2)
+
+###################### add_dependency() Error test cases #############################
+
+class DynamicFlow_F_AddDependencyFromNotExist(GraphAutoma):
+    @worker(is_start=True)
+    async def func_1(self, x: int):
+        self.add_dependency("func_2", "func_1")
+        return x + 1
+
+@pytest.fixture
+def dynamic_flow_f():
+    flow = DynamicFlow_F_AddDependencyFromNotExist(output_worker_key="func_1")
+    return flow
+
+@pytest.mark.asyncio
+async def test_dynamic_flow_f(dynamic_flow_f):
+    with pytest.raises(AutomaRuntimeError, match="fail to add dependency from a worker that does not exist"):
+        await dynamic_flow_f.arun(x=1)
+
+########
+
+class DynamicFlow_G_AddDependencyAlreadyExist(GraphAutoma):
+    @worker(is_start=True)
+    async def func_1(self, x: int):
+        return x + 1
+
+    @worker(dependencies=["func_1"])
+    async def func_2(self, x: int):
+        self.add_dependency("func_2", "func_1")
+        return x + 2
+
+@pytest.fixture
+def dynamic_flow_g():
+    flow = DynamicFlow_G_AddDependencyAlreadyExist(output_worker_key="func_2")
+    return flow
+
+@pytest.mark.asyncio
+async def test_dynamic_flow_g(dynamic_flow_g):
+    with pytest.raises(AutomaRuntimeError, match="dependency from 'func_2' to 'func_1' already exists"):
+        await dynamic_flow_g.arun(x=1)

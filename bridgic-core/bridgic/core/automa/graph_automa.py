@@ -387,10 +387,9 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
     _workers_dynamic_states: Dict[str, _WorkerDynamicState]
 
     # The whole running process of the DDG is divided into two main phases:
-    # 1. [Initialization Phase] The first phase (when _running_started is False): the initial topology of DDG was constructed.
-    # 2. [Running Phase] The second phase (when _running_started is True): the DDG is running, and the workers are executed in a dynamic step-by-step manner (DS loop).
-    # Once _running_started is set to True, it will always be True.
-    _running_started: bool
+    # 1. [Initialization Phase] The first phase (when _automa_running is False): the initial topology of DDG was constructed.
+    # 2. [Running Phase] The second phase (when _automa_running is True): the DDG is running, and the workers are executed in a dynamic step-by-step manner (DS loop).
+    _automa_running: bool
 
     # Ongoing human interactions triggered by the `interact_with_human()` call from workers of the current Automa.
     # worker_key -> list of interactions.
@@ -453,7 +452,7 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         """
         self._workers = {} #TODO: __getattribute__() refactoring
         super().__init__(name=name)
-        self._running_started = False
+        self._automa_running = False
         self._injector = WorkerInjector()
 
         # Initialize the states that need to be serialized.
@@ -537,7 +536,7 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         state_dict["name"] = self.name
         # TODO: serialize the workers, including the outbuf of each worker
         state_dict["workers"] = self._workers
-        state_dict["running_started"] = self._running_started
+        state_dict["automa_running"] = self._automa_running
         state_dict["worker_forwards"] = self._worker_forwards
         state_dict["workers_dynamic_states"] = self._workers_dynamic_states
         state_dict["output_worker_key"] = self._output_worker_key
@@ -556,7 +555,7 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         self._workers = state_dict["workers"]
         for worker in self._workers.values():
             worker.parent = self
-        self._running_started = state_dict["running_started"]
+        self._automa_running = state_dict["automa_running"]
         self._worker_forwards = state_dict["worker_forwards"]
         self._workers_dynamic_states = state_dict["workers_dynamic_states"]
         self._output_worker_key = state_dict["output_worker_key"]
@@ -777,7 +776,7 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         # Ensure the parameters are valid.
         _basic_worker_params_check(key, worker_obj)
 
-        if not self._running_started:
+        if not self._automa_running:
             # Add worker during the [Initialization Phase].
             self._add_worker_incrementally(
                 key=key,
@@ -904,7 +903,7 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         AutomaDeclarationError
             If the worker specified by key does not exist in the Automa, this exception will be raised.
         """
-        if not self._running_started:
+        if not self._automa_running:
             # remove immediately
             self._remove_worker_incrementally(key)
         else:
@@ -932,7 +931,7 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
             The key of the worker on which the worker with key `key` will depend.
         """
         ...
-        if not self._running_started:
+        if not self._automa_running:
             # add the dependency immediately
             self._add_dependency_incrementally(key, depends)
         else:
@@ -953,7 +952,7 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         """
         This method is used to set the output worker of the automa dynamically.
         """
-        if not self._running_started:
+        if not self._automa_running:
             self._output_worker_key = worker_key
         else:
             deferred_task = _SetOutputWorkerDeferredTask(
@@ -1251,10 +1250,10 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         if self.thread_pool is None:
             self.thread_pool = ThreadPoolExecutor(thread_name_prefix="bridgic-thread")
 
-        if not self._running_started:
+        if not self._automa_running:
             # Here is the last chance to compile and check the DDG in the end of the [Initialization Phase] (phase 1 just before the first DS).
             self._compile_graph_and_detect_risks()
-            self._running_started = True
+            self._automa_running = True
 
         # An Automa needs to be re-run with _current_kickoff_workers reinitialized.
         _reinit_current_kickoff_workers_if_needed()
@@ -1472,6 +1471,7 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
             self._clean_all_worker_local_space()
         self._ongoing_interactions.clear()
         self._worker_interaction_indices.clear()
+        self._automa_running = False
 
         # If the output-worker is specified, return its output as the return value of the automa.
         if self._output_worker_key:
