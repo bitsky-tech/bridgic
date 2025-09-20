@@ -491,7 +491,7 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         for worker_key, worker_func in cls._registered_worker_funcs.items():
             # The decorator based mechanism (i.e. @worker) is based on the add_worker() interface.
             # Parameters check and other implementation details can be unified.
-            self.add_func_as_worker(
+            self._add_func_as_worker_internal(
                 key=worker_key,
                 func=worker_func,
                 dependencies=worker_func.__dependencies__,
@@ -717,7 +717,7 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
             self._worker_forwards[depends] = []
         self._worker_forwards[depends].append(key)
 
-    def add_worker(
+    def _add_worker_internal(
         self,
         key: str,
         worker_obj: Worker,
@@ -727,28 +727,7 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         args_mapping_rule: ArgsMappingRule = ArgsMappingRule.AS_IS,
     ) -> None:
         """
-        This method is used to add a worker dynamically into the automa.
-
-        If this method is called during the [Initialization Phase], the worker will be added immediately. If this method is called during the [Running Phase], the worker will be added as a deferred task which will be executed in the next DS.
-
-        The dependencies can be added together with a worker. However, you can add a worker without any dependencies.
-
-        Note 1: A worker that is added during the [Running Phase] is not allowed to be a start worker.
-
-        Note 2: The args_mapping_rule can only be set together with adding a worker, even if the worker has no any dependencies.
-
-        Parameters
-        ----------
-        key : str
-            The key of the worker.
-        worker_obj : Worker
-            The worker instance to be registered.
-        dependencies : List[str]
-            A list of worker keys that the worker depends on.
-        is_start : bool
-            Whether the worker is a start worker.
-        args_mapping_rule : ArgsMappingRule
-            The rule of arguments mapping.
+        This method implements the same logic as add_worker(), but is intended for internal use only.
         """
 
         def _basic_worker_params_check(key: str, worker_obj: Worker):
@@ -806,6 +785,79 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
             # Note2: add_worker() and remove_worker() may be called in a new thread. But _topology_change_deferred_tasks is not necessary to be thread-safe due to Visibility Guarantees of the Bridgic Concurrency Model.
             self._topology_change_deferred_tasks.append(deferred_task)
 
+    def _add_func_as_worker_internal(
+        self,
+        key: str,
+        func: Callable,
+        *,
+        dependencies: List[str] = [],
+        is_start: bool = False,
+        args_mapping_rule: ArgsMappingRule = ArgsMappingRule.AS_IS,
+    ) -> None:
+        """
+        This method implements the same logic as add_func_as_worker(), but is intended for internal use only.
+        """
+        # Register func as an instance of CallableWorker.
+        if not isinstance(func, MethodType):
+            func = MethodType(func, self)
+        else:
+            # Validate: bounded __self__ of `func` must be self when add_func_as_worker() is called.
+            if func.__self__ is not self:
+                raise AutomaRuntimeError(
+                    f"the bounded instance of `func` must be the same as the instance of the GraphAutoma, "
+                    f"but got {func.__self__}"
+                )
+        func_worker = CallableWorker(func)
+
+        self._add_worker_internal(
+            key=key,
+            worker_obj=func_worker,
+            dependencies=dependencies,
+            is_start=is_start,
+            args_mapping_rule=args_mapping_rule,
+        )
+
+    def add_worker(
+        self,
+        key: str,
+        worker: Worker,
+        *,
+        dependencies: List[str] = [],
+        is_start: bool = False,
+        args_mapping_rule: ArgsMappingRule = ArgsMappingRule.AS_IS,
+    ) -> None:
+        """
+        This method is used to add a worker dynamically into the automa.
+
+        If this method is called during the [Initialization Phase], the worker will be added immediately. If this method is called during the [Running Phase], the worker will be added as a deferred task which will be executed in the next DS.
+
+        The dependencies can be added together with a worker. However, you can add a worker without any dependencies.
+
+        Note 1: A worker that is added during the [Running Phase] is not allowed to be a start worker.
+
+        Note 2: The args_mapping_rule can only be set together with adding a worker, even if the worker has no any dependencies.
+
+        Parameters
+        ----------
+        key : str
+            The key of the worker.
+        worker : Worker
+            The worker instance to be registered.
+        dependencies : List[str]
+            A list of worker keys that the worker depends on.
+        is_start : bool
+            Whether the worker is a start worker.
+        args_mapping_rule : ArgsMappingRule
+            The rule of arguments mapping.
+        """
+        self._add_worker_internal(
+            key=key,
+            worker_obj=worker,
+            dependencies=dependencies,
+            is_start=is_start,
+            args_mapping_rule=args_mapping_rule,
+        )
+
     def add_func_as_worker(
         self,
         key: str,
@@ -834,21 +886,9 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         args_mapping_rule : ArgsMappingRule
             The rule of arguments mapping.
         """
-        # Register func as an instance of CallableWorker.
-        if not isinstance(func, MethodType):
-            func = MethodType(func, self)
-        else:
-            # Validate: bounded __self__ of `func` must be self when add_func_as_worker() is called.
-            if func.__self__ is not self:
-                raise AutomaRuntimeError(
-                    f"the bounded instance of `func` must be the same as the instance of the GraphAutoma, "
-                    f"but got {func.__self__}"
-                )
-        func_worker = CallableWorker(func)
-
-        self.add_worker(
+        self._add_func_as_worker_internal(
             key=key,
-            worker_obj=func_worker,
+            func=func,
             dependencies=dependencies,
             is_start=is_start,
             args_mapping_rule=args_mapping_rule,
@@ -881,7 +921,7 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
             The rule of arguments mapping. The options are: "auto", "as_list", "as_dict", "suppressed".
         """
         def wrapper(func: Callable):
-            self.add_func_as_worker(
+            self._add_func_as_worker_internal(
                 key=(key or func.__name__),
                 func=func,
                 dependencies=dependencies,
