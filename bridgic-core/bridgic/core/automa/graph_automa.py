@@ -610,10 +610,18 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
             raise AutomaRuntimeError(
                 f"duplicate workers with the same key '{key}' are not allowed to be added!"
             )
+        
+        # Note: the dependencies argument must be a new copy of the list, created with list(dependencies).
+        # Refer to the Python documentation for more details:
+        # 1. https://docs.python.org/3/reference/compound_stmts.html#function-definitions
+        # "Default parameter values are evaluated from left to right when the function definition is executed"
+        # 2. https://docs.python.org/3/tutorial/controlflow.html#default-argument-values
+        # "The default values are evaluated at the point of function definition in the defining scope"
+        # "Important warning: The default value is evaluated only once."
         new_worker_obj = _GraphAdaptedWorker(
             key=key,
             worker=worker_obj,
-            dependencies=dependencies,
+            dependencies=list(dependencies),
             is_start=is_start,
             args_mapping_rule=args_mapping_rule,
         )
@@ -841,7 +849,7 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         self.add_worker(
             key=key,
             worker_obj=func_worker,
-            dependencies=list(dependencies),
+            dependencies=dependencies,
             is_start=is_start,
             args_mapping_rule=args_mapping_rule,
         )
