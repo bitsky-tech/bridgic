@@ -596,7 +596,7 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
     def _add_worker_incrementally(
         self,
         key: str,
-        worker_obj: Worker,
+        worker: Worker,
         *,
         dependencies: List[str] = [],
         is_start: bool = False,
@@ -620,7 +620,7 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         # "Important warning: The default value is evaluated only once."
         new_worker_obj = _GraphAdaptedWorker(
             key=key,
-            worker=worker_obj,
+            worker=worker,
             dependencies=list(dependencies),
             is_start=is_start,
             args_mapping_rule=args_mapping_rule,
@@ -720,14 +720,14 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
     def _add_worker_internal(
         self,
         key: str,
-        worker_obj: Worker,
+        worker: Worker,
         *,
         dependencies: List[str] = [],
         is_start: bool = False,
         args_mapping_rule: ArgsMappingRule = ArgsMappingRule.AS_IS,
     ) -> None:
         """
-        This method implements the same logic as add_worker(), but is intended for internal use only.
+        The private version of the method `add_worker()`.
         """
 
         def _basic_worker_params_check(key: str, worker_obj: Worker):
@@ -761,13 +761,13 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
                 )
 
         # Ensure the parameters are valid.
-        _basic_worker_params_check(key, worker_obj)
+        _basic_worker_params_check(key, worker)
 
         if not self._automa_running:
             # Add worker during the [Initialization Phase].
             self._add_worker_incrementally(
                 key=key,
-                worker_obj=worker_obj,
+                worker=worker,
                 dependencies=dependencies,
                 is_start=is_start,
                 args_mapping_rule=args_mapping_rule,
@@ -776,7 +776,7 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
             # Add worker during the [Running Phase].
             deferred_task = _AddWorkerDeferredTask(
                 key=key,
-                worker_obj=worker_obj,
+                worker_obj=worker,
                 dependencies=dependencies,
                 is_start=is_start,
                 args_mapping_rule=args_mapping_rule,
@@ -795,7 +795,7 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         args_mapping_rule: ArgsMappingRule = ArgsMappingRule.AS_IS,
     ) -> None:
         """
-        This method implements the same logic as add_func_as_worker(), but is intended for internal use only.
+        The private version of the method `add_func_as_worker()`.
         """
         # Register func as an instance of CallableWorker.
         if not isinstance(func, MethodType):
@@ -811,7 +811,7 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
 
         self._add_worker_internal(
             key=key,
-            worker_obj=func_worker,
+            worker=func_worker,
             dependencies=dependencies,
             is_start=is_start,
             args_mapping_rule=args_mapping_rule,
@@ -833,9 +833,7 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
 
         The dependencies can be added together with a worker. However, you can add a worker without any dependencies.
 
-        Note 1: A worker that is added during the [Running Phase] is not allowed to be a start worker.
-
-        Note 2: The args_mapping_rule can only be set together with adding a worker, even if the worker has no any dependencies.
+        Note: The args_mapping_rule can only be set together with adding a worker, even if the worker has no any dependencies.
 
         Parameters
         ----------
@@ -852,7 +850,7 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         """
         self._add_worker_internal(
             key=key,
-            worker_obj=worker,
+            worker=worker,
             dependencies=dependencies,
             is_start=is_start,
             args_mapping_rule=args_mapping_rule,
@@ -989,7 +987,6 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
             )
             # Note: the execution order of topology change deferred tasks is important and is determined by the order of the calls of add_worker(), remove_worker() and add_dependency() in one DS.
             self._topology_change_deferred_tasks.append(deferred_task)
-
 
     @property
     def output_worker_key(self) -> Optional[str]:
@@ -1239,7 +1236,7 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
                 if topology_task.task_type == "add_worker":
                     self._add_worker_incrementally(
                         key=topology_task.key,
-                        worker_obj=topology_task.worker_obj,
+                        worker=topology_task.worker_obj,
                         dependencies=topology_task.dependencies,
                         is_start=topology_task.is_start,
                         args_mapping_rule=topology_task.args_mapping_rule,

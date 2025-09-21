@@ -241,22 +241,27 @@ class AdderFlow_2(GraphAutoma):
     async def func_1(self, x: int):
         return x + 1
 
-    @worker(dependencies=["func_1"])
     async def func_2(self, x: int):
         return x + 2
 
 @pytest.fixture
 def adder_flow_2():
-    return AdderFlow_2(output_worker_key="func_2")
+    return AdderFlow_2(output_worker_key="func_1")
 
 @pytest.mark.asyncio
 async def test_adder_flow_2_rerun(adder_flow_2):
     # First run.
     result = await adder_flow_2.arun(x=100)
-    assert result == 100 + 1 + 2
+    assert result == 100 + 1
     # Topology change.
-    adder_flow_2.remove_worker("func_2")
-    adder_flow_2.output_worker_key = "func_1"
+    # Remove a start worker and re-add a new start worker.
+    adder_flow_2.remove_worker("func_1")
+    adder_flow_2.add_func_as_worker(
+        key="func_2",
+        func=adder_flow_2.func_2,
+        is_start=True,
+    )
+    adder_flow_2.output_worker_key = "func_2"
     # Second run.
     result = await adder_flow_2.arun(x=100)
-    assert result == 100 + 1
+    assert result == 100 + 2
