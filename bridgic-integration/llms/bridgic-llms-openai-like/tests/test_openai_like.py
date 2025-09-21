@@ -9,6 +9,7 @@ from bridgic.llms.openai_like.openai_like_llm import OpenAILikeLlm
 
 _api_base = os.environ.get("OPENAI_LIKE_API_BASE")
 _api_key = os.environ.get("OPENAI_LIKE_API_KEY")
+_model_name = os.environ.get("OPENAI_LIKE_MODEL_NAME")
 
 @pytest.mark.skipif(
     (_api_key is None) or (_api_base is None),
@@ -20,7 +21,7 @@ def test_openai_like_chat():
         api_key=_api_key,
     )
     response = llm.chat(
-        model="gpt-4.1-mini",
+        model=_model_name,
         messages=[Message.from_text(text="Hello, how are you?", role=Role.USER)],
     )
     printer.print(response)
@@ -37,7 +38,7 @@ def test_openai_like_stream():
         api_key=_api_key,
     )
     response = llm.stream(
-        model="gpt-4.1-mini",
+        model=_model_name,
         messages=[Message.from_text(text="Hello, how are you?", role=Role.USER)],
     )
     result = ""
@@ -58,7 +59,7 @@ async def test_openai_like_achat():
         api_key=_api_key,
     )
     response = await llm.achat(
-        model="gpt-4.1-mini",
+        model=_model_name,
         messages=[Message.from_text(text="Hello, how are you?", role=Role.USER)],
     )
     printer.print(response)
@@ -76,7 +77,7 @@ async def test_openai_like_astream():
         api_key=_api_key,
     )
     response = llm.astream(
-        model="gpt-4.1-mini",
+        model=_model_name,
         messages=[Message.from_text(text="Hello, how are you?", role=Role.USER)],
     )
     result = ""
@@ -99,7 +100,7 @@ async def test_openai_like_achat_with_aiohttp():
             http_async_client=aio_client,
         )
         response = await llm.achat(
-            model="gpt-4.1-mini",
+            model=_model_name,
             messages=[Message.from_text(text="Hello, how are you?", role=Role.USER)],
         )
         printer.print(response)
@@ -119,7 +120,7 @@ async def test_openai_like_astream_with_aiohttp():
             http_async_client=aio_client,
         )
         response = llm.astream(
-            model="gpt-4.1-mini",
+            model=_model_name,
             messages=[Message.from_text(text="Hello, how are you?", role=Role.USER)],
         )
         result = ""
