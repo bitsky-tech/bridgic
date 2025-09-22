@@ -7,6 +7,7 @@ from typing import List, Tuple, Optional, Any, Dict
 from bridgic.core.automa.worker import Worker
 from bridgic.core.types.error import AutomaDataInjectionError
 from bridgic.core.utils.args_map import safely_map_args
+from bridgic.core.automa.automa import Automa
 
 
 class InjectorNone: 
@@ -92,9 +93,24 @@ class WorkerInjector:
 
     def _resolve_system(self, dep: System, current_worker_key: str, worker_dict: Dict[str, Worker]) -> Any:
         if dep.key == "runtime_context":
-            inject_res = RuntimeContext(worker_key=current_worker_key)
-        
-        return inject_res
+            return RuntimeContext(worker_key=current_worker_key)
+        elif dep.key.startswith("automa:"):
+            worker_key = dep.key[7:]
+            # TODO: will optimize the performance of this part in the future with the optimization of the _GraphAdaptedWorker class.
+
+            inject_res = worker_dict.get(worker_key, InjectorNone())
+            if isinstance(inject_res, InjectorNone):
+                raise AutomaDataInjectionError(
+                    f"the sub-atoma: `{dep.key}` is not found in current automa. "
+                )
+
+            inject_res = inject_res._decorated_worker  
+            if not isinstance(inject_res, Automa):
+                raise AutomaDataInjectionError(
+                    f"the `{dep.key}` instance is not an Automa. "
+                )
+           
+            return inject_res
 
     def inject(
         self, 
