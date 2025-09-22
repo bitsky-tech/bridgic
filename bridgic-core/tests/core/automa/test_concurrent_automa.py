@@ -114,8 +114,12 @@ def concurrent_autom_3() -> ConcurrentAutoma:
 
 @pytest.mark.asyncio
 async def test_concurrent_autom_3(concurrent_autom_3: ConcurrentAutoma):
-    result: List[int] = await concurrent_autom_3.arun(x=100)
+    result: List = await concurrent_autom_3.arun(x=100)
     assert result == [101, 102]
+    # Test case for only one worker!
+    concurrent_autom_3.remove_worker("func_1")
+    result = await concurrent_autom_3.arun(x=100)
+    assert result == [102]
 
 ###################### Test cases for Errors / Exceptions in concurrent automa #########################
 

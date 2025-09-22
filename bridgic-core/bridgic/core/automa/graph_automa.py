@@ -1910,11 +1910,6 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
             return next_args, next_kwargs
 
         def merge_return_values(results: List[Any]) -> Tuple[Tuple, Dict[str, Any]]:
-            if len(dep_workers_keys) < 2:
-                raise WorkerArgsMappingError(
-                    f"The worker \"{current_worker_key}\" must has at least 2 dependencies for the args_mapping_rule=\"{ArgsMappingRule.MERGE}\", "
-                    f"but got {len(dep_workers_keys)} dependencies: {dep_workers_keys}"
-                )
             next_args, next_kwargs = tuple([results]), {}
             return next_args, next_kwargs
 
