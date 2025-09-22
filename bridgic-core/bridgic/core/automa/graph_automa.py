@@ -135,7 +135,7 @@ class _KickoffInfo(BaseModel):
     # The key of the worker that is going to be kicked off.
     worker_key: str
     # Worker key or the container "__automa__"
-    last_kickoff: str
+    last_kickoff: Optional[str]
     # Whether the kickoff is triggered by ferry_to() initiated by developers.
     from_ferry: bool = False
     # Whether the run is finished.
@@ -152,7 +152,7 @@ class _WorkerDynamicState(BaseModel):
 
 class _AddWorkerDeferredTask(BaseModel):
     task_type: Literal["add_worker"] = Field(default="add_worker")
-    key: str
+    worker_key: str
     worker_obj: Worker # Note: Not a pydantic model!!
     dependencies: List[str] = []
     is_start: bool = False
@@ -162,19 +162,19 @@ class _AddWorkerDeferredTask(BaseModel):
 
 class _RemoveWorkerDeferredTask(BaseModel):
     task_type: Literal["remove_worker"] = Field(default="remove_worker")
-    key: str
+    worker_key: str
 
 class _AddDependencyDeferredTask(BaseModel):
     task_type: Literal["add_dependency"] = Field(default="add_dependency")
-    key: str
-    depends: str
+    worker_key: str
+    dependency: str
 
 class _SetOutputWorkerDeferredTask(BaseModel):
     output_worker_key: str
 
 class _FerryDeferredTask(BaseModel):
     ferry_to_worker_key: str
-    kickoff_worker_key: str
+    kickoff_worker_key: Optional[str]
     args: Tuple[Any, ...]
     kwargs: Dict[str, Any]
 
@@ -698,7 +698,7 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
     def _add_dependency_incrementally(
         self,
         key: str,
-        depends: str,
+        dependency: str,
     ) -> None:
         """
         Incrementally add a dependency from `key` to `depends`. For internal use only.
@@ -708,23 +708,23 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
             raise AutomaRuntimeError(
                 f"fail to add dependency from a worker that does not exist: `{key}`!"
             )
-        if depends not in self._workers:
+        if dependency not in self._workers:
             raise AutomaRuntimeError(
-                f"fail to add dependency to a worker that does not exist: `{depends}`!"
+                f"fail to add dependency to a worker that does not exist: `{dependency}`!"
             )
-        if depends in self._workers[key].dependencies:
+        if dependency in self._workers[key].dependencies:
             raise AutomaRuntimeError(
-                f"dependency from '{key}' to '{depends}' already exists!"
+                f"dependency from '{key}' to '{dependency}' already exists!"
             )
 
-        self._workers[key].dependencies.append(depends)
+        self._workers[key].dependencies.append(dependency)
         # Note this detail here for dynamic states change:
         # The new dependency added here may be removed right away if the dependency is just the next kickoff worker. This is a valid behavior.
-        self._workers_dynamic_states[key].dependency_triggers.add(depends)
+        self._workers_dynamic_states[key].dependency_triggers.add(dependency)
 
-        if depends not in self._worker_forwards:
-            self._worker_forwards[depends] = []
-        self._worker_forwards[depends].append(key)
+        if dependency not in self._worker_forwards:
+            self._worker_forwards[dependency] = []
+        self._worker_forwards[dependency].append(key)
 
     def _add_worker_internal(
         self,
@@ -784,8 +784,8 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         else:
             # Add worker during the [Running Phase].
             deferred_task = _AddWorkerDeferredTask(
-                key=key,
-                worker_obj=worker,
+                worker_key=key,
+                worker_obj=worker_obj,
                 dependencies=dependencies,
                 is_start=is_start,
                 args_mapping_rule=args_mapping_rule,
@@ -963,7 +963,7 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
             self._remove_worker_incrementally(key)
         else:
             deferred_task = _RemoveWorkerDeferredTask(
-                key=key,
+                worker_key=key,
             )
             # Note: the execution order of topology change deferred tasks is important and is determined by the order of the calls of add_worker(), remove_worker() and add_dependency() in one DS.
             self._topology_change_deferred_tasks.append(deferred_task)
@@ -971,28 +971,28 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
     def add_dependency(
         self,
         key: str,
-        depends: str,
+        dependency: str,
     ) -> None:
         """
-        This method is used to dynamically add a dependency from `key` to `depends`.
+        This method is used to dynamically add a dependency from `key` to `dependency`.
 
         Note: args_mapping_rule is not allowed to be set by this method, instead it should be set together with add_worker() or add_func_as_worker().
 
         Parameters
         ----------
         key : str
-            The key of the worker that will depend on the worker with key `depends`.
-        depends : str
+            The key of the worker that will depend on the worker with key `dependency`.
+        dependency : str
             The key of the worker on which the worker with key `key` will depend.
         """
         ...
         if not self._automa_running:
             # add the dependency immediately
-            self._add_dependency_incrementally(key, depends)
+            self._add_dependency_incrementally(key, dependency)
         else:
             deferred_task = _AddDependencyDeferredTask(
-                key=key,
-                depends=depends,
+                worker_key=key,
+                dependency=dependency,
             )
             # Note: the execution order of topology change deferred tasks is important and is determined by the order of the calls of add_worker(), remove_worker() and add_dependency() in one DS.
             self._topology_change_deferred_tasks.append(deferred_task)
@@ -1130,7 +1130,9 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         ```
         """
         # TODO: check worker_key is valid, maybe deferred check...
-        kickoff_worker_key: str = self._trace_back_kickoff_worker_key_from_stack()
+        running_options = self._get_top_running_options()
+        # if debug is enabled, trace back the kickoff worker key from stacktrace.
+        kickoff_worker_key: str = self._trace_back_kickoff_worker_key_from_stack() if running_options.debug else None
         deferred_task = _FerryDeferredTask(
             ferry_to_worker_key=worker_key,
             kickoff_worker_key=kickoff_worker_key,
@@ -1244,16 +1246,16 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
             for topology_task in tc_tasks:
                 if topology_task.task_type == "add_worker":
                     self._add_worker_incrementally(
-                        key=topology_task.key,
-                        worker=topology_task.worker_obj,
+                        key=topology_task.worker_key,
+                        worker_obj=topology_task.worker_obj,
                         dependencies=topology_task.dependencies,
                         is_start=topology_task.is_start,
                         args_mapping_rule=topology_task.args_mapping_rule,
                     )
                 elif topology_task.task_type == "remove_worker":
-                    self._remove_worker_incrementally(topology_task.key)
+                    self._remove_worker_incrementally(topology_task.worker_key)
                 elif topology_task.task_type == "add_dependency":
-                    self._add_dependency_incrementally(topology_task.key, topology_task.depends)
+                    self._add_dependency_incrementally(topology_task.worker_key, topology_task.dependency)
 
         def _set_worker_run_finished(worker_key: str):
             for kickoff_info in self._current_kickoff_workers:
