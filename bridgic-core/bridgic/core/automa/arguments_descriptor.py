@@ -1,7 +1,8 @@
+import re
 from inspect import _ParameterKind
 from pydantic import BaseModel
 from dataclasses import dataclass
-from typing import List, Tuple, Optional, Any, Dict, Literal
+from typing import List, Tuple, Optional, Any, Dict
 
 from bridgic.core.automa.worker import Worker
 from bridgic.core.types.error import AutomaDataInjectionError
@@ -30,11 +31,24 @@ class From(ArgumentsDescriptor):
 @dataclass
 class System(ArgumentsDescriptor):
     """
-    worker dependency data from the automa.
+    worker dependency data from the automa with pattern matching support.
     """
-    key: Literal[
-        "runtime_context"
-    ]
+    key: str
+    
+    def __post_init__(self):
+        # 定义允许的模式
+        allowed_patterns = [
+            r"^runtime_context$",  # 精确匹配
+            r"^automa:.*$",      # 以 automa: 开头的配置项
+        ]
+        
+        # 检查是否匹配任一模式
+        if not any(re.match(pattern, self.key) for pattern in allowed_patterns):
+            raise AutomaDataInjectionError(
+                f"Key '{self.key}' is not supported. Supported keys: "
+                f"`runtime_context`: a context for data persistence of the current worker."
+                f"`automa:.*`: a sub-automa in current automa."
+            )
 
 class RuntimeContext(BaseModel):
     worker_key: str
