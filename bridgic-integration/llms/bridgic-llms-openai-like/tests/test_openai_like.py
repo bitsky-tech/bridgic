@@ -1,6 +1,5 @@
 import pytest
 import os
-import httpx
 import httpx_aiohttp
 
 from bridgic.core.intelligence.base_llm import *
@@ -12,8 +11,8 @@ _api_key = os.environ.get("OPENAI_LIKE_API_KEY")
 _model_name = os.environ.get("OPENAI_LIKE_MODEL_NAME")
 
 @pytest.mark.skipif(
-    (_api_key is None) or (_api_base is None),
-    reason="OPENAI_LIKE_API_KEY or OPENAI_LIKE_API_BASE is not set",
+    (_api_key is None) or (_api_base is None) or (_model_name is None),
+    reason="OPENAI_LIKE_API_KEY or OPENAI_LIKE_API_BASE or OPENAI_LIKE_MODEL_NAME is not set",
 )
 def test_openai_like_chat():
     llm = OpenAILikeLlm(
@@ -29,8 +28,8 @@ def test_openai_like_chat():
     assert response.message.content is not None
 
 @pytest.mark.skipif(
-    (_api_key is None) or (_api_base is None),
-    reason="OPENAI_LIKE_API_KEY or OPENAI_LIKE_API_BASE is not set",
+    (_api_key is None) or (_api_base is None) or (_model_name is None),
+    reason="OPENAI_LIKE_API_KEY or OPENAI_LIKE_API_BASE or OPENAI_LIKE_MODEL_NAME is not set",
 )
 def test_openai_like_stream():
     llm = OpenAILikeLlm(
@@ -49,8 +48,8 @@ def test_openai_like_stream():
     assert len(result) > 0
 
 @pytest.mark.skipif(
-    (_api_key is None) or (_api_base is None),
-    reason="OPENAI_LIKE_API_KEY or OPENAI_LIKE_API_BASE is not set",
+    (_api_key is None) or (_api_base is None) or (_model_name is None),
+    reason="OPENAI_LIKE_API_KEY or OPENAI_LIKE_API_BASE or OPENAI_LIKE_MODEL_NAME is not set",
 )
 @pytest.mark.asyncio
 async def test_openai_like_achat():
@@ -67,8 +66,8 @@ async def test_openai_like_achat():
     assert response.message.content is not None
 
 @pytest.mark.skipif(
-    (_api_key is None) or (_api_base is None),
-    reason="OPENAI_LIKE_API_KEY or OPENAI_LIKE_API_BASE is not set",
+    (_api_key is None) or (_api_base is None) or (_model_name is None),
+    reason="OPENAI_LIKE_API_KEY or OPENAI_LIKE_API_BASE or OPENAI_LIKE_MODEL_NAME is not set",
 )
 @pytest.mark.asyncio
 async def test_openai_like_astream():
@@ -88,8 +87,8 @@ async def test_openai_like_astream():
     assert len(result) > 0
 
 @pytest.mark.skipif(
-    (_api_key is None) or (_api_base is None),
-    reason="OPENAI_LIKE_API_KEY or OPENAI_LIKE_API_BASE is not set",
+    (_api_key is None) or (_api_base is None) or (_model_name is None),
+    reason="OPENAI_LIKE_API_KEY or OPENAI_LIKE_API_BASE or OPENAI_LIKE_MODEL_NAME is not set",
 )
 @pytest.mark.asyncio
 async def test_openai_like_achat_with_aiohttp():
@@ -108,8 +107,8 @@ async def test_openai_like_achat_with_aiohttp():
         assert response.message.content is not None
 
 @pytest.mark.skipif(
-    (_api_key is None) or (_api_base is None),
-    reason="OPENAI_LIKE_API_KEY or OPENAI_LIKE_API_BASE is not set",
+    (_api_key is None) or (_api_base is None) or (_model_name is None),
+    reason="OPENAI_LIKE_API_KEY or OPENAI_LIKE_API_BASE or OPENAI_LIKE_MODEL_NAME is not set",
 )
 @pytest.mark.asyncio
 async def test_openai_like_astream_with_aiohttp():
