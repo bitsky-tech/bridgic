@@ -100,6 +100,10 @@ async def test_vllm_server_astream(llm):
         assert chunk.raw is not None
     assert len(result) > 0
 
+@pytest.mark.skipif(
+    (_api_key is None) or (_api_base is None) or (_model_name is None),
+    reason="VLLM_SERVER_API_KEY or VLLM_SERVER_API_BASE or VLLM_SERVER_MODEL_NAME is not set",
+)
 def test_vllm_server_structured_output_pydantic_model(llm):
     class ThinkAndAnswer(BaseModel):
         thought: str = Field(description="The thought about the problem.", max_length=100)
@@ -159,6 +163,10 @@ Don't think for long time. Don't answer in many words.
     assert response.thought is not None
     assert len(response.answer) >= 5
 
+@pytest.mark.skipif(
+    (_api_key is None) or (_api_base is None) or (_model_name is None),
+    reason="VLLM_SERVER_API_KEY or VLLM_SERVER_API_BASE or VLLM_SERVER_MODEL_NAME is not set",
+)
 def test_vllm_server_structured_output_json_schema(llm):
     schema = {
         "type": "object",
@@ -253,6 +261,10 @@ async def test_vllm_server_astructured_output_json_schema(llm):
     assert isinstance(response["thought"], str)
     assert isinstance(response["answer"], str)
 
+@pytest.mark.skipif(
+    (_api_key is None) or (_api_base is None) or (_model_name is None),
+    reason="VLLM_SERVER_API_KEY or VLLM_SERVER_API_BASE or VLLM_SERVER_MODEL_NAME is not set",
+)
 def test_vllm_server_structured_output_regex(llm):
     pattern = r"^Emails:\n(- [a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+)(\n(- [a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+))*$"
     response: str = llm.structured_output(
@@ -387,6 +399,10 @@ Write a SQL to select the sales of year of 2023 from the table.
     printer.print("\n" + response, color='purple')
     assert response == "select sales from sales_table where year=2023"
 
+@pytest.mark.skipif(
+    (_api_key is None) or (_api_base is None) or (_model_name is None),
+    reason="VLLM_SERVER_API_KEY or VLLM_SERVER_API_BASE or VLLM_SERVER_MODEL_NAME is not set",
+)
 def test_vllm_server_tool_select(llm, date, tools):
     response: List[ToolCall] = llm.tool_select(
         model=_model_name,
