@@ -152,7 +152,7 @@ class _WorkerDynamicState(BaseModel):
 
 class _AddWorkerDeferredTask(BaseModel):
     task_type: Literal["add_worker"] = Field(default="add_worker")
-    key: str
+    worker_key: str
     worker_obj: Worker # Note: Not a pydantic model!!
     dependencies: List[str] = []
     is_start: bool = False
@@ -162,7 +162,12 @@ class _AddWorkerDeferredTask(BaseModel):
 
 class _RemoveWorkerDeferredTask(BaseModel):
     task_type: Literal["remove_worker"] = Field(default="remove_worker")
-    key: str
+    worker_key: str
+
+class _AddDependencyDeferredTask(BaseModel):
+    task_type: Literal["add_dependency"] = Field(default="add_dependency")
+    worker_key: str
+    dependency: str
 
 class _SetOutputWorkerDeferredTask(BaseModel):
     output_worker_key: str
@@ -382,10 +387,9 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
     _workers_dynamic_states: Dict[str, _WorkerDynamicState]
 
     # The whole running process of the DDG is divided into two main phases:
-    # 1. [Initialization Phase] The first phase (when _running_started is False): the initial topology of DDG was constructed.
-    # 2. [Running Phase] The second phase (when _running_started is True): the DDG is running, and the workers are executed in a dynamic step-by-step manner (DS loop).
-    # Once _running_started is set to True, it will always be True.
-    _running_started: bool
+    # 1. [Initialization Phase] The first phase (when _automa_running is False): the initial topology of DDG was constructed.
+    # 2. [Running Phase] The second phase (when _automa_running is True): the DDG is running, and the workers are executed in a dynamic step-by-step manner (DS loop).
+    _automa_running: bool
 
     # Ongoing human interactions triggered by the `interact_with_human()` call from workers of the current Automa.
     # worker_key -> list of interactions.
@@ -448,7 +452,7 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         """
         self._workers = {} #TODO: __getattribute__() refactoring
         super().__init__(name=name)
-        self._running_started = False
+        self._automa_running = False
         self._injector = WorkerInjector()
 
         # Initialize the states that need to be serialized.
@@ -532,7 +536,7 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         state_dict["name"] = self.name
         # TODO: serialize the workers, including the outbuf of each worker
         state_dict["workers"] = self._workers
-        state_dict["running_started"] = self._running_started
+        state_dict["automa_running"] = self._automa_running
         state_dict["worker_forwards"] = self._worker_forwards
         state_dict["workers_dynamic_states"] = self._workers_dynamic_states
         state_dict["output_worker_key"] = self._output_worker_key
@@ -551,7 +555,7 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         self._workers = state_dict["workers"]
         for worker in self._workers.values():
             worker.parent = self
-        self._running_started = state_dict["running_started"]
+        self._automa_running = state_dict["automa_running"]
         self._worker_forwards = state_dict["worker_forwards"]
         self._workers_dynamic_states = state_dict["workers_dynamic_states"]
         self._output_worker_key = state_dict["output_worker_key"]
@@ -606,10 +610,18 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
             raise AutomaRuntimeError(
                 f"duplicate workers with the same key '{key}' are not allowed to be added!"
             )
+        
+        # Note: the dependencies argument must be a new copy of the list, created with list(dependencies).
+        # Refer to the Python documentation for more details:
+        # 1. https://docs.python.org/3/reference/compound_stmts.html#function-definitions
+        # "Default parameter values are evaluated from left to right when the function definition is executed"
+        # 2. https://docs.python.org/3/tutorial/controlflow.html#default-argument-values
+        # "The default values are evaluated at the point of function definition in the defining scope"
+        # "Important warning: The default value is evaluated only once."
         new_worker_obj = _GraphAdaptedWorker(
             key=key,
             worker=worker_obj,
-            dependencies=dependencies,
+            dependencies=list(dependencies),
             is_start=is_start,
             args_mapping_rule=args_mapping_rule,
         )
@@ -674,6 +686,37 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         if key == self._output_worker_key:
             self._output_worker_key = None
 
+    def _add_dependency_incrementally(
+        self,
+        key: str,
+        dependency: str,
+    ) -> None:
+        """
+        Incrementally add a dependency from `key` to `depends`. For internal use only.
+        This method is one of the very basic primitives of DDG for dynamic topology changes.
+        """
+        if key not in self._workers:
+            raise AutomaRuntimeError(
+                f"fail to add dependency from a worker that does not exist: `{key}`!"
+            )
+        if dependency not in self._workers:
+            raise AutomaRuntimeError(
+                f"fail to add dependency to a worker that does not exist: `{dependency}`!"
+            )
+        if dependency in self._workers[key].dependencies:
+            raise AutomaRuntimeError(
+                f"dependency from '{key}' to '{dependency}' already exists!"
+            )
+
+        self._workers[key].dependencies.append(dependency)
+        # Note this detail here for dynamic states change:
+        # The new dependency added here may be removed right away if the dependency is just the next kickoff worker. This is a valid behavior.
+        self._workers_dynamic_states[key].dependency_triggers.add(dependency)
+
+        if dependency not in self._worker_forwards:
+            self._worker_forwards[dependency] = []
+        self._worker_forwards[dependency].append(key)
+
     def add_worker(
         self,
         key: str,
@@ -688,9 +731,11 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
 
         If this method is called during the [Initialization Phase], the worker will be added immediately. If this method is called during the [Running Phase], the worker will be added as a deferred task which will be executed in the next DS.
 
-        In DDG, dependencies can only be added together with a worker. However, you can add a worker without any dependencies.
+        The dependencies can be added together with a worker. However, you can add a worker without any dependencies.
 
-        Note: A worker that is added during the [Running Phase] is not allowed to be a start worker.
+        Note 1: A worker that is added during the [Running Phase] is not allowed to be a start worker.
+
+        Note 2: The args_mapping_rule can only be set together with adding a worker, even if the worker has no any dependencies.
 
         Parameters
         ----------
@@ -739,7 +784,7 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         # Ensure the parameters are valid.
         _basic_worker_params_check(key, worker_obj)
 
-        if not self._running_started:
+        if not self._automa_running:
             # Add worker during the [Initialization Phase].
             self._add_worker_incrementally(
                 key=key,
@@ -751,13 +796,13 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         else:
             # Add worker during the [Running Phase].
             deferred_task = _AddWorkerDeferredTask(
-                key=key,
+                worker_key=key,
                 worker_obj=worker_obj,
                 dependencies=dependencies,
                 is_start=is_start,
                 args_mapping_rule=args_mapping_rule,
             )
-            # Note1: the execution order of topology change deferred tasks is important and is determined by the order of the calls of add_worker(), remove_worker() in one DS.
+            # Note1: the execution order of topology change deferred tasks is important and is determined by the order of the calls of add_worker(), remove_worker() and add_dependency() in one DS.
             # Note2: add_worker() and remove_worker() may be called in a new thread. But _topology_change_deferred_tasks is not necessary to be thread-safe due to Visibility Guarantees of the Bridgic Concurrency Model.
             self._topology_change_deferred_tasks.append(deferred_task)
 
@@ -866,15 +911,45 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         AutomaDeclarationError
             If the worker specified by key does not exist in the Automa, this exception will be raised.
         """
-        if not self._running_started:
+        if not self._automa_running:
             # remove immediately
             self._remove_worker_incrementally(key)
         else:
             deferred_task = _RemoveWorkerDeferredTask(
-                key=key,
+                worker_key=key,
             )
-            # Note: the execution order of topology change deferred tasks is important and is determined by the order of the calls of add_worker(), remove_worker() in one DS.
+            # Note: the execution order of topology change deferred tasks is important and is determined by the order of the calls of add_worker(), remove_worker() and add_dependency() in one DS.
             self._topology_change_deferred_tasks.append(deferred_task)
+
+    def add_dependency(
+        self,
+        key: str,
+        dependency: str,
+    ) -> None:
+        """
+        This method is used to dynamically add a dependency from `key` to `dependency`.
+
+        Note: args_mapping_rule is not allowed to be set by this method, instead it should be set together with add_worker() or add_func_as_worker().
+
+        Parameters
+        ----------
+        key : str
+            The key of the worker that will depend on the worker with key `dependency`.
+        dependency : str
+            The key of the worker on which the worker with key `key` will depend.
+        """
+        ...
+        if not self._automa_running:
+            # add the dependency immediately
+            self._add_dependency_incrementally(key, dependency)
+        else:
+            deferred_task = _AddDependencyDeferredTask(
+                worker_key=key,
+                dependency=dependency,
+            )
+            # Note: the execution order of topology change deferred tasks is important and is determined by the order of the calls of add_worker(), remove_worker() and add_dependency() in one DS.
+            self._topology_change_deferred_tasks.append(deferred_task)
+
 
     @property
     def output_worker_key(self) -> Optional[str]:
@@ -885,7 +960,7 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         """
         This method is used to set the output worker of the automa dynamically.
         """
-        if not self._running_started:
+        if not self._automa_running:
             self._output_worker_key = worker_key
         else:
             deferred_task = _SetOutputWorkerDeferredTask(
@@ -1121,18 +1196,20 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
                 self._input_buffer.args = args
                 self._input_buffer.kwargs = kwargs
 
-        def _execute_topology_change_deferred_tasks(tc_tasks: List[Union[_AddWorkerDeferredTask, _RemoveWorkerDeferredTask]]):
+        def _execute_topology_change_deferred_tasks(tc_tasks: List[Union[_AddWorkerDeferredTask, _RemoveWorkerDeferredTask, _AddDependencyDeferredTask]]):
             for topology_task in tc_tasks:
                 if topology_task.task_type == "add_worker":
                     self._add_worker_incrementally(
-                        key=topology_task.key,
+                        key=topology_task.worker_key,
                         worker_obj=topology_task.worker_obj,
                         dependencies=topology_task.dependencies,
                         is_start=topology_task.is_start,
                         args_mapping_rule=topology_task.args_mapping_rule,
                     )
                 elif topology_task.task_type == "remove_worker":
-                    self._remove_worker_incrementally(topology_task.key)
+                    self._remove_worker_incrementally(topology_task.worker_key)
+                elif topology_task.task_type == "add_dependency":
+                    self._add_dependency_incrementally(topology_task.worker_key, topology_task.dependency)
 
         def _set_worker_run_finished(worker_key: str):
             for kickoff_info in self._current_kickoff_workers:
@@ -1183,10 +1260,10 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         if self.thread_pool is None:
             self.thread_pool = ThreadPoolExecutor(thread_name_prefix="bridgic-thread")
 
-        if not self._running_started:
+        if not self._automa_running:
             # Here is the last chance to compile and check the DDG in the end of the [Initialization Phase] (phase 1 just before the first DS).
             self._compile_graph_and_detect_risks()
-            self._running_started = True
+            self._automa_running = True
 
         # An Automa needs to be re-run with _current_kickoff_workers reinitialized.
         _reinit_current_kickoff_workers_if_needed()
@@ -1289,7 +1366,7 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
                     task_result = task.task.result()
                     _set_worker_run_finished(task.worker_key)
                     if task.worker_key in self._workers:
-                        # The current running task may be removed.
+                        # The current running worker may be removed.
                         worker_obj = self._workers[task.worker_key]
                         # Collect results of the finished tasks.
                         worker_obj.output_buffer = task_result 
@@ -1404,6 +1481,7 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
             self._clean_all_worker_local_space()
         self._ongoing_interactions.clear()
         self._worker_interaction_indices.clear()
+        self._automa_running = False
 
         # If the output-worker is specified, return its output as the return value of the automa.
         if self._output_worker_key:
