@@ -785,7 +785,7 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
             # Add worker during the [Running Phase].
             deferred_task = _AddWorkerDeferredTask(
                 worker_key=key,
-                worker_obj=worker_obj,
+                worker_obj=worker,
                 dependencies=dependencies,
                 is_start=is_start,
                 args_mapping_rule=args_mapping_rule,
@@ -1247,7 +1247,7 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
                 if topology_task.task_type == "add_worker":
                     self._add_worker_incrementally(
                         key=topology_task.worker_key,
-                        worker_obj=topology_task.worker_obj,
+                        worker=topology_task.worker_obj,
                         dependencies=topology_task.dependencies,
                         is_start=topology_task.is_start,
                         args_mapping_rule=topology_task.args_mapping_rule,
