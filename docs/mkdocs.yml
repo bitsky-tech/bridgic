@@ -1,4 +1,10 @@
 site_name: Bridgic
+site_description: Bridge logic and magic together with autonomous AI capabilities
+site_url: https://docs.bridgic.ai
+repo_url: https://github.com/bitsky-tech/bridgic
+repo_name: bitsky-tech/bridgic
+edit_uri: edit/main/docs/docs/
+
 nav:
   - Home:
     - index: home/index.md
@@ -16,39 +22,83 @@ nav:
 
 theme: 
   name: material
+  logo: assets/logo.png
+  favicon: assets/favicon.ico
   features:
+    # Navigation
     - navigation.instant
+    - navigation.instant.prefetch
     - navigation.prune
     - navigation.tabs
+    - navigation.tabs.sticky
     - navigation.indexes
     - navigation.top
     - navigation.footer
+    - navigation.path
+    - navigation.tracking
+    # Table of contents
     - toc.follow
-    - content.code.copy
+    - toc.integrate
+    # Search
     - search.suggest
     - search.highlight
+    - search.share
+    # Content
+    - content.code.copy
+    - content.code.select
+    - content.code.annotate
+    - content.tabs.link
+    - content.tooltips
+    - content.action.edit
+    - content.action.view
   palette:
-      - media: (prefers-color-scheme)
-        toggle:
-          icon: material/brightness-auto
-          name: Switch to light mode
-      - accent: purple
-        media: "(prefers-color-scheme: light)"
-        primary: white
-        scheme: default
-        toggle:
-          icon: material/brightness-7
-          name: Switch to dark mode
-      - accent: purple
-        media: "(prefers-color-scheme: dark)"
-        primary: black
-        scheme: slate
-        toggle:
-          icon: material/brightness-4
-          name: Switch to system preference
+    # Automatic mode
+    - media: "(prefers-color-scheme)"
+      toggle:
+        icon: material/brightness-auto
+        name: Switch to light mode
+    # Light mode
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: purple
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    # Dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: black
+      accent: purple
+      toggle:
+        icon: material/brightness-4
+        name: Switch to system preference
+  font:
+    text: Roboto
+    code: Roboto Mono
+  icon:
+    logo: material/bridge
+    repo: fontawesome/brands/github
+    edit: material/pencil
+    view: material/eye
 plugins: 
-  - search
+  - search:
+      separator: '[\s\-,:!=\[\]()"`/]+|\.(?!\d)|&[lg]t;|(?!\b)(?=[A-Z][a-z])'
   - autorefs
+  - git-revision-date-localized:
+      enable_creation_date: true
+      type: timeago
+      fallback_to_build_date: true
+  - git-committers:
+      repository: bitsky-tech/bridgic
+      branch: main
+      enabled: !ENV [ENABLE_GIT_COMMITTERS, false]
+  - minify:
+      minify_html: true
+      minify_js: true
+      minify_css: true
+      htmlmin_opts:
+        remove_comments: true
   - mkdocstrings:
       handlers:
         python:
@@ -73,4 +123,68 @@ plugins:
             - ../bridgic-core
 
 markdown_extensions:
+  # Python Markdown
+  - abbr
+  - admonition
   - attr_list
+  - def_list
+  - footnotes
+  - md_in_html
+  - toc:
+      permalink: true
+      title: On this page
+  # Python Markdown Extensions
+  - pymdownx.arithmatex:
+      generic: true
+  - pymdownx.betterem:
+      smart_enable: all
+  - pymdownx.caret
+  - pymdownx.details
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.keys
+  - pymdownx.magiclink:
+      repo_url_shorthand: true
+      user: bitsky-tech
+      repo: bridgic
+  - pymdownx.mark
+  - pymdownx.smartsymbols
+  - pymdownx.snippets:
+      check_paths: true
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - pymdownx.tilde
+
+extra:
+  analytics:
+    provider: google
+    property: !ENV GOOGLE_ANALYTICS_KEY
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/bitsky-tech/bridgic
+    - icon: fontawesome/brands/python
+      link: https://pypi.org/project/bridgic/
+    - icon: fontawesome/brands/discord
+      link: https://discord.gg/bridgic
+  generator: false
+
+extra_css:
+  - stylesheets/extra.css
+
+extra_javascript:
+  - javascripts/mathjax.js
+  - https://polyfill.io/v3/polyfill.min.js?features=es6
+  - https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js
