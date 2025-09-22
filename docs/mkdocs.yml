@@ -1,15 +1,18 @@
 site_name: Bridgic
 nav:
-  - Home: index.md
-  - About: about.md
-  - Docs:
-    - subdir:
-      - Doc2: subdir/doc2.md
-      - Doc1: doc1.md
+  - Home:
+    - index: home/index.md
+    - Concepts: home/concepts.md
+    - Installation: home/installation.md
+    - Quick Start: home/quick_start.md
+    - Examples: home/examples.md
   - API Reference:
     - index: api/index.md
-    - bridgic-core:
-      - event_handling: api/bridgic-core/bridgic/core/automa/interaction/event_handling.md
+    - Automa:
+      - GraphAutoma: api/bridgic-core/bridgic/core/automa/graph_automa.md
+      - EventHandling: api/bridgic-core/bridgic/core/automa/interaction/event_handling.md
+      - BaseLlm: api/bridgic-core/bridgic/core/intelligence/base_llm.md
+  - About: about/index.md
 
 theme: 
   name: material
