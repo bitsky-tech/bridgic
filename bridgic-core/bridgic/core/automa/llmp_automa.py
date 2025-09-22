@@ -15,7 +15,7 @@ class LlmpAutomaMeta(ABCMeta):
         for attr_name, attr_value in dct.items():
             worker_kwargs = getattr(attr_value, "__worker_kwargs__", None)
             if worker_kwargs is not None:
-                complete_args = packup_worker_decorator_rumtime_args(WorkerDecoratorType.LlmpAutomaMethod, worker_kwargs)
+                complete_args = packup_worker_decorator_rumtime_args(cls, WorkerDecoratorType.LlmpAutomaMethod, worker_kwargs)
                 # TODO: use complete_args to configure...
         
         goal_config = getattr(cls, "__goal_config__", None)

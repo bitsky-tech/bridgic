@@ -36,6 +36,6 @@ class AutomaLayerC(AutomaLayerA, AutomaLayerB):
         )
         self.add_worker(
             key="entry_point_worker_8",
-            worker_obj=PrintWorker(),
+            worker=PrintWorker(),
             dependencies=[],
         )

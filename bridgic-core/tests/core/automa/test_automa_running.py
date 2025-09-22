@@ -23,7 +23,7 @@ def ready_automa_obj():
     automa_obj.set_running_options(debug=True)
     automa_obj.add_worker(
         key="continue_automa",
-        worker_obj=AutomaLayerF(
+        worker=AutomaLayerF(
             output_worker_key="transfer_datetime_worker",
         ),
         dependencies=[],
