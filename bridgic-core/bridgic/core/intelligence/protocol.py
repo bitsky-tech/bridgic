@@ -58,7 +58,7 @@ class Tool(BaseModel):
 class ToolCall(BaseModel):
     id: Optional[str] = Field(..., description="ID of the tool call.")
     name: str = Field(..., description="Name of the tool.")
-    parameters: Dict[str, Any] = Field(..., default_factory=dict, description="Real parameters that are used to call the tool.")
+    parameters: Dict[str, Any] = Field(..., default_factory=dict, description="Real arguments that are used to call the tool.")
 
 class ToolSelect(Protocol):
     """
