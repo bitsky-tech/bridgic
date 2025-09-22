@@ -428,7 +428,7 @@ class VllmServerLlm(OpenAILikeLlm, StructuredOutput, ToolSelect):
         Returns
         -------
         List[ToolCall]
-            A list that contains the selected tools and their parameters.
+            A list that contains the selected tools and their arguments.
         """
         schema = self._convert_tool_select_schema(tools, min_tools, max_tools)
 
@@ -491,7 +491,7 @@ class VllmServerLlm(OpenAILikeLlm, StructuredOutput, ToolSelect):
         Returns
         -------
         List[ToolCall]
-            A list that contains the selected tools and their parameters.
+            A list that contains the selected tools and their arguments.
         """
         schema = self._convert_tool_select_schema(tools, min_tools, max_tools)
 
