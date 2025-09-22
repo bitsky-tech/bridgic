@@ -135,7 +135,7 @@ class _KickoffInfo(BaseModel):
     # The key of the worker that is going to be kicked off.
     worker_key: str
     # Worker key or the container "__automa__"
-    last_kickoff: str
+    last_kickoff: Optional[str]
     # Whether the kickoff is triggered by ferry_to() initiated by developers.
     from_ferry: bool = False
     # Whether the run is finished.
@@ -174,7 +174,7 @@ class _SetOutputWorkerDeferredTask(BaseModel):
 
 class _FerryDeferredTask(BaseModel):
     ferry_to_worker_key: str
-    kickoff_worker_key: str
+    kickoff_worker_key: Optional[str]
     args: Tuple[Any, ...]
     kwargs: Dict[str, Any]
 
@@ -1084,7 +1084,9 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         ```
         """
         # TODO: check worker_key is valid, maybe deferred check...
-        kickoff_worker_key: str = self._trace_back_kickoff_worker_key_from_stack()
+        running_options = self._get_top_running_options()
+        # if debug is enabled, trace back the kickoff worker key from stacktrace.
+        kickoff_worker_key: str = self._trace_back_kickoff_worker_key_from_stack() if running_options.debug else None
         deferred_task = _FerryDeferredTask(
             ferry_to_worker_key=worker_key,
             kickoff_worker_key=kickoff_worker_key,
