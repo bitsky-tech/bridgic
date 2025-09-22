@@ -37,13 +37,11 @@ class System(ArgumentsDescriptor):
     key: str
     
     def __post_init__(self):
-        # 定义允许的模式
         allowed_patterns = [
-            r"^runtime_context$",  # 精确匹配
-            r"^automa:.*$",      # 以 automa: 开头的配置项
+            r"^runtime_context$",
+            r"^automa:.*$",
         ]
         
-        # 检查是否匹配任一模式
         if not any(re.match(pattern, self.key) for pattern in allowed_patterns):
             raise AutomaDataInjectionError(
                 f"Key '{self.key}' is not supported. Supported keys: "
