@@ -23,8 +23,8 @@ class Func4SyncWorker(Worker):
         return x + 4
 
 @pytest.fixture
-def concurrent_autom_1() -> ConcurrentAutoma[int]:
-    concurrent = ConcurrentAutoma[int]()
+def concurrent_autom_1() -> ConcurrentAutoma:
+    concurrent = ConcurrentAutoma()
     concurrent.add_func_as_worker(
         key="func_1",
         func=func_1_async,
@@ -47,7 +47,7 @@ def concurrent_autom_1() -> ConcurrentAutoma[int]:
     return concurrent
 
 @pytest.mark.asyncio
-async def test_concurrent_autom_1(concurrent_autom_1: ConcurrentAutoma[int]):
+async def test_concurrent_autom_1(concurrent_autom_1: ConcurrentAutoma):
     result: List[int] = await concurrent_autom_1.arun(x=100)
     assert result == [101, 102, 103, 104, 105]
 
@@ -57,13 +57,13 @@ async def test_concurrent_autom_1(concurrent_autom_1: ConcurrentAutoma[int]):
 ###################### Test case 2: netsted dynamic concurrent automa #########################
 
 class MyGraph2(GraphAutoma):
-    _concurrent: ConcurrentAutoma[int]
+    _concurrent: ConcurrentAutoma
 
     def __init__(self):
         super().__init__()
 
         #TODO: how to serialize the self._concurrent field properly?
-        self._concurrent = ConcurrentAutoma[int]()
+        self._concurrent = ConcurrentAutoma()
         self.add_worker(
             key="concurrent",
             worker=self._concurrent,

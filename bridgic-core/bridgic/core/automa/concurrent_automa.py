@@ -2,7 +2,6 @@ from typing import Optional
 from concurrent.futures import ThreadPoolExecutor
 from typing import List, Any, Callable, Final, cast, Tuple, Dict
 from typing_extensions import override
-from typing import TypeVar, Generic
 
 from bridgic.core.automa import GraphAutoma
 from bridgic.core.automa.worker import Worker
@@ -10,9 +9,7 @@ from bridgic.core.automa.worker_decorator import ArgsMappingRule, WorkerDecorato
 from bridgic.core.types.error import AutomaRuntimeError
 from bridgic.core.automa.interaction import InteractionFeedback
 
-T = TypeVar('T')
-
-class ConcurrentAutoma(GraphAutoma, Generic[T]):
+class ConcurrentAutoma(GraphAutoma):
     """
     A concurrent automa is a subclass of graph automa that execute multiple workers concurrently.
 
@@ -60,8 +57,8 @@ class ConcurrentAutoma(GraphAutoma, Generic[T]):
         )
         GraphAutoma.output_worker_key.fset(self, self._MERGER_WORKER_KEY)
 
-    def _merge_workers_results(self, results: List[Any]) -> List[T]:
-        return cast(List[T], results)
+    def _merge_workers_results(self, results: List[Any]) -> List[Any]:
+        return results
 
     @classmethod
     def worker_decorator_type(cls) -> WorkerDecoratorType:
@@ -192,11 +189,11 @@ class ConcurrentAutoma(GraphAutoma, Generic[T]):
         interaction_feedback: Optional[InteractionFeedback] = None,
         interaction_feedbacks: Optional[List[InteractionFeedback]] = None,
         **kwargs: Dict[str, Any]
-    ) -> List[T]:
+    ) -> List[Any]:
         result = await super().arun(
             *args,
             interaction_feedback=interaction_feedback,
             interaction_feedbacks=interaction_feedbacks,
             **kwargs
         )
-        return cast(List[T], result)
+        return cast(List[Any], result)
