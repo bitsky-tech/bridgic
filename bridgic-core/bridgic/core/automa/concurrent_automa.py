@@ -6,7 +6,7 @@ from typing import TypeVar, Generic
 
 from bridgic.core.automa import GraphAutoma
 from bridgic.core.automa.worker import Worker
-from bridgic.core.automa.worker_decorator import ArgsMappingRule
+from bridgic.core.automa.worker_decorator import ArgsMappingRule, WorkerDecoratorType
 from bridgic.core.types.error import AutomaRuntimeError
 from bridgic.core.automa.interaction import InteractionFeedback
 
@@ -40,7 +40,16 @@ class ConcurrentAutoma(GraphAutoma, Generic[T]):
         # 1. Concurrent workers: These workers will be concurrently executed with each other.
         # 2. The Merger worker: This worker will merge the results of all the concurrent workers.
 
-        # TODO: initialize the decorated concurrent workers.
+        cls = type(self)
+        if cls.worker_decorator_type() == WorkerDecoratorType.OnlyKeySettingAllowedMethod:
+            # The _registered_worker_funcs data are from @worker decorators.
+            # Initialize the decorated concurrent workers.
+            for worker_key, worker_func in self._registered_worker_funcs.items():
+                super().add_func_as_worker(
+                    key=worker_key,
+                    func=worker_func,
+                    is_start=True,
+                )
 
         # Add a hidden worker as the merger worker, which will merge the results of all the start workers.
         super().add_func_as_worker(
@@ -53,6 +62,15 @@ class ConcurrentAutoma(GraphAutoma, Generic[T]):
 
     def _merge_workers_results(self, results: List[Any]) -> List[T]:
         return cast(List[T], results)
+
+    @classmethod
+    def worker_decorator_type(cls) -> WorkerDecoratorType:
+        """
+        Subclasses of GraphAutoma can declare this class method `worker_decorator_type` to specify the type of worker decorator.
+
+        Note: the worker decorator type of ConcurrentAutoma is `OnlyKeySettingAllowedMethod` because only the `key` parameter is allowed to be set by @worker decorator.
+        """
+        return WorkerDecoratorType.OnlyKeySettingAllowedMethod
 
     @override
     def add_worker(
@@ -116,7 +134,13 @@ class ConcurrentAutoma(GraphAutoma, Generic[T]):
         """
         if key == self._MERGER_WORKER_KEY:
             raise AutomaRuntimeError(f"the reserved key `{key}` is not allowed to be used by a concurrent worker")
-        return super().worker(key=key, is_start=True)
+
+        super_automa = super()
+        def wrapper(func: Callable):
+            super_automa.add_func_as_worker(key=key, func=func, is_start=True)
+            super_automa.add_dependency(self._MERGER_WORKER_KEY, key)
+
+        return wrapper
 
     @override
     def remove_worker(self, key: str) -> None:

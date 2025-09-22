@@ -1,11 +1,12 @@
 import pytest
 from typing import List
+import re
 
 from bridgic.core.automa import ConcurrentAutoma, GraphAutoma, worker
 from bridgic.core.automa.worker import Worker
+from bridgic.core.types.error import WorkerSignatureError, AutomaRuntimeError
 
-
-###################### Test case 1: single concurrent worker #############################
+###################### Test case 1: single concurrent automa #############################
 
 async def func_1_async(automa, x: int) -> int:
     return x + 1
@@ -40,14 +41,20 @@ def concurrent_autom_1() -> ConcurrentAutoma[int]:
         key="func_4",
         worker=Func4SyncWorker(),
     )
+    @concurrent.worker(key="func_5")
+    async def func_5_async(automa, x: int) -> int:
+        return x + 5
     return concurrent
 
 @pytest.mark.asyncio
 async def test_concurrent_autom_1(concurrent_autom_1: ConcurrentAutoma[int]):
     result: List[int] = await concurrent_autom_1.arun(x=100)
-    assert result == [101, 102, 103, 104]
+    assert result == [101, 102, 103, 104, 105]
 
-###################### Test case 2: netsted dynamic concurrent worker #########################
+    # Test all_workers()
+    assert concurrent_autom_1.all_workers() == ["func_1", "func_2", "func_3", "func_4", "func_5"]
+
+###################### Test case 2: netsted dynamic concurrent automa #########################
 
 class MyGraph2(GraphAutoma):
     _concurrent: ConcurrentAutoma[int]
@@ -89,3 +96,88 @@ async def test_concurrent_autom_2(graph_2: GraphAutoma):
     #Second run
     result = await graph_2.arun(x=100, count=5)
     assert result == [100 + 1] * 5
+
+###################### Test case 3: worker decorator in concurrent automa #########################
+
+class MyConcurrentAutoma3(ConcurrentAutoma):
+    @worker(key="func_1")
+    async def func_1(self, x: int) -> int:
+        return x + 1
+
+    @worker(key="func_2")
+    async def func_2(self, x: int) -> int:
+        return x + 2
+
+@pytest.fixture
+def concurrent_autom_3() -> ConcurrentAutoma:
+    return MyConcurrentAutoma3()
+
+@pytest.mark.asyncio
+async def test_concurrent_autom_3(concurrent_autom_3: ConcurrentAutoma):
+    result: List[int] = await concurrent_autom_3.arun(x=100)
+    assert result == [101, 102]
+
+###################### Test cases for Errors / Exceptions in concurrent automa #########################
+
+def test_worker_signature_errors():
+    with pytest.raises(WorkerSignatureError, match="Unexpected arguments:"):
+        class MyConcurrentAutoma_WithWrongDependencies(ConcurrentAutoma):
+            @worker(key="func_1")
+            async def func_1(self, x: int) -> int:
+                return x + 1
+
+            @worker(key="func_2", dependencies=["func_1"])
+            async def func_2(self, x: int) -> int:
+                return x + 2
+
+def test_topology_change_errors():
+    concurrent = MyConcurrentAutoma3()
+
+    with pytest.raises(AutomaRuntimeError, match="the reserved key `__merger__` is not allowed to be used by a concurrent worker"):
+        concurrent.add_func_as_worker(
+            key="__merger__",
+            func=func_1_async,
+        )
+    with pytest.raises(AutomaRuntimeError, match="duplicate workers with the same key"):
+        concurrent.add_func_as_worker(
+            key="func_1",
+            func=func_1_async,
+        )
+    with pytest.raises(AutomaRuntimeError, match="the reserved key `__merger__` is not allowed to be used by a concurrent worker"):
+        concurrent.add_worker(
+            key="__merger__",
+            worker=Func3AsyncWorker(),
+        )
+    with pytest.raises(AutomaRuntimeError, match="duplicate workers with the same key"):
+        concurrent.add_worker(
+            key="func_1",
+            worker=Func3AsyncWorker(),
+        )
+    with pytest.raises(AutomaRuntimeError, match="the reserved key `__merger__` is not allowed to be used by a concurrent worker"):
+        @concurrent.worker(key="__merger__")
+        async def func_5_async(automa, x: int) -> int:
+            return x + 5
+    with pytest.raises(AutomaRuntimeError, match="the merge worker is not allowed to be removed from the concurrent automa"):
+        concurrent.remove_worker("__merger__")
+    with pytest.raises(AutomaRuntimeError, match=re.escape("add_dependency() is not allowed to be called on a concurrent automa")):
+        concurrent.add_dependency("__merger__", "func_1")
+    with pytest.raises(AutomaRuntimeError, match="output_worker_key is not allowed to be set on a concurrent automa"):
+        concurrent.output_worker_key = "__merger__"
+
+#############
+
+class MyConcurrentAutoma_TryFerryTo(ConcurrentAutoma):
+    @worker(key="func_1")
+    async def func_1(self, x: int) -> int:
+        return x + 1
+
+    @worker(key="func_2")
+    async def func_2(self, x: int) -> int:
+        self.ferry_to("func_1") # This should raise an error
+        return x + 2
+
+@pytest.mark.asyncio
+async def test_ferry_error():
+    concurrent = MyConcurrentAutoma_TryFerryTo()
+    with pytest.raises(AutomaRuntimeError, match=re.escape("ferry_to() is not allowed to be called on a concurrent automa")):
+        result = await concurrent.arun(x=100)

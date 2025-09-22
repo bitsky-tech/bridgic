@@ -19,7 +19,7 @@ from bridgic.core.types.error import *
 from bridgic.core.utils.inspect_tools import get_param_names_by_kind
 from bridgic.core.utils.args_map import safely_map_args
 from bridgic.core.automa import Automa
-from bridgic.core.automa.worker_decorator import packup_worker_decorator_rumtime_args, WorkerDecoratorType, ArgsMappingRule
+from bridgic.core.automa.worker_decorator import packup_worker_decorator_rumtime_args, get_worker_decorator_default_paramap, WorkerDecoratorType, ArgsMappingRule
 from bridgic.core.automa.worker.callable_worker import CallableWorker
 from bridgic.core.automa.interaction import Event, FeedbackSender, EventHandlerType, InteractionFeedback, Feedback, Interaction, InteractionException
 from bridgic.core.automa.serialization import Snapshot
@@ -197,13 +197,18 @@ class GraphAutomaMeta(ABCMeta):
         for attr_name, attr_value in dct.items():
             worker_kwargs = getattr(attr_value, "__worker_kwargs__", None)
             if worker_kwargs is not None:
-                complete_args = packup_worker_decorator_rumtime_args(WorkerDecoratorType.GraphAutomaMethod, worker_kwargs)
+                complete_args = packup_worker_decorator_rumtime_args(
+                    cls, 
+                    cls.worker_decorator_type(), 
+                    worker_kwargs
+                )
+                default_paramap = get_worker_decorator_default_paramap(WorkerDecoratorType.GraphAutomaMethod)
                 func = attr_value
                 setattr(func, "__is_worker__", True)
-                setattr(func, "__worker_key__", complete_args["key"])
-                setattr(func, "__dependencies__", complete_args["dependencies"])
-                setattr(func, "__is_start__", complete_args["is_start"])
-                setattr(func, "__args_mapping_rule__", complete_args["args_mapping_rule"])
+                setattr(func, "__worker_key__", complete_args.get("key", default_paramap["key"]))
+                setattr(func, "__dependencies__", complete_args.get("dependencies", default_paramap["dependencies"]))
+                setattr(func, "__is_start__", complete_args.get("is_start", default_paramap["is_start"]))
+                setattr(func, "__args_mapping_rule__", complete_args.get("args_mapping_rule", default_paramap["args_mapping_rule"]))
         
         for base in bases:
             for worker_key, worker_func in getattr(base, "_registered_worker_funcs", {}).items():
@@ -247,6 +252,9 @@ class GraphAutomaMeta(ABCMeta):
 
         setattr(cls, "_registered_worker_funcs", registered_worker_funcs)
         return cls
+    
+    def worker_decorator_type(cls) -> WorkerDecoratorType:
+        return WorkerDecoratorType.GraphAutomaMethod
 
     @classmethod
     def validate_dag_constraints(mcls, forward_dict: Dict[str, List[str]]):
@@ -487,17 +495,18 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         self._worker_forwards = {}
         self._workers_dynamic_states = {}
 
-        # The _registered_worker_funcs data are from @worker decorators.
-        for worker_key, worker_func in cls._registered_worker_funcs.items():
-            # The decorator based mechanism (i.e. @worker) is based on the add_worker() interface.
-            # Parameters check and other implementation details can be unified.
-            self._add_func_as_worker_internal(
-                key=worker_key,
-                func=worker_func,
-                dependencies=worker_func.__dependencies__,
-                is_start=worker_func.__is_start__,
-                args_mapping_rule=worker_func.__args_mapping_rule__,
-            )
+        if cls.worker_decorator_type() == WorkerDecoratorType.GraphAutomaMethod:
+            # The _registered_worker_funcs data are from @worker decorators.
+            for worker_key, worker_func in cls._registered_worker_funcs.items():
+                # The decorator based mechanism (i.e. @worker) is based on the add_worker() interface.
+                # Parameters check and other implementation details can be unified.
+                self._add_func_as_worker_internal(
+                    key=worker_key,
+                    func=worker_func,
+                    dependencies=worker_func.__dependencies__,
+                    is_start=worker_func.__is_start__,
+                    args_mapping_rule=worker_func.__args_mapping_rule__,
+                )
 
         self._output_worker_key = output_worker_key
 
