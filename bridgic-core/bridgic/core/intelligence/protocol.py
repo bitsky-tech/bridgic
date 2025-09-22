@@ -15,15 +15,15 @@ class JsonSchema(BaseModel):
     constraint_type: Literal["json_schema"] = "json_schema"
     schema: Dict[str, Any] = Field(..., description="Schema of the JsonSchema constraint.")
 
-class Lark(BaseModel):
-    constraint_type: Literal["lark"] = "lark"
-    syntax: str = Field(..., description="Syntax of the Lark constraint.")
-
 class Regex(BaseModel):
     constraint_type: Literal["regex"] = "regex"
     pattern: str = Field(..., description="Pattern of the Regex constraint.")
 
-Constraint = Union[PydanticModel, JsonSchema, Lark, Regex]
+class EbnfGrammar(BaseModel):
+    constraint_type: Literal["ebnf_grammar"] = "ebnf_grammar"
+    syntax: str = Field(..., description="Syntax of the EBNF grammar constraint.")
+
+Constraint = Union[PydanticModel, JsonSchema, EbnfGrammar, Regex]
 
 class StructuredOutput(Protocol):
     """
@@ -53,12 +53,12 @@ class StructuredOutput(Protocol):
 class Tool(BaseModel):
     name: str = Field(..., description="Name of the tool.")
     description: str = Field(..., description="Description of the tool.")
-    parameters: Dict[str, Any] = Field(..., description="Parameters of the tool.")
+    parameters: Dict[str, Any] = Field(..., description="JSON schema object that describes the parameters of the tool.")
 
 class ToolCall(BaseModel):
-    call_id: Optional[str] = Field(..., default=None, description="ID of the tool call.")
-    name: str = Field(..., description="Name of the tool call.")
-    parameters: Dict[str, Any] = Field(..., default_factory=dict, description="Parameters of the tool call.")
+    id: Optional[str] = Field(..., description="ID of the tool call.")
+    name: str = Field(..., description="Name of the tool.")
+    parameters: Dict[str, Any] = Field(..., default_factory=dict, description="Real parameters that are used to call the tool.")
 
 class ToolSelect(Protocol):
     """
