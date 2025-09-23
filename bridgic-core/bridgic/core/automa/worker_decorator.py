@@ -11,8 +11,9 @@ from bridgic.core.types.error import WorkerSignatureError
 class WorkerDecoratorType(Enum):
     GraphAutomaMethod = 1
     OnlyKeySettingAllowedMethod = 2
-    GoapAutomaMethod = 3
-    LlmpAutomaMethod = 4
+    KeyAndArgsMappingSettingAllowedMethod = 3
+    GoapAutomaMethod = 4
+    LlmpAutomaMethod = 5
 
 class ArgsMappingRule(Enum):
     """
@@ -70,6 +71,24 @@ def worker(
     ----------
     key : Optional[str]
         The key of the worker. If not provided, the key of the decorated callable will be used.
+    """
+    ...
+
+@overload
+def worker(
+    *,
+    key: Optional[str] = None,
+    args_mapping_rule: ArgsMappingRule = ArgsMappingRule.AS_IS,
+) -> Callable:
+    """
+    A decorator that marks a method as a worker within a subclass of SequentialAutoma.
+
+    Parameters
+    ----------
+    key : Optional[str]
+        The key of the worker. If not provided, the key of the decorated callable will be used.
+    args_mapping_rule: ArgsMappingRule
+        The rule of arguments mapping.
     """
     ...
 
@@ -160,6 +179,8 @@ def _extract_default_paramaps() -> Dict[WorkerDecoratorType, Dict[str, Any]]:
             paramaps[WorkerDecoratorType.GoapAutomaMethod] = params_default
         elif "canonical_description" in params_default:
             paramaps[WorkerDecoratorType.LlmpAutomaMethod] = params_default
+        elif "args_mapping_rule" in params_default:
+            paramaps[WorkerDecoratorType.KeyAndArgsMappingSettingAllowedMethod] = params_default
         else:
             paramaps[WorkerDecoratorType.OnlyKeySettingAllowedMethod] = params_default
     return paramaps

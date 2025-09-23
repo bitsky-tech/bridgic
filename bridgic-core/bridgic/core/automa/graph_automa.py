@@ -915,7 +915,7 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         Parameters
         ----------
         key : str
-            The key of the worker. If not provided, the key of the decorated callable will be used.
+            The key of the worker. If not provided, the name of the decorated callable will be used.
         dependencies : List[str]
             A list of worker names that the decorated callable depends on.
         is_start : bool

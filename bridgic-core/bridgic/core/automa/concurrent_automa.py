@@ -106,7 +106,7 @@ class ConcurrentAutoma(GraphAutoma):
         key : str
             The key of the function worker.
         func : Callable
-            The function to be added as a worker to the automa.
+            The function to be added as a concurrent worker to the automa.
         """
         if key == self._MERGER_WORKER_KEY:
             raise AutomaRuntimeError(f"the reserved key `{key}` is not allowed to be used by a concurrent worker")
@@ -122,12 +122,12 @@ class ConcurrentAutoma(GraphAutoma):
         key: Optional[str] = None,
     ) -> Callable:
         """
-        This a decorator to mark a function or method as a concurrent worker of the concurrent automa. This worker will be concurrently executed with other concurrent workers.
+        This is a decorator to mark a function or method as a concurrent worker of the concurrent automa. This worker will be concurrently executed with other concurrent workers.
 
         Parameters
         ----------
         key : str
-            The key of the worker. If not provided, the key of the decorated callable will be used.
+            The key of the worker. If not provided, the name of the decorated callable will be used.
         """
         if key == self._MERGER_WORKER_KEY:
             raise AutomaRuntimeError(f"the reserved key `{key}` is not allowed to be used by a concurrent worker")
@@ -157,7 +157,7 @@ class ConcurrentAutoma(GraphAutoma):
     def add_dependency(
         self,
         key: str,
-        depends: str,
+        dependency: str,
     ) -> None:
         raise AutomaRuntimeError(f"add_dependency() is not allowed to be called on a concurrent automa")
 
