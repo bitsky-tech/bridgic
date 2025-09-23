@@ -251,7 +251,8 @@ class VllmServerLlm(OpenAILikeLlm, StructuredOutput, ToolSelect):
         **kwargs,
     ) -> Union[BaseModel, Dict[str, Any], str]:
         '''
-        Structured output in a specified format.
+        Structured output in a specified format. This part of the functionality is provided based on the 
+        capabilities of [vLLM Structured Output](https://docs.vllm.ai/en/latest/features/structured_outputs.html).
 
         Parameters
         ----------
@@ -307,7 +308,8 @@ class VllmServerLlm(OpenAILikeLlm, StructuredOutput, ToolSelect):
         **kwargs,
     ) -> Union[BaseModel, Dict[str, Any], str]:
         '''
-        Structured output in a specified format.
+        Structured output in a specified format. This part of the functionality is provided based on the 
+        capabilities of [vLLM Structured Output](https://docs.vllm.ai/en/latest/features/structured_outputs.html).
 
         Parameters
         ----------
@@ -568,6 +570,6 @@ class VllmServerLlm(OpenAILikeLlm, StructuredOutput, ToolSelect):
             ToolCall(
                 id=str(uuid.uuid4()),
                 name=tool_call["name"],
-                parameters=tool_call["arguments"],
+                arguments=tool_call["arguments"],
             ) for tool_call in tool_calls
         ]

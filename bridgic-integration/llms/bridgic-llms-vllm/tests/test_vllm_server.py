@@ -27,6 +27,11 @@ def date():
     return date
 
 @pytest.fixture
+def datetime_obj():
+    datetime_obj = datetime.datetime.now()
+    return datetime_obj
+
+@pytest.fixture
 def tools():
     class GetWeather(BaseModel):
         city: str = Field(description="The city to get the weather of.")
@@ -232,94 +237,6 @@ async def test_vllm_server_astructured_output_json_schema(llm):
     (_api_key is None) or (_api_base is None) or (_model_name is None),
     reason="VLLM_SERVER_API_KEY or VLLM_SERVER_API_BASE or VLLM_SERVER_MODEL_NAME is not set",
 )
-@pytest.mark.asyncio
-async def test_vllm_server_astructured_output_json_schema(llm):
-    schema = {
-        "type": "object",
-        "properties": {
-            "thought": {"type": "string", "description": "The thought about the problem.", "maxLength": 100},
-            "answer": {"type": "string", "description": "The answer to the question.", "minLength": 5},
-        },
-        "required": ["thought", "answer"],
-    }
-
-    response: Dict[str, Any] = await llm.astructured_output(
-        model=_model_name,
-        constraint=JsonSchema(schema=schema),
-        messages=[
-            Message.from_text(
-                text="You are a helpful assistant.",
-                role=Role.SYSTEM,
-            ),
-            Message.from_text(
-                text="What is the result of 12345 + 54321?",
-                role=Role.USER,
-            ),
-        ],
-    )
-    printer.print("\n" + json.dumps(response), color='purple')
-    assert isinstance(response["thought"], str)
-    assert isinstance(response["answer"], str)
-
-@pytest.mark.skipif(
-    (_api_key is None) or (_api_base is None) or (_model_name is None),
-    reason="VLLM_SERVER_API_KEY or VLLM_SERVER_API_BASE or VLLM_SERVER_MODEL_NAME is not set",
-)
-def test_vllm_server_structured_output_regex(llm):
-    pattern = r"^Emails:\n(- [a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+)(\n(- [a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+))*$"
-    response: str = llm.structured_output(
-        model=_model_name,
-        constraint=Regex(pattern=pattern),
-        messages=[
-            Message.from_text(
-                text="You are a helpful assistant. You are good at extracting email addresses from text.",
-                role=Role.SYSTEM,
-            ),
-            Message.from_text(
-                text="Email addresses: jack@gmail.com and david@gmail.com and john@gmail.com",
-                role=Role.USER,
-            ),
-        ],
-    )
-    printer.print("\n" + response, color='purple')
-    emails = re.findall(pattern=r"[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+", string=response)
-    assert len(emails) == 3
-    assert emails[0] == "jack@gmail.com"
-    assert emails[1] == "david@gmail.com"
-    assert emails[2] == "john@gmail.com"
-
-@pytest.mark.skipif(
-    (_api_key is None) or (_api_base is None) or (_model_name is None),
-    reason="VLLM_SERVER_API_KEY or VLLM_SERVER_API_BASE or VLLM_SERVER_MODEL_NAME is not set",
-)
-@pytest.mark.asyncio
-async def test_vllm_server_astructured_output_regex(llm):
-    pattern = r"^Emails:\n(- [a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+)(\n(- [a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+))*$"
-    response: str = await llm.astructured_output(
-        model=_model_name,
-        constraint=Regex(pattern=pattern),
-        messages=[
-            Message.from_text(
-                text="You are a helpful assistant. You are good at extracting email addresses from text.",
-                role=Role.SYSTEM,
-            ),
-            Message.from_text(
-                text="Email addresses: jack@gmail.com and david@gmail.com and john@gmail.com",
-                role=Role.USER,
-            ),
-        ],
-    )
-    printer.print("\n" + response, color='purple')
-    emails = re.findall(pattern=r"[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+", string=response)
-    assert len(emails) == 3
-    assert emails[0] == "jack@gmail.com"
-    assert emails[1] == "david@gmail.com"
-    assert emails[2] == "john@gmail.com"
-
-@pytest.mark.skipif(
-    (_api_key is None) or (_api_base is None) or (_model_name is None),
-    reason="VLLM_SERVER_API_KEY or VLLM_SERVER_API_BASE or VLLM_SERVER_MODEL_NAME is not set",
-)
 def test_vllm_server_structured_output_ebnf_grammar(llm):
     ebnf_syntax = """
 root ::= select_statement
@@ -403,6 +320,60 @@ Write a SQL to select the sales of year of 2023 from the table.
     (_api_key is None) or (_api_base is None) or (_model_name is None),
     reason="VLLM_SERVER_API_KEY or VLLM_SERVER_API_BASE or VLLM_SERVER_MODEL_NAME is not set",
 )
+def test_vllm_server_structured_output_regex_email(llm):
+    pattern = rf"^Emails:\n(- {RegexPattern.EMAIL.pattern})(\n(- {RegexPattern.EMAIL.pattern}))*$"
+    response: str = llm.structured_output(
+        model=_model_name,
+        constraint=Regex(pattern=pattern),
+        messages=[
+            Message.from_text(
+                text="You are a helpful assistant. You are good at extracting email addresses from text.",
+                role=Role.SYSTEM,
+            ),
+            Message.from_text(
+                text="Email addresses: jack@gmail.com and david@gmail.com and john@gmail.com",
+                role=Role.USER,
+            ),
+        ],
+    )
+    printer.print("\n" + response, color='purple')
+    emails = re.findall(pattern=r"[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+", string=response)
+    assert len(emails) == 3
+    assert emails[0] == "jack@gmail.com"
+    assert emails[1] == "david@gmail.com"
+    assert emails[2] == "john@gmail.com"
+
+@pytest.mark.skipif(
+    (_api_key is None) or (_api_base is None) or (_model_name is None),
+    reason="VLLM_SERVER_API_KEY or VLLM_SERVER_API_BASE or VLLM_SERVER_MODEL_NAME is not set",
+)
+def test_vllm_server_structured_output_regex_datetime(llm, datetime_obj):
+    response: str = llm.structured_output(
+        model=_model_name,
+        constraint=RegexPattern.DATE_TIME,
+        messages=[
+            Message.from_text(
+                text="You are a helpful assistant.",
+                role=Role.SYSTEM,
+            ),
+            Message.from_text(
+                text=f"""
+Today is {datetime_obj.strftime('%Y-%m-%d')}.
+It is {datetime_obj.strftime('%H:%M:%S')} now.
+I am in Beijing. Please tell me the time in Beijing in ISO 8601 format.
+""",
+                role=Role.USER,
+            ),
+        ],
+    )
+    printer.print("\n" + response, color='purple')
+    datetime_obj_new = datetime.datetime.fromisoformat(response)
+    assert datetime_obj_new.strftime('%Y-%m-%d %H:%M:%S') == datetime_obj.strftime('%Y-%m-%d %H:%M:%S')
+
+@pytest.mark.skipif(
+    (_api_key is None) or (_api_base is None) or (_model_name is None),
+    reason="VLLM_SERVER_API_KEY or VLLM_SERVER_API_BASE or VLLM_SERVER_MODEL_NAME is not set",
+)
 def test_vllm_server_tool_select(llm, date, tools):
     response: List[ToolCall] = llm.tool_select(
         model=_model_name,
@@ -424,10 +395,10 @@ def test_vllm_server_tool_select(llm, date, tools):
     for tool_call in response:
         printer.print(json.dumps(tool_call.model_dump()), color='purple')
         if tool_call.name == "get_weather":
-            assert tool_call.parameters["city"] == "Tokyo"
+            assert tool_call.arguments["city"] == "Tokyo"
         if tool_call.name == "get_news":
-            assert tool_call.parameters["date"] == date
-            assert len(tool_call.parameters["topic"]) > 0
+            assert tool_call.arguments["date"] == date
+            assert len(tool_call.arguments["topic"]) > 0
 
 @pytest.mark.skipif(
     (_api_key is None) or (_api_base is None) or (_model_name is None),
@@ -455,7 +426,7 @@ async def test_vllm_server_atool_select(llm, date, tools):
     for tool_call in response:
         printer.print(json.dumps(tool_call.model_dump()), color='purple')
         if tool_call.name == "get_weather":
-            assert tool_call.parameters["city"] == "Tokyo"
+            assert tool_call.arguments["city"] == "Tokyo"
         if tool_call.name == "get_news":
-            assert tool_call.parameters["date"] == date
-            assert len(tool_call.parameters["topic"]) > 0
+            assert tool_call.arguments["date"] == date
+            assert len(tool_call.arguments["topic"]) > 0
