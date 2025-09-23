@@ -2,7 +2,7 @@ from typing import Tuple
 
 import pytest
 
-from bridgic.core.automa import GraphAutoma, From, worker, ArgsMappingRule
+from bridgic.core.automa import GraphAutoma, From, worker, ArgsMappingRule, System
 from bridgic.core.automa.interaction import Event, InteractionFeedback, InteractionException
 from bridgic.core.automa.worker import Worker
 from bridgic.core.automa.serialization import Snapshot
@@ -450,6 +450,70 @@ async def test_automa_with_from_with_default_value_error(automa_with_from_with_d
         "You may need to set the default value of the parameter to a `From` instance with the key of the worker."
     ):
         await automa_with_from_with_default_value_error.arun(user_input=1)
+
+
+class AutomaWithSystem_1(GraphAutoma):
+    """
+    test system descriptor
+    """
+    @worker(is_start=True)
+    async def worker_0(self, user_input: int) -> int:
+        return user_input + 1  # 2
+
+    @worker(dependencies=["worker_0"])
+    async def worker_1(self, x: int) -> int:
+        return x + 1  # 3
+
+def self_add(automa, x: int):
+    return x + 1
+
+def worker_with_system_2(automa, x: int, y: int = From("worker_0", 1), z: GraphAutoma = System("automa:worker_3")) -> int:
+    z.add_func_as_worker(
+        key="self_add",
+        func=self_add,
+        dependencies=['worker_0'],
+        args_mapping_rule=ArgsMappingRule.AS_IS,
+    )
+    return x + y  # 5
+
+class AutomaWithSystem_2(GraphAutoma):
+    """
+    inner worker in AutomaWithSystem_1
+    """
+    @worker(is_start=True)
+    async def worker_0(self, x: int) -> int:
+        return x + 1  # 6
+
+async def end(automa, x: int):
+    return x  # 7
+
+
+@pytest.fixture
+def automa_with_system_1():
+    return AutomaWithSystem_1(output_worker_key="end")
+
+@pytest.mark.asyncio
+async def test_automa_with_system(automa_with_system_1: AutomaWithSystem_1):
+    automa_with_system_1.add_func_as_worker(
+        key="worker_2",
+        func=worker_with_system_2,
+        dependencies=["worker_1"],
+        args_mapping_rule=ArgsMappingRule.AS_IS,
+    )
+    automa_with_system_1.add_worker(
+        key="worker_3",
+        worker=AutomaWithSystem_2(output_worker_key="self_add"),
+        dependencies=["worker_2"],
+        args_mapping_rule=ArgsMappingRule.AS_IS,
+    )
+    automa_with_system_1.add_func_as_worker(
+        key="end",
+        func=end,
+        dependencies=["worker_3"],
+        args_mapping_rule=ArgsMappingRule.AS_IS,
+    )
+    res = await automa_with_system_1.arun(user_input=1)
+    assert res == 7
 
 
 ########################################################
