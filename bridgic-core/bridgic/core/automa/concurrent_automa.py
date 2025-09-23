@@ -5,8 +5,9 @@ from typing_extensions import override
 
 from bridgic.core.automa import GraphAutoma
 from bridgic.core.automa.worker import Worker
-from bridgic.core.automa.worker_decorator import ArgsMappingRule, WorkerDecoratorType
+from bridgic.core.automa.worker_decorator import ArgsMappingRule
 from bridgic.core.types.error import AutomaRuntimeError
+from bridgic.core.types.common import AutomaType
 from bridgic.core.automa.interaction import InteractionFeedback
 
 class ConcurrentAutoma(GraphAutoma):
@@ -38,7 +39,7 @@ class ConcurrentAutoma(GraphAutoma):
         # 2. The Merger worker: This worker will merge the results of all the concurrent workers.
 
         cls = type(self)
-        if cls.worker_decorator_type() == WorkerDecoratorType.OnlyKeySettingAllowedMethod:
+        if cls.worker_decorator_type() == AutomaType.Concurrent:
             # The _registered_worker_funcs data are from @worker decorators.
             # Initialize the decorated concurrent workers.
             for worker_key, worker_func in self._registered_worker_funcs.items():
@@ -61,13 +62,11 @@ class ConcurrentAutoma(GraphAutoma):
         return results
 
     @classmethod
-    def worker_decorator_type(cls) -> WorkerDecoratorType:
+    def worker_decorator_type(cls) -> AutomaType:
         """
         Subclasses of GraphAutoma can declare this class method `worker_decorator_type` to specify the type of worker decorator.
-
-        Note: the worker decorator type of ConcurrentAutoma is `OnlyKeySettingAllowedMethod` because only the `key` parameter is allowed to be set by @worker decorator.
         """
-        return WorkerDecoratorType.OnlyKeySettingAllowedMethod
+        return AutomaType.Concurrent
 
     @override
     def add_worker(
