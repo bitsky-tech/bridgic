@@ -205,3 +205,63 @@ async def test_adder_automa_deserialized_rerun_to_end(feedback_no, adder_automa_
         interaction_feedback=feedback_no
     )
     assert result == 16 + 2
+
+#### Test case: run ==> topology change ==> rerun.
+
+class AdderFlow_1(GraphAutoma):
+    @worker(is_start=True)
+    async def func_1(self, x: int):
+        return x + 1
+
+    async def func_2(self, x: int):
+        return x + 2
+
+@pytest.fixture
+def adder_flow_1():
+    return AdderFlow_1(output_worker_key="func_1")
+
+@pytest.mark.asyncio
+async def test_adder_flow_1_rerun(adder_flow_1):
+    # First run.
+    result = await adder_flow_1.arun(x=100)
+    assert result == 100 + 1
+    # Topology change.
+    adder_flow_1.add_func_as_worker(
+        key="func_2",
+        func=adder_flow_1.func_2,
+    )
+    adder_flow_1.add_dependency("func_2", "func_1")
+    adder_flow_1.output_worker_key = "func_2"
+    # Second run.
+    result = await adder_flow_1.arun(x=100)
+    assert result == 100 + 1 + 2
+
+class AdderFlow_2(GraphAutoma):
+    @worker(is_start=True)
+    async def func_1(self, x: int):
+        return x + 1
+
+    async def func_2(self, x: int):
+        return x + 2
+
+@pytest.fixture
+def adder_flow_2():
+    return AdderFlow_2(output_worker_key="func_1")
+
+@pytest.mark.asyncio
+async def test_adder_flow_2_rerun(adder_flow_2):
+    # First run.
+    result = await adder_flow_2.arun(x=100)
+    assert result == 100 + 1
+    # Topology change.
+    # Remove a start worker and re-add a new start worker.
+    adder_flow_2.remove_worker("func_1")
+    adder_flow_2.add_func_as_worker(
+        key="func_2",
+        func=adder_flow_2.func_2,
+        is_start=True,
+    )
+    adder_flow_2.output_worker_key = "func_2"
+    # Second run.
+    result = await adder_flow_2.arun(x=100)
+    assert result == 100 + 2

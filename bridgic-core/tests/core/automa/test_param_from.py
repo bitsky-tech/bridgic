@@ -168,7 +168,7 @@ def automa_with_class_worker_arun():
     )
     automa.add_worker(
         key="Worker2_Arun",
-        worker_obj=Worker2_Arun(),
+        worker=Worker2_Arun(),
         dependencies=["worker_1"],
         args_mapping_rule=ArgsMappingRule.AS_IS,
     )
@@ -213,7 +213,7 @@ def automa_with_class_worker_run():
     )
     automa.add_worker(
         key="Worker2_Run",
-        worker_obj=Worker2_Run(),
+        worker=Worker2_Run(),
         dependencies=["worker_1"],
         args_mapping_rule=ArgsMappingRule.AS_IS,
     )
