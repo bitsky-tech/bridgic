@@ -1,21 +1,19 @@
 [project]
-name = "bridgic-core"
-version = "0.1.0.dev6"
+name = "bridgic-llms-vllm"
+version = "0.1.0.dev1"
 classifiers = [
     "Private :: Do Not Upload",
     "Programming Language :: Python :: 3",
 ]
-description = "Core classes and abstractions of Bridgic, as well as basic implementations for the orchestration framework."
+description = "VLLM adapters for Bridgic, enabling connectivity with self-hosted LLM providers."
 readme = "README.md"
 requires-python = ">=3.9"
 authors = [
     { name = "Tielei Zhang", email = "zhangtl04@gmail.com" },
 ]
 dependencies = [
-    "msgpack>=1.1.1",
-    "pydantic>=2.8.0",
-    "jinja2>=3.1.0",
-    "docstring-parser>=0.16.0",
+    "bridgic-core>=0.1.0.dev6",
+    "bridgic-llms-openai-like>=0.1.0.dev2",
 ]
 
 [dependency-groups]
@@ -33,6 +31,12 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build]
 include = ["bridgic/"]
+
+[tool.uv.sources]
+# bridgic-core = { index = "btsk-repo" }
+# bridgic-llms-openai-like = { index = "btsk-repo" }
+bridgic-core = { path = "../../../bridgic-core" }
+bridgic-llms-openai-like = { path = "../bridgic-llms-openai-like" }
 
 [[tool.uv.index]]
 name = "btsk-repo"

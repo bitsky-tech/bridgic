@@ -1,4 +1,4 @@
-from typing import List, Protocol, Any, Dict, Type, Literal, Union, Optional
+from typing import List, Protocol, Any, Dict, Type, Literal, Union, Optional, ClassVar
 from pydantic import BaseModel, Field
 
 from bridgic.core.intelligence.base_llm import Message
@@ -15,15 +15,29 @@ class JsonSchema(BaseModel):
     constraint_type: Literal["json_schema"] = "json_schema"
     schema: Dict[str, Any] = Field(..., description="Schema of the JsonSchema constraint.")
 
-class Lark(BaseModel):
-    constraint_type: Literal["lark"] = "lark"
-    syntax: str = Field(..., description="Syntax of the Lark constraint.")
-
 class Regex(BaseModel):
     constraint_type: Literal["regex"] = "regex"
     pattern: str = Field(..., description="Pattern of the Regex constraint.")
 
-Constraint = Union[PydanticModel, JsonSchema, Lark, Regex]
+class RegexPattern:
+    INTEGER: ClassVar[Regex] = Regex(pattern=r"-?\d+")
+    FLOAT = Regex(pattern=r"-?(?:\d+\.\d+|\d+\.|\.\d+|\d+)([eE][-+]?\d+)?")
+    DATE: ClassVar[Regex] = Regex(pattern=r"\d{4}-\d{2}-\d{2}")
+    TIME: ClassVar[Regex] = Regex(pattern=r"(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?")
+    DATE_TIME_ISO_8601: ClassVar[Regex] = Regex(pattern=rf"{DATE.pattern}T{TIME.pattern}(?:Z|[+-](?:[01]\d|2[0-3]):[0-5]\d)?")
+    IP_V4_ADDRESS: ClassVar[Regex] = Regex(pattern=r"(?:(?:25[0-5]|2[0-4]\d|1\d{2}|[1-9]?\d)\.){3}(?:25[0-5]|2[0-4]\d|1\d{2}|[1-9]?\d)")
+    IP_V6_ADDRESS: ClassVar[Regex] = Regex(pattern=r"([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}")
+    EMAIL: ClassVar[Regex] = Regex(pattern=r"[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+")
+
+class Choice(BaseModel):
+    constraint_type: Literal["choice"] = "choice"
+    choices: List[str] = Field(..., description="Choices of the choice constraint.")
+
+class EbnfGrammar(BaseModel):
+    constraint_type: Literal["ebnf_grammar"] = "ebnf_grammar"
+    syntax: str = Field(..., description="Syntax of the EBNF grammar constraint.")
+
+Constraint = Union[PydanticModel, JsonSchema, EbnfGrammar, Regex, Choice]
 
 class StructuredOutput(Protocol):
     """
@@ -53,12 +67,12 @@ class StructuredOutput(Protocol):
 class Tool(BaseModel):
     name: str = Field(..., description="Name of the tool.")
     description: str = Field(..., description="Description of the tool.")
-    parameters: Dict[str, Any] = Field(..., description="Parameters of the tool.")
+    parameters: Dict[str, Any] = Field(..., description="JSON schema object that describes the parameters of the tool.")
 
 class ToolCall(BaseModel):
-    call_id: Optional[str] = Field(..., default=None, description="ID of the tool call.")
-    name: str = Field(..., description="Name of the tool call.")
-    parameters: Dict[str, Any] = Field(..., default_factory=dict, description="Parameters of the tool call.")
+    id: Optional[str] = Field(..., description="ID of the tool call.")
+    name: str = Field(..., description="Name of the tool.")
+    arguments: Dict[str, Any] = Field(..., default_factory=dict, description="Real arguments that are used to call the tool.")
 
 class ToolSelect(Protocol):
     """
