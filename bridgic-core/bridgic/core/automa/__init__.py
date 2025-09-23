@@ -1,6 +1,7 @@
 from bridgic.core.automa.automa import Automa, GoalOrientedAutoma
 from bridgic.core.automa.graph_automa import GraphAutoma
 from bridgic.core.automa.concurrent_automa import ConcurrentAutoma
+from bridgic.core.automa.sequential_automa import SequentialAutoma
 from bridgic.core.automa.goap_automa import GoapAutoma
 from bridgic.core.automa.llmp_automa import LlmpAutoma, PlanningStrategy
 from bridgic.core.automa.arguments_descriptor import From, RuntimeContext, System
@@ -13,6 +14,7 @@ __all__ = [
     "GoalOrientedAutoma",
     "GraphAutoma",
     "ConcurrentAutoma",
+    "SequentialAutoma",
     "GoapAutoma",
     "LlmpAutoma",
     "worker",
