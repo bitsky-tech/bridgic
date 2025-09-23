@@ -76,8 +76,8 @@ class WorkerInjector:
         """
         return cls()
     
-    def _resolve_from(self, dep: From, worker_dict: Dict[str, Worker]) -> Any:
-        inject_res = worker_dict.get(dep.key, dep.default)
+    def _resolve_from(self, dep: From, worker_output: Dict[str, Any]) -> Any:
+        inject_res = worker_output.get(dep.key, dep.default)
         if isinstance(inject_res, InjectorNone):
             raise AutomaDataInjectionError(
                 f"the worker: `{dep.key}` is not found in the worker dictionary. "
@@ -85,7 +85,7 @@ class WorkerInjector:
             )
 
         if isinstance(inject_res, Worker):
-            return inject_res.output_buffer
+            return inject_res
         else:
             return inject_res
 
@@ -113,6 +113,7 @@ class WorkerInjector:
         current_worker_key: str,
         current_worker_sig: Dict[_ParameterKind, List],
         worker_dict: Dict[str, Worker],
+        worker_output: Dict[str, Any],
         next_args: Tuple[Any, ...],
         next_kwargs: Dict[str, Any],
     ) -> Any:
@@ -127,6 +128,8 @@ class WorkerInjector:
             Dictionary mapping parameters to their signature information of the current worker.
         worker_dict : Dict[str, Worker]
             Dictionary containing all available workers in the automa.
+        worker_output : Dict[str, Any]
+            Dictionary containing the output of all workers in the automa.
         next_args : Tuple[Any, ...]
             Positional arguments to be passed to the current worker.
         next_kwargs : Dict[str, Any]
@@ -147,7 +150,7 @@ class WorkerInjector:
         system_inject_kwargs = {}
         for name, default_value in param_list:
             if isinstance(default_value, From):
-                value = self._resolve_from(default_value, worker_dict)
+                value = self._resolve_from(default_value, worker_output)
                 from_inject_kwargs[name] = value
             elif isinstance(default_value, System):
                 value = self._resolve_system(default_value, current_worker_key, worker_dict)
@@ -170,3 +173,6 @@ class WorkerInjector:
 
         next_args, next_kwargs = safely_map_args(next_args, current_kwargs, current_worker_sig)
         return next_args, next_kwargs
+
+
+injector = WorkerInjector()
