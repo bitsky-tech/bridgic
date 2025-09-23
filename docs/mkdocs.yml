@@ -149,10 +149,6 @@ markdown_extensions:
       pygments_lang_class: true
   - pymdownx.inlinehilite
   - pymdownx.keys
-  - pymdownx.magiclink:
-      repo_url_shorthand: true
-      user: bitsky-tech
-      repo: bridgic
   - pymdownx.mark
   - pymdownx.smartsymbols
   - pymdownx.snippets:
@@ -175,10 +171,10 @@ extra:
   social:
     - icon: fontawesome/brands/github
       link: https://github.com/bitsky-tech/bridgic
-    - icon: fontawesome/brands/python
-      link: https://pypi.org/project/bridgic/
-    - icon: fontawesome/brands/discord
-      link: https://discord.gg/bridgic
+    # - icon: fontawesome/brands/python
+    #   link: https://pypi.org/project/bridgic/
+    # - icon: fontawesome/brands/discord
+    #   link: https://discord.gg/bridgic
   generator: false
 
 extra_css:
