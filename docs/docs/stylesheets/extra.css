@@ -1,0 +1,368 @@
+/* Bridgic Documentation Custom Styles */
+/* Custom CSS styles for Bridgic documentation site */
+/* Provides clean, professional styling with brand consistency */
+
+:root {
+  /* Primary theme colors */
+  --md-primary-fg-color: #4f46e5;
+  --md-primary-fg-color--light: #6366f1;
+  --md-primary-fg-color--dark: #3730a3;
+  --md-accent-fg-color: #8b5cf6;
+  --md-accent-fg-color--transparent: #8b5cf61a;
+  
+  /* Custom brand colors - simple and clean */
+  --bridgic-purple: #8b5cf6;
+  --bridgic-blue: #4f46e5;
+  --bridgic-primary: #4f46e5;
+  --bridgic-primary-light: #e0e7ff;
+  --bridgic-border: #e5e7eb;
+}
+
+/* ========================================== */
+/* HEADER AND BRANDING STYLES */
+/* ========================================== */
+
+/* Logo styling in header */
+.md-header__button.md-logo {
+  margin: 0.2rem;
+  /* temporarily hide the logo */
+  display: none;
+}
+
+.md-header__button.md-logo img,
+.md-header__button.md-logo svg {
+  height: 1.8rem;
+  width: auto;
+}
+/* Adjust the placeholder under the icon that is temporarily hidden */
+.md-header__title {
+  margin-left: 0.5rem !important;
+}
+
+/* ========================================== */
+/* HERO SECTION STYLES */
+/* ========================================== */
+
+/* Main hero section - clean and professional styling */
+.md-typeset .hero {
+  padding: 3rem 2rem;
+  text-align: center;
+  background: var(--bridgic-primary);
+  color: white;
+  margin: -1rem -1rem 2rem -1rem;
+  border-radius: 0.5rem;
+  position: relative;
+  overflow: hidden;
+}
+
+/* Add subtle texture instead of animation */
+.md-typeset .hero::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: linear-gradient(135deg, transparent 25%, rgba(255,255,255,0.05) 25%, rgba(255,255,255,0.05) 50%, transparent 50%, transparent 75%, rgba(255,255,255,0.05) 75%);
+  background-size: 20px 20px;
+  pointer-events: none;
+}
+
+/* Hero title styling */
+.md-typeset .hero h1 {
+  color: white;
+  font-size: 2.5rem;
+  font-weight: 700;
+  margin-bottom: 1rem;
+  position: relative;
+  z-index: 1;
+}
+
+/* Hero subtitle styling */
+.md-typeset .hero p {
+  color: rgba(255, 255, 255, 0.9);
+  font-size: 1.2rem;
+  margin-bottom: 0;
+  position: relative;
+  z-index: 1;
+}
+
+/* ========================================== */
+/* CODE BLOCK STYLES */
+/* ========================================== */
+
+/* Enhanced code blocks with rounded corners */
+.md-typeset .highlight {
+  border-radius: 0.5rem;
+  overflow: hidden;
+}
+
+/* Code block filename styling */
+.md-typeset .highlight .filename {
+  background: var(--md-code-bg-color);
+  border-bottom: 1px solid var(--md-default-fg-color--lightest);
+  color: var(--md-default-fg-color--light);
+  font-size: 0.75rem;
+  font-weight: 700;
+  padding: 0.5rem 1rem;
+  margin: 0;
+}
+
+/* ========================================== */
+/* ADMONITION STYLES */
+/* ========================================== */
+
+/* Custom tip admonition styling */
+.md-typeset .admonition.tip {
+  border-color: var(--bridgic-purple);
+}
+
+/* Tip admonition title styling */
+.md-typeset .admonition.tip > .admonition-title {
+  background-color: var(--bridgic-primary-light);
+  border-color: var(--bridgic-purple);
+}
+
+/* Tip admonition icon styling */
+.md-typeset .admonition.tip > .admonition-title::before {
+  background-color: var(--bridgic-purple);
+  mask-image: var(--md-admonition-icon--tip);
+}
+
+/* ========================================== */
+/* NAVIGATION STYLES */
+/* ========================================== */
+
+/* Navigation title styling */
+.md-nav__title {
+  font-weight: 700;
+}
+
+/* Active navigation link styling */
+.md-nav__item--active > .md-nav__link {
+  color: var(--bridgic-purple);
+  font-weight: 600;
+}
+
+/* Enhanced focus states for navigation */
+.md-nav__link:focus,
+.md-nav__link:hover {
+  color: var(--bridgic-purple);
+}
+
+/* ========================================== */
+/* BUTTON STYLES */
+/* ========================================== */
+
+/* Primary button styling - clean and professional */
+.md-button {
+  background: var(--bridgic-primary);
+  border: none;
+  color: white;
+  font-weight: 600;
+  transition: all 0.2s ease;
+  border-radius: 0.375rem;
+}
+
+/* Button hover effects - subtle and clean */
+.md-button:hover {
+  background: var(--md-primary-fg-color--dark);
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(79, 70, 229, 0.3);
+}
+
+/* Primary button variant */
+.md-button--primary {
+  background: var(--bridgic-primary);
+  color: white;
+}
+
+/* ========================================== */
+/* TABLE STYLES */
+/* ========================================== */
+
+/* Enhanced table styling */
+.md-typeset table:not([class]) {
+  border-radius: 0.5rem;
+  overflow: hidden;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+/* Table header styling - clean and professional */
+.md-typeset table:not([class]) th {
+  background: var(--bridgic-primary);
+  color: white;
+  font-weight: 600;
+}
+
+/* ========================================== */
+/* DOCUMENTATION HEADING STYLES */
+/* ========================================== */
+
+/* Special heading styling for documentation sections */
+.doc-heading {
+  padding: 1rem;
+  background: var(--bridgic-primary-light);
+  border-left: 4px solid var(--bridgic-purple);
+  border-radius: 0 0.5rem 0.5rem 0;
+  margin: 1.5rem 0 1rem 0;
+}
+
+/* Documentation heading text styling */
+.doc-heading h1,
+.doc-heading h2,
+.doc-heading h3 {
+  margin: 0;
+  color: var(--bridgic-purple);
+}
+
+/* ========================================== */
+/* SEARCH STYLES */
+/* ========================================== */
+
+/* Enhanced search form styling */
+.md-search__form {
+  border-radius: 2rem;
+}
+
+/* Search input styling */
+.md-search__input {
+  border-radius: 2rem;
+}
+
+/* ========================================== */
+/* FOOTER STYLES */
+/* ========================================== */
+
+/* Custom footer styling */
+.md-footer {
+  background: var(--bridgic-primary);
+}
+
+/* Footer metadata section */
+.md-footer-meta {
+  background: rgba(0, 0, 0, 0.2);
+}
+
+/* ========================================== */
+/* MOBILE RESPONSIVE STYLES */
+/* ========================================== */
+
+/* Mobile optimizations for tablets and phones */
+@media screen and (max-width: 76.1875em) {
+  .md-typeset .hero {
+    padding: 2rem 1rem;
+    margin: -1rem -0.8rem 1.5rem -0.8rem;
+  }
+  
+  /* Responsive hero title */
+  .md-typeset .hero h1 {
+    font-size: 2rem;
+  }
+  
+  /* Responsive hero subtitle */
+  .md-typeset .hero p {
+    font-size: 1rem;
+  }
+}
+
+/* ========================================== */
+/* DARK MODE ADJUSTMENTS */
+/* ========================================== */
+
+/* Dark mode color adjustments */
+[data-md-color-scheme="slate"] {
+  --md-primary-fg-color: #6366f1;
+  --md-accent-fg-color: #a78bfa;
+}
+
+/* Dark mode hero section */
+[data-md-color-scheme="slate"] .md-typeset .hero {
+  background: #4338ca;
+}
+
+/* Dark mode documentation headings */
+[data-md-color-scheme="slate"] .doc-heading {
+  background: rgba(167, 139, 250, 0.1);
+  border-left-color: #a78bfa;
+}
+
+/* Dark mode heading text colors */
+[data-md-color-scheme="slate"] .doc-heading h1,
+[data-md-color-scheme="slate"] .doc-heading h2,
+[data-md-color-scheme="slate"] .doc-heading h3 {
+  color: #a78bfa;
+}
+
+/* ========================================== */
+/* SCROLLBAR STYLES */
+/* ========================================== */
+
+/* Custom scrollbar styling for webkit browsers */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+/* Scrollbar track background */
+::-webkit-scrollbar-track {
+  background: var(--md-default-bg-color);
+}
+
+/* Scrollbar thumb styling */
+::-webkit-scrollbar-thumb {
+  background: var(--bridgic-purple);
+  border-radius: 4px;
+}
+
+/* Scrollbar thumb hover effect */
+::-webkit-scrollbar-thumb:hover {
+  background: var(--md-accent-fg-color--light);
+}
+
+/* ========================================== */
+/* ACTIVE NAVIGATION INDICATOR */
+/* ========================================== */
+
+/* Active navigation item indicator line */
+/* .md-nav__item--active > .md-nav__link::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  width: 100%;
+  height: 2px;
+  background: var(--bridgic-primary);
+  border-radius: 1px;
+} */
+
+/* ========================================== */
+/* BADGE STYLES */
+/* ========================================== */
+
+/* Base badge styling - clean and professional */
+.badge {
+  display: inline-block;
+  padding: 0.25rem 0.5rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  line-height: 1;
+  color: white;
+  background: var(--bridgic-primary);
+  border-radius: 0.25rem;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+/* Badge variants for different statuses */
+.badge--new {
+  background: #10b981; /* Green for new features */
+}
+
+.badge--beta {
+  background: #f59e0b; /* Orange for beta features */
+}
+
+.badge--deprecated {
+  background: #ef4444; /* Red for deprecated features */
+}

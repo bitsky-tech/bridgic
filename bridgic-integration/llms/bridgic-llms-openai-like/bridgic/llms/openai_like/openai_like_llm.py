@@ -50,6 +50,7 @@ class OpenAILikeLlm(BaseLlm):
         frequency_penalty: Optional[float] = None,
         max_tokens: Optional[int] = None,
         stop: Optional[List[str]] = None,
+        extra_body: Optional[Dict[str, Any]] = None,
         **kwargs,
     ) -> Response:
         msgs: List[ChatCompletionMessageParam] = [self._convert_message(msg) for msg in messages]
@@ -62,6 +63,7 @@ class OpenAILikeLlm(BaseLlm):
             frequency_penalty=frequency_penalty,
             max_tokens=max_tokens,
             stop=stop,
+            extra_body=extra_body,
             **kwargs,
         )
         openai_message: ChatCompletionMessage = response.choices[0].message
@@ -85,6 +87,7 @@ class OpenAILikeLlm(BaseLlm):
         frequency_penalty: Optional[float] = None,
         max_tokens: Optional[int] = None,
         stop: Optional[List[str]] = None,
+        extra_body: Optional[Dict[str, Any]] = None,
         **kwargs,
     ) -> StreamResponse:
         msgs: List[ChatCompletionMessageParam] = [self._convert_message(msg) for msg in messages]
@@ -98,6 +101,7 @@ class OpenAILikeLlm(BaseLlm):
             frequency_penalty=frequency_penalty,
             max_tokens=max_tokens,
             stop=stop,
+            extra_body=extra_body,
             **kwargs,
         )
         for chunk in response:
@@ -115,6 +119,7 @@ class OpenAILikeLlm(BaseLlm):
         frequency_penalty: Optional[float] = None,
         max_tokens: Optional[int] = None,
         stop: Optional[List[str]] = None,
+        extra_body: Optional[Dict[str, Any]] = None,
         **kwargs,
     ) -> Response:
         msgs: List[ChatCompletionMessageParam] = [self._convert_message(msg) for msg in messages]
@@ -127,6 +132,7 @@ class OpenAILikeLlm(BaseLlm):
             frequency_penalty=frequency_penalty,
             max_tokens=max_tokens,
             stop=stop,
+            extra_body=extra_body,
             **kwargs,
         )
         openai_message: ChatCompletionMessage = response.choices[0].message
@@ -150,6 +156,7 @@ class OpenAILikeLlm(BaseLlm):
         frequency_penalty: Optional[float] = None,
         max_tokens: Optional[int] = None,
         stop: Optional[List[str]] = None,
+        extra_body: Optional[Dict[str, Any]] = None,
         **kwargs,
     ) -> AsyncStreamResponse:
         msgs: List[ChatCompletionMessageParam] = [self._convert_message(msg) for msg in messages]
@@ -163,6 +170,7 @@ class OpenAILikeLlm(BaseLlm):
             frequency_penalty=frequency_penalty,
             max_tokens=max_tokens,
             stop=stop,
+            extra_body=extra_body,
             **kwargs,
         )
         async for chunk in response:

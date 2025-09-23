@@ -88,7 +88,7 @@ class Flow_1_Test_AS_IS(GraphAutoma):
     @worker(dependencies=["func_10"])
     async def func_11(self):
         # Test the special case of returning None and no arguments are expected.
-        assert self.func_10.output_buffer is None
+        assert self._worker_output["func_10"] is None
 
 @pytest.fixture
 def flow_1():
@@ -618,7 +618,7 @@ class Flow_101_Test_SUPPRESSED(GraphAutoma):
 
     @worker(dependencies=["start"], args_mapping_rule=ArgsMappingRule.SUPPRESSED)
     async def end(self):
-        x, y = self.start.output_buffer
+        x, y = self._worker_output["start"]
         return x, y
 
 @pytest.fixture

@@ -23,7 +23,7 @@ from bridgic.core.automa.worker_decorator import packup_worker_decorator_rumtime
 from bridgic.core.automa.worker.callable_worker import CallableWorker
 from bridgic.core.automa.interaction import Event, FeedbackSender, EventHandlerType, InteractionFeedback, Feedback, Interaction, InteractionException
 from bridgic.core.automa.serialization import Snapshot
-from bridgic.core.automa.arguments_descriptor import RuntimeContext, WorkerInjector
+from bridgic.core.automa.arguments_descriptor import RuntimeContext, injector
 import bridgic.core.serialization.msgpackx as msgpackx
 
 class _GraphAdaptedWorker(Worker):
@@ -95,14 +95,6 @@ class _GraphAdaptedWorker(Worker):
     @parent.setter
     def parent(self, value: "Automa"):
         self._decorated_worker.parent = value
-
-    @property
-    def output_buffer(self) -> Any:
-        return self._decorated_worker.output_buffer
-    
-    @output_buffer.setter
-    def output_buffer(self, value: Any):
-        self._decorated_worker.output_buffer = value
 
     @override
     def __str__(self) -> str:
@@ -390,6 +382,7 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
     # Note: Just declarations, NOT instances!!!
     # So do not initialize them here!!!
     _workers: Dict[str, _GraphAdaptedWorker]
+    _worker_output: Dict[str, Any]
     _worker_forwards: Dict[str, List[str]]
     _output_worker_key: Optional[str]
 
@@ -405,7 +398,6 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
     # Ongoing human interactions triggered by the `interact_with_human()` call from workers of the current Automa.
     # worker_key -> list of interactions.
     _ongoing_interactions: Dict[str, List[_InteractionAndFeedback]]
-    _injector: WorkerInjector
 
     #########################################################
     #### The following fields need not to be serialized. ####
@@ -461,10 +453,10 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         state_dict : Optional[Dict[str, Any]]
             A dictionary for initializing the automa's runtime states. This parameter is designed for framework use only.
         """
-        self._workers = {} #TODO: __getattribute__() refactoring
+        self._workers = {}
+        self._worker_outputs = {}
         super().__init__(name=name)
         self._automa_running = False
-        self._injector = WorkerInjector()
 
         # Initialize the states that need to be serialized.
         self._normal_init(output_worker_key)
@@ -496,6 +488,7 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
 
         # _workers, _worker_forwards and _workers_dynamic_states will be initialized incrementally by add_worker()...
         self._worker_forwards = {}
+        self._worker_output = {}
         self._workers_dynamic_states = {}
 
         if cls.worker_decorator_type() == WorkerDecoratorType.GraphAutomaMethod:
@@ -557,7 +550,7 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         state_dict["input_buffer"] = self._input_buffer
         # TODO: the data field of Event and Feedback must be serializable in order to serialize _ongoing_interactions
         state_dict["ongoing_interactions"] = self._ongoing_interactions
-        state_dict["injector"] = self._injector
+        state_dict["worker_output"] = self._worker_output
         return state_dict
 
     @override
@@ -574,7 +567,7 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         self._current_kickoff_workers = state_dict["current_kickoff_workers"]
         self._input_buffer = state_dict["input_buffer"]
         self._ongoing_interactions = state_dict["ongoing_interactions"]
-        self._injector = state_dict["injector"]
+        self._worker_output = state_dict["worker_output"]
 
     @classmethod
     def load_from_snapshot(
@@ -1018,23 +1011,6 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
             # Note: Only the last _SetOutputWorkerDeferredTask is valid if self.output_worker_key is set multiple times in one DS.
             self._set_output_worker_deferred_task = deferred_task
 
-    def __getattribute__(self, key):
-        """
-        Used to get the worker object by its key (self.<key>).
-        """
-        workers = super().__getattribute__('_workers')
-        if key in workers:
-            return workers[key]
-        return super().__getattribute__(key)
-
-    # def __getattr__(self, key):
-    #     """
-    #     Used to get the worker object by its key (self.<key>).
-    #     """
-    #     if key in self._workers:
-    #         return self._workers[key]
-    #     return super().__getattr__(key)
-
     def _validate_canonical_graph(self):
         """
         This method is used to validate that DDG graph is canonical.
@@ -1363,10 +1339,11 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
                 )
                 # Third, Resolve data injection.
                 worker_obj = self._workers[kickoff_info.worker_key]
-                next_args, next_kwargs = self._injector.inject(
+                next_args, next_kwargs = injector.inject(
                     current_worker_key=kickoff_info.worker_key, 
                     current_worker_sig=worker_obj.get_input_param_names(), 
                     worker_dict=self._workers, 
+                    worker_output=self._worker_output,
                     next_args=next_args, 
                     next_kwargs=next_kwargs
                 )
@@ -1418,7 +1395,7 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
                         # The current running worker may be removed.
                         worker_obj = self._workers[task.worker_key]
                         # Collect results of the finished tasks.
-                        worker_obj.output_buffer = task_result 
+                        self._worker_output[task.worker_key] = task_result
                         # reset dynamic states of finished workers.
                         self._workers_dynamic_states[task.worker_key].dependency_triggers = set(getattr(worker_obj, "dependencies", []))
                         # Update the dynamic states of successor workers.
@@ -1534,7 +1511,7 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
 
         # If the output-worker is specified, return its output as the return value of the automa.
         if self._output_worker_key:
-            return self._workers[self._output_worker_key].output_buffer
+            return self._worker_output[self._output_worker_key]
         else:
             return None
 
@@ -1883,7 +1860,6 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         Tuple[Tuple[Any, ...], Dict[str, Any]]
             The mapped positional arguments and keyword arguments.
         """
-        kickoff_worker_obj = self._workers[kickoff_worker_key]
         current_worker_obj = self._workers[current_worker_key]
         args_mapping_rule = current_worker_obj.args_mapping_rule
         dep_workers_keys = self._get_worker_dependencies(current_worker_key)
@@ -1919,11 +1895,11 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
             return next_args, next_kwargs
 
         if args_mapping_rule == ArgsMappingRule.AS_IS:
-            next_args, next_kwargs = as_is_return_values([self._workers[dep_worker_key].output_buffer for dep_worker_key in dep_workers_keys])
+            next_args, next_kwargs = as_is_return_values([self._worker_output[dep_worker_key] for dep_worker_key in dep_workers_keys])
         elif args_mapping_rule == ArgsMappingRule.UNPACK:
-            next_args, next_kwargs = unpack_return_value(kickoff_worker_obj.output_buffer)
+            next_args, next_kwargs = unpack_return_value(self._worker_output[kickoff_worker_key])
         elif args_mapping_rule == ArgsMappingRule.MERGE:
-            next_args, next_kwargs = merge_return_values([self._workers[dep_worker_key].output_buffer for dep_worker_key in dep_workers_keys])
+            next_args, next_kwargs = merge_return_values([self._worker_output[dep_worker_key] for dep_worker_key in dep_workers_keys])
         elif args_mapping_rule == ArgsMappingRule.SUPPRESSED:
             next_args, next_kwargs = (), {}
 
