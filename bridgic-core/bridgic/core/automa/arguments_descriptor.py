@@ -1,11 +1,13 @@
+import re
 from inspect import _ParameterKind
 from pydantic import BaseModel
 from dataclasses import dataclass
-from typing import List, Tuple, Optional, Any, Dict, Literal
+from typing import List, Tuple, Optional, Any, Dict
 
 from bridgic.core.automa.worker import Worker
 from bridgic.core.types.error import AutomaDataInjectionError
 from bridgic.core.utils.args_map import safely_map_args
+from bridgic.core.automa.automa import Automa
 
 
 class InjectorNone: 
@@ -30,11 +32,22 @@ class From(ArgumentsDescriptor):
 @dataclass
 class System(ArgumentsDescriptor):
     """
-    worker dependency data from the automa.
+    worker dependency data from the automa with pattern matching support.
     """
-    key: Literal[
-        "runtime_context"
-    ]
+    key: str
+    
+    def __post_init__(self):
+        allowed_patterns = [
+            r"^runtime_context$",
+            r"^automa:.*$",
+        ]
+        
+        if not any(re.match(pattern, self.key) for pattern in allowed_patterns):
+            raise AutomaDataInjectionError(
+                f"Key '{self.key}' is not supported. Supported keys: "
+                f"`runtime_context`: a context for data persistence of the current worker."
+                f"`automa:.*`: a sub-automa in current automa."
+            )
 
 class RuntimeContext(BaseModel):
     worker_key: str
@@ -78,9 +91,22 @@ class WorkerInjector:
 
     def _resolve_system(self, dep: System, current_worker_key: str, worker_dict: Dict[str, Worker]) -> Any:
         if dep.key == "runtime_context":
-            inject_res = RuntimeContext(worker_key=current_worker_key)
-        
-        return inject_res
+            return RuntimeContext(worker_key=current_worker_key)
+        elif dep.key.startswith("automa:"):
+            worker_key = dep.key[7:]
+
+            inject_res = worker_dict.get(worker_key, InjectorNone())
+            if isinstance(inject_res, InjectorNone):
+                raise AutomaDataInjectionError(
+                    f"the sub-atoma: `{dep.key}` is not found in current automa. "
+                )
+  
+            if not inject_res.is_automa():
+                raise AutomaDataInjectionError(
+                    f"the `{dep.key}` instance is not an Automa. "
+                )
+           
+            return inject_res.get_decorated_worker()
 
     def inject(
         self, 
