@@ -453,8 +453,8 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         state_dict : Optional[Dict[str, Any]]
             A dictionary for initializing the automa's runtime states. This parameter is designed for framework use only.
         """
-        self._workers = {} #TODO: __getattribute__() refactoring
-        self._worker_output = {}
+        self._workers = {}
+        self._worker_outputs = {}
         super().__init__(name=name)
         self._automa_running = False
 
@@ -1010,23 +1010,6 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
             )
             # Note: Only the last _SetOutputWorkerDeferredTask is valid if self.output_worker_key is set multiple times in one DS.
             self._set_output_worker_deferred_task = deferred_task
-
-    def __getattribute__(self, key):
-        """
-        Used to get the worker object by its key (self.<key>).
-        """
-        workers = super().__getattribute__('_workers')
-        if key in workers:
-            return workers[key]
-        return super().__getattribute__(key)
-
-    # def __getattr__(self, key):
-    #     """
-    #     Used to get the worker object by its key (self.<key>).
-    #     """
-    #     if key in self._workers:
-    #         return self._workers[key]
-    #     return super().__getattr__(key)
 
     def _validate_canonical_graph(self):
         """
