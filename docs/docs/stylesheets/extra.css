@@ -25,12 +25,18 @@
 /* Logo styling in header */
 .md-header__button.md-logo {
   margin: 0.2rem;
+  /* temporarily hide the logo */
+  display: none;
 }
 
 .md-header__button.md-logo img,
 .md-header__button.md-logo svg {
   height: 1.8rem;
   width: auto;
+}
+/* Adjust the placeholder under the icon that is temporarily hidden */
+.md-header__title {
+  margin-left: 0.5rem !important;
 }
 
 /* ========================================== */
