@@ -422,3 +422,131 @@ def graph_4_feedback_no(graph_4):
 async def test_graph_4_feedback_no(graph_4_feedback_no):
     result = await graph_4_feedback_no.arun(x=5)
     assert result == 570
+
+############################ Test timout #####################################
+
+class MyWorker1MaybeTimeout(Worker):
+    async def arun(self, x: int):
+        event = Event(
+            event_type="if_add_in_worker1",
+            data={
+                "prompt_to_user": f"Current value is {x}, do you want to add another 200 to it (yes/no) ?"
+            }
+        )
+        result = x
+        try:
+            feedback = await self.request_feedback_async(event, timeout=0.1)
+            if feedback.data == "yes":
+                result = x + 200
+        except TimeoutError as e:
+            assert "No feedback is received before timeout" in e.args[0]
+            result = x - 1
+        return result
+
+class MyWorker2MaybeTimeout(Worker):
+    def run(self, x: int):
+        event = Event(
+            event_type="if_add_in_worker2",
+            data={
+                "prompt_to_user": f"Current value is {x}, do you want to add another 300 to it (yes/no) ?"
+            }
+        )
+        result = x
+        try:
+            feedback = self.request_feedback(event, timeout=0.1)
+            if feedback.data == "yes":
+                result = x + 300
+        except TimeoutError as e:
+            assert "No feedback is received before timeout" in e.args[0]
+            result = x - 2
+        return result
+
+class Graph_5_TestFeedback_Timeout(GraphAutoma):
+    @worker(is_start=True)
+    async def start(self, x: int):
+        return x + 100
+
+    @worker(dependencies=["worker_1", "worker_2"])
+    async def end(self, x1: int, x2: int):
+        return x1 + x2
+
+@pytest.fixture
+def graph_5_third_layer():
+    graph = Graph_5_TestFeedback_Timeout(output_worker_key="end")
+    worker1 = MyWorker1MaybeTimeout()
+    worker2 = MyWorker2MaybeTimeout()
+    graph.add_worker("worker_1", worker1, dependencies=["start"])
+    graph.add_worker("worker_2", worker2, dependencies=["start"])
+    return graph
+
+@pytest.fixture
+def graph_5_second_layer(graph_5_third_layer):
+    graph = SecondLayerGraph(output_worker_key="end")
+    graph.add_worker(
+        "func_2", 
+        graph_5_third_layer,
+        dependencies=["start"]
+    )
+    return graph
+
+@pytest.fixture
+def graph_5(graph_5_second_layer):
+    graph = TopGraph(output_worker_key="end")
+    graph.add_worker(
+        "middle", 
+        graph_5_second_layer,
+        dependencies=["start"]
+    )
+    return graph
+
+@pytest.fixture
+def graph_5_worker1_timeout_and_worker2_feedback_yes(graph_5):
+    async def give_feedback_yes_after_delay(delay: float, feedback_sender: FeedbackSender):
+        await asyncio.sleep(delay)
+        feedback_sender.send(Feedback(data="yes"))
+
+    def event_handler_if_add_in_worker1(event: Event, feedback_sender: FeedbackSender):
+        assert event.event_type == "if_add_in_worker1"
+        assert "(yes/no)" in event.data["prompt_to_user"]
+        asyncio.create_task(give_feedback_yes_after_delay(0.2, feedback_sender))
+
+    def event_handler_if_add_in_worker2(event: Event, feedback_sender: FeedbackSender):
+        assert event.event_type == "if_add_in_worker2"
+        assert "(yes/no)" in event.data["prompt_to_user"]
+        asyncio.create_task(give_feedback_yes_after_delay(0.01, feedback_sender))
+    
+    graph_5.register_event_handler("if_add_in_worker1", event_handler_if_add_in_worker1)
+    graph_5.register_event_handler("if_add_in_worker2", event_handler_if_add_in_worker2)
+
+    return graph_5
+
+@pytest.mark.asyncio
+async def test_graph_5_feedback_async_timeout(graph_5_worker1_timeout_and_worker2_feedback_yes):
+    result = await graph_5_worker1_timeout_and_worker2_feedback_yes.arun(x=5)
+    assert result == 569
+
+@pytest.fixture
+def graph_5_worker1_feedback_yes_and_worker2_timeout(graph_5):
+    async def give_feedback_yes_after_delay(delay: float, feedback_sender: FeedbackSender):
+        await asyncio.sleep(delay)
+        feedback_sender.send(Feedback(data="yes"))
+
+    def event_handler_if_add_in_worker1(event: Event, feedback_sender: FeedbackSender):
+        assert event.event_type == "if_add_in_worker1"
+        assert "(yes/no)" in event.data["prompt_to_user"]
+        asyncio.create_task(give_feedback_yes_after_delay(.01, feedback_sender))
+
+    def event_handler_if_add_in_worker2(event: Event, feedback_sender: FeedbackSender):
+        assert event.event_type == "if_add_in_worker2"
+        assert "(yes/no)" in event.data["prompt_to_user"]
+        asyncio.create_task(give_feedback_yes_after_delay(.2, feedback_sender))
+    
+    graph_5.register_event_handler("if_add_in_worker1", event_handler_if_add_in_worker1)
+    graph_5.register_event_handler("if_add_in_worker2", event_handler_if_add_in_worker2)
+
+    return graph_5
+
+@pytest.mark.asyncio
+async def test_graph_5_feedback_sync_timeout(graph_5_worker1_feedback_yes_and_worker2_timeout):
+    result = await graph_5_worker1_feedback_yes_and_worker2_timeout.arun(x=5)
+    assert result == 569 + 1 + 200 - 300 - 2

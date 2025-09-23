@@ -1,7 +1,9 @@
 import pytest
+from typing import List
 
 from bridgic.core.automa import GraphAutoma, worker, ArgsMappingRule
 from bridgic.core.automa import AutomaRuntimeError, AutomaCompilationError
+from bridgic.core.automa.arguments_descriptor import System
 
 class DynamicFlow_1(GraphAutoma):
     @worker(is_start=True)
@@ -48,7 +50,7 @@ def dynamic_flow_1():
         args_mapping_rule=ArgsMappingRule.UNPACK,
     )
     # Specify the output worker.
-    flow.set_output_worker("func_4")
+    flow.output_worker_key = "func_4"
     # Final flow topology (expected): func_1 -> func_3 -> func_4.
     return flow
 
@@ -88,7 +90,7 @@ class DynamicFlow_2(GraphAutoma):
             args_mapping_rule=ArgsMappingRule.UNPACK,
         )
         # Specify the output worker.
-        self.set_output_worker("func_4")
+        self.output_worker_key = "func_4"
         # Final flow topology (expected): func_1 -> func_3 -> func_4.
         return {"x": x+1, "y": y+1}
 
@@ -155,7 +157,7 @@ class DynamicFlow_4(GraphAutoma):
                 func=self.func_resusable,
                 dependencies=[f"func_{i-1}"],
             )
-        self.set_output_worker("func_6")
+        self.output_worker_key = "func_6"
         return {"x": x+1, "y": y+1}
 
     async def func_2(self, x: int, y: int):
@@ -186,7 +188,7 @@ class DynamicFlow_5_AddWorkerStepByStep(GraphAutoma):
             dependencies=["func_1"],
             args_mapping_rule=ArgsMappingRule.UNPACK,
         )
-        self.set_output_worker("func_2")
+        self.output_worker_key = "func_2"
         return {"x": x+1, "y": y+1}
 
     async def func_2(self, x: int, y: int):
@@ -211,7 +213,7 @@ class DynamicFlow_5_AddWorkerStepByStep(GraphAutoma):
                 args_mapping_rule=ArgsMappingRule.UNPACK,
             )
         else:
-            self.set_output_worker("func_6")
+            self.output_worker_key = "func_6"
         return count_run + 1, {"x": coord["x"]+10, "y": coord["y"]+20}
 
 @pytest.fixture
@@ -394,6 +396,172 @@ async def test_dynamic_flow_9(dynamic_flow_9):
     result = await dynamic_flow_9.arun(x=2)
     assert result == 29
 
+###################### Test add_dependency() case 1 #############################
+
+class DynamicFlow_10_AddDependency(GraphAutoma):
+    """
+    Test case: Dynamically add a dependency in a sequential, single-dependency setting.
+    """
+    @worker(is_start=True)
+    async def func_1(self, x: int):
+        return x + 1
+
+    @worker(dependencies=["func_1"])
+    async def func_a2(self, x: int):
+        return x + 12
+
+    async def func_2(self, x: int):
+        return x + 2
+
+    async def func_3a(self, x: int):
+        # Test case for adding dependencies during the [Running Phase]
+        # Test 1: Add an immediate successor worker that depends on myself.
+        self.add_func_as_worker(
+            key="func_4",
+            func=self.func_4,
+        )
+        self.add_dependency("func_4", "func_3a")
+        self.output_worker_key = "func_4"
+        return x + 13
+
+    async def func_3(self, x: int):
+        return x + 3
+
+    async def func_4(self, x: int):
+        if x <= 116:
+            # Replace worker `func_a3` with `func_3`
+            self.remove_worker("func_3a")
+            # After removing `func_a3`, the dependency from `func_4` to `func_a3` is also removed.
+            self.add_func_as_worker(
+                key="func_3",
+                func=self.func_3,
+                dependencies=["func_2"],
+            )
+            # Note: the dependency from `func_4` to `func_3` must be separatedly added by add_dependency().
+            self.add_dependency("func_4", "func_3")
+            # The above topology change will take effect in the next DS, triggered by ferry_to().
+            self.ferry_to("func_1", x)
+
+        self.output_worker_key = "func_4"
+        return x + 4
+
+@pytest.fixture
+def dynamic_flow_10():
+    flow = DynamicFlow_10_AddDependency()
+    # Test case for adding dependencies during the [Initialization Phase]
+    flow.add_func_as_worker(
+        key="func_3a",
+        func=flow.func_3a,
+    )
+    flow.add_dependency("func_3a", "func_a2")
+    # Replace worker `func_a2` with `func_2`
+    flow.remove_worker("func_a2")
+    # After removing `func_a2`, the dependency from `func_3a` to `func_a2` is also removed.
+    flow.add_func_as_worker(
+        key="func_2",
+        func=flow.func_2,
+        dependencies=["func_1"],
+    )
+    # Note: the dependency from `func_3a` to `func_2` must be separatedly added by add_dependency().
+    flow.add_dependency("func_3a", "func_2")
+
+    flow.output_worker_key = "func_3a"
+    return flow
+
+@pytest.mark.asyncio
+async def test_dynamic_flow_10(dynamic_flow_10):
+    result = await dynamic_flow_10.arun(x=100)
+    assert result == 100 + 1 + 2 + 13 + 1 + 2 + 3 + 4
+
+###################### Test add_dependency() case 2 #############################
+
+class DynamicFlow_11_AddDependency(GraphAutoma):
+    """
+    Test case: Dynamically add a dependency in a concurrent, multi-dependency setting.
+    """
+    @worker(is_start=True)
+    async def start(self, x: int, rtx = System("runtime_context")):
+        local_space = self.get_local_space(rtx)
+        is_first_run = local_space.get("is_first_run", False)
+        if not is_first_run:
+            local_space["is_first_run"] = True
+            # Test case for adding dependencies during the [Running Phase]
+            self.add_func_as_worker(
+                key="func_4a",
+                func=self.func_4a,
+                dependencies=["start"],
+            )
+            self.add_dependency("end", "func_4a")
+        return x + 10
+    
+    @worker(dependencies=["start"])
+    async def func_1(self, x: int):
+        return x + 1
+    
+    @worker(dependencies=["start"])
+    async def func_2(self, x: int):
+        return x + 2
+    
+    @worker(dependencies=["func_1", "func_2"], args_mapping_rule=ArgsMappingRule.MERGE)
+    async def end(self, results: List[int], rtx = System("runtime_context")):
+        result = sum(results)
+        local_space = self.get_local_space(rtx)
+        is_first_run = local_space.get("is_first_run", False)
+        if not is_first_run:
+            local_space["is_first_run"] = True
+            # Test case for replacing worker `func_4a` with `func_4` during the [Running Phase]
+            self.remove_worker("func_4a")
+            self.add_func_as_worker(
+                key="func_4",
+                func=self.func_4,
+                dependencies=["start"],
+            )
+            self.add_dependency("end", "func_4")
+            # The above topology change will take effect in the next DS, triggered by ferry_to().
+            self.ferry_to("start", result)
+        return result
+
+    async def func_3a(self, x: int):
+        return x + 13
+    
+    async def func_3(self, x: int):
+        return x + 3
+
+    async def func_4a(self, x: int):
+        return x + 14
+    
+    async def func_4(self, x: int):
+        return x + 4
+
+@pytest.fixture
+def dynamic_flow_11():
+    flow = DynamicFlow_11_AddDependency(output_worker_key="end")
+    # Test case for adding dependencies during the [Initialization Phase]
+    flow.add_func_as_worker(
+        key="func_3a",
+        func=flow.func_3a,
+        dependencies=["start"],
+    )
+    flow.add_dependency("end", "func_3a")
+
+    # Replace worker `func_a3` with `func_3`
+    flow.remove_worker("func_3a")
+    flow.add_func_as_worker(
+        key="func_3",
+        func=flow.func_3,
+        dependencies=["start"],
+    )
+    flow.add_dependency("end", "func_3")
+
+    return flow
+
+@pytest.mark.asyncio
+async def test_dynamic_flow_11(dynamic_flow_11):
+    result = await dynamic_flow_11.arun(x=100)
+    expected_result = (100 + 10 + 1) + (100 + 10 + 2) + (100 + 10 + 3)  + (100 + 10 + 14)
+    expected_result = (expected_result + 10 + 1) + (expected_result + 10 + 2) + (expected_result + 10 + 3)  + (expected_result + 10 + 4)
+    assert result == expected_result
+
 ##############################################################
 ########## Following: Error && Exception Test Cases ##########
 ##############################################################
@@ -555,3 +723,43 @@ def dynamic_flow_e():
 async def test_dynamic_flow_e(dynamic_flow_e):
     with pytest.raises(AutomaCompilationError, match=r".* not meet the DAG constraints, .* in cycle: .*"):
         await dynamic_flow_e.arun(x=1, y=2)
+
+###################### add_dependency() Error test cases #############################
+
+class DynamicFlow_F_AddDependencyFromNotExist(GraphAutoma):
+    @worker(is_start=True)
+    async def func_1(self, x: int):
+        self.add_dependency("func_2", "func_1")
+        return x + 1
+
+@pytest.fixture
+def dynamic_flow_f():
+    flow = DynamicFlow_F_AddDependencyFromNotExist(output_worker_key="func_1")
+    return flow
+
+@pytest.mark.asyncio
+async def test_dynamic_flow_f(dynamic_flow_f):
+    with pytest.raises(AutomaRuntimeError, match="fail to add dependency from a worker that does not exist"):
+        await dynamic_flow_f.arun(x=1)
+
+########
+
+class DynamicFlow_G_AddDependencyAlreadyExist(GraphAutoma):
+    @worker(is_start=True)
+    async def func_1(self, x: int):
+        return x + 1
+
+    @worker(dependencies=["func_1"])
+    async def func_2(self, x: int):
+        self.add_dependency("func_2", "func_1")
+        return x + 2
+
+@pytest.fixture
+def dynamic_flow_g():
+    flow = DynamicFlow_G_AddDependencyAlreadyExist(output_worker_key="func_2")
+    return flow
+
+@pytest.mark.asyncio
+async def test_dynamic_flow_g(dynamic_flow_g):
+    with pytest.raises(AutomaRuntimeError, match="dependency from 'func_2' to 'func_1' already exists"):
+        await dynamic_flow_g.arun(x=1)

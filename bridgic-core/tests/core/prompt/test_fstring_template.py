@@ -12,9 +12,9 @@ async def test_fstring_format_message():
     assert template._find_variables() == ["name", "project"]
 
     message = template.format_message(role="user", name="John", project="Bridgic")
-    assert message == Message(
+    assert message == Message.from_text(
         role="user",
-        content=TEMPLATE_STR.format(name="John", project="Bridgic"),
+        text=TEMPLATE_STR.format(name="John", project="Bridgic"),
     )
 
 @pytest.mark.asyncio

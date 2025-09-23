@@ -38,7 +38,7 @@ class GoapAutomaMeta(ABCMeta):
             goal_config = None
             worker_kwargs = getattr(attr_value, "__worker_kwargs__", None)
             if worker_kwargs is not None:
-                complete_args = packup_worker_decorator_rumtime_args(WorkerDecoratorType.GoapAutomaMethod, worker_kwargs)
+                complete_args = packup_worker_decorator_rumtime_args(cls, WorkerDecoratorType.GoapAutomaMethod, worker_kwargs)
                 # Use complete_args to configure worker_config.
                 # Note: We are extracting configuration information here, not runtime information.
                 # So try to keep the stored configuration format consistent with the original format.

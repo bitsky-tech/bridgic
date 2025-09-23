@@ -1,0 +1,76 @@
+site_name: Bridgic
+nav:
+  - Home:
+    - index: home/index.md
+    - Concepts: home/concepts.md
+    - Installation: home/installation.md
+    - Quick Start: home/quick_start.md
+    - Examples: home/examples.md
+  - API Reference:
+    - index: api/index.md
+    - Automa:
+      - GraphAutoma: api/bridgic-core/bridgic/core/automa/graph_automa.md
+      - EventHandling: api/bridgic-core/bridgic/core/automa/interaction/event_handling.md
+      - BaseLlm: api/bridgic-core/bridgic/core/intelligence/base_llm.md
+  - About: about/index.md
+
+theme: 
+  name: material
+  features:
+    - navigation.instant
+    - navigation.prune
+    - navigation.tabs
+    - navigation.indexes
+    - navigation.top
+    - navigation.footer
+    - toc.follow
+    - content.code.copy
+    - search.suggest
+    - search.highlight
+  palette:
+      - media: (prefers-color-scheme)
+        toggle:
+          icon: material/brightness-auto
+          name: Switch to light mode
+      - accent: purple
+        media: "(prefers-color-scheme: light)"
+        primary: white
+        scheme: default
+        toggle:
+          icon: material/brightness-7
+          name: Switch to dark mode
+      - accent: purple
+        media: "(prefers-color-scheme: dark)"
+        primary: black
+        scheme: slate
+        toggle:
+          icon: material/brightness-4
+          name: Switch to system preference
+plugins: 
+  - search
+  - autorefs
+  - mkdocstrings:
+      handlers:
+        python:
+          options:
+            docstring_options:
+              ignore_init_summary: true
+            docstring_style: numpy
+            extensions:
+              - griffe_fieldz
+            filters:
+              - "!^_"
+              - "!^__init__"
+            members_order: source
+            merge_init_into_class: false
+            separate_signature: true
+            show_root_full_path: true
+            show_root_heading: false
+            show_root_toc_entry: false
+            show_signature_annotations: true
+            signature_crossrefs: true
+          paths: 
+            - ../bridgic-core
+
+markdown_extensions:
+  - attr_list

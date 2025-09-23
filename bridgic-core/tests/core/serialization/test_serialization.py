@@ -1,5 +1,6 @@
 import msgpack
 from typing import Dict, List, Any, Set
+from typing_extensions import override
 import pytest
 from bridgic.core.automa.worker import Worker
 from bridgic.core.serialization import Serializable, Picklable
@@ -87,18 +88,14 @@ def test_enum_serialization():
 # Test a custom Serializable object.
 # Worker is serializable.
 class MyWorker1(Worker):
+    @override
     def dump_to_dict(self) -> Dict[str, Any]:
-        return {
-            "outbuf": self.output_buffer,
-            "local_space": self.local_space,
-        }
-    
-    @classmethod
-    def load_from_dict(cls, state_dict: Dict[str, Any]) -> "MyWorker1":
-        w = MyWorker1()
-        w.output_buffer = state_dict["outbuf"]
-        w.local_space = state_dict["local_space"]
-        return w
+        state_dict = super().dump_to_dict()
+        return state_dict
+
+    @override
+    def load_from_dict(self, state_dict: Dict[str, Any]) -> None:
+        super().load_from_dict(state_dict)
 
 
 @pytest.fixture
@@ -106,7 +103,6 @@ def worker_a():
     w = MyWorker1()
     # Initialize just for test
     w.output_buffer = "Hello, Bridgic in Output Buffer!"
-    w.local_space = {"a": 1, "b": 2}
     return w
 
 def test_custom_serialization(worker_a: MyWorker1):
@@ -116,7 +112,6 @@ def test_custom_serialization(worker_a: MyWorker1):
     obj = msgpackx.load_bytes(data)
     assert type(obj) is MyWorker1
     assert obj.output_buffer == worker_a.output_buffer
-    assert obj.local_space == worker_a.local_space
 
     # Test a json including a Serializable object
     orig = {
@@ -129,7 +124,6 @@ def test_custom_serialization(worker_a: MyWorker1):
     assert type(obj) is dict
     assert obj["key1"] == orig["key1"]
     assert obj["key2"].output_buffer == orig["key2"].output_buffer
-    assert obj["key2"].local_space == orig["key2"].local_space
 
 # Test a Picklable object
 class MyWorker2(Picklable):
@@ -140,7 +134,6 @@ def worker_b():
     w = MyWorker2()
     # Initialize just for test
     w.output_buffer = ["Hello, Bridgic in Output Buffer!", "(Picklable)"]
-    w.local_space = {"x": 100, "y": 333, "c": "Hello, Bridgic!"}
     return w
 
 def test_pickle_serialization(worker_a: MyWorker1, worker_b: MyWorker2):
@@ -150,7 +143,6 @@ def test_pickle_serialization(worker_a: MyWorker1, worker_b: MyWorker2):
     obj = msgpackx.load_bytes(data)
     assert type(obj) is MyWorker2
     assert obj.output_buffer == worker_b.output_buffer
-    assert obj.local_space == worker_b.local_space
 
     # Test a json including a Picklable object and a Serializable object!!
     orig = {
@@ -166,9 +158,7 @@ def test_pickle_serialization(worker_a: MyWorker1, worker_b: MyWorker2):
     assert type(obj) is dict
     assert obj["key1"]["a"] == orig["key1"]["a"]
     assert obj["key1"]["b"].output_buffer == orig["key1"]["b"].output_buffer
-    assert obj["key1"]["b"].local_space == orig["key1"]["b"].local_space
     assert obj["key2"].output_buffer == orig["key2"].output_buffer
-    assert obj["key2"].local_space == orig["key2"].local_space
 
 # Test an object whose serialization is not supported.
 # Neither Serializable nor Picklable is implemented.
@@ -180,7 +170,6 @@ def worker_c():
     w = MyWorker3()
     # Initialize just for test
     w.output_buffer = "Not serializable"
-    w.local_space = {"x": 100, "y": 333, "c": "Hello, Bridgic!"}
     return w
 
 def test_unsupported_serialization(worker_c: MyWorker3):
@@ -193,7 +182,6 @@ def test_pickle_fallback(worker_c: MyWorker3):
     obj = msgpackx.load_bytes(data)
     assert type(obj) is MyWorker3
     assert obj.output_buffer == worker_c.output_buffer
-    assert obj.local_space == worker_c.local_space
 
 # Test a Pydantic BaseModel object
 class Dog(BaseModel):

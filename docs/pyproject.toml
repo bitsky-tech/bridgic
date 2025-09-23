@@ -1,0 +1,13 @@
+[project]
+name = "bridgic-docs"
+version = "0.1.0"
+description = "Documentation for Bridgic framework."
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "griffe-fieldz>=0.3.0",
+    "mkdocs>=1.6.1",
+    "mkdocs-autorefs>=1.4.3",
+    "mkdocs-material>=9.6.19",
+    "mkdocstrings[python]>=0.30.0",
+]

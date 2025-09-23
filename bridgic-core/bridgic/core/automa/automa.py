@@ -13,14 +13,11 @@ class RunningOptions(BaseModel):
 class Automa(Worker, metaclass=ABCMeta):
     _running_options: RunningOptions
 
-    def __init__(self, name: str = None, state_dict: Optional[Dict[str, Any]] = None):
-        super().__init__(state_dict=state_dict)
+    def __init__(self, name: str = None):
+        super().__init__()
 
         # Set the name of the Automa instance.
-        if state_dict is None:
-            self.name = name or f"automa-{uuid.uuid4().hex[:8]}"
-        else:
-            self.name = state_dict["name"]
+        self.name = name or f"automa-{uuid.uuid4().hex[:8]}"
 
         # Initialize the shared running options.
         self._running_options = RunningOptions()
@@ -30,6 +27,11 @@ class Automa(Worker, metaclass=ABCMeta):
         state_dict = super().dump_to_dict()
         state_dict["name"] = self.name
         return state_dict
+
+    @override
+    def load_from_dict(self, state_dict: Dict[str, Any]) -> None:
+        super().load_from_dict(state_dict)
+        self.name = state_dict["name"]
 
     def is_top_level(self) -> bool:
         """

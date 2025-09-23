@@ -43,7 +43,7 @@ class SubtaskingExample_SearchOrchestrator(GraphAutoma):
             dependencies=[f"search_by_{subtask.aspect}" for subtask in subtasks],
             args_mapping_rule=ArgsMappingRule.MERGE,
         )
-        self.set_output_worker("synthesize_search_results")
+        self.output_worker_key = "synthesize_search_results"
 
         # The return value is not used in this example.
         return subtasks

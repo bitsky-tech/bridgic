@@ -2,9 +2,12 @@
 Test cases for rerunning an Automa instance.
 """
 
-from bridgic.core.automa import worker, GraphAutoma
 import pytest
-from typing import Dict, Any
+from bridgic.core.automa import worker, GraphAutoma
+from bridgic.core.automa.graph_automa import RuntimeContext
+from bridgic.core.automa.interaction import Event
+from bridgic.core.automa.interaction import InteractionFeedback, InteractionException
+from bridgic.core.automa.serialization import Snapshot
 
 #### Test case: rerun an Automa instance.
 
@@ -34,7 +37,7 @@ async def test_single_automa_rerun(arithmetic: ArithmeticAutoma):
     result = await arithmetic.arun(x=10)
     assert result == 35
 
-#### Test case: rerun a nested Automa instance by ferry-to. The states (counter) of the nested Automa should be maintained after rerun.
+#### Test case: rerun a nested Automa instance by ferry-to. The states (counter) of the nested Automa can be maintained after rerun.
 
 class TopAutoma(GraphAutoma):
     # The start worker is a nested Automa which will be added by add_worker()
@@ -47,9 +50,12 @@ class TopAutoma(GraphAutoma):
             return my_list
 
 class NestedAutoma(GraphAutoma):
+    def should_reset_local_space(self) -> bool:
+        return False
+    
     @worker(is_start=True)
     async def counter(self):
-        local_space: Dict[str, Any] = self.counter.local_space
+        local_space = self.get_local_space(runtime_context=RuntimeContext(worker_key="counter"))
         local_space["count"] = local_space.get("count", 0) + 1
         return local_space["count"]
 
@@ -73,3 +79,189 @@ async def test_nested_automa_rerun(topAutoma):
     # First run.
     result = await topAutoma.arun()
     assert result == ['bridgic'] * 5
+
+#### Test case: rerun an Automa that contains a worker with a human interaction.
+
+# Shared fixtures for all test cases.
+@pytest.fixture(scope="session")
+def db_base_path(tmp_path_factory):
+    return tmp_path_factory.mktemp("data")
+
+class AdderAutoma(GraphAutoma):
+    @worker(is_start=True)
+    async def func_1(self, x: int):
+        return x + 1
+
+    @worker(dependencies=["func_1"])
+    async def func_2(self, x: int):
+        event = Event(
+            event_type="if_add",
+            data={
+                "prompt_to_user": f"Current value is {x}, do you want to add another 200 to it (yes/no) ?"
+            }
+        )
+        feedback: InteractionFeedback = self.interact_with_human(event)
+        if feedback.data == "yes":
+            x += 200
+        return x + 2
+
+@pytest.fixture
+def adder_automa():
+    return AdderAutoma(output_worker_key="func_2")
+
+@pytest.mark.asyncio
+async def test_adder_automa_to_run(adder_automa: AdderAutoma, request, db_base_path):
+    try:
+        result = await adder_automa.arun(x=5)
+    except InteractionException as e:
+        assert len(e.interactions) == 1
+        for interaction in e.interactions:
+            assert interaction.event.event_type == "if_add"
+            assert "Current value is 6" in interaction.event.data["prompt_to_user"]
+        assert type(e.snapshot.serialized_bytes) is bytes
+        # Send e.interactions to human. Here is a simulation.
+        interaction_ids = [interaction.interaction_id for interaction in e.interactions]
+        request.config.cache.set("interaction_ids", interaction_ids)
+        # Persist the snapshot to an external storage. Here is a simulation implementation using file storage.
+        # Use the Automa instance / scenario name as the search index name.
+        bytes_file = db_base_path / "adder_automa.bytes"
+        version_file = db_base_path / "adder_automa.version"
+        bytes_file.write_bytes(e.snapshot.serialized_bytes)
+        version_file.write_text(e.snapshot.serialization_version)
+
+# Utility function to deserialize a TopGraph from a bytes file and a version file.
+def deserialize_adder_automa(bytes_file, version_file):
+        serialized_bytes = bytes_file.read_bytes()
+        serialization_version = version_file.read_text()
+        snapshot = Snapshot(
+            serialized_bytes=serialized_bytes, 
+            serialization_version=serialization_version
+        )
+        # Snapshot is restored.
+        assert snapshot.serialization_version == AdderAutoma.SERIALIZATION_VERSION
+        deserialized_graph = AdderAutoma.load_from_snapshot(snapshot)
+        assert type(deserialized_graph) is AdderAutoma
+        return deserialized_graph
+
+@pytest.fixture
+def adder_automa_deserialized_first(db_base_path):
+        bytes_file = db_base_path / "adder_automa.bytes"
+        version_file = db_base_path / "adder_automa.version"
+        return deserialize_adder_automa(bytes_file, version_file)
+
+@pytest.fixture
+def feedback_yes(request):
+    interaction_ids = request.config.cache.get("interaction_ids", None)
+    feedback_yes = InteractionFeedback(
+        interaction_id=interaction_ids[0],
+        data="yes"
+    )
+    return feedback_yes
+
+@pytest.mark.asyncio
+async def test_adder_automa_deserialized_rerun_to_interaction(feedback_yes, adder_automa_deserialized_first, request, db_base_path):
+    result = await adder_automa_deserialized_first.arun(
+        interaction_feedback=feedback_yes
+    )
+    assert result == 6 + 200 + 2
+
+    #### Test case continue: rerun the deserialized Automa for the second time.
+    try:
+        result = await adder_automa_deserialized_first.arun(x=15)
+    except InteractionException as e:
+        assert len(e.interactions) == 1
+        for interaction in e.interactions:
+            assert interaction.event.event_type == "if_add"
+            assert "Current value is 16" in interaction.event.data["prompt_to_user"]
+        assert type(e.snapshot.serialized_bytes) is bytes
+        # Send e.interactions to human. Here is a simulation.
+        interaction_ids = [interaction.interaction_id for interaction in e.interactions]
+        request.config.cache.set("interaction_ids", interaction_ids)
+        # Persist the snapshot to an external storage. Here is a simulation implementation using file storage.
+        # Use the Automa instance / scenario name as the search index name.
+        bytes_file = db_base_path / "adder_automa_rerun.bytes"
+        version_file = db_base_path / "adder_automa_rerun.version"
+        bytes_file.write_bytes(e.snapshot.serialized_bytes)
+        version_file.write_text(e.snapshot.serialization_version)
+
+@pytest.fixture
+def adder_automa_deserialized_second(db_base_path):
+        bytes_file = db_base_path / "adder_automa_rerun.bytes"
+        version_file = db_base_path / "adder_automa_rerun.version"
+        return deserialize_adder_automa(bytes_file, version_file)
+
+@pytest.fixture
+def feedback_no(request):
+    interaction_ids = request.config.cache.get("interaction_ids", None)
+    feedback_no = InteractionFeedback(
+        interaction_id=interaction_ids[0],
+        data="no"
+    )
+    return feedback_no
+
+@pytest.mark.asyncio
+async def test_adder_automa_deserialized_rerun_to_end(feedback_no, adder_automa_deserialized_second):
+    result = await adder_automa_deserialized_second.arun(
+        interaction_feedback=feedback_no
+    )
+    assert result == 16 + 2
+
+#### Test case: run ==> topology change ==> rerun.
+
+class AdderFlow_1(GraphAutoma):
+    @worker(is_start=True)
+    async def func_1(self, x: int):
+        return x + 1
+
+    async def func_2(self, x: int):
+        return x + 2
+
+@pytest.fixture
+def adder_flow_1():
+    return AdderFlow_1(output_worker_key="func_1")
+
+@pytest.mark.asyncio
+async def test_adder_flow_1_rerun(adder_flow_1):
+    # First run.
+    result = await adder_flow_1.arun(x=100)
+    assert result == 100 + 1
+    # Topology change.
+    adder_flow_1.add_func_as_worker(
+        key="func_2",
+        func=adder_flow_1.func_2,
+    )
+    adder_flow_1.add_dependency("func_2", "func_1")
+    adder_flow_1.output_worker_key = "func_2"
+    # Second run.
+    result = await adder_flow_1.arun(x=100)
+    assert result == 100 + 1 + 2
+
+class AdderFlow_2(GraphAutoma):
+    @worker(is_start=True)
+    async def func_1(self, x: int):
+        return x + 1
+
+    async def func_2(self, x: int):
+        return x + 2
+
+@pytest.fixture
+def adder_flow_2():
+    return AdderFlow_2(output_worker_key="func_1")
+
+@pytest.mark.asyncio
+async def test_adder_flow_2_rerun(adder_flow_2):
+    # First run.
+    result = await adder_flow_2.arun(x=100)
+    assert result == 100 + 1
+    # Topology change.
+    # Remove a start worker and re-add a new start worker.
+    adder_flow_2.remove_worker("func_1")
+    adder_flow_2.add_func_as_worker(
+        key="func_2",
+        func=adder_flow_2.func_2,
+        is_start=True,
+    )
+    adder_flow_2.output_worker_key = "func_2"
+    # Second run.
+    result = await adder_flow_2.arun(x=100)
+    assert result == 100 + 2
