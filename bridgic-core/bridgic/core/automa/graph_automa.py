@@ -19,7 +19,8 @@ from bridgic.core.types.error import *
 from bridgic.core.utils.inspect_tools import get_param_names_by_kind
 from bridgic.core.utils.args_map import safely_map_args
 from bridgic.core.automa import Automa
-from bridgic.core.automa.worker_decorator import packup_worker_decorator_rumtime_args, get_worker_decorator_default_paramap, WorkerDecoratorType, ArgsMappingRule
+from bridgic.core.automa.worker_decorator import packup_worker_decorator_rumtime_args, get_worker_decorator_default_paramap, ArgsMappingRule
+from bridgic.core.types.common import AutomaType
 from bridgic.core.automa.worker.callable_worker import CallableWorker
 from bridgic.core.automa.interaction import Event, FeedbackSender, EventHandlerType, InteractionFeedback, Feedback, Interaction, InteractionException
 from bridgic.core.automa.serialization import Snapshot
@@ -205,7 +206,7 @@ class GraphAutomaMeta(ABCMeta):
                     cls.worker_decorator_type(), 
                     worker_kwargs
                 )
-                default_paramap = get_worker_decorator_default_paramap(WorkerDecoratorType.GraphAutomaDefault)
+                default_paramap = get_worker_decorator_default_paramap(AutomaType.Graph)
                 func = attr_value
                 setattr(func, "__is_worker__", True)
                 setattr(func, "__worker_key__", complete_args.get("key", default_paramap["key"]))
@@ -256,8 +257,8 @@ class GraphAutomaMeta(ABCMeta):
         setattr(cls, "_registered_worker_funcs", registered_worker_funcs)
         return cls
     
-    def worker_decorator_type(cls) -> WorkerDecoratorType:
-        return WorkerDecoratorType.GraphAutomaDefault
+    def worker_decorator_type(cls) -> AutomaType:
+        return AutomaType.Graph
 
     @classmethod
     def validate_dag_constraints(mcls, forward_dict: Dict[str, List[str]]):
@@ -498,7 +499,7 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         self._worker_forwards = {}
         self._workers_dynamic_states = {}
 
-        if cls.worker_decorator_type() == WorkerDecoratorType.GraphAutomaDefault:
+        if cls.worker_decorator_type() == AutomaType.Graph:
             # The _registered_worker_funcs data are from @worker decorators.
             for worker_key, worker_func in cls._registered_worker_funcs.items():
                 # The decorator based mechanism (i.e. @worker) is based on the add_worker() interface.

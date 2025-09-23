@@ -1,17 +1,11 @@
 import inspect
 from enum import Enum
-from typing_extensions import overload, TypeAlias
+from typing_extensions import overload
 from typing import List, Callable, Optional, Dict, Any, Union
 
-from bridgic.core.types.common import ZeroToOne, PromptTemplate
 from bridgic.core.utils.inspect_tools import get_default_paramaps_of_overloaded_funcs
 from bridgic.core.types.error import WorkerSignatureError
-
-# Constant Definitions
-class WorkerDecoratorType(Enum):
-    GraphAutomaDefault = 1
-    OnlyKeySettingAllowed = 2
-    KeyAndArgsMappingSettingAllowed = 3
+from bridgic.core.types.common import AutomaType
 
 class ArgsMappingRule(Enum):
     """
@@ -94,10 +88,10 @@ def worker(**kwargs) -> Callable:
         return func
     return wrapper
 
-def get_worker_decorator_default_paramap(worker_decorator_type: WorkerDecoratorType) -> Dict[str, Any]:
+def get_worker_decorator_default_paramap(worker_decorator_type: AutomaType) -> Dict[str, Any]:
     return get_worker_decorator_default_paramap.__saved_paramaps[worker_decorator_type]
 
-def _extract_default_paramaps() -> Dict[WorkerDecoratorType, Dict[str, Any]]:
+def _extract_default_paramaps() -> Dict[AutomaType, Dict[str, Any]]:
     """
     This ensures that retrieving default argument mappings is independent of the order in which worker decorators are defined.
     """
@@ -105,18 +99,18 @@ def _extract_default_paramaps() -> Dict[WorkerDecoratorType, Dict[str, Any]]:
     paramaps = {}
     for params_default in params_defaults_list:
         if "dependencies" in params_default:
-            paramaps[WorkerDecoratorType.GraphAutomaDefault] = params_default
+            paramaps[AutomaType.Graph] = params_default
         elif "args_mapping_rule" in params_default:
-            paramaps[WorkerDecoratorType.KeyAndArgsMappingSettingAllowed] = params_default
+            paramaps[AutomaType.Sequential] = params_default
         else:
-            paramaps[WorkerDecoratorType.OnlyKeySettingAllowed] = params_default
+            paramaps[AutomaType.Concurrent] = params_default
     return paramaps
 
 get_worker_decorator_default_paramap.__saved_paramaps = _extract_default_paramaps()
 
 def packup_worker_decorator_rumtime_args(
         automa_class_type: type,
-        worker_decorator_type: WorkerDecoratorType,
+        worker_decorator_type: AutomaType,
         worker_kwargs: Dict[str, Any],
     ) -> Dict[str, Any]:
     default_paramap = get_worker_decorator_default_paramap(worker_decorator_type)
