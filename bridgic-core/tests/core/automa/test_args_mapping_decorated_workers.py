@@ -548,29 +548,36 @@ async def test_flow_II_keyword_inputs(flow_II):
     assert coord3.x == 1
     assert coord3.y == 2
 
-class Flow_III_ErrorTest_MERGE(GraphAutoma):
+class Flow_III_Test_MERGE(GraphAutoma):
+    """
+    Test case for only one depenency when args_mapping_rule is ArgsMappingRule.MERGE.
+    This case is valid.
+    """
     @worker(is_start=True)
     async def start(self, x: int, y):
         return [x, y]
 
     @worker(dependencies=["start"], args_mapping_rule=ArgsMappingRule.MERGE)
     async def end(self, my_list: Tuple[int, int]):
-        # This will raise an error due to only one dependency.
-        return Coordinate(my_list[0], my_list[1])
+        assert len(my_list) == 1
+        coord = my_list[0]
+        return Coordinate(coord[0], coord[1])
 
 @pytest.fixture
 def flow_III():
-    flow = Flow_III_ErrorTest_MERGE(output_worker_key="end")
+    flow = Flow_III_Test_MERGE(output_worker_key="end")
     return flow
 
 @pytest.mark.asyncio
 async def test_flow_III(flow_III):
     # Test case for positional input arguments.
-    with pytest.raises(WorkerArgsMappingError, match="must has at least 2 dependencies"):
-        await flow_III.arun(2, 3)
+    coord = await flow_III.arun(2, 3)
+    assert coord.x == 2
+    assert coord.y == 3
     # Test case for keyword input arguments.
-    with pytest.raises(WorkerArgsMappingError, match="must has at least 2 dependencies"):
-        await flow_III.arun(x=2, y=3)
+    coord = await flow_III.arun(x=2, y=3)
+    assert coord.x == 2
+    assert coord.y == 3
 
 class Flow_IV_ErrorTest_MERGE(GraphAutoma):
     @worker(is_start=True)

@@ -10,8 +10,9 @@ from bridgic.core.types.error import WorkerSignatureError
 # Constant Definitions
 class WorkerDecoratorType(Enum):
     GraphAutomaMethod = 1
-    GoapAutomaMethod = 2
-    LlmpAutomaMethod = 3
+    OnlyKeySettingAllowedMethod = 2
+    GoapAutomaMethod = 3
+    LlmpAutomaMethod = 4
 
 class ArgsMappingRule(Enum):
     """
@@ -42,7 +43,7 @@ def worker(
     args_mapping_rule: ArgsMappingRule = ArgsMappingRule.AS_IS,
 ) -> Callable:
     """
-    A decorator that marks a method as a worker within an GraphAutoma class. The worker's behavior can be customized through the decorator's parameters.
+    A decorator that marks a method as a worker within a subclass of GraphAutoma. The worker's behavior can be customized through the decorator's parameters.
 
     Parameters
     ----------
@@ -54,6 +55,21 @@ def worker(
         Whether the decorated callable is a start worker. True means it is, while False means it is not.
     args_mapping_rule : ArgsMappingRule
         The rule of arguments mapping.
+    """
+    ...
+
+@overload
+def worker(
+    *,
+    key: Optional[str] = None,
+) -> Callable:
+    """
+    A decorator that marks a method as a worker within a subclass of ConcurrentAutoma or ReActAutoma.
+
+    Parameters
+    ----------
+    key : Optional[str]
+        The key of the worker. If not provided, the key of the decorated callable will be used.
     """
     ...
 
@@ -144,32 +160,24 @@ def _extract_default_paramaps() -> Dict[WorkerDecoratorType, Dict[str, Any]]:
             paramaps[WorkerDecoratorType.GoapAutomaMethod] = params_default
         elif "canonical_description" in params_default:
             paramaps[WorkerDecoratorType.LlmpAutomaMethod] = params_default
+        else:
+            paramaps[WorkerDecoratorType.OnlyKeySettingAllowedMethod] = params_default
     return paramaps
 
 get_worker_decorator_default_paramap.__saved_paramaps = _extract_default_paramaps()
 
 def packup_worker_decorator_rumtime_args(
+        automa_class_type: type,
         worker_decorator_type: WorkerDecoratorType,
         worker_kwargs: Dict[str, Any],
     ) -> Dict[str, Any]:
-    def _map_worker_decorator_type_to_automa():
-        if worker_decorator_type == WorkerDecoratorType.GraphAutomaMethod:
-            from bridgic.core.automa.graph_automa import GraphAutoma
-            return GraphAutoma.__name__
-        elif worker_decorator_type == WorkerDecoratorType.GoapAutomaMethod:
-            from bridgic.core.automa.goap_automa import GoapAutoma
-            return GoapAutoma.__name__
-        elif worker_decorator_type == WorkerDecoratorType.LlmpAutomaMethod:
-            from bridgic.core.automa.llmp_automa import LlmpAutoma
-            return LlmpAutoma.__name__
-
     default_paramap = get_worker_decorator_default_paramap(worker_decorator_type)
     # Validation One: filter extra args
     extra_args = set(worker_kwargs.keys()) - set(default_paramap.keys())
     if extra_args:
         raise WorkerSignatureError(
             f"Unexpected arguments: {extra_args} for worker decorator when it is decorating "
-            f"{_map_worker_decorator_type_to_automa()} method"
+            f"{automa_class_type.__name__} method"
         )
     # Validation Two: validate required parameters
     missing_params = set(default_paramap.keys()) - set(worker_kwargs.keys())
@@ -177,7 +185,7 @@ def packup_worker_decorator_rumtime_args(
     if missing_required_params:
         raise WorkerSignatureError(
             f"Missing required parameters: {missing_required_params} for worker decorator "
-            f"when it is decorating {_map_worker_decorator_type_to_automa()} method"
+            f"when it is decorating {automa_class_type.__name__} method"
         )
     # Packup and return
     return {**default_paramap, **worker_kwargs}

@@ -1207,7 +1207,7 @@ async def test_flow_C_run(flow_C_run):
 
 class Flow_I(GraphAutoma):
     """
-    Test case for mutiple depenencies when args_mapping_rule is ArgsMappingRule.MERGE.
+    Test case for one/multiple depenencies when args_mapping_rule is ArgsMappingRule.MERGE.
     """
     ...
 
@@ -1545,7 +1545,11 @@ async def test_flow_II_run_keyword_inputs(flow_II_run):
     assert coord3.x == 1
     assert coord3.y == 2
 
-class Flow_III_ErrorTest(GraphAutoma):
+class Flow_III(GraphAutoma):
+    """
+    Test case for only one depenency when args_mapping_rule is ArgsMappingRule.MERGE.
+    This case is valid.
+    """
     ...
 
 class FlowIIIStartAsyncWorker(Worker):
@@ -1554,12 +1558,13 @@ class FlowIIIStartAsyncWorker(Worker):
 
 class FlowIIIEndAsyncWorker(Worker):
     async def arun(self, my_list: List[int]):
-        # This will raise an error due to only one dependency.
-        return Coordinate(my_list[0], my_list[1])
+        assert len(my_list) == 1
+        coord = my_list[0]
+        return Coordinate(coord[0], coord[1])
 
 @pytest.fixture
 def flow_III_arun():
-    flow = Flow_III_ErrorTest()
+    flow = Flow_III()
     flow.add_worker(
         "start",
         FlowIIIStartAsyncWorker(),
@@ -1577,11 +1582,13 @@ def flow_III_arun():
 @pytest.mark.asyncio
 async def test_flow_III_arun(flow_III_arun):
     # Test case for positional input arguments.
-    with pytest.raises(WorkerArgsMappingError, match="must has at least 2 dependencies"):
-        await flow_III_arun.arun(2, 3)
+    coord = await flow_III_arun.arun(2, 3)
+    assert coord.x == 2
+    assert coord.y == 3
     # Test case for keyword input arguments.
-    with pytest.raises(WorkerArgsMappingError, match="must has at least 2 dependencies"):
-        await flow_III_arun.arun(x=2, y=3)
+    coord = await flow_III_arun.arun(x=2, y=3)
+    assert coord.x == 2
+    assert coord.y == 3
 
 class FlowIIIStartSyncWorker(Worker):
     def run(self, x: int, y: int):
@@ -1589,12 +1596,21 @@ class FlowIIIStartSyncWorker(Worker):
 
 class FlowIIIEndSyncWorker(Worker):
     def run(self, my_list: List[int]):
-        # This will raise an error due to only one dependency.
         return Coordinate(my_list[0], my_list[1])
+
+class FlowIIIStartSyncWorker(Worker):
+    def run(self, x: int, y: int):
+        return [x, y]
+
+class FlowIIIEndSyncWorker(Worker):
+    def run(self, my_list: List[int]):
+        assert len(my_list) == 1
+        coord = my_list[0]
+        return Coordinate(coord[0], coord[1])
 
 @pytest.fixture
 def flow_III_run():
-    flow = Flow_III_ErrorTest()
+    flow = Flow_III()
     flow.add_worker(
         "start",
         FlowIIIStartSyncWorker(),
@@ -1612,11 +1628,13 @@ def flow_III_run():
 @pytest.mark.asyncio
 async def test_flow_III_run(flow_III_run):
     # Test case for positional input arguments.
-    with pytest.raises(WorkerArgsMappingError, match="must has at least 2 dependencies"):
-        await flow_III_run.arun(2, 3)
+    coord = await flow_III_run.arun(2, 3)
+    assert coord.x == 2
+    assert coord.y == 3
     # Test case for keyword input arguments.
-    with pytest.raises(WorkerArgsMappingError, match="must has at least 2 dependencies"):
-        await flow_III_run.arun(x=2, y=3)
+    coord = await flow_III_run.arun(x=2, y=3)
+    assert coord.x == 2
+    assert coord.y == 3
 
 class Flow_IV_ErrorTest(GraphAutoma):
     ...
