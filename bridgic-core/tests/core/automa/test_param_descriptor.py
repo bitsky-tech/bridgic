@@ -502,7 +502,7 @@ async def test_automa_with_system(automa_with_system_1: AutomaWithSystem_1):
     )
     automa_with_system_1.add_worker(
         key="worker_3",
-        worker_obj=AutomaWithSystem_2(output_worker_key="self_add"),
+        worker=AutomaWithSystem_2(output_worker_key="self_add"),
         dependencies=["worker_2"],
         args_mapping_rule=ArgsMappingRule.AS_IS,
     )
