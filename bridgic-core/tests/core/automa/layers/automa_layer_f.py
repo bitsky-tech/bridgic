@@ -14,6 +14,6 @@ class AutomaLayerF(GraphAutoma):
 
     @worker(dependencies=["datetime_worker"])
     async def transfer_datetime_worker(self, target_time: str):
-        printer.print("  transfer_datetime_worker", self.datetime_worker.output_buffer)
-        assert target_time == self.datetime_worker.output_buffer
-        return self.datetime_worker.output_buffer
+        printer.print("  transfer_datetime_worker", self._worker_output["datetime_worker"])
+        assert target_time == self._worker_output["datetime_worker"]
+        return self._worker_output["datetime_worker"]

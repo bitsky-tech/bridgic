@@ -24,8 +24,6 @@ if TYPE_CHECKING:
     from bridgic.core.automa.automa import Automa
 
 class Worker:
-    __output_buffer: Any
-    __output_has_set: bool
     __local_space: Dict[str, Any]
     
     # Cached method signatures, with no need for serialization.
@@ -40,7 +38,6 @@ class Worker:
             A dictionary for initializing the worker's runtime state. This parameter is intended for internal framework use only, specifically for deserialization, and should not be used by developers.
         """
         self.__parent: Automa = None
-        self.__output_has_set = False
         self.__local_space = {}
 
         # Cached method signatures, with no need for serialization.
@@ -120,17 +117,7 @@ class Worker:
     @parent.setter
     def parent(self, value: "Automa"):
         self.__parent = value
-
-    @property
-    def output_buffer(self) -> Any:
-        if not self.__output_has_set:
-            raise RuntimeError(f"output of worker is not ready yet")
-        return copy.deepcopy(self.__output_buffer)
     
-    @output_buffer.setter
-    def output_buffer(self, value: Any):
-        self.__output_buffer = value
-        self.__output_has_set = True
     @property
     def local_space(self) -> Dict[str, Any]:
         return self.__local_space
@@ -141,17 +128,12 @@ class Worker:
 
     def dump_to_dict(self) -> Dict[str, Any]:
         state_dict = {}
-        state_dict["output_has_set"] = self.__output_has_set
-        if self.__output_has_set:
-            state_dict["output_buffer"] = self.__output_buffer
         state_dict["local_space"] = self.__local_space
         return state_dict
 
     def load_from_dict(self, state_dict: Dict[str, Any]) -> None:
-        self.__output_has_set = state_dict["output_has_set"]
-        if self.__output_has_set:
-            self.__output_buffer = state_dict["output_buffer"]
         self.__local_space = state_dict["local_space"]
+        
     def ferry_to(self, worker_key: str, /, *args, **kwargs):
         """
         Handoff control flow to the specified worker, passing along any arguments as needed.
