@@ -16,21 +16,21 @@ class AutomaLayerA(GraphAutoma):
     @worker(dependencies=["defined_start_worker_0"], args_mapping_rule=ArgsMappingRule.SUPPRESSED)
     async def worker_1(self) -> int:
         printer.print(f"  worker_1:", "self is GraphAutoma =>", isinstance(self, GraphAutoma))
-        zero_output = self.defined_start_worker_0.output_buffer
+        zero_output = self._worker_output["defined_start_worker_0"]
         return zero_output[0]
 
     @worker(dependencies=["defined_start_worker_0"], args_mapping_rule=ArgsMappingRule.SUPPRESSED)
     async def worker_2(self, *args, **kwargs) -> int:
         printer.print("  worker_2:", "self is GraphAutoma =>", isinstance(self, GraphAutoma))
-        zero_output = self.defined_start_worker_0.output_buffer
+        zero_output = self._worker_output["defined_start_worker_0"]
         return zero_output[1]
 
     @worker(key="loop_worker_3", dependencies=["worker_1", "worker_2"], args_mapping_rule=ArgsMappingRule.SUPPRESSED)
     async def worker_3(self, rtx = System("runtime_context"), *args, **kwargs) -> int:
         await asyncio.sleep(0.25)
 
-        one_output: int = self.worker_1.output_buffer
-        two_output: int = self.worker_2.output_buffer
+        one_output: int = self._worker_output["worker_1"]
+        two_output: int = self._worker_output["worker_2"]
         one_two_sum = one_output + two_output
 
         assert one_two_sum == 3

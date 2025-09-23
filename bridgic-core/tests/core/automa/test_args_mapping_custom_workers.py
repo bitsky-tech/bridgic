@@ -92,7 +92,7 @@ class Flow1Func10AsyncWorker(Worker):
 class Flow1Func11AsyncWorker(Worker):
     async def arun(self):
         # Test the special case of returning None and no arguments are expected.
-        assert self.parent.func_10.output_buffer is None
+        assert self.parent._worker_output["func_10"] is None
 
 @pytest.fixture
 def flow_1_arun():
@@ -234,7 +234,7 @@ class Flow1Func10SyncWorker(Worker):
 class Flow1Func11SyncWorker(Worker):
     def run(self):
         # Test the special case of returning None and no arguments are expected.
-        assert self.parent.func_10.output_buffer is None
+        assert self.parent._worker_output["func_10"] is None
 
 @pytest.fixture
 def flow_1_run():
@@ -1740,7 +1740,7 @@ class Flow101StartAsyncWorker(Worker):
 
 class Flow101EndAsyncWorker(Worker):
     async def arun(self):
-        x, y = self.parent.start.output_buffer
+        x, y = self.parent._worker_output["start"]
         return x, y
 
 @pytest.fixture
@@ -1775,7 +1775,7 @@ class Flow101StartSyncWorker(Worker):
 
 class Flow101EndSyncWorker(Worker):
     def run(self):
-        x, y = self.parent.start.output_buffer
+        x, y = self.parent._worker_output["start"]
         return x, y
 
 @pytest.fixture
