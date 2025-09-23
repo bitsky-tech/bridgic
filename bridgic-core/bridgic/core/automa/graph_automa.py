@@ -118,6 +118,9 @@ class _GraphAdaptedWorker(Worker):
     def is_automa(self) -> bool:
         return isinstance(self._decorated_worker, Automa)
 
+    def get_decorated_worker(self) -> Worker:
+        return self._decorated_worker
+
 @dataclass
 class _RunnningTask:
     """

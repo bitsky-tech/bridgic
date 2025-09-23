@@ -94,21 +94,19 @@ class WorkerInjector:
             return RuntimeContext(worker_key=current_worker_key)
         elif dep.key.startswith("automa:"):
             worker_key = dep.key[7:]
-            # TODO: will optimize the performance of this part in the future with the optimization of the _GraphAdaptedWorker class.
 
             inject_res = worker_dict.get(worker_key, InjectorNone())
             if isinstance(inject_res, InjectorNone):
                 raise AutomaDataInjectionError(
                     f"the sub-atoma: `{dep.key}` is not found in current automa. "
                 )
-
-            inject_res = inject_res._decorated_worker  
-            if not isinstance(inject_res, Automa):
+  
+            if not inject_res.is_automa():
                 raise AutomaDataInjectionError(
                     f"the `{dep.key}` instance is not an Automa. "
                 )
            
-            return inject_res
+            return inject_res.get_decorated_worker()
 
     def inject(
         self, 
