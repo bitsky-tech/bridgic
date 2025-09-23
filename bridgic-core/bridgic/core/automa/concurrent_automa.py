@@ -38,7 +38,7 @@ class ConcurrentAutoma(GraphAutoma):
         # 2. The Merger worker: This worker will merge the results of all the concurrent workers.
 
         cls = type(self)
-        if cls.worker_decorator_type() == WorkerDecoratorType.OnlyKeySettingAllowedMethod:
+        if cls.worker_decorator_type() == WorkerDecoratorType.OnlyKeySettingAllowed:
             # The _registered_worker_funcs data are from @worker decorators.
             # Initialize the decorated concurrent workers.
             for worker_key, worker_func in self._registered_worker_funcs.items():
@@ -65,9 +65,9 @@ class ConcurrentAutoma(GraphAutoma):
         """
         Subclasses of GraphAutoma can declare this class method `worker_decorator_type` to specify the type of worker decorator.
 
-        Note: the worker decorator type of ConcurrentAutoma is `OnlyKeySettingAllowedMethod` because only the `key` parameter is allowed to be set by @worker decorator.
+        Note: the worker decorator type of ConcurrentAutoma is `OnlyKeySettingAllowed` because only the `key` parameter is allowed to be set by @worker decorator.
         """
-        return WorkerDecoratorType.OnlyKeySettingAllowedMethod
+        return WorkerDecoratorType.OnlyKeySettingAllowed
 
     @override
     def add_worker(

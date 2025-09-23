@@ -44,17 +44,6 @@ class Automa(Worker, metaclass=ABCMeta):
         """
         return self.parent is None
 
-    def all_workers(self) -> List[str]:
-        """
-        Gets a list containing the keys of all workers registered in this Automa.
-
-        Returns
-        -------
-        List[str]
-            A list of worker keys.
-        """
-        return list(self._workers.keys())
-
     def set_running_options(self, debug: bool = None):
         """
         Set running options for this Automa instance, and ensure these options propagate through (penetrate) all nested 

@@ -9,9 +9,9 @@ from bridgic.core.types.error import WorkerSignatureError
 
 # Constant Definitions
 class WorkerDecoratorType(Enum):
-    GraphAutomaMethod = 1
-    OnlyKeySettingAllowedMethod = 2
-    KeyAndArgsMappingSettingAllowedMethod = 3
+    GraphAutomaDefault = 1
+    OnlyKeySettingAllowed = 2
+    KeyAndArgsMappingSettingAllowed = 3
 
 class ArgsMappingRule(Enum):
     """
@@ -105,11 +105,11 @@ def _extract_default_paramaps() -> Dict[WorkerDecoratorType, Dict[str, Any]]:
     paramaps = {}
     for params_default in params_defaults_list:
         if "dependencies" in params_default:
-            paramaps[WorkerDecoratorType.GraphAutomaMethod] = params_default
+            paramaps[WorkerDecoratorType.GraphAutomaDefault] = params_default
         elif "args_mapping_rule" in params_default:
-            paramaps[WorkerDecoratorType.KeyAndArgsMappingSettingAllowedMethod] = params_default
+            paramaps[WorkerDecoratorType.KeyAndArgsMappingSettingAllowed] = params_default
         else:
-            paramaps[WorkerDecoratorType.OnlyKeySettingAllowedMethod] = params_default
+            paramaps[WorkerDecoratorType.OnlyKeySettingAllowed] = params_default
     return paramaps
 
 get_worker_decorator_default_paramap.__saved_paramaps = _extract_default_paramaps()

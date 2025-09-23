@@ -23,7 +23,7 @@ class SequentialAutoma(GraphAutoma):
         super().__init__(name=name, output_worker_key=None, thread_pool=thread_pool)
 
         cls = type(self)
-        if cls.worker_decorator_type() == WorkerDecoratorType.KeyAndArgsMappingSettingAllowedMethod:
+        if cls.worker_decorator_type() == WorkerDecoratorType.KeyAndArgsMappingSettingAllowed:
             # The _registered_worker_funcs data are from @worker decorators.
             # Initialize the decorated sequential workers.
             last_worker_key = None
@@ -47,9 +47,9 @@ class SequentialAutoma(GraphAutoma):
         """
         Subclasses of GraphAutoma can declare this class method `worker_decorator_type` to specify the type of worker decorator.
 
-        Note: the worker decorator type of SequentialAutoma is `KeyAndArgsMappingSettingAllowedMethod` because the `key` and `args_mapping_rule` parameters are allowed to be set by @worker decorator.
+        Note: the worker decorator type of SequentialAutoma is `KeyAndArgsMappingSettingAllowed` because the `key` and `args_mapping_rule` parameters are allowed to be set by @worker decorator.
         """
-        return WorkerDecoratorType.KeyAndArgsMappingSettingAllowedMethod
+        return WorkerDecoratorType.KeyAndArgsMappingSettingAllowed
 
     @override
     def add_worker(
