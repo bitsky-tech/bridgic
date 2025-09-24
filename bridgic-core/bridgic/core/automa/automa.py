@@ -44,17 +44,6 @@ class Automa(Worker, metaclass=ABCMeta):
         """
         return self.parent is None
 
-    def all_workers(self) -> List[str]:
-        """
-        Gets a list containing the keys of all workers registered in this Automa.
-
-        Returns
-        -------
-        List[str]
-            A list of worker keys.
-        """
-        return list(self._workers.keys())
-
     def set_running_options(self, debug: bool = None):
         """
         Set running options for this Automa instance, and ensure these options propagate through (penetrate) all nested 
@@ -79,26 +68,3 @@ class Automa(Worker, metaclass=ABCMeta):
             # Here we are at the top-level automa.
             return self._running_options
         return self.parent._get_top_running_options()
-
-class GoalOrientedAutoma(Automa):
-    @abstractmethod
-    def remove_worker(self, name: str) -> None:
-        """
-        Remove a worker from the Automa. In GoalOrientedAutoma and its subclasses, this method can be called at any time to remove a worker from the Automa.
-
-        Parameters
-        ----------
-        name : str
-            The name of the worker to be removed.
-
-        Returns
-        -------
-        None
-
-        Raises
-        ------
-        AutomaDeclarationError
-            If the worker specified by worker_name does not exist in the Automa, this exception will be raised.
-        """
-        ...
-        # TODO: may be removed later...
