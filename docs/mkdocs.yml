@@ -6,14 +6,14 @@ repo_name: bitsky-tech/bridgic
 edit_uri: edit/main/docs/docs/
 
 nav:
-  - Home:
-    - index: home/index.md
+  - Home: index.md
+  - Getting Started:
     - Concepts: home/concepts.md
     - Installation: home/installation.md
     - Quick Start: home/quick_start.md
     - Examples: home/examples.md
   - API Reference:
-    - index: api/index.md
+    - Index: api/index.md
     - Automa:
       - GraphAutoma: api/bridgic-core/bridgic/core/automa/graph_automa.md
       - EventHandling: api/bridgic-core/bridgic/core/automa/interaction/event_handling.md
@@ -99,6 +99,9 @@ plugins:
       minify_css: true
       htmlmin_opts:
         remove_comments: true
+  - mkdocs-jupyter:
+      execute: false
+      include_source: true
   - mkdocstrings:
       handlers:
         python:
@@ -165,12 +168,12 @@ markdown_extensions:
   - pymdownx.tilde
 
 extra:
-  analytics:
-    provider: google
-    property: !ENV GOOGLE_ANALYTICS_KEY
-  social:
-    - icon: fontawesome/brands/github
-      link: https://github.com/bitsky-tech/bridgic
+  # analytics:
+  #   provider: google
+  #   property: !ENV GOOGLE_ANALYTICS_KEY
+  # social:
+  #   - icon: fontawesome/brands/github
+  #     link: https://github.com/bitsky-tech/bridgic
     # - icon: fontawesome/brands/python
     #   link: https://pypi.org/project/bridgic/
     # - icon: fontawesome/brands/discord

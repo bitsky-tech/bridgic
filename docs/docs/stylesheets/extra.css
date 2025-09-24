@@ -2,13 +2,19 @@
 /* Custom CSS styles for Bridgic documentation site */
 /* Provides clean, professional styling with brand consistency */
 
-:root {
+:root > * {
   /* Primary theme colors */
   --md-primary-fg-color: #4f46e5;
   --md-primary-fg-color--light: #6366f1;
   --md-primary-fg-color--dark: #3730a3;
   --md-accent-fg-color: #8b5cf6;
   --md-accent-fg-color--transparent: #8b5cf61a;
+  
+  /* Background colors */
+  --md-default-bg-color: #ffffff;
+  --md-default-bg-color--light: #f8fafc;
+  --md-default-bg-color--lighter: #f1f5f9;
+  --md-default-bg-color--lightest: #e2e8f0;
   
   /* Custom brand colors - simple and clean */
   --bridgic-purple: #8b5cf6;
@@ -274,6 +280,12 @@
 [data-md-color-scheme="slate"] {
   --md-primary-fg-color: #6366f1;
   --md-accent-fg-color: #a78bfa;
+  
+  /* Dark mode background colors */
+  --md-default-bg-color: #1e1e1e;
+  --md-default-bg-color--light: #2a2a2a;
+  --md-default-bg-color--lighter: #3a3a3a;
+  --md-default-bg-color--lightest: #4a4a4a;
 }
 
 /* Dark mode hero section */
@@ -298,26 +310,30 @@
 /* SCROLLBAR STYLES */
 /* ========================================== */
 
-/* Custom scrollbar styling for webkit browsers */
 ::-webkit-scrollbar {
   width: 8px;
   height: 8px;
 }
 
-/* Scrollbar track background */
 ::-webkit-scrollbar-track {
-  background: var(--md-default-bg-color);
-}
-
-/* Scrollbar thumb styling */
-::-webkit-scrollbar-thumb {
-  background: var(--bridgic-purple);
+  background: var(--md-default-bg-color--lighter);
   border-radius: 4px;
 }
 
-/* Scrollbar thumb hover effect */
+::-webkit-scrollbar-thumb {
+  background: var(--bridgic-purple);
+  border-radius: 4px;
+  transition: background-color 0.2s ease;
+}
+
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--md-accent-fg-color--light);
+  background: var(--md-accent-fg-color);
+  opacity: 0.8;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--bridgic-purple) var(--md-default-bg-color--lighter);
 }
 
 /* ========================================== */
