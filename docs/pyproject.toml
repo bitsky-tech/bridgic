@@ -13,4 +13,6 @@ dependencies = [
     "mkdocs-git-revision-date-localized-plugin>=1.2.8",
     "mkdocs-git-committers-plugin-2>=2.3.0",
     "mkdocs-minify-plugin>=0.8.0",
+    "mkdocs-jupyter>=0.25.1",
+    "black>=25.9.0",
 ]
