@@ -12,6 +12,9 @@ nav:
     - Installation: home/installation.md
     - Quick Start: home/quick_start.md
     - Examples: home/examples.md
+  - Tutorials:
+    - Index: tutorials/index.md
+    - Parameter Passing: tutorials/parameter_passing.ipynb
   - API Reference:
     - Index: api/index.md
     - Automa:
