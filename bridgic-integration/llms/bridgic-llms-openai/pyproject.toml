@@ -13,7 +13,9 @@ authors = [
 ]
 dependencies = [
     "bridgic-core>=0.1.0.dev4",
-    "bridgic-llms-openai-like>=0.1.0.dev2",
+    "openai>=1.60.0",
+    "httpx>=0.28.1",
+    "httpx-aiohttp>=0.1.8",
 ]
 
 [dependency-groups]

@@ -9,8 +9,8 @@ from bridgic.core.intelligence.protocol import *
 from bridgic.core.utils.console import printer
 from bridgic.llms.openai.openai_llm import OpenAILlm
 
-_api_key = os.environ.get("OPEN_AI_API_KEY")
-_model_name = os.environ.get("OPEN_AI_MODEL_NAME")
+_api_key = os.environ.get("OPENAI_API_KEY")
+_model_name = os.environ.get("OPENAI_MODEL_NAME")
 
 @pytest.fixture
 def llm():
@@ -40,7 +40,7 @@ def tools():
 
 @pytest.mark.skipif(
     (_api_key is None) or (_model_name is None),
-    reason="OPEN_AI_API_KEY or OPEN_AI_MODEL_NAME is not set",
+    reason="OPENAI_API_KEY or OPENAI_MODEL_NAME is not set",
 )
 def test_openai_server_chat(llm):
     response = llm.chat(
@@ -53,7 +53,7 @@ def test_openai_server_chat(llm):
 
 @pytest.mark.skipif(
     (_api_key is None) or (_model_name is None),
-    reason="OPEN_AI_API_KEY or OPEN_AI_MODEL_NAME is not set",
+    reason="OPENAI_API_KEY or OPENAI_MODEL_NAME is not set",
 )
 def test_openai_server_stream(llm):
     response = llm.stream(
@@ -69,7 +69,7 @@ def test_openai_server_stream(llm):
 
 @pytest.mark.skipif(
     (_api_key is None) or (_model_name is None),
-    reason="OPEN_AI_API_KEY or OPEN_AI_MODEL_NAME is not set",
+    reason="OPENAI_API_KEY or OPENAI_MODEL_NAME is not set",
 )
 @pytest.mark.asyncio
 async def test_openai_server_achat(llm):
@@ -83,7 +83,7 @@ async def test_openai_server_achat(llm):
 
 @pytest.mark.skipif(
     (_api_key is None) or (_model_name is None),
-    reason="OPEN_AI_API_KEY or OPEN_AI_MODEL_NAME is not set",
+    reason="OPENAI_API_KEY or OPENAI_MODEL_NAME is not set",
 )
 @pytest.mark.asyncio
 async def test_openai_server_astream(llm):
@@ -100,7 +100,7 @@ async def test_openai_server_astream(llm):
 
 @pytest.mark.skipif(
     (_api_key is None) or (_model_name is None),
-    reason="OPEN_AI_API_KEY or OPEN_AI_MODEL_NAME is not set",
+    reason="OPENAI_API_KEY or OPENAI_MODEL_NAME is not set",
 )
 def test_openai_server_structured_output_pydantic_model(llm):
     class ThinkAndAnswer(BaseModel):
@@ -131,7 +131,7 @@ Don't think for long time. Don't answer in many words.
 
 @pytest.mark.skipif(
     (_api_key is None) or (_model_name is None),
-    reason="OPEN_AI_API_KEY or OPEN_AI_MODEL_NAME is not set",
+    reason="OPENAI_API_KEY or OPENAI_MODEL_NAME is not set",
 )
 @pytest.mark.asyncio
 async def test_openai_server_astructured_output_pydantic_model(llm):
@@ -163,7 +163,7 @@ Don't think for long time. Don't answer in many words.
 
 @pytest.mark.skipif(
     (_api_key is None) or (_model_name is None),
-    reason="OPEN_AI_API_KEY or OPEN_AI_MODEL_NAME is not set",
+    reason="OPENAI_API_KEY or OPENAI_MODEL_NAME is not set",
 )
 def test_openai_server_structured_output_json_schema(llm):
     schema = {
@@ -195,7 +195,7 @@ def test_openai_server_structured_output_json_schema(llm):
 
 @pytest.mark.skipif(
     (_api_key is None) or (_model_name is None),
-    reason="OPEN_AI_API_KEY or OPEN_AI_MODEL_NAME is not set",
+    reason="OPENAI_API_KEY or OPENAI_MODEL_NAME is not set",
 )
 @pytest.mark.asyncio
 async def test_openai_server_astructured_output_json_schema(llm):
@@ -228,7 +228,7 @@ async def test_openai_server_astructured_output_json_schema(llm):
 
 @pytest.mark.skipif(
     (_api_key is None) or (_model_name is None),
-    reason="OPEN_AI_API_KEY or OPEN_AI_MODEL_NAME is not set",
+    reason="OPENAI_API_KEY or OPENAI_MODEL_NAME is not set",
 )
 @pytest.mark.asyncio
 async def test_openai_server_astructured_output_json_schema(llm):
@@ -261,7 +261,7 @@ async def test_openai_server_astructured_output_json_schema(llm):
 
 @pytest.mark.skipif(
     (_api_key is None) or (_model_name is None),
-    reason="OPEN_AI_API_KEY or OPEN_AI_MODEL_NAME is not set",
+    reason="OPENAI_API_KEY or OPENAI_MODEL_NAME is not set",
 )
 def test_openai_server_structured_output_regex(llm):
     pattern = r"^Emails:\n(- [a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+)(\n(- [a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+))*$"
@@ -283,7 +283,7 @@ def test_openai_server_structured_output_regex(llm):
 
 @pytest.mark.skipif(
     (_api_key is None) or (_model_name is None),
-    reason="OPEN_AI_API_KEY or OPEN_AI_MODEL_NAME is not set",
+    reason="OPENAI_API_KEY or OPENAI_MODEL_NAME is not set",
 )
 @pytest.mark.asyncio
 async def test_openai_server_astructured_output_regex(llm):
@@ -307,7 +307,7 @@ async def test_openai_server_astructured_output_regex(llm):
 
 @pytest.mark.skipif(
     (_api_key is None) or (_model_name is None),
-    reason="OPEN_AI_API_KEY or OPEN_AI_MODEL_NAME is not set",
+    reason="OPENAI_API_KEY or OPENAI_MODEL_NAME is not set",
 )
 def test_openai_server_structured_output_ebnf_grammar(llm):
     ebnf_syntax = """
@@ -347,7 +347,7 @@ number ::= "2020" | "2021" | "2022" | "2023" | "2024"
 
 @pytest.mark.skipif(
     (_api_key is None) or (_model_name is None),
-    reason="OPEN_AI_API_KEY or OPEN_AI_MODEL_NAME is not set",
+    reason="OPENAI_API_KEY or OPENAI_MODEL_NAME is not set",
 )
 @pytest.mark.asyncio
 async def test_openai_server_astructured_output_ebnf_grammar(llm):
@@ -388,7 +388,7 @@ number ::= "2020" | "2021" | "2022" | "2023" | "2024"
 
 @pytest.mark.skipif(
     (_api_key is None) or (_model_name is None),
-    reason="OPEN_AI_API_KEY or OPEN_AI_MODEL_NAME is not set",
+    reason="OPENAI_API_KEY or OPENAI_MODEL_NAME is not set",
 )
 def test_openai_server_tool_select(llm, date, tools):
     response: List[ToolCall] = llm.tool_select(
@@ -416,7 +416,7 @@ def test_openai_server_tool_select(llm, date, tools):
 
 @pytest.mark.skipif(
     (_api_key is None) or (_model_name is None),
-    reason="OPEN_AI_API_KEY or OPEN_AI_MODEL_NAME is not set",
+    reason="OPENAI_API_KEY or OPENAI_MODEL_NAME is not set",
 )
 @pytest.mark.asyncio
 async def test_openai_server_atool_select(llm, date, tools):

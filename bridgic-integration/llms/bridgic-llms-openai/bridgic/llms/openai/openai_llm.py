@@ -5,7 +5,7 @@ import warnings
 from typing import List, overload, Literal
 from openai.types.chat import ChatCompletion, ChatCompletionChunk, ChatCompletionMessageFunctionToolCall
 from pydantic import BaseModel
-from openai import Stream
+from openai import Stream, OpenAI, AsyncOpenAI
 from openai.types.chat.chat_completion_message import ChatCompletionMessage
 from openai.resources.chat.completions.completions import ChatCompletionMessageParam
 from openai.types.chat.chat_completion_system_message_param import ChatCompletionSystemMessageParam
@@ -16,29 +16,24 @@ from openai.types.chat.chat_completion_tool_message_param import ChatCompletionT
 from bridgic.core.intelligence.base_llm import *
 from bridgic.core.intelligence.content import *
 from bridgic.core.intelligence.protocol import *
-from bridgic.llms.openai_like.openai_like_llm import OpenAILikeLlm
 from bridgic.core.utils.console import printer
 
-class OpenAILlm(OpenAILikeLlm, StructuredOutput, ToolSelect):
+class OpenAILlm(BaseLlm, StructuredOutput, ToolSelect):
     """
-    OpenAI LLM client implementing Bridgic's intelligence protocols.
-
-    This class provides a comprehensive interface to OpenAI's language models,
-    supporting chat completions, streaming, structured outputs, and tool calling
-    within the Bridgic framework. It inherits from OpenAILikeLlm and implements
-    the StructuredOutput and ToolSelect protocols for enhanced functionality.
+    Wrapper class for OpenAI, providing common chat and stream calling interfaces for OpenAI model
+    and implementing the common protocols in the Bridgic framework.
 
     Parameters
     ----------
     api_key : str
         The API key for OpenAI services. Required for authentication.
-    api_base : Optional[str], default=None
+    api_base : Optional[str]
         The base URL for the OpenAI API. If None, uses the default OpenAI endpoint.
-    timeout : Optional[float], default=None
+    timeout : Optional[float]
         Request timeout in seconds. If None, no timeout is applied.
-    http_client : Optional[httpx.Client], default=None
+    http_client : Optional[httpx.Client]
         Custom synchronous HTTP client for requests. If None, creates a default client.
-    http_async_client : Optional[httpx.AsyncClient], default=None
+    http_async_client : Optional[httpx.AsyncClient]
         Custom asynchronous HTTP client for requests. If None, creates a default client.
 
     Attributes
@@ -52,35 +47,33 @@ class OpenAILlm(OpenAILikeLlm, StructuredOutput, ToolSelect):
     --------
     Basic usage for chat completion:
 
-    >>> llm = OpenAILlm(api_key="your-api-key")
-    >>> messages = [Message.from_text("Hello!", role=Role.USER)]
-    >>> response = llm.chat(messages=messages, model="gpt-4")
-    >>> print(response.message.content)
+    ```python
+    llm = OpenAILlm(api_key="your-api-key")
+    messages = [Message.from_text("Hello!", role=Role.USER)]
+    response = llm.chat(messages=messages, model="gpt-4")
+    ```
 
     Structured output with Pydantic model:
 
-    >>> class Answer(BaseModel):
-    ...     reasoning: str
-    ...     result: int
-    >>> constraint = PydanticModel(model=Answer)
-    >>> structured_response = llm.structured_output(
-    ...     messages=messages,
-    ...     constraint=constraint,
-    ...     model="gpt-4"
-    ... )
+    ```python
+    class Answer(BaseModel):
+        reasoning: str
+        result: int
+
+    constraint = PydanticModel(model=Answer)
+    structured_response = llm.structured_output(
+        messages=messages,
+        constraint=constraint,
+        model="gpt-4"
+    )
+    ```
 
     Tool calling:
 
-    >>> tools = [Tool(name="calculator", description="Calculate math", parameters={})]
-    >>> tool_calls = llm.tool_select(messages=messages, tools=tools, model="gpt-4")
-
-    Notes
-    -----
-    - Supports both synchronous and asynchronous operations
-    - Handles OpenAI API refusals by issuing warnings
-    - Automatically converts between Bridgic and OpenAI message formats
-    - Implements structured output with strict JSON schema validation
-    - Provides comprehensive tool calling capabilities
+    ```python
+    tools = [Tool(name="calculator", description="Calculate math", parameters={})]
+    tool_calls = llm.tool_select(messages=messages, tools=tools, model="gpt-4")
+    ```
     """
 
     def __init__(
@@ -98,27 +91,17 @@ class OpenAILlm(OpenAILikeLlm, StructuredOutput, ToolSelect):
         ----------
         api_key : str
             The API key for OpenAI services. Required for authentication.
-        api_base : Optional[str], default=None
+        api_base : Optional[str]
             The base URL for the OpenAI API. If None, uses the default OpenAI endpoint.
-        timeout : Optional[float], default=None
+        timeout : Optional[float]
             Request timeout in seconds. If None, no timeout is applied.
-        http_client : Optional[httpx.Client], default=None
+        http_client : Optional[httpx.Client]
             Custom synchronous HTTP client for requests. If None, creates a default client.
-        http_async_client : Optional[httpx.AsyncClient], default=None
+        http_async_client : Optional[httpx.AsyncClient]
             Custom asynchronous HTTP client for requests. If None, creates a default client.
-
-        Notes
-        -----
-        This class inherits from OpenAILikeLlm and implements StructuredOutput and 
-        ToolSelect protocols for enhanced functionality.
         """
-        super().__init__(
-            api_base=api_base,
-            api_key=api_key,
-            timeout=timeout,
-            http_client=http_client,
-            http_async_client=http_async_client,
-        )
+        self.client = OpenAI(base_url=api_base, api_key=api_key, timeout=timeout, http_client=http_client)
+        self.async_client = AsyncOpenAI(base_url=api_base, api_key=api_key, timeout=timeout, http_client=http_async_client)
 
     def chat(
         self,
@@ -142,28 +125,28 @@ class OpenAILlm(OpenAILikeLlm, StructuredOutput, ToolSelect):
             A list of messages comprising the conversation so far.
         model : str
             Model ID used to generate the response, like `gpt-4o` or `gpt-4`.
-        temperature : Optional[float], default=None
+        temperature : Optional[float]
             What sampling temperature to use, between 0 and 2. Higher values like 0.8 will
             make the output more random, while lower values like 0.2 will make it more
             focused and deterministic.
-        top_p : Optional[float], default=None
+        top_p : Optional[float]
             An alternative to sampling with temperature, called nucleus sampling, where the
             model considers the results of the tokens with top_p probability mass.
-        presence_penalty : Optional[float], default=None
+        presence_penalty : Optional[float]
             Number between -2.0 and 2.0. Positive values penalize new tokens based on
             whether they appear in the text so far, increasing the model's likelihood to
             talk about new topics.
-        frequency_penalty : Optional[float], default=None
+        frequency_penalty : Optional[float]
             Number between -2.0 and 2.0. Positive values penalize new tokens based on their
             existing frequency in the text so far, decreasing the model's likelihood to
             repeat the same line verbatim.
-        max_tokens : Optional[int], default=None
+        max_tokens : Optional[int]
             The maximum number of tokens that can be generated in the chat completion.
             This value is now deprecated in favor of `max_completion_tokens`.
-        stop : Optional[List[str]], default=None
+        stop : Optional[List[str]]
             Up to 4 sequences where the API will stop generating further tokens.
             Not supported with latest reasoning models `o3` and `o3-mini`.
-        extra_body : Optional[Dict[str, Any]], default=None
+        extra_body : Optional[Dict[str, Any]]
             Add additional JSON properties to the request.
         **kwargs
             Additional keyword arguments passed to the OpenAI API.
@@ -172,11 +155,6 @@ class OpenAILlm(OpenAILikeLlm, StructuredOutput, ToolSelect):
         -------
         Response
             A response object containing the generated message and raw API response.
-
-        Notes
-        -----
-        This method converts Bridgic Message objects to OpenAI format and handles
-        potential refusal responses by issuing warnings.
         """
         msgs: List[ChatCompletionMessageParam] = [self._convert_message(msg) for msg in messages]
         response: ChatCompletion = self.client.chat.completions.create(
@@ -223,28 +201,28 @@ class OpenAILlm(OpenAILikeLlm, StructuredOutput, ToolSelect):
             A list of messages comprising the conversation so far.
         model : str
             Model ID used to generate the response, like `gpt-4o` or `gpt-4`.
-        temperature : Optional[float], default=None
+        temperature : Optional[float]
             What sampling temperature to use, between 0 and 2. Higher values like 0.8 will
             make the output more random, while lower values like 0.2 will make it more
             focused and deterministic.
-        top_p : Optional[float], default=None
+        top_p : Optional[float]
             An alternative to sampling with temperature, called nucleus sampling, where the
             model considers the results of the tokens with top_p probability mass.
-        presence_penalty : Optional[float], default=None
+        presence_penalty : Optional[float]
             Number between -2.0 and 2.0. Positive values penalize new tokens based on
             whether they appear in the text so far, increasing the model's likelihood to
             talk about new topics.
-        frequency_penalty : Optional[float], default=None
+        frequency_penalty : Optional[float]
             Number between -2.0 and 2.0. Positive values penalize new tokens based on their
             existing frequency in the text so far, decreasing the model's likelihood to
             repeat the same line verbatim.
-        max_tokens : Optional[int], default=None
+        max_tokens : Optional[int]
             The maximum number of tokens that can be generated in the chat completion.
             This value is now deprecated in favor of `max_completion_tokens`.
-        stop : Optional[List[str]], default=None
+        stop : Optional[List[str]]
             Up to 4 sequences where the API will stop generating further tokens.
             Not supported with latest reasoning models `o3` and `o3-mini`.
-        extra_body : Optional[Dict[str, Any]], default=None
+        extra_body : Optional[Dict[str, Any]]
             Add additional JSON properties to the request.
         **kwargs
             Additional keyword arguments passed to the OpenAI API.
@@ -301,28 +279,28 @@ class OpenAILlm(OpenAILikeLlm, StructuredOutput, ToolSelect):
             A list of messages comprising the conversation so far.
         model : str
             Model ID used to generate the response, like `gpt-4o` or `gpt-4`.
-        temperature : Optional[float], default=None
+        temperature : Optional[float]
             What sampling temperature to use, between 0 and 2. Higher values like 0.8 will
             make the output more random, while lower values like 0.2 will make it more
             focused and deterministic.
-        top_p : Optional[float], default=None
+        top_p : Optional[float]
             An alternative to sampling with temperature, called nucleus sampling, where the
             model considers the results of the tokens with top_p probability mass.
-        presence_penalty : Optional[float], default=None
+        presence_penalty : Optional[float]
             Number between -2.0 and 2.0. Positive values penalize new tokens based on
             whether they appear in the text so far, increasing the model's likelihood to
             talk about new topics.
-        frequency_penalty : Optional[float], default=None
+        frequency_penalty : Optional[float]
             Number between -2.0 and 2.0. Positive values penalize new tokens based on their
             existing frequency in the text so far, decreasing the model's likelihood to
             repeat the same line verbatim.
-        max_tokens : Optional[int], default=None
+        max_tokens : Optional[int]
             The maximum number of tokens that can be generated in the chat completion.
             This value is now deprecated in favor of `max_completion_tokens`.
-        stop : Optional[List[str]], default=None
+        stop : Optional[List[str]]
             Up to 4 sequences where the API will stop generating further tokens.
             Not supported with latest reasoning models `o3` and `o3-mini`.
-        extra_body : Optional[Dict[str, Any]], default=None
+        extra_body : Optional[Dict[str, Any]]
             Add additional JSON properties to the request.
         **kwargs
             Additional keyword arguments passed to the OpenAI API.
@@ -383,28 +361,28 @@ class OpenAILlm(OpenAILikeLlm, StructuredOutput, ToolSelect):
             A list of messages comprising the conversation so far.
         model : str
             Model ID used to generate the response, like `gpt-4o` or `gpt-4`.
-        temperature : Optional[float], default=None
+        temperature : Optional[float]
             What sampling temperature to use, between 0 and 2. Higher values like 0.8 will
             make the output more random, while lower values like 0.2 will make it more
             focused and deterministic.
-        top_p : Optional[float], default=None
+        top_p : Optional[float]
             An alternative to sampling with temperature, called nucleus sampling, where the
             model considers the results of the tokens with top_p probability mass.
-        presence_penalty : Optional[float], default=None
+        presence_penalty : Optional[float]
             Number between -2.0 and 2.0. Positive values penalize new tokens based on
             whether they appear in the text so far, increasing the model's likelihood to
             talk about new topics.
-        frequency_penalty : Optional[float], default=None
+        frequency_penalty : Optional[float]
             Number between -2.0 and 2.0. Positive values penalize new tokens based on their
             existing frequency in the text so far, decreasing the model's likelihood to
             repeat the same line verbatim.
-        max_tokens : Optional[int], default=None
+        max_tokens : Optional[int]
             The maximum number of tokens that can be generated in the chat completion.
             This value is now deprecated in favor of `max_completion_tokens`.
-        stop : Optional[List[str]], default=None
+        stop : Optional[List[str]]
             Up to 4 sequences where the API will stop generating further tokens.
             Not supported with latest reasoning models `o3` and `o3-mini`.
-        extra_body : Optional[Dict[str, Any]], default=None
+        extra_body : Optional[Dict[str, Any]]
             Add additional JSON properties to the request.
         **kwargs
             Additional keyword arguments passed to the OpenAI API.
@@ -457,11 +435,6 @@ class OpenAILlm(OpenAILikeLlm, StructuredOutput, ToolSelect):
         ------
         ValueError
             If the message role is not supported (SYSTEM, USER, AI, or TOOL).
-
-        Notes
-        -----
-        This method extracts text blocks from the message and combines them with
-        newlines. Only TextBlock instances are processed; other block types are ignored.
         """
         content_list = []
         for block in message.blocks:
@@ -534,22 +507,22 @@ class OpenAILlm(OpenAILikeLlm, StructuredOutput, ToolSelect):
             The constraint defining the desired output format (PydanticModel or JsonSchema).
         model : str
             Model ID used to generate the response. Structured outputs work best with GPT-4o and later.
-        temperature : Optional[float], default=None
+        temperature : Optional[float]
             What sampling temperature to use, between 0 and 2. Higher values like 0.8 will
             make the output more random, while lower values like 0.2 will make it more
             focused and deterministic.
-        top_p : Optional[float], default=None
+        top_p : Optional[float]
             An alternative to sampling with temperature, called nucleus sampling, where the
             model considers the results of the tokens with top_p probability mass.
-        presence_penalty : Optional[float], default=None
+        presence_penalty : Optional[float]
             Number between -2.0 and 2.0. Positive values penalize new tokens based on
             whether they appear in the text so far, increasing the model's likelihood to
             talk about new topics.
-        frequency_penalty : Optional[float], default=None
+        frequency_penalty : Optional[float]
             Number between -2.0 and 2.0. Positive values penalize new tokens based on their
             existing frequency in the text so far, decreasing the model's likelihood to
             repeat the same line verbatim.
-        extra_body : Optional[Dict[str, Any]], default=None
+        extra_body : Optional[Dict[str, Any]]
             Add additional JSON properties to the request.
         **kwargs
             Additional keyword arguments passed to the OpenAI API.
@@ -566,27 +539,32 @@ class OpenAILlm(OpenAILikeLlm, StructuredOutput, ToolSelect):
         --------
         Using a Pydantic model constraint:
 
-        >>> class Answer(BaseModel):
-        ...     reasoning: str
-        ...     result: int
-        >>> constraint = PydanticModel(model=Answer)
-        >>> response = llm.structured_output(
-        ...     messages=[Message.from_text("What is 2+2?", role=Role.USER)],
-        ...     constraint=constraint,
-        ...     model="gpt-4o"
-        ... )
-        >>> print(response.reasoning, response.result)
+        ```python
+        class Answer(BaseModel):
+            reasoning: str
+            result: int
+
+        constraint = PydanticModel(model=Answer)
+        response = llm.structured_output(
+            messages=[Message.from_text("What is 2+2?", role=Role.USER)],
+            constraint=constraint,
+            model="gpt-4o"
+        )
+        print(response.reasoning, response.result)
+        ```
 
         Using a JSON schema constraint:
 
-        >>> schema = {"type": "object", "properties": {"answer": {"type": "string"}}}
-        >>> constraint = JsonSchema(schema=schema)
-        >>> response = llm.structured_output(
-        ...     messages=[Message.from_text("Hello", role=Role.USER)],
-        ...     constraint=constraint,
-        ...     model="gpt-4o"
-        ... )
-        >>> print(response["answer"])
+        ```python
+        schema = {"type": "object", "properties": {"answer": {"type": "string"}}}
+        constraint = JsonSchema(schema=schema)
+        response = llm.structured_output(
+            messages=[Message.from_text("Hello", role=Role.USER)],
+            constraint=constraint,
+            model="gpt-4o"
+        )
+        print(response["answer"])
+        ```
 
         Notes
         -----
@@ -634,22 +612,22 @@ class OpenAILlm(OpenAILikeLlm, StructuredOutput, ToolSelect):
             The constraint defining the desired output format (PydanticModel or JsonSchema).
         model : str
             Model ID used to generate the response. Structured outputs work best with GPT-4o and later.
-        temperature : Optional[float], default=None
+        temperature : Optional[float]
             What sampling temperature to use, between 0 and 2. Higher values like 0.8 will
             make the output more random, while lower values like 0.2 will make it more
             focused and deterministic.
-        top_p : Optional[float], default=None
+        top_p : Optional[float]
             An alternative to sampling with temperature, called nucleus sampling, where the
             model considers the results of the tokens with top_p probability mass.
-        presence_penalty : Optional[float], default=None
+        presence_penalty : Optional[float]
             Number between -2.0 and 2.0. Positive values penalize new tokens based on
             whether they appear in the text so far, increasing the model's likelihood to
             talk about new topics.
-        frequency_penalty : Optional[float], default=None
+        frequency_penalty : Optional[float]
             Number between -2.0 and 2.0. Positive values penalize new tokens based on their
             existing frequency in the text so far, decreasing the model's likelihood to
             repeat the same line verbatim.
-        extra_body : Optional[Dict[str, Any]], default=None
+        extra_body : Optional[Dict[str, Any]]
             Add additional JSON properties to the request.
         **kwargs
             Additional keyword arguments passed to the OpenAI API.
@@ -666,15 +644,17 @@ class OpenAILlm(OpenAILikeLlm, StructuredOutput, ToolSelect):
         --------
         Using asynchronous structured output:
 
-        >>> async def get_structured_response():
-        ...     llm = OpenAILlm(api_key="your-key")
-        ...     constraint = PydanticModel(model=Answer)
-        ...     response = await llm.astructured_output(
-        ...         messages=[Message.from_text("Calculate 5+3", role=Role.USER)],
-        ...         constraint=constraint,
-        ...         model="gpt-4o"
-        ...     )
-        ...     return response
+        ```python
+        async def get_structured_response():
+            llm = OpenAILlm(api_key="your-key")
+            constraint = PydanticModel(model=Answer)
+            response = await llm.astructured_output(
+                messages=[Message.from_text("Calculate 5+3", role=Role.USER)],
+                constraint=constraint,
+                model="gpt-4o"
+            )
+            return response
+        ```
 
         Notes
         -----
@@ -765,7 +745,7 @@ class OpenAILlm(OpenAILikeLlm, StructuredOutput, ToolSelect):
             }
         else:
             raise ValueError(f"Invalid constraint: {constraint}")
-    
+
     def _convert_response(
         self,
         constraint: Constraint,
@@ -822,6 +802,8 @@ class OpenAILlm(OpenAILikeLlm, StructuredOutput, ToolSelect):
         from a provided list based on the conversation context. It supports OpenAI's
         function calling capabilities with parallel execution and various control options.
 
+        More OpenAI information: [function-calling](https://platform.openai.com/docs/guides/function-calling)
+
         Parameters
         ----------
         messages : List[Message]
@@ -830,26 +812,26 @@ class OpenAILlm(OpenAILikeLlm, StructuredOutput, ToolSelect):
             A list of tools the model may call.
         model : str
             Model ID used to generate the response. Function calling requires compatible models.
-        temperature : Optional[float], default=None
+        temperature : Optional[float]
             What sampling temperature to use, between 0 and 2. Higher values like 0.8 will
             make the output more random, while lower values like 0.2 will make it more
             focused and deterministic.
-        top_p : Optional[float], default=None
+        top_p : Optional[float]
             An alternative to sampling with temperature, called nucleus sampling, where the
             model considers the results of the tokens with top_p probability mass.
-        presence_penalty : Optional[float], default=None
+        presence_penalty : Optional[float]
             Number between -2.0 and 2.0. Positive values penalize new tokens based on
             whether they appear in the text so far, increasing the model's likelihood to
             talk about new topics.
-        frequency_penalty : Optional[float], default=None
+        frequency_penalty : Optional[float]
             Number between -2.0 and 2.0. Positive values penalize new tokens based on their
             existing frequency in the text so far, decreasing the model's likelihood to
             repeat the same line verbatim.
-        extra_body : Optional[Dict[str, Any]], default=None
+        extra_body : Optional[Dict[str, Any]]
             Add additional JSON properties to the request.
-        parallel_tool_calls : Optional[bool], default=True
+        parallel_tool_calls : Optional[bool]
             Whether to enable parallel function calling during tool use.
-        tool_choice : Optional[Literal["auto", "required", "none"]], default="auto"
+        tool_choice : Optional[Literal["auto", "required", "none"]]
             Controls which (if any) tool is called by the model. `none` means the model will
             not call any tool and instead generates a message. `auto` means the model can
             pick between generating a message or calling one or more tools. `required` means
@@ -861,27 +843,8 @@ class OpenAILlm(OpenAILikeLlm, StructuredOutput, ToolSelect):
         -------
         List[ToolCall]
             List of selected tool calls with their IDs, names, and parsed arguments.
-
-        Examples
-        --------
-        >>> tools = [
-        ...     Tool(name="get_weather", description="Get weather info", parameters={}),
-        ...     Tool(name="calculator", description="Perform calculations", parameters={})
-        ... ]
-        >>> messages = [Message.from_text("What's the weather in Tokyo?", role=Role.USER)]
-        >>> tool_calls = llm.tool_select(messages=messages, tools=tools, model="gpt-4")
-        >>> for call in tool_calls:
-        ...     print(f"Tool: {call.name}, Args: {call.arguments}")
-
-        Notes
-        -----
-        - Requires OpenAI models that support function calling
-        - Tool calls are automatically assigned the ID from OpenAI
-        - Function arguments are parsed from JSON to Python dictionaries
-
-        More OpenAI information: [function-calling](https://platform.openai.com/docs/guides/function-calling)
         """
-        tools = self._convert_tools_2_openai_json(tools)
+        json_desc_tools = [self._convert_tool_to_json(tool) for tool in tools]
         msgs: List[ChatCompletionMessageParam] = [self._convert_message(msg) for msg in messages]
         response: Dict[str, Any] = self.client.chat.completions.create(
             model=model,
@@ -890,7 +853,7 @@ class OpenAILlm(OpenAILikeLlm, StructuredOutput, ToolSelect):
             top_p=top_p,
             presence_penalty=presence_penalty,
             frequency_penalty=frequency_penalty,
-            tools=tools,
+            tools=json_desc_tools,
             tool_choice=tool_choice,
             parallel_tool_calls=parallel_tool_calls,
             extra_body=extra_body,
@@ -914,11 +877,13 @@ class OpenAILlm(OpenAILikeLlm, StructuredOutput, ToolSelect):
         **kwargs,
     ) -> List[ToolCall]:
         """
-        Asynchronously select and invoke tools from a list based on conversation context.
+        Select and invoke tools from a list based on conversation context.
 
-        This is the asynchronous version of tool_select, suitable for concurrent processing
-        and non-blocking operations. It enables the model to intelligently select and call
-        appropriate tools from a provided list based on the conversation context.
+        This method enables the model to intelligently select and call appropriate tools
+        from a provided list based on the conversation context. It supports OpenAI's
+        function calling capabilities with parallel execution and various control options.
+
+        More OpenAI information: [function-calling](https://platform.openai.com/docs/guides/function-calling)
 
         Parameters
         ----------
@@ -928,26 +893,26 @@ class OpenAILlm(OpenAILikeLlm, StructuredOutput, ToolSelect):
             A list of tools the model may call.
         model : str
             Model ID used to generate the response. Function calling requires compatible models.
-        temperature : Optional[float], default=None
+        temperature : Optional[float]
             What sampling temperature to use, between 0 and 2. Higher values like 0.8 will
             make the output more random, while lower values like 0.2 will make it more
             focused and deterministic.
-        top_p : Optional[float], default=None
+        top_p : Optional[float]
             An alternative to sampling with temperature, called nucleus sampling, where the
             model considers the results of the tokens with top_p probability mass.
-        presence_penalty : Optional[float], default=None
+        presence_penalty : Optional[float]
             Number between -2.0 and 2.0. Positive values penalize new tokens based on
             whether they appear in the text so far, increasing the model's likelihood to
             talk about new topics.
-        frequency_penalty : Optional[float], default=None
+        frequency_penalty : Optional[float]
             Number between -2.0 and 2.0. Positive values penalize new tokens based on their
             existing frequency in the text so far, decreasing the model's likelihood to
             repeat the same line verbatim.
-        extra_body : Optional[Dict[str, Any]], default=None
+        extra_body : Optional[Dict[str, Any]]
             Add additional JSON properties to the request.
-        parallel_tool_calls : Optional[bool], default=True
+        parallel_tool_calls : Optional[bool]
             Whether to enable parallel function calling during tool use.
-        tool_choice : Optional[Literal["auto", "none", "required"]], default="auto"
+        tool_choice : Optional[Literal["auto", "required", "none"]]
             Controls which (if any) tool is called by the model. `none` means the model will
             not call any tool and instead generates a message. `auto` means the model can
             pick between generating a message or calling one or more tools. `required` means
@@ -959,26 +924,8 @@ class OpenAILlm(OpenAILikeLlm, StructuredOutput, ToolSelect):
         -------
         List[ToolCall]
             List of selected tool calls with their IDs, names, and parsed arguments.
-
-        Examples
-        --------
-        >>> async def select_tools():
-        ...     tools = [Tool(name="search", description="Search web", parameters={})]
-        ...     messages = [Message.from_text("Search for Python tutorials", role=Role.USER)]
-        ...     tool_calls = await llm.atool_select(messages=messages, tools=tools, model="gpt-4")
-        ...     return tool_calls
-
-        Notes
-        -----
-        - This is the asynchronous version of tool_select
-        - Suitable for concurrent processing and high-throughput applications
-        - Requires OpenAI models that support function calling
-        - Tool calls are automatically assigned the ID from OpenAI
-        - Function arguments are parsed from JSON to Python dictionaries
-
-        More OpenAI information: [function-calling](https://platform.openai.com/docs/guides/function-calling)
         """
-        json_desc_tools = self._convert_tools_2_openai_json(tools)
+        json_desc_tools = [self._convert_tool_to_json(tool) for tool in tools]
         msgs: List[ChatCompletionMessageParam] = [self._convert_message(msg) for msg in messages]
         response: Dict[str, Any] = await self.async_client.chat.completions.create(
             model=model,
@@ -995,53 +942,16 @@ class OpenAILlm(OpenAILikeLlm, StructuredOutput, ToolSelect):
         )
         tool_calls = response.choices[0].message.tool_calls
         return self._convert_tool_calls(tool_calls)
-    
+
     def _convert_parameters(self, parameters: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Convert tool parameters to OpenAI function properties format.
-
-        Parameters
-        ----------
-        parameters : Dict[str, Any]
-            The tool parameters dictionary containing properties and required fields.
-
-        Returns
-        -------
-        Dict[str, Any]
-            OpenAI-compatible properties object with type, properties, required fields,
-            and additionalProperties set to False.
-
-        Notes
-        -----
-        This method ensures the parameters conform to OpenAI's function calling schema
-        requirements by adding the necessary object structure and disabling additional properties.
-        """
         return {
             "type": "object",
             "properties": parameters.get("properties", {}),
             "required": parameters.get("required", []),
             "additionalProperties": False
         }
-    
-    def _convert_tool_2_json(self, tool: Tool) -> Dict[str, Any]:
-        """
-        Convert a Bridgic Tool object to OpenAI function calling format.
 
-        Parameters
-        ----------
-        tool : Tool
-            The Bridgic tool object containing name, description, and parameters.
-
-        Returns
-        -------
-        Dict[str, Any]
-            OpenAI-compatible function definition with type, name, description, and parameters.
-
-        Notes
-        -----
-        This method structures the tool information according to OpenAI's function
-        calling API specification, wrapping the tool in a "function" type.
-        """
+    def _convert_tool_to_json(self, tool: Tool) -> Dict[str, Any]:
         return {
             "type": "function",
             "function": {
@@ -1050,51 +960,8 @@ class OpenAILlm(OpenAILikeLlm, StructuredOutput, ToolSelect):
                 "parameters": self._convert_parameters(tool.parameters),
             }
         }
-    
-    def _convert_tools_2_openai_json(
-        self,
-        tools: List[Tool] = [],
-    ) -> List[Dict[str, Any]]:
-        """
-        Convert a list of Bridgic Tool objects to OpenAI tools format.
-
-        Parameters
-        ----------
-        tools : List[Tool], default=[]
-            List of Bridgic tool objects to convert.
-
-        Returns
-        -------
-        List[Dict[str, Any]]
-            List of OpenAI-compatible tool definitions.
-
-        Notes
-        -----
-        This method processes each tool through _convert_tool_2_json to ensure
-        proper formatting for OpenAI's function calling API.
-        """
-        tools = [self._convert_tool_2_json(tool) for tool in tools]
-        return tools
 
     def _convert_tool_calls(self, tool_calls: List[ChatCompletionMessageFunctionToolCall]) -> List[ToolCall]:
-        """
-        Convert OpenAI tool calls to Bridgic ToolCall objects.
-
-        Parameters
-        ----------
-        tool_calls : List[ChatCompletionMessageFunctionToolCall]
-            List of tool calls returned by OpenAI's function calling API.
-
-        Returns
-        -------
-        List[ToolCall]
-            List of Bridgic ToolCall objects with unique IDs, function names, and parsed arguments.
-
-        Notes
-        -----
-        Each tool call is assigned the ID from OpenAI, and the function arguments
-        are parsed from JSON string format to a Python dictionary.
-        """
         return [
             ToolCall(
                 id=tool_call.id,
