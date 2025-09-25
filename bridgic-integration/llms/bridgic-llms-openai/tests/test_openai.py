@@ -42,7 +42,7 @@ def tools():
     (_api_key is None) or (_model_name is None),
     reason="OPEN_AI_API_KEY or OPEN_AI_MODEL_NAME is not set",
 )
-def test_vllm_server_chat(llm):
+def test_openai_server_chat(llm):
     response = llm.chat(
         model=_model_name,
         messages=[Message.from_text(text="Hello, how are you?", role=Role.USER)],
@@ -55,7 +55,7 @@ def test_vllm_server_chat(llm):
     (_api_key is None) or (_model_name is None),
     reason="OPEN_AI_API_KEY or OPEN_AI_MODEL_NAME is not set",
 )
-def test_vllm_server_stream(llm):
+def test_openai_server_stream(llm):
     response = llm.stream(
         model=_model_name,
         messages=[Message.from_text(text="Hello, how are you?", role=Role.USER)],
@@ -72,7 +72,7 @@ def test_vllm_server_stream(llm):
     reason="OPEN_AI_API_KEY or OPEN_AI_MODEL_NAME is not set",
 )
 @pytest.mark.asyncio
-async def test_vllm_server_achat(llm):
+async def test_openai_server_achat(llm):
     response = await llm.achat(
         model=_model_name,
         messages=[Message.from_text(text="Hello, how are you?", role=Role.USER)],
@@ -86,7 +86,7 @@ async def test_vllm_server_achat(llm):
     reason="OPEN_AI_API_KEY or OPEN_AI_MODEL_NAME is not set",
 )
 @pytest.mark.asyncio
-async def test_vllm_server_astream(llm):
+async def test_openai_server_astream(llm):
     response = llm.astream(
         model=_model_name,
         messages=[Message.from_text(text="Hello, how are you?", role=Role.USER)],
@@ -102,7 +102,7 @@ async def test_vllm_server_astream(llm):
     (_api_key is None) or (_model_name is None),
     reason="OPEN_AI_API_KEY or OPEN_AI_MODEL_NAME is not set",
 )
-def test_vllm_server_structured_output_pydantic_model(llm):
+def test_openai_server_structured_output_pydantic_model(llm):
     class ThinkAndAnswer(BaseModel):
         thought: str = Field(description="The thought about the problem.", max_length=100)
         answer: str = Field(description="The answer to the question.", min_length=10)
@@ -134,7 +134,7 @@ Don't think for long time. Don't answer in many words.
     reason="OPEN_AI_API_KEY or OPEN_AI_MODEL_NAME is not set",
 )
 @pytest.mark.asyncio
-async def test_vllm_server_astructured_output_pydantic_model(llm):
+async def test_openai_server_astructured_output_pydantic_model(llm):
     class ThinkAndAnswer(BaseModel):
         thought: str = Field(description="The thought about the problem.", max_length=100)
         answer: str = Field(description="The answer to the question.", min_length=10)
@@ -165,7 +165,7 @@ Don't think for long time. Don't answer in many words.
     (_api_key is None) or (_model_name is None),
     reason="OPEN_AI_API_KEY or OPEN_AI_MODEL_NAME is not set",
 )
-def test_vllm_server_structured_output_json_schema(llm):
+def test_openai_server_structured_output_json_schema(llm):
     schema = {
         "type": "object",
         "properties": {
@@ -198,7 +198,7 @@ def test_vllm_server_structured_output_json_schema(llm):
     reason="OPEN_AI_API_KEY or OPEN_AI_MODEL_NAME is not set",
 )
 @pytest.mark.asyncio
-async def test_vllm_server_astructured_output_json_schema(llm):
+async def test_openai_server_astructured_output_json_schema(llm):
     schema = {
         "type": "object",
         "properties": {
@@ -231,7 +231,7 @@ async def test_vllm_server_astructured_output_json_schema(llm):
     reason="OPEN_AI_API_KEY or OPEN_AI_MODEL_NAME is not set",
 )
 @pytest.mark.asyncio
-async def test_vllm_server_astructured_output_json_schema(llm):
+async def test_openai_server_astructured_output_json_schema(llm):
     schema = {
         "type": "object",
         "properties": {
@@ -263,62 +263,53 @@ async def test_vllm_server_astructured_output_json_schema(llm):
     (_api_key is None) or (_model_name is None),
     reason="OPEN_AI_API_KEY or OPEN_AI_MODEL_NAME is not set",
 )
-def test_vllm_server_structured_output_regex(llm):
+def test_openai_server_structured_output_regex(llm):
     pattern = r"^Emails:\n(- [a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+)(\n(- [a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+))*$"
-    response: str = llm.structured_output(
-        model=_model_name,
-        constraint=Regex(pattern=pattern),
-        messages=[
-            Message.from_text(
-                text="You are a helpful assistant. You are good at extracting email addresses from text.",
-                role=Role.SYSTEM,
-            ),
-            Message.from_text(
-                text="Email addresses: jack@gmail.com and david@gmail.com and john@gmail.com",
-                role=Role.USER,
-            ),
-        ],
-    )
-    printer.print("\n" + response, color='purple')
-    emails = re.findall(pattern=r"[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+", string=response)
-    assert len(emails) == 3
-    assert emails[0] == "jack@gmail.com"
-    assert emails[1] == "david@gmail.com"
-    assert emails[2] == "john@gmail.com"
+    with pytest.raises(ValueError, match=r"Invalid constraint: constraint_type=\'regex\' pattern=.*"):
+        llm.structured_output(
+            model=_model_name,
+            constraint=Regex(pattern=pattern),
+            messages=[
+                Message.from_text(
+                    text="You are a helpful assistant. You are good at extracting email addresses from text.",
+                    role=Role.SYSTEM,
+                ),
+                Message.from_text(
+                    text="Email addresses: jack@gmail.com and david@gmail.com and john@gmail.com",
+                    role=Role.USER,
+                ),
+            ],
+        )
 
 @pytest.mark.skipif(
     (_api_key is None) or (_model_name is None),
     reason="OPEN_AI_API_KEY or OPEN_AI_MODEL_NAME is not set",
 )
 @pytest.mark.asyncio
-async def test_vllm_server_astructured_output_regex(llm):
+async def test_openai_server_astructured_output_regex(llm):
     pattern = r"^Emails:\n(- [a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+)(\n(- [a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+))*$"
-    response: str = await llm.astructured_output(
-        model=_model_name,
-        constraint=Regex(pattern=pattern),
-        messages=[
-            Message.from_text(
-                text="You are a helpful assistant. You are good at extracting email addresses from text.",
-                role=Role.SYSTEM,
-            ),
-            Message.from_text(
-                text="Email addresses: jack@gmail.com and david@gmail.com and john@gmail.com",
-                role=Role.USER,
-            ),
-        ],
-    )
-    printer.print("\n" + response, color='purple')
-    emails = re.findall(pattern=r"[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+", string=response)
-    assert len(emails) == 3
-    assert emails[0] == "jack@gmail.com"
-    assert emails[1] == "david@gmail.com"
-    assert emails[2] == "john@gmail.com"
+    with pytest.raises(ValueError, match=r"Invalid constraint: constraint_type=\'regex\' pattern=.*"):
+        await llm.astructured_output(
+            model=_model_name,
+            constraint=Regex(pattern=pattern),
+            messages=[
+                Message.from_text(
+                    text="You are a helpful assistant. You are good at extracting email addresses from text.",
+                    role=Role.SYSTEM,
+                ),
+                Message.from_text(
+                    text="Email addresses: jack@gmail.com and david@gmail.com and john@gmail.com",
+                    role=Role.USER,
+                ),
+            ],
+        )
+    
 
 @pytest.mark.skipif(
     (_api_key is None) or (_model_name is None),
     reason="OPEN_AI_API_KEY or OPEN_AI_MODEL_NAME is not set",
 )
-def test_vllm_server_structured_output_ebnf_grammar(llm):
+def test_openai_server_structured_output_ebnf_grammar(llm):
     ebnf_syntax = """
 root ::= select_statement
 select_statement ::= "select " columns " from " table " where " conditions
@@ -329,38 +320,37 @@ conditions ::= condition (" and " condition)*
 condition ::= column "=" number
 number ::= "2020" | "2021" | "2022" | "2023" | "2024"
 """
-    response: str = llm.structured_output(
-        model=_model_name,
-        constraint=EbnfGrammar(syntax=ebnf_syntax),
-        messages=[
-            Message.from_text(
-                text="You are a helpful assistant. You are good at writting SQL statements.",
-                role=Role.SYSTEM,
-            ),
-            Message.from_text(
-                text="""
-Here is a table (table name: sales_table) about the sales data:
-| id | year | sales |
-| -- | ---- | ----- |
-| 1  | 2021 | 20000 |
-| 2  | 2022 | 20000 |
-| 3  | 2023 | 30000 |
-| 4  | 2024 | 40000 |
-Write a SQL to select the sales of year of 2023 from the table.
-""",
-                role=Role.USER,
-            ),
-        ],
-    )
-    printer.print("\n" + response, color='purple')
-    assert response == "select sales from sales_table where year=2023"
+    with pytest.raises(ValueError, match=r"Invalid constraint: constraint_type=\'ebnf_grammar\' syntax=.*"):
+        llm.structured_output(
+            model=_model_name,
+            constraint=EbnfGrammar(syntax=ebnf_syntax),
+            messages=[
+                Message.from_text(
+                    text="You are a helpful assistant. You are good at writting SQL statements.",
+                    role=Role.SYSTEM,
+                ),
+                Message.from_text(
+                    text="""
+    Here is a table (table name: sales_table) about the sales data:
+    | id | year | sales |
+    | -- | ---- | ----- |
+    | 1  | 2021 | 20000 |
+    | 2  | 2022 | 20000 |
+    | 3  | 2023 | 30000 |
+    | 4  | 2024 | 40000 |
+    Write a SQL to select the sales of year of 2023 from the table.
+    """,
+                    role=Role.USER,
+                ),
+            ],
+        )
 
 @pytest.mark.skipif(
     (_api_key is None) or (_model_name is None),
     reason="OPEN_AI_API_KEY or OPEN_AI_MODEL_NAME is not set",
 )
 @pytest.mark.asyncio
-async def test_vllm_server_astructured_output_ebnf_grammar(llm):
+async def test_openai_server_astructured_output_ebnf_grammar(llm):
     ebnf_syntax = """
 root ::= select_statement
 select_statement ::= "select " columns " from " table " where " conditions
@@ -371,42 +361,39 @@ conditions ::= condition (" and " condition)*
 condition ::= column "=" number
 number ::= "2020" | "2021" | "2022" | "2023" | "2024"
 """
-    response: str = await llm.astructured_output(
-        model=_model_name,
-        constraint=EbnfGrammar(syntax=ebnf_syntax),
-        messages=[
-            Message.from_text(
-                text="You are a helpful assistant. You are good at writting SQL statements.",
-                role=Role.SYSTEM,
-            ),
-            Message.from_text(
-                text="""
-Here is a table (table name: sales_table) about the sales data:
-| id | year | sales |
-| -- | ---- | ----- |
-| 1  | 2021 | 20000 |
-| 2  | 2022 | 20000 |
-| 3  | 2023 | 30000 |
-| 4  | 2024 | 40000 |
-Write a SQL to select the sales of year of 2023 from the table.
-""",
-                role=Role.USER,
-            ),
-        ],
-    )
-    printer.print("\n" + response, color='purple')
-    assert response == "select sales from sales_table where year=2023"
+    with pytest.raises(ValueError, match=r"Invalid constraint: constraint_type=\'ebnf_grammar\' syntax=.*"):
+        await llm.astructured_output(
+            model=_model_name,
+            constraint=EbnfGrammar(syntax=ebnf_syntax),
+            messages=[
+                Message.from_text(
+                    text="You are a helpful assistant. You are good at writting SQL statements.",
+                    role=Role.SYSTEM,
+                ),
+                Message.from_text(
+                    text="""
+    Here is a table (table name: sales_table) about the sales data:
+    | id | year | sales |
+    | -- | ---- | ----- |
+    | 1  | 2021 | 20000 |
+    | 2  | 2022 | 20000 |
+    | 3  | 2023 | 30000 |
+    | 4  | 2024 | 40000 |
+    Write a SQL to select the sales of year of 2023 from the table.
+    """,
+                    role=Role.USER,
+                ),
+            ],
+        )
 
 @pytest.mark.skipif(
     (_api_key is None) or (_model_name is None),
     reason="OPEN_AI_API_KEY or OPEN_AI_MODEL_NAME is not set",
 )
-def test_vllm_server_tool_select(llm, date, tools):
+def test_openai_server_tool_select(llm, date, tools):
     response: List[ToolCall] = llm.tool_select(
         model=_model_name,
         tools=tools,
-        min_tools=1,
-        max_tools=3,
         messages=[
             Message.from_text(
                 text="You are a helpful assistant. You are good at calling the provided tools to solve problems.",
@@ -422,22 +409,20 @@ def test_vllm_server_tool_select(llm, date, tools):
     for tool_call in response:
         printer.print(json.dumps(tool_call.model_dump()), color='purple')
         if tool_call.name == "get_weather":
-            assert tool_call.parameters["city"] == "Tokyo"
+            assert tool_call.arguments["city"] == "Tokyo"
         if tool_call.name == "get_news":
-            assert tool_call.parameters["date"] == date
-            assert len(tool_call.parameters["topic"]) > 0
+            assert tool_call.arguments["date"] == date
+            assert len(tool_call.arguments["topic"]) > 0
 
 @pytest.mark.skipif(
     (_api_key is None) or (_model_name is None),
     reason="OPEN_AI_API_KEY or OPEN_AI_MODEL_NAME is not set",
 )
 @pytest.mark.asyncio
-async def test_vllm_server_atool_select(llm, date, tools):
+async def test_openai_server_atool_select(llm, date, tools):
     response: List[ToolCall] = await llm.atool_select(
         model=_model_name,
         tools=tools,
-        min_tools=0,
-        max_tools=3,
         messages=[
             Message.from_text(
                 text="You are a helpful assistant. You are good at calling the provided tools to solve problems.",
@@ -453,7 +438,8 @@ async def test_vllm_server_atool_select(llm, date, tools):
     for tool_call in response:
         printer.print(json.dumps(tool_call.model_dump()), color='purple')
         if tool_call.name == "get_weather":
-            assert tool_call.parameters["city"] == "Tokyo"
+            assert tool_call.arguments["city"] == "Tokyo"
         if tool_call.name == "get_news":
-            assert tool_call.parameters["date"] == date
-            assert len(tool_call.parameters["topic"]) > 0
+            assert tool_call.arguments["date"] == date
+            assert len(tool_call.arguments["topic"]) > 0
+
