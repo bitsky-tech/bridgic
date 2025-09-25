@@ -16,6 +16,7 @@ nav:
     - Index: tutorials/index.md
     - Parameter Passing: tutorials/parameter_passing.ipynb
     - Dynamic Router: tutorials/dynamic_router.ipynb
+    - Dynamic DAG: tutorials/dynamic_dag.ipynb
   - API Reference:
     - Index: api/index.md
     - Automa:
