@@ -22,7 +22,7 @@ wheels = [
 
 [[package]]
 name = "bridgic-core"
-version = "0.1.0.dev6"
+version = "0.1.0.dev7"
 source = { editable = "." }
 dependencies = [
     { name = "docstring-parser" },
