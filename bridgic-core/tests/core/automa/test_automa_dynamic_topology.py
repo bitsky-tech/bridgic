@@ -46,11 +46,12 @@ def dynamic_flow_1():
     flow.add_func_as_worker(
         key="func_4",
         func=flow.func_4,
+        is_output=True,
         dependencies=["func_3"],
         args_mapping_rule=ArgsMappingRule.UNPACK,
     )
     # Specify the output worker.
-    flow.output_worker_key = "func_4"
+    # flow.output_worker_key = "func_4"
     # Final flow topology (expected): func_1 -> func_3 -> func_4.
     return flow
 
@@ -86,11 +87,12 @@ class DynamicFlow_2(GraphAutoma):
         self.add_func_as_worker(
             key="func_4",
             func=self.func_4,
+            is_output=True,
             dependencies=["func_3"],
             args_mapping_rule=ArgsMappingRule.UNPACK,
         )
         # Specify the output worker.
-        self.output_worker_key = "func_4"
+        # self.output_worker_key = "func_4"
         # Final flow topology (expected): func_1 -> func_3 -> func_4.
         return {"x": x+1, "y": y+1}
 
@@ -121,14 +123,14 @@ class DynamicFlow_3(GraphAutoma):
     async def func_1(self, x: int, y: int):
         return {"x": x+1, "y": y+1}
 
-    @worker(dependencies=["func_1"], args_mapping_rule=ArgsMappingRule.UNPACK)
+    @worker(dependencies=["func_1"], args_mapping_rule=ArgsMappingRule.UNPACK, is_output=True)
     async def func_2(self, x: int, y: int):
         return {"x": x+1, "y": y+1}
 
 @pytest.fixture
 def dynamic_flow_3():
     # Test case: call remove_worker() to get a empty graph.
-    flow = DynamicFlow_3(output_worker_key="func_2")
+    flow = DynamicFlow_3()
     # The removal order for different workers is irrelevant.
     flow.remove_worker("func_1")
     flow.remove_worker("func_2")
@@ -155,9 +157,10 @@ class DynamicFlow_4(GraphAutoma):
             self.add_func_as_worker(
                 key=f"func_{i}",
                 func=self.func_resusable,
+                is_output=True if i == 6 else False,
                 dependencies=[f"func_{i-1}"],
             )
-        self.output_worker_key = "func_6"
+        # self.output_worker_key = "func_6"
         return {"x": x+1, "y": y+1}
 
     async def func_2(self, x: int, y: int):
@@ -188,7 +191,7 @@ class DynamicFlow_5_AddWorkerStepByStep(GraphAutoma):
             dependencies=["func_1"],
             args_mapping_rule=ArgsMappingRule.UNPACK,
         )
-        self.output_worker_key = "func_2"
+        # self.output_worker_key = "func_2"
         return {"x": x+1, "y": y+1}
 
     async def func_2(self, x: int, y: int):
@@ -209,11 +212,12 @@ class DynamicFlow_5_AddWorkerStepByStep(GraphAutoma):
             self.add_func_as_worker(
                 key=f"func_{count_run+4}",
                 func=self.func_resusable,
+                is_output=True if f"func_{count_run+4}" == "func_6" else False,
                 dependencies=[my_key],
                 args_mapping_rule=ArgsMappingRule.UNPACK,
             )
-        else:
-            self.output_worker_key = "func_6"
+        # else:
+        #     self.output_worker_key = "func_6"
         return count_run + 1, {"x": coord["x"]+10, "y": coord["y"]+20}
 
 @pytest.fixture
@@ -244,7 +248,7 @@ class DynamicFlow_6_RemovePredecessor(GraphAutoma):
         self.remove_worker("func_1")
         return x + 2
 
-    @worker(dependencies=["func_2"])
+    @worker(dependencies=["func_2"], is_output=True)
     async def func_3(self, x: int):
         # Remove the predecessor worker again.
         self.remove_worker("func_2")
@@ -252,7 +256,7 @@ class DynamicFlow_6_RemovePredecessor(GraphAutoma):
 
 @pytest.fixture
 def dynamic_flow_6():
-    flow = DynamicFlow_6_RemovePredecessor(output_worker_key="func_3")
+    flow = DynamicFlow_6_RemovePredecessor()
     return flow
 
 @pytest.mark.asyncio
@@ -271,7 +275,7 @@ class DynamicFlow_7_RemoveSelf(GraphAutoma):
     async def func_1(self, x: int):
         return x + 1
 
-    @worker(dependencies=["func_1"])
+    @worker(dependencies=["func_1"], is_output=True)
     async def func_2(self, x: int):
         # Remove myself!
         self.remove_worker("func_2")
@@ -285,7 +289,7 @@ class DynamicFlow_7_RemoveSelf(GraphAutoma):
 
 @pytest.fixture
 def dynamic_flow_7():
-    flow = DynamicFlow_7_RemoveSelf(output_worker_key="func_2")
+    flow = DynamicFlow_7_RemoveSelf()
     return flow
 
 @pytest.mark.asyncio
@@ -305,7 +309,7 @@ class DynamicFlow_8_RemoveNext(GraphAutoma):
     async def func_1(self, x: int):
         return x + 1
 
-    @worker(dependencies=["func_1"])
+    @worker(dependencies=["func_1"], is_output=True)
     async def func_2(self, x: int):
         # Remove next worker
         self.remove_worker("func_3")
@@ -317,7 +321,7 @@ class DynamicFlow_8_RemoveNext(GraphAutoma):
 
 @pytest.fixture
 def dynamic_flow_8():
-    flow = DynamicFlow_8_RemoveNext(output_worker_key="func_2")
+    flow = DynamicFlow_8_RemoveNext()
     return flow
 
 @pytest.mark.asyncio
@@ -342,13 +346,13 @@ class DynamicFlow_8_RemoveSelfAndFerryToNext(GraphAutoma):
         self.remove_worker("func_2")
         self.ferry_to("func_3", x + 2)
 
-    @worker(dependencies=["func_2"])
+    @worker(dependencies=["func_2"], is_output=True)
     async def func_3(self, x: int):
         return x + 3
 
 @pytest.fixture
 def dynamic_flow_8():
-    flow = DynamicFlow_8_RemoveSelfAndFerryToNext(output_worker_key="func_3")
+    flow = DynamicFlow_8_RemoveSelfAndFerryToNext()
     return flow
 
 @pytest.mark.asyncio
@@ -381,14 +385,14 @@ class DynamicFlow_9_RemoveBranch(GraphAutoma):
     async def func_3(self, x: int):
         return x + 3
 
-    @worker(dependencies=["func_1", "func_2", "func_3"])
+    @worker(dependencies=["func_1", "func_2", "func_3"], is_output=True)
     async def end(self, x_from_func_2: int, x_from_func_3: int):
         # Note: the dependency 'func_1' is removed, so only x_from_func_2 and x_from_func_3 are received.
         return x_from_func_2 + x_from_func_3
 
 @pytest.fixture
 def dynamic_flow_9():
-    flow = DynamicFlow_9_RemoveBranch(output_worker_key="end")
+    flow = DynamicFlow_9_RemoveBranch()
     return flow
 
 @pytest.mark.asyncio
@@ -419,9 +423,10 @@ class DynamicFlow_10_AddDependency(GraphAutoma):
         self.add_func_as_worker(
             key="func_4",
             func=self.func_4,
+            is_output=True
         )
         self.add_dependency("func_4", "func_3a")
-        self.output_worker_key = "func_4"
+        # self.output_worker_key = "func_4"
         return x + 13
 
     async def func_3(self, x: int):
@@ -442,7 +447,7 @@ class DynamicFlow_10_AddDependency(GraphAutoma):
             # The above topology change will take effect in the next DS, triggered by ferry_to().
             self.ferry_to("func_1", x)
 
-        self.output_worker_key = "func_4"
+        # self.output_worker_key = "func_4"
         return x + 4
 
 @pytest.fixture
@@ -465,7 +470,7 @@ def dynamic_flow_10():
     # Note: the dependency from `func_3a` to `func_2` must be separatedly added by add_dependency().
     flow.add_dependency("func_3a", "func_2")
 
-    flow.output_worker_key = "func_3a"
+    # flow.output_worker_key = "func_3a"
     return flow
 
 @pytest.mark.asyncio
@@ -502,7 +507,7 @@ class DynamicFlow_11_AddDependency(GraphAutoma):
     async def func_2(self, x: int):
         return x + 2
     
-    @worker(dependencies=["func_1", "func_2"], args_mapping_rule=ArgsMappingRule.MERGE)
+    @worker(dependencies=["func_1", "func_2"], args_mapping_rule=ArgsMappingRule.MERGE, is_output=True)
     async def end(self, results: List[int], rtx = System("runtime_context")):
         result = sum(results)
         local_space = self.get_local_space(rtx)
@@ -535,7 +540,7 @@ class DynamicFlow_11_AddDependency(GraphAutoma):
 
 @pytest.fixture
 def dynamic_flow_11():
-    flow = DynamicFlow_11_AddDependency(output_worker_key="end")
+    flow = DynamicFlow_11_AddDependency()
     # Test case for adding dependencies during the [Initialization Phase]
     flow.add_func_as_worker(
         key="func_3a",
@@ -727,14 +732,14 @@ async def test_dynamic_flow_e(dynamic_flow_e):
 ###################### add_dependency() Error test cases #############################
 
 class DynamicFlow_F_AddDependencyFromNotExist(GraphAutoma):
-    @worker(is_start=True)
+    @worker(is_start=True, is_output=True)
     async def func_1(self, x: int):
         self.add_dependency("func_2", "func_1")
         return x + 1
 
 @pytest.fixture
 def dynamic_flow_f():
-    flow = DynamicFlow_F_AddDependencyFromNotExist(output_worker_key="func_1")
+    flow = DynamicFlow_F_AddDependencyFromNotExist()
     return flow
 
 @pytest.mark.asyncio
@@ -749,14 +754,14 @@ class DynamicFlow_G_AddDependencyAlreadyExist(GraphAutoma):
     async def func_1(self, x: int):
         return x + 1
 
-    @worker(dependencies=["func_1"])
+    @worker(dependencies=["func_1"], is_output=True)
     async def func_2(self, x: int):
         self.add_dependency("func_2", "func_1")
         return x + 2
 
 @pytest.fixture
 def dynamic_flow_g():
-    flow = DynamicFlow_G_AddDependencyAlreadyExist(output_worker_key="func_2")
+    flow = DynamicFlow_G_AddDependencyAlreadyExist()
     return flow
 
 @pytest.mark.asyncio

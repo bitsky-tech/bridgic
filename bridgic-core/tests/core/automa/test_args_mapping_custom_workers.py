@@ -150,9 +150,10 @@ def flow_1_arun():
     flow.add_worker(
         "func_11",
         Flow1Func11AsyncWorker(),
+        is_output=True,
         dependencies=["func_10"],
     )
-    flow.output_worker_key = "func_11"
+    # flow.output_worker_key = "func_11"
     return flow
 
 @pytest.mark.asyncio
@@ -292,9 +293,10 @@ def flow_1_run():
     flow.add_worker(
         "func_11",
         Flow1Func11SyncWorker(),
+        is_output=True,
         dependencies=["func_10"],
     )
-    flow.output_worker_key = "func_11"
+    # flow.output_worker_key = "func_11"
     return flow
 
 @pytest.mark.asyncio
@@ -368,10 +370,11 @@ def flow_2_arun():
     flow.add_worker(
         "end",
         Flow2EndAsyncWorker(),
+        is_output=True,
         #Note: The order of dependencies is important for args mapping!!!
         dependencies=["func_2", "func_1", "func_3"],
     )
-    flow.output_worker_key = "end"
+    # flow.output_worker_key = "end"
     return flow
 
 @pytest.mark.asyncio
@@ -439,10 +442,11 @@ def flow_2_run():
     flow.add_worker(
         "end",
         Flow2EndSyncWorker(),
+        is_output=True,
         #Note: The order of dependencies is important for args mapping!!!
         dependencies=["func_2", "func_1", "func_3"],
     )
-    flow.output_worker_key = "end"
+    # flow.output_worker_key = "end"
     return flow
 
 @pytest.mark.asyncio
@@ -489,11 +493,12 @@ class Flow3StartAsyncWorker(Worker):
         self.parent.add_worker(
             "merge",
             Flow3MergeAsyncWorker(),
+            is_output=True,
             dependencies=[f"func_coord_{coord.x}_{coord.y}" for coord in coordinates],
             #args_mapping_rule is the default value, which is ArgsMappingRule.AS_IS,
         )
         # Dynamically set the output worker to the 'merge' worker which is dynamically added.
-        self.parent.output_worker_key = "merge"
+        # self.parent.output_worker_key = "merge"
 
 @pytest.fixture
 def flow_3_arun():
@@ -558,11 +563,12 @@ class Flow3StartSyncWorker(Worker):
         self.parent.add_worker(
             "merge",
             Flow3MergeSyncWorker(),
+            is_output=True,
             dependencies=[f"func_coord_{coord.x}_{coord.y}" for coord in coordinates],
             #args_mapping_rule is the default value, which is ArgsMappingRule.AS_IS,
         )
         # Dynamically set the output worker to the 'merge' worker which is dynamically added.
-        self.parent.output_worker_key = "merge"
+        # self.parent.output_worker_key = "merge"
 
 @pytest.fixture
 def flow_3_run():
@@ -896,10 +902,11 @@ def flow_A_arun():
     flow.add_worker(
         "func_8",
         FlowAFunc8AsyncWorker(),
+        is_output=True,
         dependencies=["func_7"],
         args_mapping_rule=ArgsMappingRule.UNPACK,
     )
-    flow.output_worker_key = "func_8"
+    # flow.output_worker_key = "func_8"
     return flow
 
 @pytest.mark.asyncio
@@ -1020,10 +1027,11 @@ def flow_A_run():
     flow.add_worker(
         "func_8",
         FlowAFunc8SyncWorker(),
+        is_output=True,
         dependencies=["func_7"],
         args_mapping_rule=ArgsMappingRule.UNPACK,
     )
-    flow.output_worker_key = "func_8"
+    # flow.output_worker_key = "func_8"
     return flow
 
 @pytest.mark.asyncio
@@ -1067,10 +1075,11 @@ def flow_B_arun():
     flow.add_worker(
         "end",
         FlowBEndAsyncWorker(),
+        is_output=True,
         dependencies=["func_1", "func_2"],
         args_mapping_rule=ArgsMappingRule.UNPACK,
     )
-    flow.output_worker_key = "end"
+    # flow.output_worker_key = "end"
     return flow
 
 @pytest.mark.asyncio
@@ -1111,10 +1120,11 @@ def flow_B_run():
     flow.add_worker(
         "end",
         FlowBEndSyncWorker(),
+        is_output=True,
         dependencies=["func_1", "func_2"],
         args_mapping_rule=ArgsMappingRule.UNPACK,
     )
-    flow.output_worker_key = "end"
+    # flow.output_worker_key = "end"
     return flow
 
 @pytest.mark.asyncio
@@ -1150,10 +1160,11 @@ def flow_C_arun():
     flow.add_worker(
         "func_2",
         FlowCFunc2AsyncWorker(),
+        is_output=True,
         dependencies=["func_1"],
         args_mapping_rule=ArgsMappingRule.UNPACK,
     )
-    flow.output_worker_key = "func_2"
+    # flow.output_worker_key = "func_2"
     return flow
 
 @pytest.mark.asyncio
@@ -1186,10 +1197,11 @@ def flow_C_run():
     flow.add_worker(
         "func_2",
         FlowCFunc2SyncWorker(),
+        is_output=True,
         dependencies=["func_1"],
         args_mapping_rule=ArgsMappingRule.UNPACK,
     )
-    flow.output_worker_key = "func_2"
+    # flow.output_worker_key = "func_2"
     return flow
 
 @pytest.mark.asyncio
@@ -1284,10 +1296,11 @@ def flow_I_arun():
     flow.add_worker(
         "end_2",
         FlowIEnd2AsyncWorker(),
+        is_output=True,
         dependencies=["func_1", "func_2", "func_3"],
         args_mapping_rule=ArgsMappingRule.MERGE,
     )
-    flow.output_worker_key = "end_2"
+    # flow.output_worker_key = "end_2"
     return flow
 
 @pytest.mark.asyncio
@@ -1382,10 +1395,11 @@ def flow_I_run():
     flow.add_worker(
         "end_2",
         FlowIEnd2SyncWorker(),
+        is_output=True,
         dependencies=["func_1", "func_2", "func_3"],
         args_mapping_rule=ArgsMappingRule.MERGE,
     )
-    flow.output_worker_key = "end_2"
+    # flow.output_worker_key = "end_2"
     return flow
 
 @pytest.mark.asyncio
@@ -1441,11 +1455,12 @@ class FlowIIStartAsyncWorker(Worker):
         self.parent.add_worker(
             "merge",
             FlowIIMergeAsyncWorker(),
+            is_output=True,
             dependencies=[f"func_coord_{coord.x}_{coord.y}" for coord in coordinates],
             args_mapping_rule=ArgsMappingRule.MERGE,
         )
         # Dynamically set the output worker to the 'merge' worker which is dynamically added.
-        self.parent.output_worker_key = "merge"
+        # self.parent.output_worker_key = "merge"
 
 @pytest.fixture
 def flow_II_arun():
@@ -1507,11 +1522,12 @@ class FlowIIStartSyncWorker(Worker):
         self.parent.add_worker(
             "merge",
             FlowIIMergeSyncWorker(),
+            is_output=True,
             dependencies=[f"func_coord_{coord.x}_{coord.y}" for coord in coordinates],
             args_mapping_rule=ArgsMappingRule.MERGE,
         )
         # Dynamically set the output worker to the 'merge' worker which is dynamically added.
-        self.parent.output_worker_key = "merge"
+        # self.parent.output_worker_key = "merge"
 
 @pytest.fixture
 def flow_II_run():
@@ -1573,10 +1589,11 @@ def flow_III_arun():
     flow.add_worker(
         "end",
         FlowIIIEndAsyncWorker(),
+        is_output=True,
         dependencies=["start"],
         args_mapping_rule=ArgsMappingRule.MERGE,
     )
-    flow.output_worker_key = "end"
+    # flow.output_worker_key = "end"
     return flow
 
 @pytest.mark.asyncio
@@ -1619,10 +1636,11 @@ def flow_III_run():
     flow.add_worker(
         "end",
         FlowIIIEndSyncWorker(),
+        is_output=True,
         dependencies=["start"],
         args_mapping_rule=ArgsMappingRule.MERGE,
     )
-    flow.output_worker_key = "end"
+    # flow.output_worker_key = "end"
     return flow
 
 @pytest.mark.asyncio
@@ -1668,10 +1686,11 @@ def flow_IV_arun():
     flow.add_worker(
         "end",
         FlowIVEndAsyncWorker(),
+        is_output=True,
         dependencies=["start1", "start2"],
         args_mapping_rule=ArgsMappingRule.MERGE,
     )
-    flow.output_worker_key = "end"
+    # flow.output_worker_key = "end"
     return flow
 
 @pytest.mark.asyncio
@@ -1712,10 +1731,11 @@ def flow_IV_run():
     flow.add_worker(
         "end",
         FlowIVEndSyncWorker(),
+        is_output=True,
         dependencies=["start1", "start2"],
         args_mapping_rule=ArgsMappingRule.MERGE,
     )
-    flow.output_worker_key = "end"
+    # flow.output_worker_key = "end"
     return flow
 
 @pytest.mark.asyncio
@@ -1754,10 +1774,11 @@ def flow_101_arun():
     flow.add_worker(
         "end",
         Flow101EndAsyncWorker(),
+        is_output=True,
         dependencies=["start"],
         args_mapping_rule=ArgsMappingRule.SUPPRESSED,
     )
-    flow.output_worker_key = "end"
+    # flow.output_worker_key = "end"
     return flow
 
 @pytest.mark.asyncio
@@ -1789,10 +1810,11 @@ def flow_101_run():
     flow.add_worker(
         "end",
         Flow101EndSyncWorker(),
+        is_output=True,
         dependencies=["start"],
         args_mapping_rule=ArgsMappingRule.SUPPRESSED,
     )
-    flow.output_worker_key = "end"
+    # flow.output_worker_key = "end"
     return flow
 
 @pytest.mark.asyncio

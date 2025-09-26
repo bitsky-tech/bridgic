@@ -91,7 +91,7 @@ class Flow_1_Nested(GraphAutoma):
         assert user_input == "hi"
         return x+1, y+1
     
-    @worker(dependencies=["func_1"], args_mapping_rule=ArgsMappingRule.UNPACK)
+    @worker(dependencies=["func_1"], args_mapping_rule=ArgsMappingRule.UNPACK, is_output=True)
     async def func_2(self, x, y, user_input: str):
         assert x == 9
         assert y == 11
@@ -101,13 +101,13 @@ class Flow_1_Nested(GraphAutoma):
 @pytest.fixture
 def flow_1():
     flow = Flow_1()
-    flow_nested = Flow_1_Nested(output_worker_key="func_2")
+    flow_nested = Flow_1_Nested()
     # Test case for inputs propagation in nested Automa.
     flow.add_worker(
         "end",
         flow_nested,
+        is_output=True
     )
-    flow.output_worker_key = "end"
     return flow
 
 @pytest.mark.asyncio
@@ -198,7 +198,7 @@ class Flow_2_Nested(GraphAutoma):
         assert user_input == "hi"
         return x+1, y+1
     
-    @worker(dependencies=["func_1"], args_mapping_rule=ArgsMappingRule.UNPACK)
+    @worker(dependencies=["func_1"], args_mapping_rule=ArgsMappingRule.UNPACK, is_output=True)
     def func_2(self, x, y, user_input: str):
         assert x == 9
         assert y == 11
@@ -208,13 +208,13 @@ class Flow_2_Nested(GraphAutoma):
 @pytest.fixture
 def flow_2():
     flow = Flow_2()
-    flow_nested = Flow_2_Nested(output_worker_key="func_2")
+    flow_nested = Flow_2_Nested()
     # Test case for inputs propagation in nested Automa.
     flow.add_worker(
         "end",
         flow_nested,
+        is_output=True
     )
-    flow.output_worker_key = "end"
     return flow
 
 @pytest.mark.asyncio
@@ -322,9 +322,9 @@ def flow_3_nested():
         "func_2",
         Flow3NestedFunc2AsyncWorker(),
         dependencies=["func_1"],
+        is_output=True,
         args_mapping_rule=ArgsMappingRule.UNPACK,
     )
-    flow.output_worker_key = "func_2"
     return flow
 
 @pytest.fixture
@@ -369,8 +369,8 @@ def flow_3(flow_3_nested):
     flow.add_worker(
         "end",
         flow_3_nested,
+        is_output=True
     )
-    flow.output_worker_key = "end"
     return flow
 
 @pytest.mark.asyncio
@@ -478,9 +478,9 @@ def flow_4_nested():
         "func_2",
         Flow4NestedFunc2SyncWorker(),
         dependencies=["func_1"],
+        is_output=True,
         args_mapping_rule=ArgsMappingRule.UNPACK,
     )
-    flow.output_worker_key = "func_2"
     return flow
 
 @pytest.fixture
@@ -525,8 +525,8 @@ def flow_4(flow_4_nested):
     flow.add_worker(
         "end",
         flow_4_nested,
+        is_output=True
     )
-    flow.output_worker_key = "end"
     return flow
 
 @pytest.mark.asyncio
