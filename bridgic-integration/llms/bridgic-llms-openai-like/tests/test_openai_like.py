@@ -17,9 +17,9 @@ def llm():
         api_key=_api_key,
         timeout=5,
     )
+    state_dict = llm.dump_to_dict()
     del llm
     llm = OpenAILikeLlm.__new__(OpenAILikeLlm)
-    state_dict = llm.dump_to_dict()
     llm.load_from_dict(state_dict)
     return llm
 
