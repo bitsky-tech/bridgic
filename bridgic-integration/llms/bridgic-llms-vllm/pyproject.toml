@@ -12,8 +12,8 @@ authors = [
     { name = "Tielei Zhang", email = "zhangtl04@gmail.com" },
 ]
 dependencies = [
-    "bridgic-core>=0.1.0.dev6",
-    "bridgic-llms-openai-like>=0.1.0.dev2",
+    "bridgic-core>=0.1.0.dev9",
+    "bridgic-llms-openai-like>=0.1.0.dev4",
 ]
 
 [dependency-groups]
