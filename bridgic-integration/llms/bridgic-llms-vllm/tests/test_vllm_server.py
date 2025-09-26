@@ -15,11 +15,16 @@ _model_name = os.environ.get("VLLM_SERVER_MODEL_NAME")
 
 @pytest.fixture
 def llm():
-    return VllmServerLlm(
+    llm = VllmServerLlm(
         api_base=_api_base,
         api_key=_api_key,
         timeout=5,
     )
+    del llm
+    llm = VllmServerLlm.__new__(VllmServerLlm)
+    state_dict = llm.dump_to_dict()
+    llm.load_from_dict(state_dict)
+    return llm
 
 @pytest.fixture
 def date():
@@ -350,7 +355,7 @@ def test_vllm_server_structured_output_regex_email(llm):
 def test_vllm_server_structured_output_regex_datetime(llm, datetime_obj):
     response: str = llm.structured_output(
         model=_model_name,
-        constraint=RegexPattern.DATE_TIME,
+        constraint=RegexPattern.DATE_TIME_ISO_8601,
         messages=[
             Message.from_text(
                 text="You are a helpful assistant.",

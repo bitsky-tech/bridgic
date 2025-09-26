@@ -5,6 +5,7 @@ import uuid
 import copy
 
 from typing import List
+from typing_extensions import override
 from pydantic import BaseModel
 from openai import OpenAI, AsyncOpenAI
 from openai.types.chat.chat_completion_message import ChatCompletionMessage
@@ -51,6 +52,14 @@ class VllmServerLlm(OpenAILikeLlm, StructuredOutput, ToolSelect):
             http_client=http_client,
             http_async_client=http_async_client,
         )
+
+    @override
+    def dump_to_dict(self) -> Dict[str, Any]:
+        return super().dump_to_dict()
+
+    @override
+    def load_from_dict(self, state_dict: Dict[str, Any]) -> None:
+        super().load_from_dict(state_dict)
 
     def chat(
         self,

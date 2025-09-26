@@ -180,16 +180,17 @@ wheels = [
 
 [[package]]
 name = "bridgic-core"
-version = "0.1.0.dev3"
+version = "0.1.0.dev8"
 source = { registry = "http://8.130.156.165:3141/btsk/test/+simple" }
 dependencies = [
+    { name = "docstring-parser" },
     { name = "jinja2" },
     { name = "msgpack" },
     { name = "pydantic" },
 ]
-sdist = { url = "http://8.130.156.165:3141/btsk/test/+f/158/9a4f91887e99f/bridgic_core-0.1.0.dev3.tar.gz", hash = "sha256:1589a4f91887e99f4dbc5fa8cb528c803ae60d84ce83cb60a593e22283813b8d" }
+sdist = { url = "http://8.130.156.165:3141/btsk/test/+f/47a/400cdda8036d5/bridgic_core-0.1.0.dev8.tar.gz", hash = "sha256:47a400cdda8036d5f74380e8184707f4c61b67a6aae9bd6f3204ab5ba3f8997c" }
 wheels = [
-    { url = "http://8.130.156.165:3141/btsk/test/+f/b3d/279ddc91bdd8a/bridgic_core-0.1.0.dev3-py3-none-any.whl", hash = "sha256:b3d279ddc91bdd8aef37ed441b1946d1c2fc3d131c9a79193b366e892cc983e9" },
+    { url = "http://8.130.156.165:3141/btsk/test/+f/146/d9849bac371ed/bridgic_core-0.1.0.dev8-py3-none-any.whl", hash = "sha256:146d9849bac371eddcb073751a3fe4026d183e5d0018d2f6947f0736b63d00fd" },
 ]
 
 [[package]]
@@ -211,7 +212,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "bridgic-core", specifier = ">=0.1.0.dev3", index = "http://8.130.156.165:3141/btsk/test/+simple" },
+    { name = "bridgic-core", specifier = ">=0.1.0.dev7", index = "http://8.130.156.165:3141/btsk/test/+simple" },
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "httpx-aiohttp", specifier = ">=0.1.8" },
     { name = "openai", specifier = ">=1.60.0" },
@@ -248,6 +249,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/fc/f8/98eea607f65de6527f8a2e8885fc8015d3e6f5775df186e443e0964a11c3/distro-1.9.0.tar.gz", hash = "sha256:2fa77c6fd8940f116ee1d6b94a2f90b13b5ea8d019b98bc8bafdcabcdd9bdbed", size = 60722, upload-time = "2023-12-24T09:54:32.31Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/12/b3/231ffd4ab1fc9d679809f356cebee130ac7daa00d6d6f3206dd4fd137e9e/distro-1.9.0-py3-none-any.whl", hash = "sha256:7bffd925d65168f85027d8da9af6bddab658135b840670a223589bc0c8ef02b2", size = 20277, upload-time = "2023-12-24T09:54:30.421Z" },
+]
+
+[[package]]
+name = "docstring-parser"
+version = "0.17.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/b2/9d/c3b43da9515bd270df0f80548d9944e389870713cc1fe2b8fb35fe2bcefd/docstring_parser-0.17.0.tar.gz", hash = "sha256:583de4a309722b3315439bb31d64ba3eebada841f2e2cee23b99df001434c912", size = 27442, upload-time = "2025-07-21T07:35:01.868Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/55/e2/2537ebcff11c1ee1ff17d8d0b6f4db75873e3b0fb32c2d4a2ee31ecb310a/docstring_parser-0.17.0-py3-none-any.whl", hash = "sha256:cf2569abd23dce8099b300f9b4fa8191e9582dda731fd533daf54c4551658708", size = 36896, upload-time = "2025-07-21T07:35:00.684Z" },
 ]
 
 [[package]]

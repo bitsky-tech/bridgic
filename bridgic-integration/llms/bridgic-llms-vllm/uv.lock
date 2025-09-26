@@ -180,7 +180,7 @@ wheels = [
 
 [[package]]
 name = "bridgic-core"
-version = "0.1.0.dev6"
+version = "0.1.0.dev7"
 source = { directory = "../../../bridgic-core" }
 dependencies = [
     { name = "docstring-parser" },
@@ -216,7 +216,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "bridgic-core", specifier = ">=0.1.0.dev3", index = "http://8.130.156.165:3141/btsk/test/+simple" },
+    { name = "bridgic-core", specifier = ">=0.1.0.dev7", index = "http://8.130.156.165:3141/btsk/test/+simple" },
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "httpx-aiohttp", specifier = ">=0.1.8" },
     { name = "openai", specifier = ">=1.60.0" },
@@ -230,7 +230,7 @@ dev = [
 
 [[package]]
 name = "bridgic-llms-vllm"
-version = "0.1.0.dev1"
+version = "0.1.0.dev2"
 source = { editable = "." }
 dependencies = [
     { name = "bridgic-core" },
