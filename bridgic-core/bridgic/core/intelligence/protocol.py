@@ -40,7 +40,12 @@ class EbnfGrammar(BaseModel):
     syntax: str = Field(..., description="Syntax of the EBNF grammar constraint.")
     description: str = Field(..., description="Description of the EBNF grammar constraint.")
 
-Constraint = Union[PydanticModel, JsonSchema, EbnfGrammar, Regex, Choice]
+class LarkGrammar(BaseModel):
+    constraint_type: Literal["lark_grammar"] = "lark_grammar"
+    syntax: str = Field(..., description="Syntax of the Lark grammar constraint.")
+    description: str = Field(..., description="Description of the Lark grammar constraint.")
+
+Constraint = Union[PydanticModel, JsonSchema, EbnfGrammar, LarkGrammar, Regex, Choice]
 
 class StructuredOutput(Protocol):
     """
