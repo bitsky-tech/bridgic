@@ -14,7 +14,7 @@ class PydanticModel(BaseModel):
 class JsonSchema(BaseModel):
     constraint_type: Literal["json_schema"] = "json_schema"
     name: str = Field(..., description="Name of the JsonSchema constraint.")
-    schema: Dict[str, Any] = Field(..., description="Schema of the JsonSchema constraint.")
+    schema_dict: Dict[str, Any] = Field(..., description="Schema of the JsonSchema constraint.")
 
 class Regex(BaseModel):
     constraint_type: Literal["regex"] = "regex"

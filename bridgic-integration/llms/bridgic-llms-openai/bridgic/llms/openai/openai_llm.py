@@ -738,7 +738,7 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelect):
             return {
                 "type": "json_schema",
                 "json_schema": {
-                    "schema": self._add_schema_properties(constraint.schema),
+                    "schema": self._add_schema_properties(constraint.schema_dict),
                     "name": constraint.__class__.__name__,
                     "strict": True,
                 },

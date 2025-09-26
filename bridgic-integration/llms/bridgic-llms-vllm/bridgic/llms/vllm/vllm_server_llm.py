@@ -371,7 +371,7 @@ class VllmServerLlm(OpenAILikeLlm, StructuredOutput, ToolSelect):
         if isinstance(constraint, PydanticModel):
             extra_body["guided_json"] = constraint.model.model_json_schema()
         elif isinstance(constraint, JsonSchema):
-            extra_body["guided_json"] = constraint.schema
+            extra_body["guided_json"] = constraint.schema_dict
         elif isinstance(constraint, Regex):
             extra_body["guided_regex"] = constraint.pattern
         elif isinstance(constraint, EbnfGrammar):
@@ -445,7 +445,7 @@ class VllmServerLlm(OpenAILikeLlm, StructuredOutput, ToolSelect):
 
         response: Dict[str, Any] = self.structured_output(
             model=model,
-            constraint=JsonSchema(schema=schema, name=""),
+            constraint=JsonSchema(schema_dict=schema, name=""),
             messages=messages,
             temperature=temperature,
             top_p=top_p,
@@ -508,7 +508,7 @@ class VllmServerLlm(OpenAILikeLlm, StructuredOutput, ToolSelect):
 
         response: Dict[str, Any] = await self.astructured_output(
             model=model,
-            constraint=JsonSchema(schema=schema, name=""),
+            constraint=JsonSchema(schema_dict=schema, name=""),
             messages=messages,
             temperature=temperature,
             top_p=top_p,

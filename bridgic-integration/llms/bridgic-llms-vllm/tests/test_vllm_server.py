@@ -189,7 +189,7 @@ def test_vllm_server_structured_output_json_schema(llm):
 
     response: Dict[str, Any] = llm.structured_output(
         model=_model_name,
-        constraint=JsonSchema(name="ThinkAndAnswer", schema=schema),
+        constraint=JsonSchema(name="ThinkAndAnswer", schema_dict=schema),
         messages=[
             Message.from_text(
                 text="You are a helpful assistant.",
@@ -222,7 +222,7 @@ async def test_vllm_server_astructured_output_json_schema(llm):
 
     response: Dict[str, Any] = await llm.astructured_output(
         model=_model_name,
-        constraint=JsonSchema(name="ThinkAndAnswer", schema=schema),
+        constraint=JsonSchema(name="ThinkAndAnswer", schema_dict=schema),
         messages=[
             Message.from_text(
                 text="You are a helpful assistant.",
