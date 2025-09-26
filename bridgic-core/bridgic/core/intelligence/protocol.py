@@ -13,6 +13,7 @@ class PydanticModel(BaseModel):
 
 class JsonSchema(BaseModel):
     constraint_type: Literal["json_schema"] = "json_schema"
+    name: str = Field(..., description="Name of the JsonSchema constraint.")
     schema: Dict[str, Any] = Field(..., description="Schema of the JsonSchema constraint.")
 
 class Regex(BaseModel):
@@ -36,6 +37,7 @@ class Choice(BaseModel):
 class EbnfGrammar(BaseModel):
     constraint_type: Literal["ebnf_grammar"] = "ebnf_grammar"
     syntax: str = Field(..., description="Syntax of the EBNF grammar constraint.")
+    description: str = Field(..., description="Description of the EBNF grammar constraint.")
 
 Constraint = Union[PydanticModel, JsonSchema, EbnfGrammar, Regex, Choice]
 
