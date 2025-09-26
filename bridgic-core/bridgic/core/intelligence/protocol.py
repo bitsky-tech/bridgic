@@ -13,21 +13,23 @@ class PydanticModel(BaseModel):
 
 class JsonSchema(BaseModel):
     constraint_type: Literal["json_schema"] = "json_schema"
+    name: str = Field(..., description="Name of the JsonSchema constraint.")
     schema: Dict[str, Any] = Field(..., description="Schema of the JsonSchema constraint.")
 
 class Regex(BaseModel):
     constraint_type: Literal["regex"] = "regex"
     pattern: str = Field(..., description="Pattern of the Regex constraint.")
+    description: str = Field(..., description="Description of the Regex constraint.")
 
 class RegexPattern:
-    INTEGER: ClassVar[Regex] = Regex(pattern=r"-?\d+")
-    FLOAT = Regex(pattern=r"-?(?:\d+\.\d+|\d+\.|\.\d+|\d+)([eE][-+]?\d+)?")
-    DATE: ClassVar[Regex] = Regex(pattern=r"\d{4}-\d{2}-\d{2}")
-    TIME: ClassVar[Regex] = Regex(pattern=r"(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?")
-    DATE_TIME_ISO_8601: ClassVar[Regex] = Regex(pattern=rf"{DATE.pattern}T{TIME.pattern}(?:Z|[+-](?:[01]\d|2[0-3]):[0-5]\d)?")
-    IP_V4_ADDRESS: ClassVar[Regex] = Regex(pattern=r"(?:(?:25[0-5]|2[0-4]\d|1\d{2}|[1-9]?\d)\.){3}(?:25[0-5]|2[0-4]\d|1\d{2}|[1-9]?\d)")
-    IP_V6_ADDRESS: ClassVar[Regex] = Regex(pattern=r"([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}")
-    EMAIL: ClassVar[Regex] = Regex(pattern=r"[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+")
+    INTEGER: ClassVar[Regex] = Regex(pattern=r"-?\d+", description="A regex for matching integers.")
+    FLOAT = Regex(pattern=r"-?(?:\d+\.\d+|\d+\.|\.\d+|\d+)([eE][-+]?\d+)?", description="A regex for matching floats.")
+    DATE: ClassVar[Regex] = Regex(pattern=r"\d{4}-\d{2}-\d{2}", description="A regex for matching dates.")
+    TIME: ClassVar[Regex] = Regex(pattern=r"(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?", description="A regex for matching times.")
+    DATE_TIME_ISO_8601: ClassVar[Regex] = Regex(pattern=rf"{DATE.pattern}T{TIME.pattern}(?:Z|[+-](?:[01]\d|2[0-3]):[0-5]\d)?", description="A regex for matching date-time in ISO 8601 format.")
+    IP_V4_ADDRESS: ClassVar[Regex] = Regex(pattern=r"(?:(?:25[0-5]|2[0-4]\d|1\d{2}|[1-9]?\d)\.){3}(?:25[0-5]|2[0-4]\d|1\d{2}|[1-9]?\d)", description="A regex for matching IPv4 addresses.")
+    IP_V6_ADDRESS: ClassVar[Regex] = Regex(pattern=r"([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}", description="A regex for matching IPv6 addresses.")
+    EMAIL: ClassVar[Regex] = Regex(pattern=r"[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+", description="A regex for matching email addresses.")
 
 class Choice(BaseModel):
     constraint_type: Literal["choice"] = "choice"
@@ -36,6 +38,7 @@ class Choice(BaseModel):
 class EbnfGrammar(BaseModel):
     constraint_type: Literal["ebnf_grammar"] = "ebnf_grammar"
     syntax: str = Field(..., description="Syntax of the EBNF grammar constraint.")
+    description: str = Field(..., description="Description of the EBNF grammar constraint.")
 
 Constraint = Union[PydanticModel, JsonSchema, EbnfGrammar, Regex, Choice]
 
