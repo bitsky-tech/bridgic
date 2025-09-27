@@ -1363,6 +1363,11 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
                 # Collect the output worker keys.
                 if self._workers[kickoff_info.worker_key].is_output:
                     is_output_worker_keys.add(kickoff_info.worker_key)
+                    if len(is_output_worker_keys) > 1:
+                        raise AutomaRuntimeError(
+                            f"The results of multiple workers with the setting `is_output=True` are not supported to be returned at the same time: {is_output_worker_keys}"
+                            "If you want to collect the results of multiple workers simultaneously, it is recommended that you add one worker to gather them."
+                        )
 
                 # Schedule task for each kickoff worker.
                 if worker_obj.is_automa():
@@ -1521,11 +1526,6 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         self._automa_running = False
 
         if is_output_worker_keys:
-            if len(is_output_worker_keys) > 1:
-                raise AutomaRuntimeError(
-                    f"The results of multiple workers with the setting `is_output=True` are not supported to be returned at the same time."
-                    "If you want to collect the results of multiple workers simultaneously, it is recommended that you add one worker to gather them."
-                )
             return self._worker_output.get(list(is_output_worker_keys)[0], None)
         else:
             return None
