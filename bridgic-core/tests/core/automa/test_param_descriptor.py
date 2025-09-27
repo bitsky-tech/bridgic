@@ -24,13 +24,13 @@ class AutomaWithAsyncWorker(GraphAutoma):
     async def worker_1(self, x: int, z: int = 1) -> int:
         return x + 1
 
-    @worker(dependencies=["worker_1"])
+    @worker(dependencies=["worker_1"], is_output=True)
     async def worker_2(self, x: int, y: int = From("worker_0")) -> int:
         return x + y
 
 @pytest.fixture
 def automa_with_async_worker():
-    return AutomaWithAsyncWorker(output_worker_key="worker_2")
+    return AutomaWithAsyncWorker()
 
 @pytest.mark.asyncio
 async def test_automa_with_async_worker(automa_with_async_worker: AutomaWithAsyncWorker):
@@ -50,13 +50,13 @@ class AutomaWithSyncWorker(GraphAutoma):
     def worker_1(self, x: int, z: int = 1) -> int:
         return x + 1
     
-    @worker(dependencies=["worker_1"])
+    @worker(dependencies=["worker_1"], is_output=True)
     def worker_2(self, x: int, y: int = From("worker_0")) -> int:
         return x + y
 
 @pytest.fixture
 def automa_with_sync_worker():
-    return AutomaWithSyncWorker(output_worker_key="worker_2")
+    return AutomaWithSyncWorker()
 
 @pytest.mark.asyncio
 async def test_automa_with_sync_worker(automa_with_sync_worker: AutomaWithSyncWorker):
@@ -76,13 +76,13 @@ class AutomaWithSyncAndAsyncWorker(GraphAutoma):
     async def worker_1(self, x: int, z: int = 1) -> int:
         return x + z
     
-    @worker(dependencies=["worker_1"])
+    @worker(dependencies=["worker_1"], is_output=True)
     async def worker_2(self, x: int, y: int = From("worker_0")) -> int:
         return x + y
     
 @pytest.fixture
 def automa_with_sync_and_async_worker():
-    return AutomaWithSyncAndAsyncWorker(output_worker_key="worker_2")
+    return AutomaWithSyncAndAsyncWorker()
 
 @pytest.mark.asyncio
 async def test_automa_with_sync_and_async_worker(automa_with_sync_and_async_worker: AutomaWithSyncAndAsyncWorker):
@@ -108,7 +108,7 @@ class AutomaWithFuncAsWorker(GraphAutoma):
 
 @pytest.fixture
 def automa_with_func_as_worker():
-    automa = AutomaWithFuncAsWorker(output_worker_key="worker_2")
+    automa = AutomaWithFuncAsWorker()
     automa.add_func_as_worker(
         key="worker_0", 
         func=worker_0,
@@ -125,6 +125,7 @@ def automa_with_func_as_worker():
         key="worker_2",
         func=worker_2,
         dependencies=["worker_1"],
+        is_output=True,
         args_mapping_rule=ArgsMappingRule.AS_IS,
     )
     return automa
@@ -153,7 +154,7 @@ class AutomaWithClassWorkerArun(GraphAutoma):
 
 @pytest.fixture
 def automa_with_class_worker_arun():
-    automa = AutomaWithClassWorkerArun(output_worker_key="Worker2_Arun")
+    automa = AutomaWithClassWorkerArun()
     automa.add_func_as_worker(
         key="worker_0",
         func=worker_0,
@@ -169,6 +170,7 @@ def automa_with_class_worker_arun():
     automa.add_worker(
         key="Worker2_Arun",
         worker=Worker2_Arun(),
+        is_output=True,
         dependencies=["worker_1"],
         args_mapping_rule=ArgsMappingRule.AS_IS,
     )
@@ -198,7 +200,7 @@ class AutomaWithClassWorkerRun(GraphAutoma):
 
 @pytest.fixture
 def automa_with_class_worker_run():
-    automa = AutomaWithClassWorkerRun(output_worker_key="Worker2_Run")
+    automa = AutomaWithClassWorkerRun()
     automa.add_func_as_worker(
         key="worker_0",
         func=worker_0,
@@ -214,6 +216,7 @@ def automa_with_class_worker_run():
     automa.add_worker(
         key="Worker2_Run",
         worker=Worker2_Run(),
+        is_output=True,
         dependencies=["worker_1"],
         args_mapping_rule=ArgsMappingRule.AS_IS,
     )
@@ -242,13 +245,13 @@ class AutomaArgsMappingASISandFrom(GraphAutoma):
     async def worker_1(self, x: int) -> Tuple[int, int]:
         return x + 1, x
 
-    @worker(dependencies=["worker_1"], args_mapping_rule=ArgsMappingRule.AS_IS)
+    @worker(dependencies=["worker_1"], args_mapping_rule=ArgsMappingRule.AS_IS, is_output=True)
     async def worker_2(self, x: int, y: int = From("worker_0")) -> int:
         return x[0] + x[1] + y
 
 @pytest.fixture
 def automa_with_args_mapping_asis_and_from():
-    return AutomaArgsMappingASISandFrom(output_worker_key="worker_2")
+    return AutomaArgsMappingASISandFrom()
 
 @pytest.mark.asyncio
 async def test_automa_with_args_mapping_asis_and_from(automa_with_args_mapping_asis_and_from: AutomaArgsMappingASISandFrom):
@@ -268,13 +271,13 @@ class AutomaArgsMappingUNPACKandFrom(GraphAutoma):
     async def worker_1(self, x: int) -> Tuple[int, int]:
         return x + 1, x
 
-    @worker(dependencies=["worker_1"], args_mapping_rule=ArgsMappingRule.UNPACK)
+    @worker(dependencies=["worker_1"], args_mapping_rule=ArgsMappingRule.UNPACK, is_output=True)
     async def worker_2(self, x: int, y: int, z: int = From("worker_0")) -> int:
         return x + y + z
 
 @pytest.fixture
 def automa_with_args_mapping_unpack_and_from():
-    return AutomaArgsMappingUNPACKandFrom(output_worker_key="worker_2")
+    return AutomaArgsMappingUNPACKandFrom()
 
 @pytest.mark.asyncio
 async def test_automa_with_args_mapping_unpack_and_from(automa_with_args_mapping_unpack_and_from: AutomaArgsMappingUNPACKandFrom):
@@ -294,13 +297,13 @@ class AutomaArgsMappingMERGEandFrom(GraphAutoma):
     async def worker_1(self, x: int) -> Tuple[int, int]:
         return x + 1, x
 
-    @worker(dependencies=["worker_0", "worker_1"], args_mapping_rule=ArgsMappingRule.MERGE)
+    @worker(dependencies=["worker_0", "worker_1"], args_mapping_rule=ArgsMappingRule.MERGE, is_output=True)
     async def worker_2(self, x: int, y: int = From("worker_0")) -> int:
         return x[0] + x[1][0] + x[1][1] + y
 
 @pytest.fixture
 def automa_with_args_mapping_merge_and_from():
-    return AutomaArgsMappingMERGEandFrom(output_worker_key="worker_2")
+    return AutomaArgsMappingMERGEandFrom()
 
 @pytest.mark.asyncio
 async def test_automa_with_args_mapping_merge_and_from(automa_with_args_mapping_merge_and_from: AutomaArgsMappingMERGEandFrom):
@@ -320,13 +323,13 @@ class AutomaArgsMappingSUPPRESSEDandFrom(GraphAutoma):
     async def worker_1(self, x: int) -> Tuple[int, int]:
         return x + 1, x
 
-    @worker(dependencies=["worker_1"], args_mapping_rule=ArgsMappingRule.SUPPRESSED)
+    @worker(dependencies=["worker_1"], args_mapping_rule=ArgsMappingRule.SUPPRESSED, is_output=True)
     async def worker_2(self, x: int = From("worker_0")) -> int:
         return x
 
 @pytest.fixture
 def automa_with_args_mapping_suppressed_and_from():
-    return AutomaArgsMappingSUPPRESSEDandFrom(output_worker_key="worker_2")
+    return AutomaArgsMappingSUPPRESSEDandFrom()
 
 @pytest.mark.asyncio
 async def test_automa_with_args_mapping_suppressed_and_from(automa_with_args_mapping_suppressed_and_from: AutomaArgsMappingMERGEandFrom):
@@ -346,14 +349,14 @@ class AutomaArgsMappingPositionLessThanParamsError(GraphAutoma):
     async def worker_1(self, x: int) -> Tuple[int, int]:
         return x + 1, x
 
-    @worker(dependencies=["worker_1"], args_mapping_rule=ArgsMappingRule.AS_IS)
+    @worker(dependencies=["worker_1"], args_mapping_rule=ArgsMappingRule.AS_IS, is_output=True)
     async def worker_2(self, x: int = From("worker_0")) -> int:
         print(x)
         return x
 
 @pytest.fixture
 def automa_with_args_mapping_position_less_than_params_error():
-    return AutomaArgsMappingPositionLessThanParamsError(output_worker_key="worker_2")
+    return AutomaArgsMappingPositionLessThanParamsError()
 
 @pytest.mark.asyncio
 async def test_automa_with_args_mapping_position_less_than_params_error(
@@ -382,13 +385,13 @@ class AutomaArgsMappingUNPACKandFromCover(GraphAutoma):
             "z": x + 2,
         }
 
-    @worker(dependencies=["worker_1"], args_mapping_rule=ArgsMappingRule.UNPACK)
+    @worker(dependencies=["worker_1"], args_mapping_rule=ArgsMappingRule.UNPACK, is_output=True)
     async def worker_2(self, x: int, y: int, z: int = From("worker_0")) -> int:
         return x + y + z
 
 @pytest.fixture
 def automa_with_args_mapping_unpack_and_from_cover():
-    return AutomaArgsMappingUNPACKandFromCover(output_worker_key="worker_2")
+    return AutomaArgsMappingUNPACKandFromCover()
 
 @pytest.mark.asyncio
 async def test_automa_with_args_mapping_unpack_and_from_cover(automa_with_args_mapping_unpack_and_from_cover: AutomaArgsMappingUNPACKandFromCover):
@@ -408,13 +411,13 @@ class AutomaFromWithDefaultValue(GraphAutoma):
     async def worker_1(self, x: int) -> Tuple[int, int]:
         return x + 1
 
-    @worker(dependencies=["worker_1"], args_mapping_rule=ArgsMappingRule.AS_IS)
+    @worker(dependencies=["worker_1"], args_mapping_rule=ArgsMappingRule.AS_IS, is_output=True)
     async def worker_2(self, x: int, y: int = From("no_exist_worker", 1)) -> int:
         return x + y
 
 @pytest.fixture
 def automa_with_from_with_default_value():
-    return AutomaFromWithDefaultValue(output_worker_key="worker_2")
+    return AutomaFromWithDefaultValue()
 
 @pytest.mark.asyncio
 async def test_automa_with_from_with_default_value(automa_with_from_with_default_value: AutomaFromWithDefaultValue):
@@ -434,13 +437,13 @@ class AutomaFromWithDefaultValueError(GraphAutoma):
     async def worker_1(self, x: int) -> Tuple[int, int]:
         return x + 1
 
-    @worker(dependencies=["worker_1"], args_mapping_rule=ArgsMappingRule.AS_IS)
+    @worker(dependencies=["worker_1"], args_mapping_rule=ArgsMappingRule.AS_IS, is_output=True)
     async def worker_2(self, x: int, y: int = From("no_exist_worker")) -> int:
         return x + y
 
 @pytest.fixture
 def automa_with_from_with_default_value_error():
-    return AutomaFromWithDefaultValueError(output_worker_key="worker_2")
+    return AutomaFromWithDefaultValueError()
 
 @pytest.mark.asyncio
 async def test_automa_with_from_with_default_value_error(automa_with_from_with_default_value_error: AutomaFromWithDefaultValueError):
@@ -471,6 +474,7 @@ def worker_with_system_2(automa, x: int, y: int = From("worker_0", 1), z: GraphA
     z.add_func_as_worker(
         key="self_add",
         func=self_add,
+        is_output=True,
         dependencies=['worker_0'],
         args_mapping_rule=ArgsMappingRule.AS_IS,
     )
@@ -490,7 +494,7 @@ async def end(automa, x: int):
 
 @pytest.fixture
 def automa_with_system_1():
-    return AutomaWithSystem_1(output_worker_key="end")
+    return AutomaWithSystem_1()
 
 @pytest.mark.asyncio
 async def test_automa_with_system(automa_with_system_1: AutomaWithSystem_1):
@@ -502,13 +506,14 @@ async def test_automa_with_system(automa_with_system_1: AutomaWithSystem_1):
     )
     automa_with_system_1.add_worker(
         key="worker_3",
-        worker=AutomaWithSystem_2(output_worker_key="self_add"),
+        worker=AutomaWithSystem_2(),
         dependencies=["worker_2"],
         args_mapping_rule=ArgsMappingRule.AS_IS,
     )
     automa_with_system_1.add_func_as_worker(
         key="end",
         func=end,
+        is_output=True,
         dependencies=["worker_3"],
         args_mapping_rule=ArgsMappingRule.AS_IS,
     )
@@ -550,13 +555,13 @@ class AutomaSerializationWithFrom(GraphAutoma):
             res = x + 200 + y + 200
         return res
 
-    @worker(dependencies=["worker_3"])
+    @worker(dependencies=["worker_3"], is_output=True)
     async def worker_4(self, x: int):
         return x
 
 @pytest.fixture
 def automa_serialization_with_from():
-    return AutomaSerializationWithFrom(output_worker_key="worker_4")
+    return AutomaSerializationWithFrom()
 
 @pytest.mark.asyncio
 async def test_adder_automa_1_interact_serialized(automa_serialization_with_from: AutomaSerializationWithFrom, request, db_base_path):

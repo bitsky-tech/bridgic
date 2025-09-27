@@ -68,6 +68,7 @@ class MyGraph2(GraphAutoma):
             key="concurrent",
             worker=self._concurrent,
             dependencies=["start"],
+            is_output=True,
         )
 
     @worker(key="start", is_start=True)
@@ -83,9 +84,7 @@ class MyGraph2(GraphAutoma):
 
 @pytest.fixture
 def graph_2() -> GraphAutoma:
-    graph = MyGraph2()
-    graph.output_worker_key = "concurrent"
-    return graph
+    return MyGraph2()
 
 @pytest.mark.asyncio
 async def test_concurrent_autom_2(graph_2: GraphAutoma):
@@ -137,7 +136,7 @@ def test_worker_signature_errors():
 def test_topology_change_errors():
     concurrent = MyConcurrentAutoma3()
 
-    with pytest.raises(AutomaRuntimeError, match="the reserved key `__merger__` is not allowed to be used by a concurrent worker"):
+    with pytest.raises(AutomaRuntimeError, match="the reserved key `__merger__` is not allowed to be used"):
         concurrent.add_func_as_worker(
             key="__merger__",
             func=func_1_async,
@@ -147,7 +146,7 @@ def test_topology_change_errors():
             key="func_1",
             func=func_1_async,
         )
-    with pytest.raises(AutomaRuntimeError, match="the reserved key `__merger__` is not allowed to be used by a concurrent worker"):
+    with pytest.raises(AutomaRuntimeError, match="the reserved key `__merger__` is not allowed to be used"):
         concurrent.add_worker(
             key="__merger__",
             worker=Func3AsyncWorker(),
@@ -157,7 +156,7 @@ def test_topology_change_errors():
             key="func_1",
             worker=Func3AsyncWorker(),
         )
-    with pytest.raises(AutomaRuntimeError, match="the reserved key `__merger__` is not allowed to be used by a concurrent worker"):
+    with pytest.raises(AutomaRuntimeError, match="the reserved key `__merger__` is not allowed to be used"):
         @concurrent.worker(key="__merger__")
         async def func_5_async(automa, x: int) -> int:
             return x + 5
@@ -165,8 +164,6 @@ def test_topology_change_errors():
         concurrent.remove_worker("__merger__")
     with pytest.raises(AutomaRuntimeError, match=re.escape("add_dependency() is not allowed to be called on a concurrent automa")):
         concurrent.add_dependency("__merger__", "func_1")
-    with pytest.raises(AutomaRuntimeError, match="output_worker_key is not allowed to be set on a concurrent automa"):
-        concurrent.output_worker_key = "__merger__"
 
 #############
 

@@ -13,17 +13,20 @@ A worker has two types of methods for running tasks:
 import copy
 import asyncio
 from typing import Any, Dict, List, TYPE_CHECKING, Optional, Tuple
+from typing_extensions import override
 from functools import partial
 from inspect import _ParameterKind
 from bridgic.core.automa.interaction import Event, InteractionFeedback, Feedback
 from bridgic.core.types.error import WorkerRuntimeError
+from bridgic.core.types.serialization import Serializable
 from bridgic.core.utils.inspect_tools import get_param_names_all_kinds
 from bridgic.core.utils.args_map import safely_map_args
 
 if TYPE_CHECKING:
     from bridgic.core.automa.automa import Automa
 
-class Worker:
+class Worker(Serializable):
+    __parent: "Automa"
     __local_space: Dict[str, Any]
     
     # Cached method signatures, with no need for serialization.
@@ -37,7 +40,7 @@ class Worker:
         state_dict : Optional[Dict[str, Any]] (default = None)
             A dictionary for initializing the worker's runtime state. This parameter is intended for internal framework use only, specifically for deserialization, and should not be used by developers.
         """
-        self.__parent: Automa = None
+        self.__parent = None
         self.__local_space = {}
 
         # Cached method signatures, with no need for serialization.
@@ -126,13 +129,21 @@ class Worker:
     def local_space(self, value: Dict[str, Any]):
         self.__local_space = value
 
+    @override
     def dump_to_dict(self) -> Dict[str, Any]:
         state_dict = {}
         state_dict["local_space"] = self.__local_space
         return state_dict
 
+    @override
     def load_from_dict(self, state_dict: Dict[str, Any]) -> None:
+        # Initialize parent to None - it will be set by the containing Automa
+        self.__parent = None
         self.__local_space = state_dict["local_space"]
+        
+        # Cached method signatures, with no need for serialization.
+        self.__cached_param_names_of_arun = None
+        self.__cached_param_names_of_run = None
         
     def ferry_to(self, worker_key: str, /, *args, **kwargs):
         """

@@ -112,6 +112,9 @@ class CallableWorker(Worker):
         else:
             self._callable = load_qualified_class_or_func(state_dict["callable_name"])
             self._expected_bound_parent = False
+        
+        # Cached method signatures, with no need for serialization.
+        self.__cached_param_names_of_callable = None
 
     @property
     def callable(self):
