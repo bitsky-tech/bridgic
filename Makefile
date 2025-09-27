@@ -15,7 +15,7 @@ init-dev:
 	find . -maxdepth 4 -type d -name "bridgic-*" | while read dir; do \
 		if [ -f "$$dir/Makefile" ] && [ -f "$$dir/pyproject.toml" ]; then \
 			echo "==> Found Bridgic subpackage: $$dir"; \
-			$(MAKE) -C "$$dir" venv-init; \
+			$(MAKE) -C "$$dir" venv-collect; \
 		fi \
 	done
 
