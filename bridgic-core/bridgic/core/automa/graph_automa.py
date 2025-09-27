@@ -171,9 +171,6 @@ class _AddDependencyDeferredTask(BaseModel):
     worker_key: str
     dependency: str
 
-class _SetOutputWorkerDeferredTask(BaseModel):
-    output_worker_key: str
-
 class _FerryDeferredTask(BaseModel):
     ferry_to_worker_key: str
     kickoff_worker_key: Optional[str]
@@ -1010,26 +1007,6 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
             )
             # Note: the execution order of topology change deferred tasks is important and is determined by the order of the calls of add_worker(), remove_worker() and add_dependency() in one DS.
             self._topology_change_deferred_tasks.append(deferred_task)
-
-    # TODO: Remove this property and setter after the output_worker_key is deprecated.
-    @property
-    def output_worker_key(self) -> Optional[str]:
-        pass
-        # return self._output_worker_key
-    
-    @output_worker_key.setter
-    def output_worker_key(self, worker_key: str):
-        """
-        This method is used to set the output worker of the automa dynamically.
-        """
-        if not self._automa_running:
-            self._output_worker_key = worker_key
-        else:
-            deferred_task = _SetOutputWorkerDeferredTask(
-                output_worker_key=worker_key,
-            )
-            # Note: Only the last _SetOutputWorkerDeferredTask is valid if self.output_worker_key is set multiple times in one DS.
-            # self._set_output_worker_deferred_task = deferred_task
 
     def _validate_canonical_graph(self):
         """
