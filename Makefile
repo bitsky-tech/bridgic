@@ -10,6 +10,8 @@ init-dev:
 	@echo "\n==> Preparing virtual environment for project."
 	@if [ -d .venv ]; then echo ".venv already exists, removing..."; rm -rf .venv; fi
 	@uv venv --python=python3.9 .venv && echo ".venv created."
+	@echo "\n==> Installing development dependencies for the project..."
+	@source .venv/bin/activate && uv sync --group dev
 	@echo "\n==> Initializing virtual environment for subpackages..."
 	@source .venv/bin/activate && \
 	find . -maxdepth 4 -type d -name "bridgic-*" | while read dir; do \
