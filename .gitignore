@@ -3,3 +3,5 @@ __pycache__/
 logs/
 dist/
 .DS_Store
+docs/site
+.cursor

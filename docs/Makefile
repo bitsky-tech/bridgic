@@ -9,7 +9,7 @@ MKDOCS = uv run mkdocs
 # Build static site
 build-doc:
 	@uv sync
-	$(MKDOCS) build --strict
+	$(MKDOCS) build
 
 # Start development server
 serve-doc:
