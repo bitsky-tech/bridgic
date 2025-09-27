@@ -1522,7 +1522,6 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         self._worker_interaction_indices.clear()
         self._automa_running = False
 
-        print(f"is_output_worker_keys: {is_output_worker_keys}")
         if is_output_worker_keys:
             if len(is_output_worker_keys) > 1:
                 raise AutomaRuntimeError(
