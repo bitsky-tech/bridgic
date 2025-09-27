@@ -180,7 +180,6 @@ class Flow_3_Test_AS_IS(GraphAutoma):
             #args_mapping_rule is the default value, which is ArgsMappingRule.AS_IS,
         )
         # Dynamically set the output worker to the 'merge' worker which is dynamically added.
-        # self.output_worker_key = "merge"
     
     async def func_1(self, coord: Coordinate):
         assert coord.x in [2, 3, 1]
@@ -513,7 +512,6 @@ class Flow_II_Test_MERGE(GraphAutoma):
             args_mapping_rule=ArgsMappingRule.MERGE,
         )
         # Dynamically set the output worker to the 'merge' worker which is dynamically added.
-        # self.output_worker_key = "merge"
     
     async def func_1(self, coord: Coordinate):
         assert coord.x in [2, 3, 1]

@@ -51,7 +51,6 @@ def dynamic_flow_1():
         args_mapping_rule=ArgsMappingRule.UNPACK,
     )
     # Specify the output worker.
-    # flow.output_worker_key = "func_4"
     # Final flow topology (expected): func_1 -> func_3 -> func_4.
     return flow
 
@@ -92,7 +91,6 @@ class DynamicFlow_2(GraphAutoma):
             args_mapping_rule=ArgsMappingRule.UNPACK,
         )
         # Specify the output worker.
-        # self.output_worker_key = "func_4"
         # Final flow topology (expected): func_1 -> func_3 -> func_4.
         return {"x": x+1, "y": y+1}
 
@@ -160,7 +158,6 @@ class DynamicFlow_4(GraphAutoma):
                 is_output=True if i == 6 else False,
                 dependencies=[f"func_{i-1}"],
             )
-        # self.output_worker_key = "func_6"
         return {"x": x+1, "y": y+1}
 
     async def func_2(self, x: int, y: int):
@@ -191,7 +188,6 @@ class DynamicFlow_5_AddWorkerStepByStep(GraphAutoma):
             dependencies=["func_1"],
             args_mapping_rule=ArgsMappingRule.UNPACK,
         )
-        # self.output_worker_key = "func_2"
         return {"x": x+1, "y": y+1}
 
     async def func_2(self, x: int, y: int):
@@ -216,8 +212,6 @@ class DynamicFlow_5_AddWorkerStepByStep(GraphAutoma):
                 dependencies=[my_key],
                 args_mapping_rule=ArgsMappingRule.UNPACK,
             )
-        # else:
-        #     self.output_worker_key = "func_6"
         return count_run + 1, {"x": coord["x"]+10, "y": coord["y"]+20}
 
 @pytest.fixture
@@ -426,7 +420,6 @@ class DynamicFlow_10_AddDependency(GraphAutoma):
             is_output=True
         )
         self.add_dependency("func_4", "func_3a")
-        # self.output_worker_key = "func_4"
         return x + 13
 
     async def func_3(self, x: int):
@@ -447,7 +440,6 @@ class DynamicFlow_10_AddDependency(GraphAutoma):
             # The above topology change will take effect in the next DS, triggered by ferry_to().
             self.ferry_to("func_1", x)
 
-        # self.output_worker_key = "func_4"
         return x + 4
 
 @pytest.fixture
@@ -470,7 +462,6 @@ def dynamic_flow_10():
     # Note: the dependency from `func_3a` to `func_2` must be separatedly added by add_dependency().
     flow.add_dependency("func_3a", "func_2")
 
-    # flow.output_worker_key = "func_3a"
     return flow
 
 @pytest.mark.asyncio

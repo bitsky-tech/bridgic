@@ -153,7 +153,6 @@ def flow_1_arun():
         is_output=True,
         dependencies=["func_10"],
     )
-    # flow.output_worker_key = "func_11"
     return flow
 
 @pytest.mark.asyncio
@@ -296,7 +295,6 @@ def flow_1_run():
         is_output=True,
         dependencies=["func_10"],
     )
-    # flow.output_worker_key = "func_11"
     return flow
 
 @pytest.mark.asyncio
@@ -374,7 +372,6 @@ def flow_2_arun():
         #Note: The order of dependencies is important for args mapping!!!
         dependencies=["func_2", "func_1", "func_3"],
     )
-    # flow.output_worker_key = "end"
     return flow
 
 @pytest.mark.asyncio
@@ -446,7 +443,6 @@ def flow_2_run():
         #Note: The order of dependencies is important for args mapping!!!
         dependencies=["func_2", "func_1", "func_3"],
     )
-    # flow.output_worker_key = "end"
     return flow
 
 @pytest.mark.asyncio
@@ -498,7 +494,6 @@ class Flow3StartAsyncWorker(Worker):
             #args_mapping_rule is the default value, which is ArgsMappingRule.AS_IS,
         )
         # Dynamically set the output worker to the 'merge' worker which is dynamically added.
-        # self.parent.output_worker_key = "merge"
 
 @pytest.fixture
 def flow_3_arun():
@@ -568,7 +563,6 @@ class Flow3StartSyncWorker(Worker):
             #args_mapping_rule is the default value, which is ArgsMappingRule.AS_IS,
         )
         # Dynamically set the output worker to the 'merge' worker which is dynamically added.
-        # self.parent.output_worker_key = "merge"
 
 @pytest.fixture
 def flow_3_run():
@@ -628,8 +622,8 @@ def flow_4_arun():
         "func_2",
         Flow4Func2AsyncWorker(),
         dependencies=["func_1"],
+        is_output=True,
     )
-    flow.output_worker_key = "func_2"
     return flow
 
 @pytest.mark.asyncio
@@ -662,8 +656,8 @@ def flow_4_run():
         "func_2",
         Flow4Func2SyncWorker(),
         dependencies=["func_1"],
+        is_output=True,
     )
-    flow.output_worker_key = "func_2"
     return flow
 
 @pytest.mark.asyncio
@@ -719,8 +713,8 @@ def flow_5_arun():
         "end",
         Flow5EndAsyncWorker(),
         dependencies=["func_1", "func_2"],
+        is_output=True,
     )
-    flow.output_worker_key = "end"
     return flow
 
 @pytest.mark.asyncio
@@ -774,7 +768,6 @@ def flow_5_run():
         Flow5EndSyncWorker(),
         dependencies=["func_1", "func_2"],
     )
-    flow.output_worker_key = "end"
     return flow
 
 @pytest.mark.asyncio
@@ -906,7 +899,6 @@ def flow_A_arun():
         dependencies=["func_7"],
         args_mapping_rule=ArgsMappingRule.UNPACK,
     )
-    # flow.output_worker_key = "func_8"
     return flow
 
 @pytest.mark.asyncio
@@ -1031,7 +1023,6 @@ def flow_A_run():
         dependencies=["func_7"],
         args_mapping_rule=ArgsMappingRule.UNPACK,
     )
-    # flow.output_worker_key = "func_8"
     return flow
 
 @pytest.mark.asyncio
@@ -1079,7 +1070,6 @@ def flow_B_arun():
         dependencies=["func_1", "func_2"],
         args_mapping_rule=ArgsMappingRule.UNPACK,
     )
-    # flow.output_worker_key = "end"
     return flow
 
 @pytest.mark.asyncio
@@ -1124,7 +1114,6 @@ def flow_B_run():
         dependencies=["func_1", "func_2"],
         args_mapping_rule=ArgsMappingRule.UNPACK,
     )
-    # flow.output_worker_key = "end"
     return flow
 
 @pytest.mark.asyncio
@@ -1164,7 +1153,6 @@ def flow_C_arun():
         dependencies=["func_1"],
         args_mapping_rule=ArgsMappingRule.UNPACK,
     )
-    # flow.output_worker_key = "func_2"
     return flow
 
 @pytest.mark.asyncio
@@ -1201,7 +1189,6 @@ def flow_C_run():
         dependencies=["func_1"],
         args_mapping_rule=ArgsMappingRule.UNPACK,
     )
-    # flow.output_worker_key = "func_2"
     return flow
 
 @pytest.mark.asyncio
@@ -1300,7 +1287,6 @@ def flow_I_arun():
         dependencies=["func_1", "func_2", "func_3"],
         args_mapping_rule=ArgsMappingRule.MERGE,
     )
-    # flow.output_worker_key = "end_2"
     return flow
 
 @pytest.mark.asyncio
@@ -1399,7 +1385,6 @@ def flow_I_run():
         dependencies=["func_1", "func_2", "func_3"],
         args_mapping_rule=ArgsMappingRule.MERGE,
     )
-    # flow.output_worker_key = "end_2"
     return flow
 
 @pytest.mark.asyncio
@@ -1460,7 +1445,6 @@ class FlowIIStartAsyncWorker(Worker):
             args_mapping_rule=ArgsMappingRule.MERGE,
         )
         # Dynamically set the output worker to the 'merge' worker which is dynamically added.
-        # self.parent.output_worker_key = "merge"
 
 @pytest.fixture
 def flow_II_arun():
@@ -1527,7 +1511,6 @@ class FlowIIStartSyncWorker(Worker):
             args_mapping_rule=ArgsMappingRule.MERGE,
         )
         # Dynamically set the output worker to the 'merge' worker which is dynamically added.
-        # self.parent.output_worker_key = "merge"
 
 @pytest.fixture
 def flow_II_run():
@@ -1593,7 +1576,6 @@ def flow_III_arun():
         dependencies=["start"],
         args_mapping_rule=ArgsMappingRule.MERGE,
     )
-    # flow.output_worker_key = "end"
     return flow
 
 @pytest.mark.asyncio
@@ -1640,7 +1622,6 @@ def flow_III_run():
         dependencies=["start"],
         args_mapping_rule=ArgsMappingRule.MERGE,
     )
-    # flow.output_worker_key = "end"
     return flow
 
 @pytest.mark.asyncio
@@ -1690,7 +1671,6 @@ def flow_IV_arun():
         dependencies=["start1", "start2"],
         args_mapping_rule=ArgsMappingRule.MERGE,
     )
-    # flow.output_worker_key = "end"
     return flow
 
 @pytest.mark.asyncio
@@ -1735,7 +1715,6 @@ def flow_IV_run():
         dependencies=["start1", "start2"],
         args_mapping_rule=ArgsMappingRule.MERGE,
     )
-    # flow.output_worker_key = "end"
     return flow
 
 @pytest.mark.asyncio
@@ -1778,7 +1757,6 @@ def flow_101_arun():
         dependencies=["start"],
         args_mapping_rule=ArgsMappingRule.SUPPRESSED,
     )
-    # flow.output_worker_key = "end"
     return flow
 
 @pytest.mark.asyncio
@@ -1814,7 +1792,6 @@ def flow_101_run():
         dependencies=["start"],
         args_mapping_rule=ArgsMappingRule.SUPPRESSED,
     )
-    # flow.output_worker_key = "end"
     return flow
 
 @pytest.mark.asyncio
