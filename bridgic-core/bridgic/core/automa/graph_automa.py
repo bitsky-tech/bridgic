@@ -6,8 +6,8 @@ from inspect import Parameter, _ParameterKind
 import json
 import threading
 import uuid
-from abc import ABCMeta
-from typing import Any, List, Dict, Set, Mapping, Callable, Tuple, Optional, Literal, Union
+from typing import _ProtocolMeta
+from typing import Any, List, Dict, Set, Mapping, Callable, Tuple, Optional, Literal, Union, ClassVar
 from types import MethodType
 from collections import defaultdict, deque
 from dataclasses import dataclass
@@ -25,7 +25,7 @@ from bridgic.core.automa.worker.callable_worker import CallableWorker
 from bridgic.core.automa.interaction import Event, FeedbackSender, EventHandlerType, InteractionFeedback, Feedback, Interaction, InteractionException
 from bridgic.core.automa.serialization import Snapshot
 from bridgic.core.automa.arguments_descriptor import RuntimeContext, injector
-import bridgic.core.serialization.msgpackx as msgpackx
+from bridgic.core.utils import msgpackx
 
 class _GraphAdaptedWorker(Worker):
     """
@@ -177,7 +177,7 @@ class _FerryDeferredTask(BaseModel):
     args: Tuple[Any, ...]
     kwargs: Dict[str, Any]
 
-class GraphAutomaMeta(ABCMeta):
+class GraphAutomaMeta(_ProtocolMeta):
     """
     This metaclass is used to:
         - Correctly handle inheritence of pre-defined workers during GraphAutoma class inheritence, 
@@ -361,28 +361,27 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
     """
 
     # The initial topology defined by @worker functions.
-    _registered_worker_funcs: Dict[str, Callable] = {}
+    _registered_worker_funcs: ClassVar[Dict[str, Callable]] = {}
 
-    # [IMPORTANT] 
-    # The whole states of the Automa are divided into two main parts:
-    #
-    # [Part One: Topology-Related Runtime States] The runtime states related to topology changes.
-    # -- Nodes: workers (A Worker can be another Automa): {_workers}
-    # -- Edges: Dependencies between workers: {dependencies in _workers, _worker_forwards}
-    # -- Worker Dynamics: the dynamic in-degrees of each workers. {_workers_dynamic_states}
-    # -- Configurations: Start workers, args_mapping_rule, etc. {is_start and args_mapping_rule in _workers}
-    # -- Deferred Tasks: {_topology_change_deferred_tasks}
-    #
-    # [Part Two: Task-Related Runtime States] The runtime states related to task execution.
-    # -- Current kickoff workers list. {_current_kickoff_workers}
-    # -- Running & Ferry Tasks list. {_running_tasks, _ferry_deferred_tasks}
-    # -- Automa input buffer. {_input_buffer}
-    # -- Output buffer and local space for each worker. {in _workers}
-    # -- Ongoing human interactions... {_ongoing_interactions}
-    # -- Other runtime states...
+    # IMPORTANT: The entire states of a GraphAutoma instance include 2 part:
+    # 
+    # Part-1 (for the states of topology structure):
+    #   1. Inner worker instances: self._workers
+    #   2. Relations between worker: self._worker_forwards
+    #   3. Dynamic states that serve as trigger of execution of workers: self._workers_dynamic_states
+    #   4. Execution result of inner workers: self._worker_output
+    # 
+    # Part-2 (for the states of running states):
+    #   1. Records of Workers that are going to be kicked off: self._current_kickoff_workers
+    #   2. Records of running or deferred tasks:
+    #      - self._running_tasks
+    #      - self._topology_change_deferred_tasks
+    #      - self._ferry_deferred_tasks
+    #      - self._set_output_worker_deferred_task
+    #   3. Buffers of automa inputs: self._input_buffer
+    #   4. Ongoing human interactions: self._ongoing_interactions
+    #   ...
 
-    # Note: Just declarations, NOT instances!!!
-    # So do not initialize them here!!!
     _workers: Dict[str, _GraphAdaptedWorker]
     _worker_output: Dict[str, Any]
     _worker_forwards: Dict[str, List[str]]
@@ -528,35 +527,57 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
     @override
     def dump_to_dict(self) -> Dict[str, Any]:
         state_dict = super().dump_to_dict()
-        # collect states to serialize 
+
         state_dict["name"] = self.name
-        # TODO: serialize the workers, including the outbuf of each worker
-        state_dict["workers"] = self._workers
         state_dict["automa_running"] = self._automa_running
+
+        # States related to workers.
+        state_dict["workers"] = self._workers
         state_dict["worker_forwards"] = self._worker_forwards
         state_dict["workers_dynamic_states"] = self._workers_dynamic_states
-        # TODO: args && kwargs must be serializable in order to serialize _current_kickoff_workers
+        state_dict["worker_output"] = self._worker_output
+
+        # States related to interruption recovery.
         state_dict["current_kickoff_workers"] = self._current_kickoff_workers
         state_dict["input_buffer"] = self._input_buffer
-        # TODO: the data field of Event and Feedback must be serializable in order to serialize _ongoing_interactions
         state_dict["ongoing_interactions"] = self._ongoing_interactions
-        state_dict["worker_output"] = self._worker_output
+
         return state_dict
 
     @override
     def load_from_dict(self, state_dict: Dict[str, Any]) -> None:
         super().load_from_dict(state_dict)
-        # Deserialize from the state_dict
+
+        self.name = state_dict["name"]
+        self._automa_running = state_dict["automa_running"]
+
+        # States related to workers.
         self._workers = state_dict["workers"]
         for worker in self._workers.values():
             worker.parent = self
-        self._automa_running = state_dict["automa_running"]
         self._worker_forwards = state_dict["worker_forwards"]
         self._workers_dynamic_states = state_dict["workers_dynamic_states"]
+        self._worker_output = state_dict["worker_output"]
+
+        # States related to interruption recovery.
         self._current_kickoff_workers = state_dict["current_kickoff_workers"]
         self._input_buffer = state_dict["input_buffer"]
         self._ongoing_interactions = state_dict["ongoing_interactions"]
-        self._worker_output = state_dict["worker_output"]
+
+        ########
+        # The following states need not to be serialized but need to be initialized.
+        ########
+        # The list of the tasks that are currently being executed.
+        self._running_tasks = []
+        # deferred tasks
+        self._topology_change_deferred_tasks = []
+        self._set_output_worker_deferred_task = None
+        self._ferry_deferred_tasks = []
+        # event handling and human interactions
+        self._event_handlers = {}
+        self._default_event_handler = None
+        self._worker_interaction_indices = {}
+        self._thread_pool = None
 
     @classmethod
     def load_from_snapshot(

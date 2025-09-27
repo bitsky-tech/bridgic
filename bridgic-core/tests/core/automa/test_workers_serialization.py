@@ -7,7 +7,7 @@ from typing import Optional, Dict, Any
 from typing_extensions import override
 from bridgic.core.automa import GraphAutoma, worker, ArgsMappingRule
 from bridgic.core.automa.worker import Worker, CallableWorker
-from bridgic.core.serialization import msgpackx
+from bridgic.core.utils import msgpackx
 from bridgic.core.types.error import WorkerRuntimeError
 
 ################## Test cases for Customized Worker ####################
@@ -29,7 +29,6 @@ def worker_6(top_automa: TopAutoma):
     # Test a CallableWorker with a parent of Automa.
     w = CallableWorker(top_automa.add2)
     top_automa.add_worker("add2", w, dependencies=["add1"], is_output=True)
-    # top_automa.output_worker_key = "add2"
     return w
 
 @pytest.fixture
@@ -52,7 +51,6 @@ async def test_callable_worker_serialization_4(worker_6_partially_deserialized: 
 def automa_and_worker(worker_6_partially_deserialized: CallableWorker):
     top_automa2 = TopAutoma()
     top_automa2.add_worker("add2", worker_6_partially_deserialized, dependencies=["add1"], is_output=True)
-    # top_automa2.output_worker_key = "add2"
     # Fully deserialized after being added to a Automa.
     worker_6_deserialized = worker_6_partially_deserialized
     return top_automa2, worker_6_deserialized
