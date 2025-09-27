@@ -7,7 +7,7 @@ from typing import Optional, Dict, Any
 from typing_extensions import override
 from bridgic.core.automa import GraphAutoma, worker, ArgsMappingRule
 from bridgic.core.automa.worker import Worker, CallableWorker
-from bridgic.core.serialization import msgpackx
+from bridgic.core.utils import msgpackx
 from bridgic.core.types.error import WorkerRuntimeError
 
 ################## Test cases for Customized Worker ####################

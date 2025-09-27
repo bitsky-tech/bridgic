@@ -10,7 +10,7 @@ from bridgic.core.automa.worker import Worker
 class RunningOptions(BaseModel):
     debug: bool = False
 
-class Automa(Worker, metaclass=ABCMeta):
+class Automa(Worker):
     _running_options: RunningOptions
 
     def __init__(self, name: str = None):
@@ -26,12 +26,14 @@ class Automa(Worker, metaclass=ABCMeta):
     def dump_to_dict(self) -> Dict[str, Any]:
         state_dict = super().dump_to_dict()
         state_dict["name"] = self.name
+        state_dict["running_options"] = self._running_options
         return state_dict
 
     @override
     def load_from_dict(self, state_dict: Dict[str, Any]) -> None:
         super().load_from_dict(state_dict)
         self.name = state_dict["name"]
+        self._running_options = state_dict["running_options"]
 
     def is_top_level(self) -> bool:
         """

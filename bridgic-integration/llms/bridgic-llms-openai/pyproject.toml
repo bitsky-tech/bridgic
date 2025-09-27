@@ -1,11 +1,11 @@
 [project]
-name = "bridgic-llms-vllm"
-version = "0.1.0.dev2"
+name = "bridgic-llms-openai"
+version = "0.1.0.dev1"
 classifiers = [
     "Private :: Do Not Upload",
     "Programming Language :: Python :: 3",
 ]
-description = "VLLM adapters for Bridgic, enabling connectivity with self-hosted LLM providers."
+description = "OpenAI adapters for Bridgic."
 readme = "README.md"
 requires-python = ">=3.9"
 authors = [
@@ -13,7 +13,9 @@ authors = [
 ]
 dependencies = [
     "bridgic-core>=0.1.0.dev10",
-    "bridgic-llms-openai-like>=0.1.0.dev4",
+    "openai>=1.60.0",
+    "httpx>=0.28.1",
+    "httpx-aiohttp>=0.1.8",
 ]
 
 [dependency-groups]

@@ -3,6 +3,7 @@ from typing import List, Generator, AsyncGenerator
 from enum import Enum
 
 from bridgic.core.intelligence.content import *
+from bridgic.core.types.serialization import Serializable
 
 class Role(str, Enum):
     """
@@ -69,7 +70,7 @@ class MessageChunk(BaseModel):
 StreamResponse = Generator[MessageChunk, None, None]
 AsyncStreamResponse = AsyncGenerator[MessageChunk, None]
 
-class BaseLlm(ABC):
+class BaseLlm(ABC, Serializable):
     """
     Base class for Large Language Model implementations.
     """

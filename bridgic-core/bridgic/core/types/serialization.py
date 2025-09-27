@@ -1,10 +1,8 @@
 from typing import Protocol, TypeVar, runtime_checkable, Dict, Any
 from abc import abstractmethod
 
-T = TypeVar('T', covariant=True)
-
 @runtime_checkable
-class Serializable(Protocol[T]):
+class Serializable(Protocol):
     """
     Serializable is a protocol that defines the interface for objects that customizes serialization.
     The type parameter T is the type of the object to be serialized and deserialized, typically the subclass itself that implements Serializable.
