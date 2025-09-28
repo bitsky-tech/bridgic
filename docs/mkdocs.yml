@@ -14,7 +14,7 @@ nav:
     - Quick Start: home/quick_start.md
     - Examples: home/examples.md
   - API Reference:
-      - Index: api/index.md
+      - Index: reference/bridgic-core/index.md
       - Bridgic-Core:
         - Bridgic:
           - Core:
