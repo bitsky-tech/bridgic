@@ -72,7 +72,6 @@ theme:
     - navigation.tracking
     # Table of contents
     - toc.follow
-    - toc.integrate
     # Search
     - search.suggest
     - search.highlight

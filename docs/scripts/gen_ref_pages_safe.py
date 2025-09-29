@@ -7,6 +7,7 @@ import logging
 import sys
 import yaml
 import os
+import shutil
 from pathlib import Path
 from typing import List, Dict, Set, Optional, Tuple, Any
 import re
@@ -350,6 +351,25 @@ class DocumentationGenerator:
         self.error_files = []
         self.nav_structure = {}
         
+    def clean_reference_directory(self) -> None:
+        """Clean the reference directory before generating new documentation"""
+        try:
+            reference_dir = self.docs_dir / "docs" / self.config.docs_base_path
+            
+            if reference_dir.exists():
+                logger.info(f"Cleaning reference directory: {reference_dir}")
+                shutil.rmtree(reference_dir)
+                logger.info("Successfully cleaned reference directory")
+            else:
+                logger.info(f"Reference directory does not exist, no cleanup needed: {reference_dir}")
+                
+        except PermissionError as e:
+            logger.error(f"Permission denied while cleaning reference directory: {e}")
+            raise
+        except Exception as e:
+            logger.error(f"Failed to clean reference directory: {e}")
+            raise
+
     def should_exclude_path(self, path: Path) -> bool:
         """Check if path should be excluded"""
         for pattern in self.config.exclude_patterns:
@@ -572,6 +592,9 @@ class DocumentationGenerator:
         """Execute the main documentation generation process"""
         logger.info("Starting API documentation generation...")
         logger.info(f"Working root directory: {self.root}")
+        
+        # Clean reference directory before generating new documentation
+        self.clean_reference_directory()
         
         for package_path in self.config.packages:
             self.process_package(package_path)

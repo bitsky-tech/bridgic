@@ -19,7 +19,6 @@ build-doc:
 # Start development server
 serve-doc:
 	@uv sync
-	@make gen-ref-pages
 	$(MKDOCS) serve -a $(HOST):$(PORT)
 
 # Clean build artifacts
