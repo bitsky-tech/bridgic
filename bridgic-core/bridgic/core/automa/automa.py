@@ -12,6 +12,7 @@ from concurrent.futures import ThreadPoolExecutor
 from bridgic.core.automa.worker import Worker
 from bridgic.core.automa.interaction import Event, FeedbackSender, EventHandlerType, InteractionFeedback, Feedback, Interaction, InteractionException
 from bridgic.core.automa.serialization import Snapshot
+from bridgic.core.automa.arguments_descriptor import RuntimeContext
 from bridgic.core.utils import msgpackx
 from bridgic.core.utils.inspect_tools import get_param_names_by_kind
 from bridgic.core.types.error import AutomaRuntimeError
@@ -115,7 +116,7 @@ class Automa(Worker):
         self._thread_pool = executor
 
     @abstractmethod
-    def locate_interacting_worker(self) -> Optional[str]:
+    def _locate_interacting_worker(self) -> Optional[str]:
         """
         Locate the worker that is currently interacting with human.
 
@@ -127,9 +128,16 @@ class Automa(Worker):
         ...
 
     @abstractmethod
-    def identify_worker_by_instance(self, worker: Worker) -> Optional[str]:
+    def _get_worker_key(self, worker: Worker) -> Optional[str]:
         """
         Identify the worker key by the worker instance.
+        """
+        ...
+
+    @abstractmethod
+    def _get_worker_instance(self, worker_key: str) -> Worker:
+        """
+        Get the worker instance by the worker key.
         """
         ...
 
@@ -370,7 +378,7 @@ class Automa(Worker):
     ###############################################################
 
     def interact_with_human(self, event: Event) -> InteractionFeedback:
-        kickoff_worker_key: str = self.locate_interacting_worker()
+        kickoff_worker_key: str = self._locate_interacting_worker()
         if kickoff_worker_key:
             return self.interact_with_human_from_worker_key(event, kickoff_worker_key)
         raise AutomaRuntimeError(
@@ -383,7 +391,7 @@ class Automa(Worker):
         event: Event,
         worker: Worker
     ) -> InteractionFeedback:
-        worker_key = self.identify_worker_by_instance(worker)
+        worker_key = self._get_worker_key(worker)
         if worker_key:
             return self.interact_with_human_from_worker_key(event, worker_key)
         raise AutomaRuntimeError(
@@ -434,3 +442,38 @@ class Automa(Worker):
     ###############################################################
     ######### [Bridgic Human Interaction Mechanism] ends ##########
     ###############################################################
+
+    def get_local_space(self, runtime_context: RuntimeContext) -> Dict[str, Any]:
+        """
+        Retrieve the local execution context (local space) associated with the current worker. 
+        If you require the local space to be cleared after the completion of `automa.arun()`, 
+        you may customize this behavior by overriding the `should_reset_local_space()` method.
+
+        Parameters
+        ----------
+        runtime_context : RuntimeContext
+            The runtime context.
+
+        Returns
+        -------
+        Dict[str, Any]
+            The local space.
+        """
+        worker_key = runtime_context.worker_key
+        worker_obj = self._get_worker_instance(worker_key)
+        return worker_obj.local_space
+
+    def should_reset_local_space(self) -> bool:
+        """
+        This method indicates whether to reset the local space at the end of the arun method of Automa. 
+        By default, it returns True, standing for resetting. Otherwise, it means doing nothing.
+        
+        Examples:
+        --------
+        ```python
+        class MyAutoma(Automa):
+            def should_reset_local_space(self) -> bool:
+                return False
+        ```
+        """
+        return True

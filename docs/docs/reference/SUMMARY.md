@@ -23,15 +23,14 @@
                 * [base_template](bridgic-core/bridgic/core/prompt/base_template.md)
                 * [ejinja_template](bridgic-core/bridgic/core/prompt/ejinja_template.md)
                 * [fstring_template](bridgic-core/bridgic/core/prompt/fstring_template.md)
-            * [serialization](bridgic-core/bridgic/core/serialization/index.md)
-                * [base](bridgic-core/bridgic/core/serialization/base.md)
-                * [msgpackx](bridgic-core/bridgic/core/serialization/msgpackx.md)
             * types
                 * [common](bridgic-core/bridgic/core/types/common.md)
                 * [error](bridgic-core/bridgic/core/types/error.md)
+                * [serialization](bridgic-core/bridgic/core/types/serialization.md)
             * utils
                 * [args_map](bridgic-core/bridgic/core/utils/args_map.md)
                 * [cache](bridgic-core/bridgic/core/utils/cache.md)
                 * [collection](bridgic-core/bridgic/core/utils/collection.md)
                 * [console](bridgic-core/bridgic/core/utils/console.md)
                 * [inspect_tools](bridgic-core/bridgic/core/utils/inspect_tools.md)
+                * [msgpackx](bridgic-core/bridgic/core/utils/msgpackx.md)

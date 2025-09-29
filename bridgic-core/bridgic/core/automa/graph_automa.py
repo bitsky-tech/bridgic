@@ -23,7 +23,7 @@ from bridgic.core.automa.worker_decorator import packup_worker_decorator_rumtime
 from bridgic.core.types.common import AutomaType
 from bridgic.core.automa.worker.callable_worker import CallableWorker
 from bridgic.core.automa.serialization import Snapshot
-from bridgic.core.automa.arguments_descriptor import RuntimeContext, injector
+from bridgic.core.automa.arguments_descriptor import injector
 from bridgic.core.utils import msgpackx
 
 class _GraphAdaptedWorker(Worker):
@@ -1059,45 +1059,12 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         # But _ferry_deferred_tasks is not necessary to be thread-safe due to Visibility Guarantees of the Bridgic Concurrency Model.
         self._ferry_deferred_tasks.append(deferred_task)
     
-    def get_local_space(self, runtime_context: RuntimeContext) -> Dict[str, Any]:
-        """
-        Get the local space, if you want to clean the local space after automa.arun(), you can override the should_reset_local_space() method.
-
-        Parameters
-        ----------
-        runtime_context : RuntimeContext
-            The runtime context.
-
-        Returns
-        -------
-        Dict[str, Any]
-            The local space.
-        """
-        worker_key = runtime_context.worker_key
-        worker_obj = self._workers[worker_key]
-        return worker_obj.local_space
-
     def _clean_all_worker_local_space(self):
         """
         Clean the local space of all workers.
         """
         for worker_obj in self._workers.values():
             worker_obj.local_space = {}
-
-    def should_reset_local_space(self) -> bool:
-        """
-        This method indicates whether to reset the local space at the end of the arun method of GraphAutoma. 
-        By default, it returns True, standing for resetting. Otherwise, it means doing nothing.
-        
-        Examples:
-        --------
-        ```python
-        class MyAutoma(GraphAutoma):
-            def should_reset_local_space(self) -> bool:
-                return False
-        ```
-        """
-        return True
 
     async def arun(
         self, 
@@ -1496,7 +1463,7 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         # TODO: check how to use _component_list and _component_idx...
 
     @override
-    def identify_worker_by_instance(self, worker: Worker) -> Optional[str]:
+    def _get_worker_key(self, worker: Worker) -> Optional[str]:
         for worker_key, worker_obj in self._workers.items():
             if worker_obj == worker:
                 # Note: _GraphAdaptedWorker.__eq__() is overridden to support the '==' operator.
@@ -1504,13 +1471,17 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         return None
 
     @override
-    def locate_interacting_worker(self) -> Optional[str]:
+    def _get_worker_instance(self, worker_key: str) -> Worker:
+        return self._workers[worker_key]
+
+    @override
+    def _locate_interacting_worker(self) -> Optional[str]:
         return self._trace_back_kickoff_worker_key_from_stack()
 
     def _trace_back_kickoff_worker_key_from_stack(self) -> Optional[str]:
         worker = self._get_current_running_worker_instance_by_stacktrace()
         if worker:
-            return self.identify_worker_by_instance(worker)
+            return self._get_worker_key(worker)
         return None
 
     def _get_current_running_worker_instance_by_stacktrace(self) -> Optional[Worker]:

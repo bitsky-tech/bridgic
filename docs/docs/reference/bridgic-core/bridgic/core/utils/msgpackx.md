@@ -1,8 +1,8 @@
-# base
+# msgpackx
 
 > Bridgic Core
 
-::: bridgic.core.serialization.base
+::: bridgic.core.utils.msgpackx
     options:
       show_source: true
       show_root_heading: true

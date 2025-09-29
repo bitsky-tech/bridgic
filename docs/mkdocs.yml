@@ -40,18 +40,17 @@ nav:
               - Base Template: reference/bridgic-core/bridgic/core/prompt/base_template.md
               - Ejinja Template: reference/bridgic-core/bridgic/core/prompt/ejinja_template.md
               - Fstring Template: reference/bridgic-core/bridgic/core/prompt/fstring_template.md
-            - Serialization:
-              - Base: reference/bridgic-core/bridgic/core/serialization/base.md
-              - Msgpackx: reference/bridgic-core/bridgic/core/serialization/msgpackx.md
             - Types:
               - Common: reference/bridgic-core/bridgic/core/types/common.md
               - Error: reference/bridgic-core/bridgic/core/types/error.md
+              - Serialization: reference/bridgic-core/bridgic/core/types/serialization.md
             - Utils:
               - Args Map: reference/bridgic-core/bridgic/core/utils/args_map.md
               - Cache: reference/bridgic-core/bridgic/core/utils/cache.md
               - Collection: reference/bridgic-core/bridgic/core/utils/collection.md
               - Console: reference/bridgic-core/bridgic/core/utils/console.md
               - Inspect Tools: reference/bridgic-core/bridgic/core/utils/inspect_tools.md
+              - Msgpackx: reference/bridgic-core/bridgic/core/utils/msgpackx.md
 
   - About: about/index.md
 
