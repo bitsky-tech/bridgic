@@ -377,25 +377,41 @@ class Automa(Worker):
     ######## [Bridgic Human Interaction Mechanism] starts #########
     ###############################################################
 
-    def interact_with_human(self, event: Event) -> InteractionFeedback:
-        kickoff_worker_key: str = self._locate_interacting_worker()
+    def interact_with_human(
+        self,
+        event: Event,
+        interacting_worker: Optional[Worker] = None,
+    ) -> InteractionFeedback:
+        """
+        Trigger an interruption in the "human-computer interaction" during the execution of Automa.
+
+        Parameters
+        ----------
+        event: Event
+            The event that triggered the interaction.
+        interacting_worker: Optional[Worker]
+            The worker that is currently interacting with human. If not provided, the worker will be located automatically.
+
+        Returns
+        -------
+        InteractionFeedback
+            The feedback received from the application layer.
+
+        Raises
+        ------
+        _InteractionEventException
+            If the Automa is not the top-level Automa and the `interact_with_human()` method is called by 
+            one or more workers, this exception will be raised to the upper level Automa.
+        """
+        if not interacting_worker:
+            kickoff_worker_key: str = self._locate_interacting_worker()
+        else:
+            kickoff_worker_key = self._get_worker_key(interacting_worker)
+
         if kickoff_worker_key:
             return self.interact_with_human_from_worker_key(event, kickoff_worker_key)
         raise AutomaRuntimeError(
             f"Get kickoff worker failed in Automa[{self.name}] "
-            f"when trying to interact with human with event: {event}"
-        )
-
-    def interact_with_human_from_worker(
-        self,
-        event: Event,
-        worker: Worker
-    ) -> InteractionFeedback:
-        worker_key = self._get_worker_key(worker)
-        if worker_key:
-            return self.interact_with_human_from_worker_key(event, worker_key)
-        raise AutomaRuntimeError(
-            f"Not found worker[{worker}] in Automa[{self.name}] "
             f"when trying to interact with human with event: {event}"
         )
 
