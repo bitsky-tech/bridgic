@@ -72,9 +72,9 @@ def flow_1_and_thread_name_prefix(request):
         "merge", 
         MergeAsyncWorker(),
         dependencies=["func_1", "func_2"],
+        is_output=True,
         args_mapping_rule=ArgsMappingRule.AS_IS
     )
-    flow.output_worker_key = "merge"
     yield flow, thread_name_prefix
     # clear up the thread pool
     if thread_pool:
@@ -97,7 +97,7 @@ async def test_flow_1(flow_1_and_thread_name_prefix):
 ################################################################################
 
 class Flow2(GraphAutoma):
-    @worker(is_start=True)
+    @worker(is_start=True, is_output=True)
     async def func_1(self, input_x: int, context_for_test: Dict[str, Any]) -> int:
         assert threading.get_ident() == context_for_test["main_thread_id"]
         output_x = input_x + 1
@@ -142,7 +142,6 @@ def flow_2_and_thread_name_prefix(request):
         "func_4", 
         Func4AsyncWorker(),
     )
-    flow.output_worker_key = "func_1"
     yield flow, thread_name_prefix
     # clear up the thread pool
     if thread_pool:
@@ -206,6 +205,7 @@ class Func4AsyncWorkerV2(Worker):
             "func_5", 
             Func5SyncWorkerV2(),
             dependencies=["func_4"],
+            is_output=True,
             args_mapping_rule=ArgsMappingRule.UNPACK
         )
         return input_x + 4, context_for_test
@@ -214,7 +214,6 @@ class Func5SyncWorkerV2(Worker):
     def run(self, input_x: int, context_for_test: Dict[str, Any]) -> int:
         assert threading.get_ident() != context_for_test["main_thread_id"]
         assert threading.current_thread().name.startswith(context_for_test["thread_name_prefix_in_thread_pool"])
-        self.parent.output_worker_key = "func_5"
         return input_x + 5
 
 @pytest.fixture(params=[True, False])
@@ -324,10 +323,10 @@ def flow_4_and_thread_name_prefix(request):
     flow.add_worker(
         "func_4", 
         Func4AsyncWorkerV3(),
+        is_output=True,
         dependencies=["func_3"],
         args_mapping_rule=ArgsMappingRule.UNPACK
     )
-    flow.output_worker_key = "func_4"
     yield flow, thread_name_prefix
     # clear up the thread pool
     if thread_pool:
@@ -447,9 +446,9 @@ def flow_5_and_thread_name_prefix(request):
         "func_4", 
         Func4AsyncWorkerV4(),
         dependencies=["func_3"],
+        is_output=True,
         args_mapping_rule=ArgsMappingRule.UNPACK
     )
-    flow.output_worker_key = "func_4"
     yield flow, thread_name_prefix
     # clear up the thread pool
     if thread_pool:
@@ -593,13 +592,13 @@ async def test_flow_5_interact_5(flow_5_deserialized_fourth, db_base_path, reque
 ################################################################################
 
 class Graph_Exception_1(GraphAutoma):
-    @worker(is_start=True)
+    @worker(is_start=True, is_output=True)
     async def func_1(self, input_x: int) -> int:
         raise Exception("exception in async def")
 
 @pytest.fixture
 def graph_exception_1():
-    graph = Graph_Exception_1(output_worker_key="func_1")
+    graph = Graph_Exception_1()
     return graph
 
 @pytest.mark.asyncio
@@ -608,13 +607,13 @@ async def test_graph_exception_1(graph_exception_1):
         await graph_exception_1.arun(input_x=1)
 
 class Graph_Exception_2(GraphAutoma):
-    @worker(is_start=True)
+    @worker(is_start=True, is_output=True)
     def func_2(self, input_x: int) -> int:
         raise Exception("exception in normal def")
 
 @pytest.fixture
 def graph_exception_2():
-    graph = Graph_Exception_2(output_worker_key="func_2")
+    graph = Graph_Exception_2()
     return graph
 
 @pytest.mark.asyncio
@@ -631,11 +630,12 @@ class Func3ExceptionSyncWorker(Worker):
 
 @pytest.fixture
 def graph_exception_3():
-    graph = Graph_Exception_3(output_worker_key="func_3")
+    graph = Graph_Exception_3()
     graph.add_worker(
         "func_3", 
         Func3ExceptionSyncWorker(),
         is_start=True,
+        is_output=True,
     )
     return graph
 
@@ -653,11 +653,12 @@ class Func4ExceptionAsyncWorker(Worker):
 
 @pytest.fixture
 def graph_exception_4():
-    graph = Graph_Exception_4(output_worker_key="func_4")
+    graph = Graph_Exception_4()
     graph.add_worker(
         "func_4", 
         Func4ExceptionAsyncWorker(),
         is_start=True,
+        is_output=True,
     )
     return graph
 
