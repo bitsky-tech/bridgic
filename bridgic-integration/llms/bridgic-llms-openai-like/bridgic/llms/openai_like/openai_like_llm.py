@@ -1,7 +1,8 @@
 import httpx
 import warnings
 
-from typing import List
+from typing import List, Dict, Any
+from typing_extensions import override
 from openai import OpenAI, AsyncOpenAI
 from openai.types.chat.chat_completion_message import ChatCompletionMessage
 from openai.resources.chat.completions.completions import ChatCompletionMessageParam
@@ -29,6 +30,15 @@ class OpenAILikeLlm(BaseLlm):
         The timeout in seconds.
     """
 
+    api_base: str
+    api_key: str
+    timeout: float
+    http_client: httpx.Client
+    http_async_client: httpx.AsyncClient
+
+    client: OpenAI
+    async_client: AsyncOpenAI
+
     def __init__(
         self,
         api_base: str,
@@ -37,6 +47,14 @@ class OpenAILikeLlm(BaseLlm):
         http_client: Optional[httpx.Client] = None,
         http_async_client: Optional[httpx.AsyncClient] = None,
     ):
+        # Record for serialization / deserialization.
+        self.api_base = api_base
+        self.api_key = api_key
+        self.timeout = timeout
+        self.http_client = http_client
+        self.http_async_client = http_async_client
+
+        # Initialize clients.
         self.client = OpenAI(base_url=api_base, api_key=api_key, timeout=timeout, http_client=http_client)
         self.async_client = AsyncOpenAI(base_url=api_base, api_key=api_key, timeout=timeout, http_client=http_async_client)
 
@@ -195,3 +213,44 @@ class OpenAILikeLlm(BaseLlm):
             return ChatCompletionToolMessageParam(content=content_txt, role="tool")
         else:
             raise ValueError(f"Invalid role: {message.role}")
+
+    @override
+    def dump_to_dict(self) -> Dict[str, Any]:
+        state_dict = {
+            "api_base": self.api_base,
+            "api_key": self.api_key,
+            "timeout": self.timeout,
+        }
+        if self.http_client:
+            warnings.warn(
+                "httpx.Client is not serializable, so it will be set to None in the deserialization.",
+                RuntimeWarning,
+            )
+        if self.http_async_client:
+            warnings.warn(
+                "httpx.AsyncClient is not serializable, so it will be set to None in the deserialization.",
+                RuntimeWarning,
+            )
+        return state_dict
+
+    @override
+    def load_from_dict(self, state_dict: Dict[str, Any]) -> None:
+        self.api_base = state_dict["api_base"]
+        self.api_key = state_dict["api_key"]
+        self.timeout = state_dict["timeout"]
+
+        self.http_client = None
+        self.http_async_client = None
+
+        self.client = OpenAI(
+            base_url=self.api_base,
+            api_key=self.api_key,
+            timeout=self.timeout,
+            http_client=self.http_client,
+        )
+        self.async_client = AsyncOpenAI(
+            base_url=self.api_base,
+            api_key=self.api_key,
+            timeout=self.timeout,
+            http_client=self.http_async_client,
+        )
