@@ -1365,8 +1365,11 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
                     is_output_worker_keys.add(kickoff_info.worker_key)
                     if len(is_output_worker_keys) > 1:
                         raise AutomaRuntimeError(
-                            f"The results of multiple workers with the setting `is_output=True` are not supported to be returned at the same time: {is_output_worker_keys}"
-                            "If you want to collect the results of multiple workers simultaneously, it is recommended that you add one worker to gather them."
+                            f"It is not allowed to have more than one worker with `is_output=True` and "
+                            f"they are all considered as output-worker when the automa terminates and returns."
+                            f"The current output-worker keys are: {is_output_worker_keys}."
+                            f"If you want to collect the results of multiple workers simultaneously, "
+                            f"it is recommended that you add one worker to gather them."
                         )
 
                 # Schedule task for each kickoff worker.
