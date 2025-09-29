@@ -1,7 +1,6 @@
-from typing import Optional
+from typing import Optional, Final, Callable, Any, Dict, Union
 from concurrent.futures import ThreadPoolExecutor
 from typing_extensions import override
-from typing import Callable
 
 from bridgic.core.automa.worker import Worker
 from bridgic.core.automa import GraphAutoma
@@ -16,21 +15,24 @@ class SequentialAutoma(GraphAutoma):
     When all the workers have finished running, the sequential automa will return the output results of the last worker to the caller.
     """
 
+    _TAIL_WORKER_KEY: Final[str] = "__tail__"
+    _last_worker_key: Optional[str]
+
     def __init__(
         self,
         name: Optional[str] = None,
         thread_pool: Optional[ThreadPoolExecutor] = None,
     ):
-        super().__init__(name=name, output_worker_key=None, thread_pool=thread_pool)
+        super().__init__(name=name, thread_pool=thread_pool)
 
         cls = type(self)
+        self._last_worker_key = None
         if cls.worker_decorator_type() == AutomaType.Sequential:
             # The _registered_worker_funcs data are from @worker decorators.
             # Initialize the decorated sequential workers.
-            last_worker_key = None
             for worker_key, worker_func in self._registered_worker_funcs.items():
-                is_start = last_worker_key is None
-                dependencies = [] if last_worker_key is None else [last_worker_key]
+                is_start = self._last_worker_key is None
+                dependencies = [] if self._last_worker_key is None else [self._last_worker_key]
                 super().add_func_as_worker(
                     key=worker_key,
                     func=worker_func,
@@ -38,10 +40,21 @@ class SequentialAutoma(GraphAutoma):
                     is_start=is_start,
                     args_mapping_rule=worker_func.__args_mapping_rule__,
                 )
-                last_worker_key = worker_key
+                self._last_worker_key = worker_key
 
-        if last_worker_key is not None:
-            GraphAutoma.output_worker_key.fset(self, last_worker_key)
+        if self._last_worker_key is not None:
+            # Add a hidden worker as the tail worker.
+            super().add_func_as_worker(
+                key=self._TAIL_WORKER_KEY,
+                func=self._tail_worker,
+                dependencies=[self._last_worker_key],
+                is_output=True,
+                args_mapping_rule=ArgsMappingRule.AS_IS,
+            )
+
+    def _tail_worker(self, result: Any) -> Any:
+        # Return the result of the last worker without any modification.
+        return result
 
     @classmethod
     def worker_decorator_type(cls) -> AutomaType:
@@ -49,6 +62,56 @@ class SequentialAutoma(GraphAutoma):
         Subclasses of GraphAutoma can declare this class method `worker_decorator_type` to specify the type of worker decorator.
         """
         return AutomaType.Sequential
+
+    @override
+    def dump_to_dict(self) -> Dict[str, Any]:
+        state_dict = super().dump_to_dict()
+        state_dict["last_worker_key"] = self._last_worker_key
+        return state_dict
+
+    @override
+    def load_from_dict(self, state_dict: Dict[str, Any]) -> None:
+        super().load_from_dict(state_dict)
+        self._last_worker_key = state_dict["last_worker_key"]
+
+    def __add_worker_internal(
+        self,
+        key: str,
+        func_or_worker: Union[Callable, Worker],
+        *,
+        args_mapping_rule: ArgsMappingRule = ArgsMappingRule.AS_IS,
+    ) -> None:
+        is_start = self._last_worker_key is None
+        dependencies = [] if self._last_worker_key is None else [self._last_worker_key]
+        if isinstance(func_or_worker, Callable):
+            super().add_func_as_worker(
+                key=key, 
+                func=func_or_worker,
+                dependencies=dependencies,
+                is_start=is_start,
+                args_mapping_rule=args_mapping_rule,
+            )
+        else:
+            super().add_worker(
+                key=key, 
+                worker=func_or_worker,
+                dependencies=dependencies,
+                is_start=is_start,
+                args_mapping_rule=args_mapping_rule,
+            )
+        if self._last_worker_key is not None:
+            # Remove the old hidden tail worker.
+            super().remove_worker(self._TAIL_WORKER_KEY)
+
+        # Add a new hidden tail worker.
+        self._last_worker_key = key
+        super().add_func_as_worker(
+            key=self._TAIL_WORKER_KEY,
+            func=self._tail_worker,
+            dependencies=[self._last_worker_key],
+            is_output=True,
+            args_mapping_rule=ArgsMappingRule.AS_IS,
+        )
 
     @override
     def add_worker(
@@ -70,17 +133,14 @@ class SequentialAutoma(GraphAutoma):
         args_mapping_rule : ArgsMappingRule
             The rule of arguments mapping.
         """
-        last_worker_key = super().output_worker_key
-        is_start = last_worker_key is None
-        dependencies = [] if last_worker_key is None else [last_worker_key]
-        super().add_worker(
-            key=key, 
-            worker=worker,
-            dependencies=dependencies,
-            is_start=is_start,
-            args_mapping_rule=args_mapping_rule,
+        if key == self._TAIL_WORKER_KEY:
+            raise AutomaRuntimeError(f"the reserved key `{key}` is not allowed to be used by `add_worker()`")
+
+        self.__add_worker_internal(
+            key, 
+            worker, 
+            args_mapping_rule=args_mapping_rule
         )
-        GraphAutoma.output_worker_key.fset(self, key)
 
     @override
     def add_func_as_worker(
@@ -102,17 +162,14 @@ class SequentialAutoma(GraphAutoma):
         args_mapping_rule : ArgsMappingRule
             The rule of arguments mapping.
         """
-        last_worker_key = super().output_worker_key
-        is_start = last_worker_key is None
-        dependencies = [] if last_worker_key is None else [last_worker_key]
-        super().add_func_as_worker(
-            key=key, 
-            func=func,
-            dependencies=dependencies,
-            is_start=is_start,
-            args_mapping_rule=args_mapping_rule,
+        if key == self._TAIL_WORKER_KEY:
+            raise AutomaRuntimeError(f"the reserved key `{key}` is not allowed to be used by `add_func_as_worker()`")
+
+        self.__add_worker_internal(
+            key, 
+            func, 
+            args_mapping_rule=args_mapping_rule
         )
-        GraphAutoma.output_worker_key.fset(self, key)
 
     @override
     def worker(
@@ -131,19 +188,15 @@ class SequentialAutoma(GraphAutoma):
         args_mapping_rule: ArgsMappingRule
             The rule of arguments mapping.
         """
-        super_automa = super()
+        if key == self._TAIL_WORKER_KEY:
+            raise AutomaRuntimeError(f"the reserved key `{key}` is not allowed to be used by `automa.worker()`")
+
         def wrapper(func: Callable):
-            last_worker_key = super_automa.output_worker_key
-            is_start = last_worker_key is None
-            dependencies = [] if last_worker_key is None else [last_worker_key]
-            super_automa.add_func_as_worker(
-                key=key, 
-                func=func,
-                dependencies=dependencies,
-                is_start=is_start,
-                args_mapping_rule=args_mapping_rule,
+            self.__add_worker_internal(
+                key, 
+                func, 
+                args_mapping_rule=args_mapping_rule
             )
-            GraphAutoma.output_worker_key.fset(self, key)
 
         return wrapper
 
@@ -158,11 +211,6 @@ class SequentialAutoma(GraphAutoma):
         depends: str,
     ) -> None:
         raise AutomaRuntimeError(f"add_dependency() is not allowed to be called on a sequential automa")
-
-    @override
-    @GraphAutoma.output_worker_key.setter
-    def output_worker_key(self, worker_key: str):
-        raise AutomaRuntimeError(f"output_worker_key is not allowed to be set on a sequential automa")
 
     def ferry_to(self, worker_key: str, /, *args, **kwargs):
         raise AutomaRuntimeError(f"ferry_to() is not allowed to be called on a sequential automa")

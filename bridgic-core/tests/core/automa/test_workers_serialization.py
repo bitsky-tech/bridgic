@@ -7,7 +7,7 @@ from typing import Optional, Dict, Any
 from typing_extensions import override
 from bridgic.core.automa import GraphAutoma, worker, ArgsMappingRule
 from bridgic.core.automa.worker import Worker, CallableWorker
-from bridgic.core.serialization import msgpackx
+from bridgic.core.utils import msgpackx
 from bridgic.core.types.error import WorkerRuntimeError
 
 ################## Test cases for Customized Worker ####################
@@ -28,8 +28,7 @@ def top_automa():
 def worker_6(top_automa: TopAutoma):
     # Test a CallableWorker with a parent of Automa.
     w = CallableWorker(top_automa.add2)
-    top_automa.add_worker("add2", w, dependencies=["add1"])
-    top_automa.output_worker_key = "add2"
+    top_automa.add_worker("add2", w, dependencies=["add1"], is_output=True)
     return w
 
 @pytest.fixture
@@ -51,8 +50,7 @@ async def test_callable_worker_serialization_4(worker_6_partially_deserialized: 
 @pytest.fixture
 def automa_and_worker(worker_6_partially_deserialized: CallableWorker):
     top_automa2 = TopAutoma()
-    top_automa2.add_worker("add2", worker_6_partially_deserialized, dependencies=["add1"])
-    top_automa2.output_worker_key = "add2"
+    top_automa2.add_worker("add2", worker_6_partially_deserialized, dependencies=["add1"], is_output=True)
     # Fully deserialized after being added to a Automa.
     worker_6_deserialized = worker_6_partially_deserialized
     return top_automa2, worker_6_deserialized
@@ -76,13 +74,13 @@ class AdderAutoma(GraphAutoma):
             "y": y + 1
         }
     
-    @worker(dependencies=["add1"], args_mapping_rule=ArgsMappingRule.UNPACK)
+    @worker(dependencies=["add1"], args_mapping_rule=ArgsMappingRule.UNPACK, is_output=True)
     async def add2(self, x: int, y: int):
         return x + 2, y + 2
 
 @pytest.fixture
 def adder_automa():
-    return AdderAutoma(output_worker_key="add2")
+    return AdderAutoma()
 
 @pytest.fixture
 def deserialized_adder_automa(adder_automa: AdderAutoma):

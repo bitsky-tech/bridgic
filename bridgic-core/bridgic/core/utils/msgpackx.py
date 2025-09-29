@@ -1,22 +1,28 @@
 """
-msgpackx is a serialization library that extends msgpack to provide enhanced data serialization capabilities.
-It supports serializing various common data types that are not natively handled by msgpack, and also allows customization of serialization methods for different data types.
+This module provides a serialization mechanism, which extends default msgpack serialization.
 
-If the data type implements Serializable, the customized serialization method will be used.
-If the data type implements Picklable, the data will be serialized using pickle.
-If the data type does not implement Serializable or Picklable, the serialization behavior is determined by the pickle_fallback parameter. If pickle_fallback is True, the data will be serialized using pickle. Otherwise, serialization will be tried by msgpack, which may raise a TypeError if failed.
+The strategy it will adopt the serialization and deserialization strategies is in the following order:
 
-TODO: Add default serialization support for some common data types. Which data types should be supported?
-Ref: https://docs.python.org/3/library/datatypes.html
+1. Checking if the data type belongs to common basic data types, and if so, using the special implementation for it.
+2. Checking if the data type implements Serializable protocol, and if so, using its customized implementation.
+3. Checking if the data type implements Picklable protocol, and if so, using its pickle's implementation.
+4. Otherwise, the serialization behavior is determined by the pickle_fallback parameter.
+    - If pickle_fallback is True, the data will be serialized / deserialized using pickle.
+    - If pickle_fallback is False, serialization / deserialization will be tried by msgpack, which may raise a TypeError if failed.
+
+See more about [Python's common basic data types](https://docs.python.org/3/library/datatypes.html).
 """
+import msgpack # type: ignore
+import pickle
+
 from typing import Any, Optional
 from enum import Enum
-import msgpack # type: ignore
-from .base import Serializable, Picklable
-import pickle
 from bridgic.core.utils.inspect_tools import load_qualified_class_or_func
+from bridgic.core.types.serialization import Serializable, Picklable
 from datetime import datetime
 from pydantic import BaseModel
+
+# TODO: It may be supported for more data types in the future.
 
 def dump_bytes(obj: Any, pickle_fallback: bool = False) -> bytes:
     def _custom_encode(obj: Any) -> Any:
@@ -85,7 +91,7 @@ def load_bytes(data: bytes) -> Any:
                 qualified_class_name = dict_obj["t"]
                 cls: Serializable = load_qualified_class_or_func(qualified_class_name)
                 # Note: Use the __init__ method with all default arguments to initialize the object.
-                obj = cls()
+                obj = cls.__new__(cls)
                 obj.load_from_dict(dict_obj["d"])
                 return obj
         return dict_obj

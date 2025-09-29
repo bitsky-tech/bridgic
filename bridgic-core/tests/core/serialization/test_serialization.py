@@ -3,8 +3,8 @@ from typing import Dict, List, Any, Set
 from typing_extensions import override
 import pytest
 from bridgic.core.automa.worker import Worker
-from bridgic.core.serialization import Serializable, Picklable
-import bridgic.core.serialization.msgpackx as msgpackx
+from bridgic.core.types.serialization import Serializable, Picklable
+from bridgic.core.utils import msgpackx
 from datetime import datetime, timezone, timedelta
 from pydantic import BaseModel
 

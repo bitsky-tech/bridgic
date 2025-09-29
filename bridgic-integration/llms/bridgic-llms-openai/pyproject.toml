@@ -1,41 +1,44 @@
 [project]
-name = "bridgic"
-version = "0.1.0.dev3"
+name = "bridgic-llms-openai"
+version = "0.1.0.dev1"
 classifiers = [
     "Private :: Do Not Upload",
     "Programming Language :: Python :: 3",
 ]
-description = "Bridgic is a project that enables developers to develop agents/workflows in a more natural and flexible way, consisting of several Python packages."
-keywords = ["LLM", "devtools", "workflow", "agent"]
+description = "OpenAI adapters for Bridgic."
 readme = "README.md"
 requires-python = ">=3.9"
 authors = [
     { name = "Tielei Zhang", email = "zhangtl04@gmail.com" },
 ]
 dependencies = [
-    "bridgic-core>=0.1.0.dev10,<0.2.0",
-    "brisgic-openai-like>=0.1.0.dev4,<0.2.0",
+    "bridgic-core>=0.1.0.dev10",
+    "openai>=1.60.0",
+    "httpx>=0.28.1",
+    "httpx-aiohttp>=0.1.8",
 ]
 
 [dependency-groups]
 dev = [
     "pytest>=8.4.0",
     "pytest-asyncio>=1.0.0",
-    "pytest-cov>=4.0.0",
 ]
+
+[tool.pytest.ini_options]
+addopts = ["--tb=short", "--verbose"]
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build]
-include = ["/meta/bridgic/"]
-
-[tool.hatch.build.targets.wheel.sources]
-"/meta/bridgic" = "bridgic"
+include = ["bridgic/"]
 
 [tool.uv.sources]
-bridgic-core = { index = "btsk-repo" }
+# bridgic-core = { index = "btsk-repo" }
+# bridgic-llms-openai-like = { index = "btsk-repo" }
+bridgic-core = { path = "../../../bridgic-core" }
+bridgic-llms-openai-like = { path = "../bridgic-llms-openai-like" }
 
 [[tool.uv.index]]
 name = "btsk-repo"

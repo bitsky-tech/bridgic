@@ -31,7 +31,7 @@ class ConcurrentAutoma(GraphAutoma):
         name: Optional[str] = None,
         thread_pool: Optional[ThreadPoolExecutor] = None,
     ):
-        super().__init__(name=name, output_worker_key=None, thread_pool=thread_pool)
+        super().__init__(name=name, thread_pool=thread_pool)
 
         # Implementation notes:
         # There are two types of workers in the concurrent automa:
@@ -54,9 +54,9 @@ class ConcurrentAutoma(GraphAutoma):
             key=self._MERGER_WORKER_KEY,
             func=self._merge_workers_results,
             dependencies=super().all_workers(),
+            is_output=True,
             args_mapping_rule=ArgsMappingRule.MERGE,
         )
-        GraphAutoma.output_worker_key.fset(self, self._MERGER_WORKER_KEY)
 
     def _merge_workers_results(self, results: List[Any]) -> List[Any]:
         return results
@@ -85,7 +85,7 @@ class ConcurrentAutoma(GraphAutoma):
             The worker instance to be registered.
         """
         if key == self._MERGER_WORKER_KEY:
-            raise AutomaRuntimeError(f"the reserved key `{key}` is not allowed to be used by a concurrent worker")
+            raise AutomaRuntimeError(f"the reserved key `{key}` is not allowed to be used by `add_worker()`")
         # Implementation notes:
         # Concurrent workers are implemented as start workers in the underlying graph automa.
         super().add_worker(key=key, worker=worker, is_start=True)
@@ -108,7 +108,7 @@ class ConcurrentAutoma(GraphAutoma):
             The function to be added as a concurrent worker to the automa.
         """
         if key == self._MERGER_WORKER_KEY:
-            raise AutomaRuntimeError(f"the reserved key `{key}` is not allowed to be used by a concurrent worker")
+            raise AutomaRuntimeError(f"the reserved key `{key}` is not allowed to be used by `add_func_as_worker()`")
         # Implementation notes:
         # Concurrent workers are implemented as start workers in the underlying graph automa.
         super().add_func_as_worker(key=key, func=func, is_start=True)
@@ -129,7 +129,7 @@ class ConcurrentAutoma(GraphAutoma):
             The key of the worker. If not provided, the name of the decorated callable will be used.
         """
         if key == self._MERGER_WORKER_KEY:
-            raise AutomaRuntimeError(f"the reserved key `{key}` is not allowed to be used by a concurrent worker")
+            raise AutomaRuntimeError(f"the reserved key `{key}` is not allowed to be used by `automa.worker()`")
 
         super_automa = super()
         def wrapper(func: Callable):
@@ -159,11 +159,6 @@ class ConcurrentAutoma(GraphAutoma):
         dependency: str,
     ) -> None:
         raise AutomaRuntimeError(f"add_dependency() is not allowed to be called on a concurrent automa")
-
-    @override
-    @GraphAutoma.output_worker_key.setter
-    def output_worker_key(self, worker_key: str):
-        raise AutomaRuntimeError(f"output_worker_key is not allowed to be set on a concurrent automa")
 
     def all_workers(self) -> List[str]:
         """

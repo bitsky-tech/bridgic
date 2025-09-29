@@ -7,34 +7,22 @@ import datetime
 from bridgic.core.intelligence.base_llm import *
 from bridgic.core.intelligence.protocol import *
 from bridgic.core.utils.console import printer
-from bridgic.llms.vllm.vllm_server_llm import VllmServerLlm
+from bridgic.llms.openai.openai_llm import OpenAILlm
 
-_api_base = os.environ.get("VLLM_SERVER_API_BASE")
-_api_key = os.environ.get("VLLM_SERVER_API_KEY")
-_model_name = os.environ.get("VLLM_SERVER_MODEL_NAME")
+_api_key = os.environ.get("OPENAI_API_KEY")
+_model_name = os.environ.get("OPENAI_MODEL_NAME")
 
 @pytest.fixture
 def llm():
-    llm = VllmServerLlm(
-        api_base=_api_base,
+    return OpenAILlm(
         api_key=_api_key,
         timeout=5,
     )
-    state_dict = llm.dump_to_dict()
-    del llm
-    llm = VllmServerLlm.__new__(VllmServerLlm)
-    llm.load_from_dict(state_dict)
-    return llm
 
 @pytest.fixture
 def date():
     date = datetime.datetime.now().strftime('%Y-%m-%d')
     return date
-
-@pytest.fixture
-def datetime_obj():
-    datetime_obj = datetime.datetime.now()
-    return datetime_obj
 
 @pytest.fixture
 def tools():
@@ -51,10 +39,10 @@ def tools():
 
 
 @pytest.mark.skipif(
-    (_api_key is None) or (_api_base is None) or (_model_name is None),
-    reason="VLLM_SERVER_API_KEY or VLLM_SERVER_API_BASE or VLLM_SERVER_MODEL_NAME is not set",
+    (_api_key is None) or (_model_name is None),
+    reason="OPENAI_API_KEY or OPENAI_MODEL_NAME is not set",
 )
-def test_vllm_server_chat(llm):
+def test_openai_server_chat(llm):
     response = llm.chat(
         model=_model_name,
         messages=[Message.from_text(text="Hello, how are you?", role=Role.USER)],
@@ -64,10 +52,10 @@ def test_vllm_server_chat(llm):
     assert response.message.content is not None
 
 @pytest.mark.skipif(
-    (_api_key is None) or (_api_base is None) or (_model_name is None),
-    reason="VLLM_SERVER_API_KEY or VLLM_SERVER_API_BASE or VLLM_SERVER_MODEL_NAME is not set",
+    (_api_key is None) or (_model_name is None),
+    reason="OPENAI_API_KEY or OPENAI_MODEL_NAME is not set",
 )
-def test_vllm_server_stream(llm):
+def test_openai_server_stream(llm):
     response = llm.stream(
         model=_model_name,
         messages=[Message.from_text(text="Hello, how are you?", role=Role.USER)],
@@ -80,11 +68,11 @@ def test_vllm_server_stream(llm):
     assert len(result) > 0
 
 @pytest.mark.skipif(
-    (_api_key is None) or (_api_base is None) or (_model_name is None),
-    reason="VLLM_SERVER_API_KEY or VLLM_SERVER_API_BASE or VLLM_SERVER_MODEL_NAME is not set",
+    (_api_key is None) or (_model_name is None),
+    reason="OPENAI_API_KEY or OPENAI_MODEL_NAME is not set",
 )
 @pytest.mark.asyncio
-async def test_vllm_server_achat(llm):
+async def test_openai_server_achat(llm):
     response = await llm.achat(
         model=_model_name,
         messages=[Message.from_text(text="Hello, how are you?", role=Role.USER)],
@@ -94,11 +82,11 @@ async def test_vllm_server_achat(llm):
     assert response.message.content is not None
 
 @pytest.mark.skipif(
-    (_api_key is None) or (_api_base is None) or (_model_name is None),
-    reason="VLLM_SERVER_API_KEY or VLLM_SERVER_API_BASE or VLLM_SERVER_MODEL_NAME is not set",
+    (_api_key is None) or (_model_name is None),
+    reason="OPENAI_API_KEY or OPENAI_MODEL_NAME is not set",
 )
 @pytest.mark.asyncio
-async def test_vllm_server_astream(llm):
+async def test_openai_server_astream(llm):
     response = llm.astream(
         model=_model_name,
         messages=[Message.from_text(text="Hello, how are you?", role=Role.USER)],
@@ -111,10 +99,10 @@ async def test_vllm_server_astream(llm):
     assert len(result) > 0
 
 @pytest.mark.skipif(
-    (_api_key is None) or (_api_base is None) or (_model_name is None),
-    reason="VLLM_SERVER_API_KEY or VLLM_SERVER_API_BASE or VLLM_SERVER_MODEL_NAME is not set",
+    (_api_key is None) or (_model_name is None),
+    reason="OPENAI_API_KEY or OPENAI_MODEL_NAME is not set",
 )
-def test_vllm_server_structured_output_pydantic_model(llm):
+def test_openai_server_structured_output_pydantic_model(llm):
     class ThinkAndAnswer(BaseModel):
         thought: str = Field(description="The thought about the problem.", max_length=100)
         answer: str = Field(description="The answer to the question.", min_length=10)
@@ -142,11 +130,11 @@ Don't think for long time. Don't answer in many words.
     assert len(response.answer) >= 5
 
 @pytest.mark.skipif(
-    (_api_key is None) or (_api_base is None) or (_model_name is None),
-    reason="VLLM_SERVER_API_KEY or VLLM_SERVER_API_BASE or VLLM_SERVER_MODEL_NAME is not set",
+    (_api_key is None) or (_model_name is None),
+    reason="OPENAI_API_KEY or OPENAI_MODEL_NAME is not set",
 )
 @pytest.mark.asyncio
-async def test_vllm_server_astructured_output_pydantic_model(llm):
+async def test_openai_server_astructured_output_pydantic_model(llm):
     class ThinkAndAnswer(BaseModel):
         thought: str = Field(description="The thought about the problem.", max_length=100)
         answer: str = Field(description="The answer to the question.", min_length=10)
@@ -174,10 +162,10 @@ Don't think for long time. Don't answer in many words.
     assert len(response.answer) >= 5
 
 @pytest.mark.skipif(
-    (_api_key is None) or (_api_base is None) or (_model_name is None),
-    reason="VLLM_SERVER_API_KEY or VLLM_SERVER_API_BASE or VLLM_SERVER_MODEL_NAME is not set",
+    (_api_key is None) or (_model_name is None),
+    reason="OPENAI_API_KEY or OPENAI_MODEL_NAME is not set",
 )
-def test_vllm_server_structured_output_json_schema(llm):
+def test_openai_server_structured_output_json_schema(llm):
     schema = {
         "type": "object",
         "properties": {
@@ -189,7 +177,7 @@ def test_vllm_server_structured_output_json_schema(llm):
 
     response: Dict[str, Any] = llm.structured_output(
         model=_model_name,
-        constraint=JsonSchema(name="ThinkAndAnswer", schema_dict=schema),
+        constraint=JsonSchema(schema_dict=schema),
         messages=[
             Message.from_text(
                 text="You are a helpful assistant.",
@@ -206,11 +194,11 @@ def test_vllm_server_structured_output_json_schema(llm):
     assert isinstance(response["answer"], str)
 
 @pytest.mark.skipif(
-    (_api_key is None) or (_api_base is None) or (_model_name is None),
-    reason="VLLM_SERVER_API_KEY or VLLM_SERVER_API_BASE or VLLM_SERVER_MODEL_NAME is not set",
+    (_api_key is None) or (_model_name is None),
+    reason="OPENAI_API_KEY or OPENAI_MODEL_NAME is not set",
 )
 @pytest.mark.asyncio
-async def test_vllm_server_astructured_output_json_schema(llm):
+async def test_openai_server_astructured_output_json_schema(llm):
     schema = {
         "type": "object",
         "properties": {
@@ -222,7 +210,7 @@ async def test_vllm_server_astructured_output_json_schema(llm):
 
     response: Dict[str, Any] = await llm.astructured_output(
         model=_model_name,
-        constraint=JsonSchema(name="ThinkAndAnswer", schema_dict=schema),
+        constraint=JsonSchema(schema_dict=schema),
         messages=[
             Message.from_text(
                 text="You are a helpful assistant.",
@@ -239,152 +227,173 @@ async def test_vllm_server_astructured_output_json_schema(llm):
     assert isinstance(response["answer"], str)
 
 @pytest.mark.skipif(
-    (_api_key is None) or (_api_base is None) or (_model_name is None),
-    reason="VLLM_SERVER_API_KEY or VLLM_SERVER_API_BASE or VLLM_SERVER_MODEL_NAME is not set",
-)
-def test_vllm_server_structured_output_ebnf_grammar(llm):
-    ebnf_syntax = """
-root ::= select_statement
-select_statement ::= "select " columns " from " table " where " conditions
-columns ::= (column (", " column)*) | "*"
-column ::= "year" | "sales"
-table ::= "sales_table"
-conditions ::= condition (" and " condition)*
-condition ::= column "=" number
-number ::= "2020" | "2021" | "2022" | "2023" | "2024"
-"""
-    response: str = llm.structured_output(
-        model=_model_name,
-        constraint=EbnfGrammar(syntax=ebnf_syntax, description="A grammar for selecting sales data."),
-        messages=[
-            Message.from_text(
-                text="You are a helpful assistant. You are good at writting SQL statements.",
-                role=Role.SYSTEM,
-            ),
-            Message.from_text(
-                text="""
-Here is a table (table name: sales_table) about the sales data:
-| id | year | sales |
-| -- | ---- | ----- |
-| 1  | 2021 | 20000 |
-| 2  | 2022 | 20000 |
-| 3  | 2023 | 30000 |
-| 4  | 2024 | 40000 |
-Write a SQL to select the sales of year of 2023 from the table.
-""",
-                role=Role.USER,
-            ),
-        ],
-    )
-    printer.print("\n" + response, color='purple')
-    assert response == "select sales from sales_table where year=2023"
-
-@pytest.mark.skipif(
-    (_api_key is None) or (_api_base is None) or (_model_name is None),
-    reason="VLLM_SERVER_API_KEY or VLLM_SERVER_API_BASE or VLLM_SERVER_MODEL_NAME is not set",
+    (_api_key is None) or (_model_name is None),
+    reason="OPENAI_API_KEY or OPENAI_MODEL_NAME is not set",
 )
 @pytest.mark.asyncio
-async def test_vllm_server_astructured_output_ebnf_grammar(llm):
-    ebnf_syntax = """
-root ::= select_statement
-select_statement ::= "select " columns " from " table " where " conditions
-columns ::= (column (", " column)*) | "*"
-column ::= "year" | "sales"
-table ::= "sales_table"
-conditions ::= condition (" and " condition)*
-condition ::= column "=" number
-number ::= "2020" | "2021" | "2022" | "2023" | "2024"
-"""
-    response: str = await llm.astructured_output(
-        model=_model_name,
-        constraint=EbnfGrammar(syntax=ebnf_syntax, description="A grammar for selecting sales data."),
-        messages=[
-            Message.from_text(
-                text="You are a helpful assistant. You are good at writting SQL statements.",
-                role=Role.SYSTEM,
-            ),
-            Message.from_text(
-                text="""
-Here is a table (table name: sales_table) about the sales data:
-| id | year | sales |
-| -- | ---- | ----- |
-| 1  | 2021 | 20000 |
-| 2  | 2022 | 20000 |
-| 3  | 2023 | 30000 |
-| 4  | 2024 | 40000 |
-Write a SQL to select the sales of year of 2023 from the table.
-""",
-                role=Role.USER,
-            ),
-        ],
-    )
-    printer.print("\n" + response, color='purple')
-    assert response == "select sales from sales_table where year=2023"
+async def test_openai_server_astructured_output_json_schema(llm):
+    schema = {
+        "type": "object",
+        "properties": {
+            "thought": {"type": "string", "description": "The thought about the problem.", "maxLength": 100},
+            "answer": {"type": "string", "description": "The answer to the question.", "minLength": 5},
+        },
+        "required": ["thought", "answer"],
+    }
 
-@pytest.mark.skipif(
-    (_api_key is None) or (_api_base is None) or (_model_name is None),
-    reason="VLLM_SERVER_API_KEY or VLLM_SERVER_API_BASE or VLLM_SERVER_MODEL_NAME is not set",
-)
-def test_vllm_server_structured_output_regex_email(llm):
-    pattern = rf"^Emails:\n(- {RegexPattern.EMAIL.pattern})(\n(- {RegexPattern.EMAIL.pattern}))*$"
-    response: str = llm.structured_output(
+    response: Dict[str, Any] = await llm.astructured_output(
         model=_model_name,
-        constraint=Regex(pattern=pattern, description="A regex for matching email addresses."),
-        messages=[
-            Message.from_text(
-                text="You are a helpful assistant. You are good at extracting email addresses from text.",
-                role=Role.SYSTEM,
-            ),
-            Message.from_text(
-                text="Email addresses: jack@gmail.com and david@gmail.com and john@gmail.com",
-                role=Role.USER,
-            ),
-        ],
-    )
-    printer.print("\n" + response, color='purple')
-    emails = re.findall(pattern=r"[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+", string=response)
-    assert len(emails) == 3
-    assert emails[0] == "jack@gmail.com"
-    assert emails[1] == "david@gmail.com"
-    assert emails[2] == "john@gmail.com"
-
-@pytest.mark.skipif(
-    (_api_key is None) or (_api_base is None) or (_model_name is None),
-    reason="VLLM_SERVER_API_KEY or VLLM_SERVER_API_BASE or VLLM_SERVER_MODEL_NAME is not set",
-)
-def test_vllm_server_structured_output_regex_datetime(llm, datetime_obj):
-    response: str = llm.structured_output(
-        model=_model_name,
-        constraint=RegexPattern.DATE_TIME_ISO_8601,
+        constraint=JsonSchema(schema_dict=schema),
         messages=[
             Message.from_text(
                 text="You are a helpful assistant.",
                 role=Role.SYSTEM,
             ),
             Message.from_text(
-                text=f"""
-Today is {datetime_obj.strftime('%Y-%m-%d')}.
-It is {datetime_obj.strftime('%H:%M:%S')} now.
-I am in Beijing. Please tell me the time in Beijing in ISO 8601 format.
-""",
+                text="What is the result of 12345 + 54321?",
                 role=Role.USER,
             ),
         ],
     )
-    printer.print("\n" + response, color='purple')
-    datetime_obj_new = datetime.datetime.fromisoformat(response)
-    assert datetime_obj_new.strftime('%Y-%m-%d %H:%M:%S') == datetime_obj.strftime('%Y-%m-%d %H:%M:%S')
+    printer.print("\n" + json.dumps(response), color='purple')
+    assert isinstance(response["thought"], str)
+    assert isinstance(response["answer"], str)
 
 @pytest.mark.skipif(
-    (_api_key is None) or (_api_base is None) or (_model_name is None),
-    reason="VLLM_SERVER_API_KEY or VLLM_SERVER_API_BASE or VLLM_SERVER_MODEL_NAME is not set",
+    (_api_key is None) or (_model_name is None),
+    reason="OPENAI_API_KEY or OPENAI_MODEL_NAME is not set",
 )
-def test_vllm_server_tool_select(llm, date, tools):
+def test_openai_server_structured_output_regex(llm):
+    pattern = r"^Emails:\n(- [a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+)(\n(- [a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+))*$"
+    with pytest.raises(ValueError, match=r"Invalid constraint: constraint_type=\'regex\' pattern=.*"):
+        llm.structured_output(
+            model=_model_name,
+            constraint=Regex(pattern=pattern),
+            messages=[
+                Message.from_text(
+                    text="You are a helpful assistant. You are good at extracting email addresses from text.",
+                    role=Role.SYSTEM,
+                ),
+                Message.from_text(
+                    text="Email addresses: jack@gmail.com and david@gmail.com and john@gmail.com",
+                    role=Role.USER,
+                ),
+            ],
+        )
+
+@pytest.mark.skipif(
+    (_api_key is None) or (_model_name is None),
+    reason="OPENAI_API_KEY or OPENAI_MODEL_NAME is not set",
+)
+@pytest.mark.asyncio
+async def test_openai_server_astructured_output_regex(llm):
+    pattern = r"^Emails:\n(- [a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+)(\n(- [a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+))*$"
+    with pytest.raises(ValueError, match=r"Invalid constraint: constraint_type=\'regex\' pattern=.*"):
+        await llm.astructured_output(
+            model=_model_name,
+            constraint=Regex(pattern=pattern),
+            messages=[
+                Message.from_text(
+                    text="You are a helpful assistant. You are good at extracting email addresses from text.",
+                    role=Role.SYSTEM,
+                ),
+                Message.from_text(
+                    text="Email addresses: jack@gmail.com and david@gmail.com and john@gmail.com",
+                    role=Role.USER,
+                ),
+            ],
+        )
+    
+
+@pytest.mark.skipif(
+    (_api_key is None) or (_model_name is None),
+    reason="OPENAI_API_KEY or OPENAI_MODEL_NAME is not set",
+)
+def test_openai_server_structured_output_ebnf_grammar(llm):
+    ebnf_syntax = """
+root ::= select_statement
+select_statement ::= "select " columns " from " table " where " conditions
+columns ::= (column (", " column)*) | "*"
+column ::= "year" | "sales"
+table ::= "sales_table"
+conditions ::= condition (" and " condition)*
+condition ::= column "=" number
+number ::= "2020" | "2021" | "2022" | "2023" | "2024"
+"""
+    with pytest.raises(ValueError, match=r"Invalid constraint: constraint_type=\'ebnf_grammar\' syntax=.*"):
+        llm.structured_output(
+            model=_model_name,
+            constraint=EbnfGrammar(syntax=ebnf_syntax),
+            messages=[
+                Message.from_text(
+                    text="You are a helpful assistant. You are good at writting SQL statements.",
+                    role=Role.SYSTEM,
+                ),
+                Message.from_text(
+                    text="""
+    Here is a table (table name: sales_table) about the sales data:
+    | id | year | sales |
+    | -- | ---- | ----- |
+    | 1  | 2021 | 20000 |
+    | 2  | 2022 | 20000 |
+    | 3  | 2023 | 30000 |
+    | 4  | 2024 | 40000 |
+    Write a SQL to select the sales of year of 2023 from the table.
+    """,
+                    role=Role.USER,
+                ),
+            ],
+        )
+
+@pytest.mark.skipif(
+    (_api_key is None) or (_model_name is None),
+    reason="OPENAI_API_KEY or OPENAI_MODEL_NAME is not set",
+)
+@pytest.mark.asyncio
+async def test_openai_server_astructured_output_ebnf_grammar(llm):
+    ebnf_syntax = """
+root ::= select_statement
+select_statement ::= "select " columns " from " table " where " conditions
+columns ::= (column (", " column)*) | "*"
+column ::= "year" | "sales"
+table ::= "sales_table"
+conditions ::= condition (" and " condition)*
+condition ::= column "=" number
+number ::= "2020" | "2021" | "2022" | "2023" | "2024"
+"""
+    with pytest.raises(ValueError, match=r"Invalid constraint: constraint_type=\'ebnf_grammar\' syntax=.*"):
+        await llm.astructured_output(
+            model=_model_name,
+            constraint=EbnfGrammar(syntax=ebnf_syntax),
+            messages=[
+                Message.from_text(
+                    text="You are a helpful assistant. You are good at writting SQL statements.",
+                    role=Role.SYSTEM,
+                ),
+                Message.from_text(
+                    text="""
+    Here is a table (table name: sales_table) about the sales data:
+    | id | year | sales |
+    | -- | ---- | ----- |
+    | 1  | 2021 | 20000 |
+    | 2  | 2022 | 20000 |
+    | 3  | 2023 | 30000 |
+    | 4  | 2024 | 40000 |
+    Write a SQL to select the sales of year of 2023 from the table.
+    """,
+                    role=Role.USER,
+                ),
+            ],
+        )
+
+@pytest.mark.skipif(
+    (_api_key is None) or (_model_name is None),
+    reason="OPENAI_API_KEY or OPENAI_MODEL_NAME is not set",
+)
+def test_openai_server_tool_select(llm, date, tools):
     response: List[ToolCall] = llm.tool_select(
         model=_model_name,
         tools=tools,
-        min_tools=1,
-        max_tools=3,
         messages=[
             Message.from_text(
                 text="You are a helpful assistant. You are good at calling the provided tools to solve problems.",
@@ -406,16 +415,14 @@ def test_vllm_server_tool_select(llm, date, tools):
             assert len(tool_call.arguments["topic"]) > 0
 
 @pytest.mark.skipif(
-    (_api_key is None) or (_api_base is None) or (_model_name is None),
-    reason="VLLM_SERVER_API_KEY or VLLM_SERVER_API_BASE or VLLM_SERVER_MODEL_NAME is not set",
+    (_api_key is None) or (_model_name is None),
+    reason="OPENAI_API_KEY or OPENAI_MODEL_NAME is not set",
 )
 @pytest.mark.asyncio
-async def test_vllm_server_atool_select(llm, date, tools):
+async def test_openai_server_atool_select(llm, date, tools):
     response: List[ToolCall] = await llm.atool_select(
         model=_model_name,
         tools=tools,
-        min_tools=0,
-        max_tools=3,
         messages=[
             Message.from_text(
                 text="You are a helpful assistant. You are good at calling the provided tools to solve problems.",
@@ -435,3 +442,4 @@ async def test_vllm_server_atool_select(llm, date, tools):
         if tool_call.name == "get_news":
             assert tool_call.arguments["date"] == date
             assert len(tool_call.arguments["topic"]) > 0
+
