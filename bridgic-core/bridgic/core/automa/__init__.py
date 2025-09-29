@@ -1,4 +1,4 @@
-from bridgic.core.automa.automa import Automa
+from bridgic.core.automa.automa import Automa, _InteractionAndFeedback, _InteractionEventException
 from bridgic.core.automa.graph_automa import GraphAutoma
 from bridgic.core.automa.concurrent_automa import ConcurrentAutoma
 from bridgic.core.automa.sequential_automa import SequentialAutoma
@@ -8,6 +8,8 @@ from bridgic.core.types.error import *
 
 __all__ = [
     "Automa",
+    "_InteractionAndFeedback",
+    "_InteractionEventException",
     "GraphAutoma",
     "ConcurrentAutoma",
     "SequentialAutoma",

@@ -4,7 +4,7 @@ Test cases for rerunning an Automa instance.
 
 import pytest
 from bridgic.core.automa import worker, GraphAutoma
-from bridgic.core.automa.graph_automa import RuntimeContext
+from bridgic.core.automa.arguments_descriptor import RuntimeContext
 from bridgic.core.automa.interaction import Event
 from bridgic.core.automa.interaction import InteractionFeedback, InteractionException
 from bridgic.core.automa.serialization import Snapshot
