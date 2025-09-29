@@ -1,6 +1,6 @@
 [project]
 name = "bridgic"
-version = "0.1.0.dev2"
+version = "0.1.0.dev3"
 classifiers = [
     "Private :: Do Not Upload",
     "Programming Language :: Python :: 3",
@@ -13,7 +13,15 @@ authors = [
     { name = "Tielei Zhang", email = "zhangtl04@gmail.com" },
 ]
 dependencies = [
-    "bridgic-core>=0.1.0.dev2,<0.2.0",
+    "bridgic-core>=0.1.0.dev10,<0.2.0",
+    "brisgic-openai-like>=0.1.0.dev4,<0.2.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.4.0",
+    "pytest-asyncio>=1.0.0",
+    "pytest-cov>=4.0.0",
 ]
 
 [build-system]

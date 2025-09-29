@@ -370,6 +370,7 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
     #   2. Relations between worker: self._worker_forwards
     #   3. Dynamic states that serve as trigger of execution of workers: self._workers_dynamic_states
     #   4. Execution result of inner workers: self._worker_output
+    #   5. Configurations of this automa instance: self._output_worker_key
     # 
     # Part-2 (for the states of running states):
     #   1. Records of Workers that are going to be kicked off: self._current_kickoff_workers
