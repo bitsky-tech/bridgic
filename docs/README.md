@@ -12,14 +12,11 @@ All Python dependencies are defined in `pyproject.toml` and installed via `uv sy
 ### Quick Start 🚀
 
 ```bash
-# 1) Install dependencies
-make install
+# 1) Start the development server (default: 127.0.0.1:8000)
+make serve-doc
 
-# 2) Start the dev server (default: 127.0.0.1:8000)
-make serve
-
-# Or customize host/port
-make serve HOST=0.0.0.0 PORT=8001
+# Or customize host and port
+make serve-doc HOST=0.0.0.0 PORT=8001
 ```
 
 Open `http://127.0.0.1:8000` in your browser. Live reload is enabled. 🔁
@@ -27,15 +24,11 @@ Open `http://127.0.0.1:8000` in your browser. Live reload is enabled. 🔁
 ### Common Commands 🛠️
 
 ```bash
-# Build the static site into ./site
-make build
+# Build static site to ./site directory
+make build-doc
 
-# Strict build to validate configuration and references
-make check
-
-# Show MkDocs help / version
-make help
-make version
+# Generate API reference documentation
+make gen-ref-pages
 
 # Clean build artifacts and cache
 make clean
@@ -43,31 +36,51 @@ make clean
 
 Under the hood, these targets invoke MkDocs via `uv run mkdocs` so you don't need to manually activate a virtual environment. 🧰
 
-### Configuration ⚙️
+### API Documentation Generation 🤖
 
-- Main config: `mkdocs.yml`
-- Theme: Material (`mkdocs-material`)
-- API reference: `mkdocstrings[python]` with `griffe-fieldz`
-- Source paths for API docs point to `../bridgic-core`
+The project includes an automated API documentation generation system:
 
-You can tweak navigation, theme options, and docstring rendering in `mkdocs.yml`.
+```bash
+# Generate API reference documentation
+make gen-ref-pages
+
+# Configuration file for customization
+scripts/doc_config.yaml
+```
+
+**Note:** Both `serve-doc` and `build-doc` commands automatically run `make gen-ref-pages` to ensure API documentation is always up-to-date.
+
+### Configurable Parameters ⚙️
+
+The Makefile supports the following configurable parameters:
+
+```bash
+# Host address (default: 127.0.0.1)
+HOST=0.0.0.0 make serve-doc
+
+# Port number (default: 8000)
+PORT=8001 make serve-doc
+
+# Combined usage
+HOST=0.0.0.0 PORT=8001 make serve-doc
+```
 
 ### Project Layout 🗂️
 
 ```
 docs/
   ├─ docs/               # Markdown sources (guides, API index, etc.)
+  │   ├─ reference/      # Generated API documentation
+  │   ├─ home/           # Getting started guides
+  │   └─ about/          # Project information
+  ├─ scripts/            # Documentation generation tools
+  │   ├─ gen_ref_pages_safe.py  # Safe API doc generator
+  │   └─ doc_config.yaml        # Generation configuration
   ├─ site/               # Built static site (generated)
   ├─ mkdocs.yml          # MkDocs configuration
   ├─ pyproject.toml      # Docs dependencies
-  └─ Makefile            # Helpful shortcuts (serve/build/check/...)
+  └─ Makefile            # Convenient commands (serve-doc/build-doc/gen-ref-pages/clean)
 ```
-
-### Tips & Troubleshooting 🧭
-
-- Port already in use? Change it with `make serve PORT=8001`.
-- Stale content or layout? Run `make clean && make build`.
-- API pages missing members? Ensure the `../bridgic-core` code is present and importable.
 
 ### Deployment 🌐
 
@@ -76,5 +89,4 @@ TODO: Add CICD
 ### License 📄
 
 This documentation is distributed under the same license as the repository. See the root `LICENSE` file.
-
 

@@ -6,14 +6,20 @@ PORT ?= 8000
 
 MKDOCS = uv run mkdocs
 
+# Generate API reference documentation
+gen-ref-pages:
+	@uv run python scripts/gen_ref_pages_safe.py
+
 # Build static site
 build-doc:
 	@uv sync
-	$(MKDOCS) build --strict
+	@make gen-ref-pages
+	$(MKDOCS) build
 
 # Start development server
 serve-doc:
 	@uv sync
+	@make gen-ref-pages
 	$(MKDOCS) serve -a $(HOST):$(PORT)
 
 # Clean build artifacts
