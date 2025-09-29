@@ -69,6 +69,59 @@ Edit `scripts/doc_config.yaml` to customize:
 - Documentation generation options
 - mkdocstrings rendering settings
 
+#### Debugging & Troubleshooting 🐛
+
+The documentation generator includes comprehensive debugging capabilities:
+
+**Enable Debug Output:**
+```bash
+# Method 1: Edit doc_config.yaml
+# Set verbose: true and logging.level: "DEBUG"
+
+# Method 2: Temporarily enable verbose logging
+# Edit scripts/gen_ref_pages_safe.py line 18:
+# logging.basicConfig(level=logging.DEBUG, ...)
+```
+
+**Debug Output Features:**
+- **Verbose Mode**: Detailed file processing information
+- **Statistics Report**: Shows generated/skipped/error file counts
+- **Error Details**: Full error messages and stack traces when verbose is enabled
+- **Path Resolution**: Debug info about working directory changes
+- **Navigation Structure**: Detailed MkDocs config update process
+
+**Generated Debug Files:**
+- `docs/reference/SUMMARY.md` - Complete navigation structure for verification
+- Console output with processing statistics
+- Error file list with detailed failure reasons
+
+**Common Debug Scenarios:**
+```bash
+# Check what files are being processed
+uv run python scripts/gen_ref_pages_safe.py | grep "Generated documentation"
+
+# View skipped files (when verbose=true)
+uv run python scripts/gen_ref_pages_safe.py | grep "Skipped file"
+
+# See full error details for failed files
+uv run python scripts/gen_ref_pages_safe.py | grep -A 5 "Error files:"
+
+# Debug navigation structure
+cat docs/reference/SUMMARY.md
+```
+
+**Configuration Debug Options:**
+```yaml
+# In scripts/doc_config.yaml
+generation_options:
+  verbose: true                    # Enable detailed logging
+  skip_empty_modules: true         # Skip empty Python files
+  show_source: true               # Show source links in docs
+  
+logging:
+  level: "DEBUG"                  # DEBUG, INFO, WARNING, ERROR
+```
+
 ### Configuration ⚙️
 
 - Main config: `mkdocs.yml`
@@ -98,11 +151,30 @@ docs/
 
 ### Tips & Troubleshooting 🧭
 
+**General Issues:**
 - Port already in use? Change it with `make serve PORT=8001`.
 - Stale content or layout? Run `make clean && make build`.
 - API pages missing members? Ensure the `../bridgic-core` code is present and importable.
 - Need to regenerate API docs? Run `uv run python scripts/gen_ref_pages_safe.py`.
 - Configuration issues? Check `scripts/doc_config.yaml` for proper package paths.
+
+**Documentation Generation Issues:**
+- **Script fails with "Config file 'mkdocs.yml' does not exist"**: Ensure you're running from the correct directory or use `cd docs && uv run python scripts/gen_ref_pages_safe.py`.
+- **Empty or missing documentation pages**: Enable verbose mode and check the "Error files" section in the output.
+- **Navigation not updating**: Verify the script completed successfully and check the generated `SUMMARY.md` file.
+- **Module import errors**: Ensure the Python packages are properly installed and importable from the script's working directory.
+
+**Debug Commands:**
+```bash
+# Full debug output
+cd docs && uv run python scripts/gen_ref_pages_safe.py 2>&1 | tee debug.log
+
+# Check generated file count
+ls -la docs/reference/bridgic-core/bridgic/core/**/*.md | wc -l
+
+# Verify navigation structure
+head -20 docs/reference/SUMMARY.md
+```
 
 ### Deployment 🌐
 

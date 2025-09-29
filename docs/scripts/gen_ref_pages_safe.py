@@ -6,6 +6,7 @@ Uses staging and recovery mechanism to protect other configurations
 import logging
 import sys
 import yaml
+import os
 from pathlib import Path
 from typing import List, Dict, Set, Optional, Tuple, Any
 import re
@@ -76,7 +77,7 @@ class DocumentationConfig:
         self.generate_index_pages = True
         self.docstring_style = "numpy"
         
-        # mkdocstrings选项
+        # mkdocstrings options
         self.mkdocstrings_options = {
             "docstring_options": {"ignore_init_summary": True},
             "filters": ["!^_", "!^__init__"],
@@ -195,7 +196,7 @@ class SafeMkDocsConfigUpdater:
             next_config_match = re.search(next_config_pattern, remaining_content, flags=re.MULTILINE)
             
             if next_config_match:
-                nav_content = remaining_content[:next_config_match.start() + 1]  # 保留换行符
+                nav_content = remaining_content[:next_config_match.start() + 1]  # keep the newline
                 content_after_nav = remaining_content[next_config_match.start() + 1:]
             else:
                 # nav is the last configuration item
@@ -274,7 +275,7 @@ class SafeMkDocsConfigUpdater:
     
     def _build_api_reference_nav(self, nav_structure: Dict[str, Any]) -> List[Any]:
         """Build navigation structure for API Reference"""
-        api_nav = [{'Index': 'api/index.md'}]
+        api_nav = [{'Index': 'reference/bridgic-core/index.md'}]
         
         for package_name, package_structure in nav_structure.items():
             formatted_name = self._format_display_name(package_name)
@@ -340,7 +341,10 @@ class DocumentationGenerator:
     def __init__(self, config: DocumentationConfig):
         self.config = config
         self.nav = mkdocs_gen_files.Nav()
+        # script is located under docs/scripts/, so the root directory is the upper layer of the script directory
         self.root = Path(__file__).parent.parent.parent
+        # docs directory is the upper layer of the script directory
+        self.docs_dir = Path(__file__).parent.parent
         self.generated_files = []
         self.skipped_files = []
         self.error_files = []
@@ -582,7 +586,7 @@ class DocumentationGenerator:
     def update_mkdocs_config(self) -> None:
         """Update the API Reference section of MkDocs configuration file"""
         try:
-            mkdocs_path = self.root / "docs" / "mkdocs.yml"
+            mkdocs_path = self.docs_dir / "mkdocs.yml"
             updater = SafeMkDocsConfigUpdater(mkdocs_path)
             
             if self.nav_structure:
@@ -600,15 +604,30 @@ class DocumentationGenerator:
 def main():
     """Main function"""
     try:
-        config = DocumentationConfig()
-        generator = DocumentationGenerator(config)
-        generator.generate()
+        # ensure the working directory is set to docs directory, so mkdocs_gen_files can find mkdocs.yml
+        script_dir = Path(__file__).parent  # docs/scripts/
+        docs_dir = script_dir.parent  # docs/
+        original_cwd = Path.cwd()
+        
+        logger.info(f"Changing working directory from {original_cwd} to {docs_dir}")
+        os.chdir(docs_dir)
+        
+        try:
+            config = DocumentationConfig()
+            generator = DocumentationGenerator(config)
+            generator.generate()
+        finally:
+            # restore the original working directory
+            os.chdir(original_cwd)
+            logger.info(f"Restored working directory to {original_cwd}")
         
     except KeyboardInterrupt:
         logger.info("User interrupted operation")
         sys.exit(1)
     except Exception as e:
         logger.error(f"Error occurred during documentation generation: {e}")
+        import traceback
+        logger.debug(f"Detailed error information: {traceback.format_exc()}")
         sys.exit(1)
 
 if __name__ == "__main__":
