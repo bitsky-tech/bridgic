@@ -378,6 +378,25 @@ class Automa(Worker):
     ###############################################################
 
     def interact_with_human(self, event: Event) -> InteractionFeedback:
+        """
+        Trigger an interruption in the "human-computer interaction" during the execution of Automa.
+
+        Parameters
+        ----------
+        event: Event
+            The event that triggered the interaction.
+
+        Returns
+        -------
+        InteractionFeedback
+            The feedback received from the application layer.
+
+        Raises
+        ------
+        _InteractionEventException
+            If the Automa is not the top-level Automa and the `interact_with_human()` method is called by 
+            one or more workers, this exception will be raised to the upper level Automa.
+        """
         kickoff_worker_key: str = self._locate_interacting_worker()
         if kickoff_worker_key:
             return self.interact_with_human_from_worker_key(event, kickoff_worker_key)
