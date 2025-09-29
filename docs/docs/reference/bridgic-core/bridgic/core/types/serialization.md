@@ -2,7 +2,7 @@
 
 > Bridgic Core
 
-::: bridgic.core.serialization
+::: bridgic.core.types.serialization
     options:
       show_source: true
       show_root_heading: true
