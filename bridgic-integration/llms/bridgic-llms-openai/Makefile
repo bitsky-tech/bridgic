@@ -5,8 +5,12 @@ repo ?= btsk
 
 venv-init:
 	@echo "\n==> Initializing virtual environment for [${package_name}]..."
-	@if [ -d .venv ]; then echo ".venv already exists, removing..."; rm -rf .venv; fi
-	@uv venv --python=python3.9 .venv && echo ".venv created."
+	@if [ -d ${CURDIR}/.venv ]; then echo ".venv already exists, removing..."; rm -rf ${CURDIR}/.venv; fi
+	@uv venv --python=python3.9 ${CURDIR}/.venv && echo ".venv created."
+	@echo "\n==> Installing dependencies for [${package_name}]..."
+	@source ${CURDIR}/.venv/bin/activate && uv pip install -e .
+
+venv-collect:
 	@echo "\n==> Installing dependencies for [${package_name}]..."
 	@uv pip install -e .
 
