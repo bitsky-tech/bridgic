@@ -28,6 +28,7 @@ def worker(
     key: Optional[str] = None,
     dependencies: List[str] = [],
     is_start: bool = False,
+    is_output: bool = False,
     args_mapping_rule: ArgsMappingRule = ArgsMappingRule.AS_IS,
 ) -> Callable:
     """
@@ -41,6 +42,8 @@ def worker(
         A list of worker names that the decorated callable depends on.
     is_start : bool
         Whether the decorated callable is a start worker. True means it is, while False means it is not.
+    is_output : bool
+        Whether the decorated callable is an output worker. True means it is, while False means it is not.
     args_mapping_rule : ArgsMappingRule
         The rule of arguments mapping.
     """

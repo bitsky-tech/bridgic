@@ -15,13 +15,13 @@ class MissingWorkerKeyStateAutomaRuntimeContextNone(GraphAutoma):
         local_space["loop_index"] = loop_index + 1
         return loop_index
     
-    @worker(dependencies=["start"])
+    @worker(dependencies=["start"], is_output=True)
     async def end(self, loop_index: int):
         return loop_index + 5
 
 @pytest.fixture
 def missing_worker_key_state_automa_runtime_context_none():
-    graph = MissingWorkerKeyStateAutomaRuntimeContextNone(output_worker_key="end")
+    graph = MissingWorkerKeyStateAutomaRuntimeContextNone()
     return graph
 
 @pytest.mark.asyncio
@@ -44,13 +44,13 @@ class DuplicateLocalSpaceCallAutoma(GraphAutoma):
         local_space["loop_index"] = loop_index + 1
         return loop_index
     
-    @worker(dependencies=["start"])
+    @worker(dependencies=["start"], is_output=True)
     async def end(self, loop_index: int):
         return loop_index + 5
 
 @pytest.fixture
 def duplicate_local_space_call_automa():
-    graph = DuplicateLocalSpaceCallAutoma(output_worker_key="end")
+    graph = DuplicateLocalSpaceCallAutoma()
     return graph
 
 @pytest.mark.asyncio
@@ -72,7 +72,7 @@ class ArithmeticAutomaWithLocalSpace(GraphAutoma):
         local_space["start_state"] = new_start_state
         return new_start_state
 
-    @worker(dependencies=["start"])
+    @worker(dependencies=["start"], is_output=True)
     async def end(self, start_state: int, rtx = System("runtime_context")):
         local_space = self.get_local_space(rtx)
         end_state = local_space.get("end_state", start_state)
@@ -84,7 +84,7 @@ class ArithmeticAutomaWithLocalSpace(GraphAutoma):
 
 @pytest.fixture
 def arithmetic_automa_with_local_space():
-    graph = ArithmeticAutomaWithLocalSpace(output_worker_key="end")
+    graph = ArithmeticAutomaWithLocalSpace()
     return graph
 
 @pytest.mark.asyncio
@@ -117,7 +117,7 @@ class ArithmeticAutomaWithPersistentLocalSpace(GraphAutoma):
         local_space["start_state"] = new_start_state
         return new_start_state
 
-    @worker(dependencies=["start"])
+    @worker(dependencies=["start"], is_output=True)
     async def end(self, start_state: int, rtx = System("runtime_context")):
         local_space = self.get_local_space(rtx)
         end_state = local_space.get("end_state", start_state)
@@ -129,7 +129,7 @@ class ArithmeticAutomaWithPersistentLocalSpace(GraphAutoma):
 
 @pytest.fixture
 def arithmetic_automa_with_persistent_local_space():
-    graph = ArithmeticAutomaWithPersistentLocalSpace(output_worker_key="end")
+    graph = ArithmeticAutomaWithPersistentLocalSpace()
     return graph
 
 @pytest.mark.asyncio
@@ -180,7 +180,7 @@ class TodoItem():
 class TopAutoma(GraphAutoma):
     # The start worker is a nested Automa which will be added by add_worker()
 
-    @worker(dependencies=["start"])
+    @worker(dependencies=["start"], is_output=True)
     async def end(self, my_list: list[str]):
         if len(my_list) < 5:
             self.ferry_to("start")
@@ -256,18 +256,18 @@ class NestedAutoma(GraphAutoma):
         local_space["count"] = count + 1
         return count
     
-    @worker(dependencies=["test_local_space_int"])
+    @worker(dependencies=["test_local_space_int"], is_output=True)
     async def end(self, count: int):
         return ['Learn Bridgic'] * count
 
 @pytest.fixture
 def nested_automa():
-    graph = NestedAutoma(output_worker_key="end")
+    graph = NestedAutoma()
     return graph
 
 @pytest.fixture
 def top_automa_with_nested(nested_automa):
-    graph = TopAutoma(output_worker_key="end")
+    graph = TopAutoma()
     graph.add_worker("start", nested_automa, is_start=True)
     return graph
 
@@ -337,7 +337,7 @@ class ComplexObjectLocalSpaceAutoma(GraphAutoma):
             assert item.learn_count == 5
         return item
     
-    @worker(dependencies=["test_item"])
+    @worker(dependencies=["test_item"], is_output=True)
     async def end(self, item: TodoItem):
         if item.learn_count < 5:
             self.ferry_to("start")
@@ -346,7 +346,7 @@ class ComplexObjectLocalSpaceAutoma(GraphAutoma):
 
 @pytest.fixture
 def complex_object_local_space_automa():
-    graph = ComplexObjectLocalSpaceAutoma(output_worker_key="end")
+    graph = ComplexObjectLocalSpaceAutoma()
     return graph
 
 @pytest.mark.asyncio
@@ -373,13 +373,13 @@ class ComplexObjectLocalSpaceNestedAutoma(ComplexObjectLocalSpaceAutoma):
 
 @pytest.fixture
 def complex_object_local_space_nested_automa():
-    graph = ComplexObjectLocalSpaceNestedAutoma(output_worker_key="nested_end")
+    graph = ComplexObjectLocalSpaceNestedAutoma()
     return graph
 
 
 @pytest.fixture
 def top_automa_with_complex_nested(complex_object_local_space_nested_automa: ComplexObjectLocalSpaceNestedAutoma):
-    graph = TopAutoma(output_worker_key="end")
+    graph = TopAutoma()
     graph.add_worker("start" , complex_object_local_space_nested_automa, is_start=True)
     return graph
 
@@ -408,12 +408,12 @@ class ComplexObjectLocalSpaceNestedAutomaWithPersistentLocalSpace(ComplexObjectL
 
 @pytest.fixture
 def complex_object_local_space_nested_automa_with_persistent_local_space():
-    graph = ComplexObjectLocalSpaceNestedAutomaWithPersistentLocalSpace(output_worker_key="nested_persistent_end")
+    graph = ComplexObjectLocalSpaceNestedAutomaWithPersistentLocalSpace()
     return graph
 
 @pytest.fixture
 def top_automa_with_complex_nested_with_persistent_local_space(complex_object_local_space_nested_automa_with_persistent_local_space: ComplexObjectLocalSpaceNestedAutomaWithPersistentLocalSpace):
-    graph = TopAutoma(output_worker_key="end")
+    graph = TopAutoma()
     graph.add_worker("start" , complex_object_local_space_nested_automa_with_persistent_local_space, is_start=True)
     return graph
 
@@ -449,7 +449,7 @@ class AdderAutoma1(GraphAutoma):
         print("func_1 after add 1:", local_space["x"])
         return local_space["x"]
 
-    @worker(dependencies=["func_1"])
+    @worker(dependencies=["func_1"], is_output=True)
     async def func_2(self, x: int):
         event = Event(
             event_type="if_add",
@@ -469,7 +469,7 @@ class AdderAutoma1(GraphAutoma):
 
 @pytest.fixture
 def adder_automa1():
-    return AdderAutoma1(output_worker_key="func_2")
+    return AdderAutoma1()
 
 @pytest.mark.asyncio
 async def test_adder_automa_1_interact_serialized(adder_automa1: AdderAutoma1, request, db_base_path):

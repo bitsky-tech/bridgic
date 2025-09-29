@@ -22,13 +22,8 @@ class EndWorker(Worker):
 
 class AutomaLayerC(AutomaLayerA, AutomaLayerB):
 
-    def __init__(
-        self,
-        output_worker_key: str = None,
-    ):
-        super().__init__(
-            output_worker_key=output_worker_key,
-        )
+    def __init__(self):
+        super().__init__()
         self.add_func_as_worker(
             key="entry_point_worker_7",
             func=lambda *args, **kwargs: 7,
