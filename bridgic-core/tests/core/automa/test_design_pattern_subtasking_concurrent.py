@@ -44,7 +44,7 @@ class SubtaskingExample_SearchOrchestrator(GraphAutoma):
             dependencies=[f"search_by_{subtask.aspect}" for subtask in subtasks],
             args_mapping_rule=ArgsMappingRule.MERGE,
         )
-
+   
         # The return value is not used in this example.
         return subtasks
 
