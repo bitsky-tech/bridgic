@@ -27,4 +27,4 @@ class McpToolSpec(ToolSpec):
 class AutomaToolSpec(ToolSpec):
     name: str
     description: str
-    automa: Union[GraphAutoma, str]
+    automa: str
