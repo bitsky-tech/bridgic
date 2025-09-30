@@ -1,8 +1,36 @@
 import inspect
-from typing import Callable, List, Dict, Any, Tuple
-from typing_extensions import get_overloads
 import importlib
 import enum
+
+from typing import Callable, List, Dict, Any, Tuple
+from typing_extensions import get_overloads, overload
+from bridgic.core.utils.collection import deep_hash
+
+_marked_overloads: Dict[str, Dict[str, Any]] = {}
+
+def mark_overload(key: str, value: Any) -> Callable:
+    """
+    A decorator to mark an overload function with a key and value. It is useful 
+    when you need to mark a function as overloaded and add more information to it.
+    """
+    def wrapper(func: Callable):
+        func_key = f"{func.__module__}.{func.__qualname__}"
+        params_key = hash_kw_default_params(func)
+        func_params_key = f"{func_key}::{params_key}"
+        if func_params_key not in _marked_overloads:
+            _marked_overloads[func_params_key] = {}
+        _marked_overloads[func_params_key][key] = value
+        return overload(func)
+    return wrapper
+
+def get_mark_by_func(func: Callable, key: str) -> Any:
+    """
+    Given a callable object and a specified key, get the pre-set mark.
+    """
+    func_key = f"{func.__module__}.{func.__qualname__}"
+    params_key = hash_kw_default_params(func)
+    func_params_key = f"{func_key}::{params_key}"
+    return _marked_overloads[func_params_key][key]
 
 def get_param_names_by_kind(
         func: Callable, 
@@ -79,22 +107,20 @@ def get_param_names_all_kinds(
             param_names_dict[param.kind].append((name, param.default))
     return param_names_dict
 
+def hash_kw_default_params(func: Callable) -> int:
+    hashable = tuple(sorted((k, v) for k, v in func.__kwdefaults__.items()))
+    return deep_hash(hashable)
 
-def get_default_paramaps_of_overloaded_funcs(func: Callable) -> List[Dict[str, Any]]:
+def list_default_params_of_each_overload(func: Callable) -> List[Dict[str, Any]]:
     """
-    Returns a list of dictionaries containing default parameter values for each overloaded function.
+    Returns a list of dictionaries, each containing the default parameter values 
+    for one overload of the given function.
     """
     overloaded_funcs = get_overloads(func)
     params_defaults_list = []
-    for func in overloaded_funcs:
-        sig = inspect.signature(func)
-        params_default = {}
-        for name, param in sig.parameters.items():
-            params_default[name] = param.default
-        params_defaults_list.append(params_default)
-
+    for ov_func in overloaded_funcs:
+        params_defaults_list.append(ov_func.__kwdefaults__)
     return params_defaults_list
-
 
 def load_qualified_class_or_func(full_qualified_name: str):
     parts = full_qualified_name.split('.')
