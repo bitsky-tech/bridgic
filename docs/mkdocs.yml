@@ -6,6 +6,7 @@ repo_name: bitsky-tech/bridgic
 edit_uri: edit/main/docs/docs/
 
 nav:
+
   - Home: index.md
   - Getting Started:
     - Concepts: home/concepts.md
@@ -13,11 +14,44 @@ nav:
     - Quick Start: home/quick_start.md
     - Examples: home/examples.md
   - API Reference:
-    - Index: api/index.md
-    - Automa:
-      - GraphAutoma: api/bridgic-core/bridgic/core/automa/graph_automa.md
-      - EventHandling: api/bridgic-core/bridgic/core/automa/interaction/event_handling.md
-      - BaseLlm: api/bridgic-core/bridgic/core/intelligence/base_llm.md
+      - Index: reference/bridgic-core/index.md
+      - Bridgic-Core:
+        - Bridgic:
+          - Core:
+            - Automa:
+              - Arguments Descriptor: reference/bridgic-core/bridgic/core/automa/arguments_descriptor.md
+              - Automa: reference/bridgic-core/bridgic/core/automa/automa.md
+              - Concurrent Automa: reference/bridgic-core/bridgic/core/automa/concurrent_automa.md
+              - Graph Automa: reference/bridgic-core/bridgic/core/automa/graph_automa.md
+              - Interaction:
+                - Event Handling: reference/bridgic-core/bridgic/core/automa/interaction/event_handling.md
+                - Human Interaction: reference/bridgic-core/bridgic/core/automa/interaction/human_interaction.md
+              - Sequential Automa: reference/bridgic-core/bridgic/core/automa/sequential_automa.md
+              - Serialization: reference/bridgic-core/bridgic/core/automa/serialization.md
+              - Worker:
+                - Callable Worker: reference/bridgic-core/bridgic/core/automa/worker/callable_worker.md
+                - Worker: reference/bridgic-core/bridgic/core/automa/worker/worker.md
+              - Worker Decorator: reference/bridgic-core/bridgic/core/automa/worker_decorator.md
+            - Intelligence:
+              - Base LLM: reference/bridgic-core/bridgic/core/intelligence/base_llm.md
+              - Content: reference/bridgic-core/bridgic/core/intelligence/content.md
+              - Protocol: reference/bridgic-core/bridgic/core/intelligence/protocol.md
+            - Prompt:
+              - Base Template: reference/bridgic-core/bridgic/core/prompt/base_template.md
+              - Ejinja Template: reference/bridgic-core/bridgic/core/prompt/ejinja_template.md
+              - Fstring Template: reference/bridgic-core/bridgic/core/prompt/fstring_template.md
+            - Types:
+              - Common: reference/bridgic-core/bridgic/core/types/common.md
+              - Error: reference/bridgic-core/bridgic/core/types/error.md
+              - Serialization: reference/bridgic-core/bridgic/core/types/serialization.md
+            - Utils:
+              - Args Map: reference/bridgic-core/bridgic/core/utils/args_map.md
+              - Cache: reference/bridgic-core/bridgic/core/utils/cache.md
+              - Collection: reference/bridgic-core/bridgic/core/utils/collection.md
+              - Console: reference/bridgic-core/bridgic/core/utils/console.md
+              - Inspect Tools: reference/bridgic-core/bridgic/core/utils/inspect_tools.md
+              - Msgpackx: reference/bridgic-core/bridgic/core/utils/msgpackx.md
+
   - About: about/index.md
 
 theme: 
@@ -38,7 +72,6 @@ theme:
     - navigation.tracking
     # Table of contents
     - toc.follow
-    - toc.integrate
     # Search
     - search.suggest
     - search.highlight
