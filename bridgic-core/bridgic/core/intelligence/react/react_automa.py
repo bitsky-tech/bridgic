@@ -13,6 +13,11 @@ from bridgic.core.automa import worker, ArgsMappingRule
 DEFAULT_MAX_ITERATIONS = 20
 DEFAULT_TEMPLATE_FILE = "bridgic/core/intelligence/react/default_template.txt"
 
+## Features:
+# - [1] flexible and convenient input message types.
+# - [2] full support of human interaction, including serialization and deserialization.
+# - [3] customize ToolSpec encoding.
+# - [4] customize tool running concurrency.
 ## TODO: customize window composer, different from prompt template?
 
 

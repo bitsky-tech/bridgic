@@ -5,14 +5,14 @@ from pydantic import BaseModel
 from bridgic.core.automa import GraphAutoma
 
 class ToolType(Enum):
-    CALLABLE = "callable"
+    FUNC_TOOL = "func_tool"
     MCP_TOOL = "mcp_tool"
     AUTOMA_AS_TOOL = "automa_as_tool"
 
 class ToolSpec(BaseModel):
     type: ToolType
 
-class CallableToolSpec(ToolSpec):
+class FunctionToolSpec(ToolSpec):
     name: str
     description: str
     fn_schema: Optional[Type[BaseModel]]
