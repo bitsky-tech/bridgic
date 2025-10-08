@@ -1,6 +1,7 @@
-from typing import ClassVar
+from typing import ClassVar, Dict, Any
 from bridgic.core.types.common import AutomaType
 from bridgic.core.automa.graph_meta import GraphMeta
+from bridgic.core.automa.arguments_descriptor import RuntimeContext
 
 class GraphFragment(metaclass=GraphMeta):
     """
@@ -47,3 +48,9 @@ class GraphFragment(metaclass=GraphMeta):
     """
     # Automa type identifier
     AUTOMA_TYPE: ClassVar[AutomaType] = AutomaType.Fragment
+
+    def get_local_space(self, runtime_context: RuntimeContext) -> Dict[str, Any]:
+        ...
+
+    def ferry_to(self, worker_key: str, /, *args, **kwargs):
+        ...

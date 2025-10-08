@@ -1,4 +1,4 @@
-from typing import Dict, List, Callable, Union, Any, ClassVar, _ProtocolMeta
+from typing import Dict, List, Callable, Type, Union, Any, ClassVar, _ProtocolMeta
 from bridgic.core.types.error import *
 from bridgic.core.utils.graph_tools import validate_dag_constraints
 from bridgic.core.types.common import AutomaType
@@ -20,6 +20,7 @@ class GraphMeta(_ProtocolMeta):
     def __new__(mcls, name, bases, dct):
         cls = super().__new__(mcls, name, bases, dct)
         automa_type = getattr(cls, 'AUTOMA_TYPE')
+        inherit_level = mcls.decide_inherit_level(cls)
 
         # Maintain the necessary data structures for declaring the static graph.
         registered_worker_funcs: Dict[str, Callable] = {}
@@ -81,5 +82,21 @@ class GraphMeta(_ProtocolMeta):
         validate_dag_constraints(worker_static_forwards)
 
         setattr(cls, "_registered_worker_funcs", registered_worker_funcs)
+        setattr(cls, "_worker_static_forwards", worker_static_forwards)
         return cls
 
+    @classmethod
+    def decide_inherit_level(mcls, cls: Type) -> int:
+        # Avoid direct import to prevent ImportError during class initialization.
+        rev_mro = list(reversed(cls.mro()))
+        graph_automa_cls = None
+        for c in rev_mro:
+            if getattr(c, "__name__", None) == "GraphAutoma":
+                graph_automa_cls = c
+                break
+        if graph_automa_cls is not None:
+            graph_automa_idx = rev_mro.index(graph_automa_cls)
+            cls_idx = rev_mro.index(cls) - graph_automa_idx
+        else:
+            cls_idx = -1
+        return cls_idx
