@@ -13,11 +13,18 @@ from bridgic.core.automa.worker import Worker, CallableWorker
 from bridgic.core.utils.json_schema import create_func_params_json_schema
 from bridgic.core.utils.inspect_tools import load_qualified_class_or_func
 
-# TODO:
-# 1， 生成tool； 2，创建worker； 3，序列化和反序列化（可定制）
-# 4，从原材料生成spec对象； 
 class ToolSpec(Serializable):
+    """
+    ToolSpec is an abstract class that represents a tool specification that describes all necessary information about a tool used by the LLM. 
+
+    ToolSpec and its subclasses are responsible for providing four categories of interfaces:
+    1. Transformations to LLM Tool: `to_tool`.
+    2. Worker Creation: `create_worker`.
+    3. Serialization and Deserialization.
+    4. ToolSpec initialization from raw resources: `from_raw`.
+    """
     _tool_id: Optional[Union[str, int]]
+    """The unique ID of the tool, used to uniquely identify a tool across the entire system. This tool can be of various types."""
 
     def __init__(self):
         self._tool_id = None
@@ -28,6 +35,14 @@ class ToolSpec(Serializable):
 
     @abstractmethod
     def to_tool(self) -> Tool:
+        """
+        Transform this ToolSpec to a `Tool` object used by LLM.
+
+        Returns
+        -------
+        Tool
+            A `Tool` object that can be used by LLM.
+        """
         ...
 
     ###############################################################
@@ -36,6 +51,14 @@ class ToolSpec(Serializable):
 
     @abstractmethod
     def create_worker(self) -> Worker:
+        """
+        Create a Worker from the information included in this ToolSpec.
+
+        Returns
+        -------
+        Worker
+            A new `Worker` object that can be added to an Automa to execute the tool.
+        """
         ...
 
     ###############################################################
@@ -56,7 +79,7 @@ class ToolSpec(Serializable):
 
     ###############################################################
     ######## Part Four of interfaces: 
-    ######## ToolSpec initialization from raw materials ###########
+    ######## ToolSpec initialization from raw resources ###########
     ######## `from(...)`: See subclasses for details ##############
     ###############################################################
 
@@ -90,6 +113,25 @@ class FunctionToolSpec(ToolSpec):
         tool_description: Optional[str] = None,
         tool_parameters: Optional[Dict[str, Any]] = None,
     ) -> "FunctionToolSpec":
+        """
+        Create a FunctionToolSpec from a python function. By default, the tool name, description and parameters' json schema will be extracted from the function's docstring and the parameters' type and description. However, these values can be customized by passing in the corresponding arguments.
+
+        Parameters
+        ----------
+        func : Callable
+            The python function to create a FunctionToolSpec from.
+        tool_name : Optional[str]
+            The name of the tool. If not provided, the function name will be used.
+        tool_description : Optional[str]
+            The description of the tool. If not provided, the function docstring will be used.
+        tool_parameters : Optional[Dict[str, Any]]
+            The JSON schema of the tool's parameters. If not provided, the JSON schema will be constructed properly from the parameters' annotations, the function's signature and/or docstring.
+
+        Returns
+        -------
+        FunctionToolSpec
+            A new `FunctionToolSpec` object.
+        """
         if isinstance(func, MethodType):
             raise ValueError(f"`func` is not allowed to be a bound method: {func}.")
 
@@ -137,6 +179,14 @@ class FunctionToolSpec(ToolSpec):
 
     @override
     def to_tool(self) -> Tool:
+        """
+        Transform this FunctionToolSpec to a `Tool` object used by LLM.
+
+        Returns
+        -------
+        Tool
+            A `Tool` object that can be used by LLM.
+        """
         return Tool(
             name=self._tool_name,
             description=self._tool_description,
@@ -145,6 +195,14 @@ class FunctionToolSpec(ToolSpec):
 
     @override
     def create_worker(self) -> Worker:
+        """
+        Create a Worker from the information included in this FunctionToolSpec.
+
+        Returns
+        -------
+        Worker
+            A new `Worker` object that can be added to an Automa to execute the tool.
+        """
         # TODO: some initialization arguments may be needed in future, e.g., `bound_needed`.
         return CallableWorker(self._func)
 
@@ -213,6 +271,9 @@ class AutomaToolSpec(ToolSpec):
         automa_thread_pool: Optional[ThreadPoolExecutor] = None,
         **init_kwargs: Dict[str, Any],
     ) -> "AutomaToolSpec":
+        """
+        Create an AutomaToolSpec from an Automa class.
+        """
         # TODO: how to automatically extract tool metadata from the automa class?
         return cls(
             automa_cls=automa_cls,
@@ -226,6 +287,14 @@ class AutomaToolSpec(ToolSpec):
 
     @override
     def to_tool(self) -> Tool:
+        """
+        Transform this AutomaToolSpec to a `Tool` object used by LLM.
+
+        Returns
+        -------
+        Tool
+            A `Tool` object that can be used by LLM.
+        """
         return Tool(
             name=self._tool_name,
             description=self._tool_description,
@@ -234,6 +303,14 @@ class AutomaToolSpec(ToolSpec):
 
     @override
     def create_worker(self) -> Worker:
+        """
+        Create a Worker from the information included in this AutomaToolSpec.
+
+        Returns
+        -------
+        Worker
+            A new `Worker` object that can be added to an Automa to execute the tool.
+        """
         return self._automa_cls(
             name=self._automa_name,
             thread_pool=self._automa_thread_pool,
