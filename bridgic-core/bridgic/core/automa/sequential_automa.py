@@ -1,4 +1,4 @@
-from typing import Optional, Final, Callable, Any, Dict, Union
+from typing import Optional, Final, Callable, Any, Dict, Union, ClassVar
 from concurrent.futures import ThreadPoolExecutor
 from typing_extensions import override
 
@@ -15,6 +15,9 @@ class SequentialAutoma(GraphAutoma):
     When all the workers have finished running, the sequential automa will return the output results of the last worker to the caller.
     """
 
+    # Automa type identifier
+    AUTOMA_TYPE: ClassVar[AutomaType] = AutomaType.Sequential
+
     _TAIL_WORKER_KEY: Final[str] = "__tail__"
     _last_worker_key: Optional[str]
 
@@ -27,7 +30,7 @@ class SequentialAutoma(GraphAutoma):
 
         cls = type(self)
         self._last_worker_key = None
-        if cls.automa_type() == AutomaType.Sequential:
+        if cls.AUTOMA_TYPE == AutomaType.Sequential:
             # The _registered_worker_funcs data are from @worker decorators.
             # Initialize the decorated sequential workers.
             for worker_key, worker_func in self._registered_worker_funcs.items():
@@ -55,13 +58,6 @@ class SequentialAutoma(GraphAutoma):
     def _tail_worker(self, result: Any) -> Any:
         # Return the result of the last worker without any modification.
         return result
-
-    @classmethod
-    def automa_type(cls) -> AutomaType:
-        """
-        Subclasses of GraphAutoma can declare this class method `automa_type` to specify the type of worker decorator.
-        """
-        return AutomaType.Sequential
 
     @override
     def dump_to_dict(self) -> Dict[str, Any]:

@@ -6,6 +6,7 @@ from typing import Union
 ZeroToOne: TypeAlias = float
 
 class AutomaType(Enum):
+    Fragment = 0
     Graph = 1
     Concurrent = 2
     Sequential = 3

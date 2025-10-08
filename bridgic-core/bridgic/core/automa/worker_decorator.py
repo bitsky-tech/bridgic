@@ -26,6 +26,30 @@ class ArgsMappingRule(Enum):
     MERGE = "merge"
     SUPPRESSED = "suppressed"
 
+@mark_overload("__automa_type__", AutomaType.Fragment)
+def worker(
+    *,
+    key: Optional[str] = None,
+    dependencies: List[str] = [],
+    is_start: bool = False,
+    args_mapping_rule: ArgsMappingRule = ArgsMappingRule.AS_IS,
+) -> Callable:
+    """
+    A decorator for designating a method as a worker node in a `GraphFragment` subclass.
+
+    Parameters
+    ----------
+    key : Optional[str]
+        The key of the worker. If not provided, the name of the decorated callable will be used.
+    dependencies : List[str]
+        A list of worker names that the decorated callable depends on.
+    is_start : bool
+        Whether the decorated callable is a start worker. True means it is, while False means it is not.
+    args_mapping_rule : ArgsMappingRule
+        The rule of arguments mapping.
+    """
+    ...
+
 @mark_overload("__automa_type__", AutomaType.Graph)
 def worker(
     *,
@@ -118,15 +142,15 @@ def _get_default_params_of_each_automa_type() -> Dict[AutomaType, Dict[str, Any]
 
 _automa_type_to_default_params = _get_default_params_of_each_automa_type()
 
-def get_worker_decorator_default_paramap(automa_type: AutomaType) -> Dict[str, Any]:
+def get_worker_decor_default_params(automa_type: AutomaType) -> Dict[str, Any]:
     return _automa_type_to_default_params[automa_type]
 
-def packup_worker_decorator_rumtime_args(
+def packup_worker_decor_runtime_args(
     automa_class: type,
     automa_type: AutomaType,
     worker_kwargs: Dict[str, Any],
 ) -> Dict[str, Any]:
-    default_paramap = get_worker_decorator_default_paramap(automa_type)
+    default_paramap = get_worker_decor_default_params(automa_type)
     # Validation One: filter extra args
     extra_args = set(worker_kwargs.keys()) - set(default_paramap.keys())
     if extra_args:
