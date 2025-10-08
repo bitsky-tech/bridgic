@@ -1,14 +1,13 @@
 from typing import Callable, Type, Tuple, Dict, List
-from bridgic.core.automa.graph_fragment import GraphFragment
 from bridgic.core.types.error import AutomaDeclarationError
 
-def using(*fragments: Type[GraphFragment]) -> Callable:
+def using(*fragments: Type) -> Callable:
     """
     Decorator for merging and flattening multiple GraphFragment classes into a GraphAutoma.
 
     Parameters
     ----------
-    *fragments : Type[GraphFragment]
+    *fragments : Type
         The GraphFragment classes to be merged.
 
     Returns
@@ -31,6 +30,8 @@ def using(*fragments: Type[GraphFragment]) -> Callable:
     ```
     """
     def decorator(cls: Type) -> Type:
+        from bridgic.core.automa.graph_fragment import GraphFragment
+
         for fragment in fragments:
             if not issubclass(fragment, GraphFragment):
                 raise TypeError(

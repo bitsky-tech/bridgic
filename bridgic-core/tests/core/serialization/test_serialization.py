@@ -79,7 +79,7 @@ def test_datetime_serialization():
     assert msgpackx.load_bytes(data) == dt2
 
 def test_enum_serialization():
-    from bridgic.core.automa.worker_decorator import ArgsMappingRule
+    from bridgic.core.automa.decorator.worker import ArgsMappingRule
     data = msgpackx.dump_bytes(ArgsMappingRule.AS_IS)
     assert msgpackx.load_bytes(data) == ArgsMappingRule.AS_IS
     data = msgpackx.dump_bytes(ArgsMappingRule.UNPACK)

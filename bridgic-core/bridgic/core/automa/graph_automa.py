@@ -21,7 +21,7 @@ from bridgic.core.utils.graph_tools import validate_dag_constraints
 from bridgic.core.automa import Automa, _InteractionAndFeedback, _InteractionEventException
 from bridgic.core.automa.graph_meta import GraphMeta
 from bridgic.core.automa.interaction import Interaction, InteractionFeedback, InteractionException
-from bridgic.core.automa.worker_decorator import (
+from bridgic.core.automa.decorator.worker import (
     packup_worker_decor_runtime_args,
     get_worker_decor_default_params,
     ArgsMappingRule,

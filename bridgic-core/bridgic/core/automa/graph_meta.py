@@ -2,7 +2,7 @@ from typing import Dict, List, Callable, Type, Union, Any, ClassVar, _ProtocolMe
 from bridgic.core.types.error import *
 from bridgic.core.utils.graph_tools import validate_dag_constraints
 from bridgic.core.types.common import AutomaType
-from bridgic.core.automa.worker_decorator import (
+from bridgic.core.automa.decorator.worker import (
     packup_worker_decor_runtime_args,
     get_worker_decor_default_params,
 )

@@ -4,7 +4,7 @@ from typing_extensions import override
 
 from bridgic.core.automa.worker import Worker
 from bridgic.core.automa import GraphAutoma
-from bridgic.core.automa.worker_decorator import ArgsMappingRule
+from bridgic.core.automa.decorator.worker import ArgsMappingRule
 from bridgic.core.types.error import AutomaRuntimeError
 from bridgic.core.types.common import AutomaType
 

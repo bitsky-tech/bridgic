@@ -22,7 +22,12 @@ nav:
               - Arguments Descriptor: reference/bridgic-core/bridgic/core/automa/arguments_descriptor.md
               - Automa: reference/bridgic-core/bridgic/core/automa/automa.md
               - Concurrent Automa: reference/bridgic-core/bridgic/core/automa/concurrent_automa.md
+              - Decorator:
+                - Using: reference/bridgic-core/bridgic/core/automa/decorator/using.md
+                - Worker: reference/bridgic-core/bridgic/core/automa/decorator/worker.md
               - Graph Automa: reference/bridgic-core/bridgic/core/automa/graph_automa.md
+              - Graph Fragment: reference/bridgic-core/bridgic/core/automa/graph_fragment.md
+              - Graph Meta: reference/bridgic-core/bridgic/core/automa/graph_meta.md
               - Interaction:
                 - Event Handling: reference/bridgic-core/bridgic/core/automa/interaction/event_handling.md
                 - Human Interaction: reference/bridgic-core/bridgic/core/automa/interaction/human_interaction.md
@@ -31,7 +36,6 @@ nav:
               - Worker:
                 - Callable Worker: reference/bridgic-core/bridgic/core/automa/worker/callable_worker.md
                 - Worker: reference/bridgic-core/bridgic/core/automa/worker/worker.md
-              - Worker Decorator: reference/bridgic-core/bridgic/core/automa/worker_decorator.md
             - Intelligence:
               - Base LLM: reference/bridgic-core/bridgic/core/intelligence/base_llm.md
               - Content: reference/bridgic-core/bridgic/core/intelligence/content.md
@@ -49,6 +53,7 @@ nav:
               - Cache: reference/bridgic-core/bridgic/core/utils/cache.md
               - Collection: reference/bridgic-core/bridgic/core/utils/collection.md
               - Console: reference/bridgic-core/bridgic/core/utils/console.md
+              - Graph Tools: reference/bridgic-core/bridgic/core/utils/graph_tools.md
               - Inspect Tools: reference/bridgic-core/bridgic/core/utils/inspect_tools.md
               - Msgpackx: reference/bridgic-core/bridgic/core/utils/msgpackx.md
 

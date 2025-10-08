@@ -1,8 +1,8 @@
-# worker_decorator
+# decorator
 
 > Bridgic Core
 
-::: bridgic.core.automa.worker_decorator
+::: bridgic.core.automa.decorator
     options:
       show_source: true
       show_root_heading: true
