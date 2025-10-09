@@ -14,7 +14,7 @@ authors = [
 ]
 dependencies = [
     "bridgic-core>=0.1.0.dev10,<0.2.0",
-    "brisgic-openai-like>=0.1.0.dev4,<0.2.0",
+    "bridgic-llms-openai-like>=0.1.0.dev4,<0.2.0",
 ]
 
 [dependency-groups]
@@ -36,6 +36,7 @@ include = ["/meta/bridgic/"]
 
 [tool.uv.sources]
 bridgic-core = { index = "btsk-repo" }
+bridgic-llms-openai-like = { index = "btsk-repo" }
 
 [[tool.uv.index]]
 name = "btsk-repo"

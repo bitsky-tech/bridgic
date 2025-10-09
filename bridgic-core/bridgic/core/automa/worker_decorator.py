@@ -1,9 +1,13 @@
 import inspect
 from enum import Enum
-from typing_extensions import overload
-from typing import List, Callable, Optional, Dict, Any, Union
 
-from bridgic.core.utils.inspect_tools import get_default_paramaps_of_overloaded_funcs
+from typing import List, Callable, Optional, Dict, Any, Union, Iterable
+from typing_extensions import overload, get_overloads
+
+from bridgic.core.utils.inspect_tools import (
+    mark_overload,
+    get_mark_by_func,
+)
 from bridgic.core.types.error import WorkerSignatureError
 from bridgic.core.types.common import AutomaType
 
@@ -22,7 +26,7 @@ class ArgsMappingRule(Enum):
     MERGE = "merge"
     SUPPRESSED = "suppressed"
 
-@overload
+@mark_overload("__automa_type__", AutomaType.Graph)
 def worker(
     *,
     key: Optional[str] = None,
@@ -32,12 +36,12 @@ def worker(
     args_mapping_rule: ArgsMappingRule = ArgsMappingRule.AS_IS,
 ) -> Callable:
     """
-    A decorator that marks a method as a worker within a subclass of GraphAutoma. The worker's behavior can be customized through the decorator's parameters.
+    A decorator for designating a method as a worker node in a `GraphAutoma` subclass.
 
     Parameters
     ----------
     key : Optional[str]
-        The key of the worker. If not provided, the key of the decorated callable will be used.
+        The key of the worker. If not provided, the name of the decorated callable will be used.
     dependencies : List[str]
         A list of worker names that the decorated callable depends on.
     is_start : bool
@@ -49,34 +53,34 @@ def worker(
     """
     ...
 
-@overload
+@mark_overload("__automa_type__", [AutomaType.Concurrent, AutomaType.ReAct])
 def worker(
     *,
     key: Optional[str] = None,
 ) -> Callable:
     """
-    A decorator that marks a method as a worker within a subclass of ConcurrentAutoma or ReActAutoma.
+    A decorator for designating a method as a worker node in a `ConcurrentAutoma` or `ReActAutoma` subclass.
 
     Parameters
     ----------
     key : Optional[str]
-        The key of the worker. If not provided, the key of the decorated callable will be used.
+        The key of the worker. If not provided, the name of the decorated callable will be used.
     """
     ...
 
-@overload
+@mark_overload("__automa_type__", AutomaType.Sequential)
 def worker(
     *,
     key: Optional[str] = None,
     args_mapping_rule: ArgsMappingRule = ArgsMappingRule.AS_IS,
 ) -> Callable:
     """
-    A decorator that marks a method as a worker within a subclass of SequentialAutoma.
+    A decorator for designating a method as a worker node in a `SequentialAutoma` subclass.
 
     Parameters
     ----------
     key : Optional[str]
-        The key of the worker. If not provided, the key of the decorated callable will be used.
+        The key of the worker. If not provided, the name of the decorated callable will be used.
     args_mapping_rule: ArgsMappingRule
         The rule of arguments mapping.
     """
@@ -84,45 +88,51 @@ def worker(
 
 def worker(**kwargs) -> Callable:
     """
-    The implementation of the 3 overloaded worker decorators defined above.
+    The actual implementation of the different overloaded worker decorators defined above.
     """
     def wrapper(func: Callable):
         setattr(func, "__worker_kwargs__", kwargs)
         return func
     return wrapper
 
-def get_worker_decorator_default_paramap(worker_decorator_type: AutomaType) -> Dict[str, Any]:
-    return get_worker_decorator_default_paramap.__saved_paramaps[worker_decorator_type]
-
-def _extract_default_paramaps() -> Dict[AutomaType, Dict[str, Any]]:
-    """
-    This ensures that retrieving default argument mappings is independent of the order in which worker decorators are defined.
-    """
-    params_defaults_list = get_default_paramaps_of_overloaded_funcs(worker)
-    paramaps = {}
-    for params_default in params_defaults_list:
-        if "dependencies" in params_default:
-            paramaps[AutomaType.Graph] = params_default
-        elif "args_mapping_rule" in params_default:
-            paramaps[AutomaType.Sequential] = params_default
+def _get_default_params_of_each_automa_type() -> Dict[AutomaType, Dict[str, Any]]:
+    overload_funcs = get_overloads(worker)
+    result: Dict[AutomaType, Dict[str, Any]] = {}
+    for ov_func in overload_funcs:
+        mark = get_mark_by_func(ov_func, "__automa_type__")
+        if mark is not None:
+            if isinstance(mark, Iterable):
+                for t in mark:
+                    if isinstance(t, AutomaType):
+                        result[t] = ov_func.__kwdefaults__
+                    else:
+                        raise ValueError(f"Invalid automa type: {t}")
+            else:
+                if isinstance(mark, AutomaType):
+                    result[mark] = ov_func.__kwdefaults__
+                else:
+                    raise ValueError(f"Invalid automa type: {mark}")
         else:
-            paramaps[AutomaType.Concurrent] = params_default
-    return paramaps
+            raise ValueError(f"No mark found for {ov_func} at line {ov_func.__code__.co_firstlineno}")
+    return result
 
-get_worker_decorator_default_paramap.__saved_paramaps = _extract_default_paramaps()
+_automa_type_to_default_params = _get_default_params_of_each_automa_type()
+
+def get_worker_decorator_default_paramap(automa_type: AutomaType) -> Dict[str, Any]:
+    return _automa_type_to_default_params[automa_type]
 
 def packup_worker_decorator_rumtime_args(
-        automa_class_type: type,
-        worker_decorator_type: AutomaType,
-        worker_kwargs: Dict[str, Any],
-    ) -> Dict[str, Any]:
-    default_paramap = get_worker_decorator_default_paramap(worker_decorator_type)
+    automa_class: type,
+    automa_type: AutomaType,
+    worker_kwargs: Dict[str, Any],
+) -> Dict[str, Any]:
+    default_paramap = get_worker_decorator_default_paramap(automa_type)
     # Validation One: filter extra args
     extra_args = set(worker_kwargs.keys()) - set(default_paramap.keys())
     if extra_args:
         raise WorkerSignatureError(
             f"Unexpected arguments: {extra_args} for worker decorator when it is decorating "
-            f"{automa_class_type.__name__} method"
+            f"method within {automa_class.__name__}"
         )
     # Validation Two: validate required parameters
     missing_params = set(default_paramap.keys()) - set(worker_kwargs.keys())
@@ -130,7 +140,7 @@ def packup_worker_decorator_rumtime_args(
     if missing_required_params:
         raise WorkerSignatureError(
             f"Missing required parameters: {missing_required_params} for worker decorator "
-            f"when it is decorating {automa_class_type.__name__} method"
+            f"when it is decorating method within {automa_class.__name__}"
         )
     # Packup and return
     return {**default_paramap, **worker_kwargs}

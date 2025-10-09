@@ -1,0 +1,99 @@
+# API Documentation Generation Configuration File
+# This file defines various parameters and options for documentation generation
+
+# Exclusion pattern configuration
+exclude_patterns:
+  - "__pycache__"
+  - ".venv"
+  - "venv"
+  - ".git"
+  - ".pytest_cache"
+  - "node_modules"
+  - "tests"
+  - "test"
+  - "ipynb"
+  - "dist"
+  - "build"
+  - "site-packages"
+
+# Specific files to exclude
+exclude_files:
+  - "__main__.py"
+  - "setup.py"
+  - "conftest.py"
+  - "version.py"
+
+# List of package directories to process
+packages:
+  - name: "bridgic-core"
+    path: "bridgic-core"
+    description: "Bridgic Core"
+  # - name: "bridgic-llms-openai"
+  #   path: "bridgic-integration/llms/bridgic-llms-openai"
+  #   description: "OpenAI LLM Integration"
+  # - name: "bridgic-llms-openai-like"
+  #   path: "bridgic-integration/llms/bridgic-llms-openai-like"
+  #   description: "OpenAI-compatible LLM Integration"
+  # - name: "bridgic-llms-vllm"
+  #   path: "bridgic-integration/llms/bridgic-llms-vllm"
+  #   description: "vLLM Integration"
+
+# Documentation generation options
+generation_options:
+  # Base path for documentation generation
+  docs_base_path: "reference"
+  
+  # Whether to generate verbose logs
+  verbose: true
+  
+  # Whether to skip empty modules
+  skip_empty_modules: true
+  
+  # Whether to show source code
+  show_source: true
+  
+  # Whether to show root heading
+  show_root_heading: true
+  
+  # Whether to show root toc entry
+  show_root_toc_entry: true
+  
+  # Whether to generate index pages
+  generate_index_pages: true
+  
+  # Docstring style (numpy, google, sphinx)
+  docstring_style: "numpy"
+
+# mkdocstrings configuration options
+mkdocstrings_options:
+  docstring_options:
+    ignore_init_summary: true
+  filters:
+    - "!^_"        # Exclude private members
+    - "!^__init__" # Exclude __init__ methods
+  members_order: "source"
+  merge_init_into_class: false
+  separate_signature: true
+  signature_crossrefs: true
+
+# Logging configuration
+logging:
+  level: "INFO"  # DEBUG, INFO, WARNING, ERROR
+  format: "%(asctime)s - %(levelname)s - %(message)s"
+  
+# Advanced options
+advanced_options:
+  # Whether to process type annotations
+  process_type_annotations: true
+  
+  # Whether to generate cross-references
+  generate_cross_references: true
+  
+  # Maximum recursion depth
+  max_recursion_depth: 10
+  
+  # Parallel processing
+  enable_parallel_processing: false
+  
+  # Caching settings
+  enable_caching: false

@@ -27,7 +27,7 @@ class SequentialAutoma(GraphAutoma):
 
         cls = type(self)
         self._last_worker_key = None
-        if cls.worker_decorator_type() == AutomaType.Sequential:
+        if cls.automa_type() == AutomaType.Sequential:
             # The _registered_worker_funcs data are from @worker decorators.
             # Initialize the decorated sequential workers.
             for worker_key, worker_func in self._registered_worker_funcs.items():
@@ -57,9 +57,9 @@ class SequentialAutoma(GraphAutoma):
         return result
 
     @classmethod
-    def worker_decorator_type(cls) -> AutomaType:
+    def automa_type(cls) -> AutomaType:
         """
-        Subclasses of GraphAutoma can declare this class method `worker_decorator_type` to specify the type of worker decorator.
+        Subclasses of GraphAutoma can declare this class method `automa_type` to specify the type of worker decorator.
         """
         return AutomaType.Sequential
 

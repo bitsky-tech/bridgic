@@ -249,4 +249,4 @@ class Worker(Serializable):
     def interact_with_human(self, event: Event) -> InteractionFeedback:
         if self.parent is None:
             raise WorkerRuntimeError(f"`interact_with_human` method can only be called by a worker inside an Automa")
-        return self.parent.interact_with_human_from_worker(event, self)
+        return self.parent.interact_with_human(event, self)

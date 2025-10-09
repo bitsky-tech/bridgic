@@ -16,15 +16,14 @@ from typing_extensions import override
 from bridgic.core.utils.console import printer
 from bridgic.core.automa.worker import Worker
 from bridgic.core.types.error import *
-from bridgic.core.utils.inspect_tools import get_param_names_by_kind
 from bridgic.core.utils.args_map import safely_map_args
-from bridgic.core.automa import Automa
+from bridgic.core.automa import Automa, _InteractionAndFeedback, _InteractionEventException
+from bridgic.core.automa.interaction import Interaction, InteractionFeedback, InteractionException
 from bridgic.core.automa.worker_decorator import packup_worker_decorator_rumtime_args, get_worker_decorator_default_paramap, ArgsMappingRule
 from bridgic.core.types.common import AutomaType
 from bridgic.core.automa.worker.callable_worker import CallableWorker
-from bridgic.core.automa.interaction import Event, FeedbackSender, EventHandlerType, InteractionFeedback, Feedback, Interaction, InteractionException
 from bridgic.core.automa.serialization import Snapshot
-from bridgic.core.automa.arguments_descriptor import RuntimeContext, injector
+from bridgic.core.automa.arguments_descriptor import injector
 from bridgic.core.utils import msgpackx
 
 class _GraphAdaptedWorker(Worker):
@@ -198,7 +197,7 @@ class GraphAutomaMeta(_ProtocolMeta):
             if worker_kwargs is not None:
                 complete_args = packup_worker_decorator_rumtime_args(
                     cls, 
-                    cls.worker_decorator_type(), 
+                    cls.automa_type(), 
                     worker_kwargs
                 )
                 default_paramap = get_worker_decorator_default_paramap(AutomaType.Graph)
@@ -253,7 +252,7 @@ class GraphAutomaMeta(_ProtocolMeta):
         setattr(cls, "_registered_worker_funcs", registered_worker_funcs)
         return cls
     
-    def worker_decorator_type(cls) -> AutomaType:
+    def automa_type(cls) -> AutomaType:
         return AutomaType.Graph
 
     @classmethod
@@ -300,17 +299,6 @@ class GraphAutomaMeta(_ProtocolMeta):
                 f"the graph automa does not meet the DAG constraints, because the "
                 f"following workers are in cycle: {nodes_in_cycle}"
             )
-
-class _InteractionEventException(Exception):
-    """
-    Exception raised when the `interact_with_human` method is called.
-    For internal use only.
-    `Interaction` obects are stored in `self.args` of the exception.
-    """
-
-class _InteractionAndFeedback(BaseModel):
-    interaction: Interaction
-    feedback: Optional[InteractionFeedback] = None
 
 class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
     """
@@ -396,10 +384,6 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
     # 2. [Running Phase] The second phase (when _automa_running is True): the DDG is running, and the workers are executed in a dynamic step-by-step manner (DS loop).
     _automa_running: bool
 
-    # Ongoing human interactions triggered by the `interact_with_human()` call from workers of the current Automa.
-    # worker_key -> list of interactions.
-    _ongoing_interactions: Dict[str, List[_InteractionAndFeedback]]
-
     #########################################################
     #### The following fields need not to be serialized. ####
     #########################################################
@@ -409,21 +393,6 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
     # TODO: Need to be refactored when parallelization features are added.
     _topology_change_deferred_tasks: List[Union[_AddWorkerDeferredTask, _RemoveWorkerDeferredTask]]
     _ferry_deferred_tasks: List[_FerryDeferredTask]
-
-    _event_handlers: Dict[str, EventHandlerType]
-    _default_event_handler: EventHandlerType
-
-    # worker_key -> count
-    _worker_interaction_indices: Dict[str, int]
-
-    # The main event loop of the Automa, which is usually provided by the application layer.
-    _main_loop: asyncio.AbstractEventLoop
-
-    # The thread id of the main thread in which the main event loop is running.
-    _main_thread_id: int
-
-    # The thread pool for parallel running of I/O-bound tasks. It can be None.
-    _thread_pool: ThreadPoolExecutor
 
     def __init__(
         self,
@@ -449,27 +418,20 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         state_dict : Optional[Dict[str, Any]]
             A dictionary for initializing the automa's runtime states. This parameter is designed for framework use only.
         """
+        super().__init__(name=name, thread_pool=thread_pool)
+
         self._workers = {}
         self._worker_outputs = {}
-        super().__init__(name=name)
         self._automa_running = False
 
         # Initialize the states that need to be serialized.
         self._normal_init()
 
-        ########
-        # The following states need not to be serialized.
-        ########
         # The list of the tasks that are currently being executed.
         self._running_tasks = []
         # deferred tasks
         self._topology_change_deferred_tasks = []
         self._ferry_deferred_tasks = []
-        # event handling and human interactions
-        self._event_handlers = {}
-        self._default_event_handler = None
-        self._worker_interaction_indices = {}
-        self._thread_pool = thread_pool
 
     def _normal_init(self):
         ###############################################################################
@@ -483,7 +445,7 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         self._worker_output = {}
         self._workers_dynamic_states = {}
 
-        if cls.worker_decorator_type() == AutomaType.Graph:
+        if cls.automa_type() == AutomaType.Graph:
             # The _registered_worker_funcs data are from @worker decorators.
             for worker_key, worker_func in cls._registered_worker_funcs.items():
                 # The decorator based mechanism (i.e. @worker) is based on the add_worker() interface.
@@ -510,8 +472,6 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         self._current_kickoff_workers = []
         # -- Automa input buffer.
         self._input_buffer = _AutomaInputBuffer()
-        # -- Ongoing human interactions
-        self._ongoing_interactions = {}
 
 
         ###############################################################################
@@ -541,7 +501,6 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         # States related to interruption recovery.
         state_dict["current_kickoff_workers"] = self._current_kickoff_workers
         state_dict["input_buffer"] = self._input_buffer
-        state_dict["ongoing_interactions"] = self._ongoing_interactions
 
         return state_dict
 
@@ -563,51 +522,17 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         # States related to interruption recovery.
         self._current_kickoff_workers = state_dict["current_kickoff_workers"]
         self._input_buffer = state_dict["input_buffer"]
-        self._ongoing_interactions = state_dict["ongoing_interactions"]
 
-        ########
-        # The following states need not to be serialized but need to be initialized.
-        ########
         # The list of the tasks that are currently being executed.
         self._running_tasks = []
-        # deferred tasks
+        # Deferred tasks
         self._topology_change_deferred_tasks = []
         self._set_output_worker_deferred_task = None
         self._ferry_deferred_tasks = []
-        # event handling and human interactions
-        self._event_handlers = {}
-        self._default_event_handler = None
-        self._worker_interaction_indices = {}
-        self._thread_pool = None
-
-    @classmethod
-    def load_from_snapshot(
-        cls, 
-        snapshot: Snapshot,
-        thread_pool: Optional[ThreadPoolExecutor] = None,
-    ) -> "GraphAutoma":
-        # Here you can compare snapshot.serialization_version with SERIALIZATION_VERSION, and handle any necessary version compatibility issues if needed.
-        automa = msgpackx.load_bytes(snapshot.serialized_bytes)
-        if thread_pool:
-            automa.thread_pool = thread_pool
-        return automa
 
     ###############################################################
     ########### [Bridgic Serialization Mechanism] ends ############
     ###############################################################
-
-    @property
-    def thread_pool(self) -> Optional[ThreadPoolExecutor]:
-        return self._thread_pool
-
-    @thread_pool.setter
-    def thread_pool(self, executor: ThreadPoolExecutor) -> None:
-        """
-        Set the thread pool for parallel running of I/O-bound tasks.
-
-        If an Automa is nested within another Automa, the thread pool of the top-level Automa will be used, rather than the thread pool of the nested Automa.
-        """
-        self._thread_pool = executor
 
     def _add_worker_incrementally(
         self,
@@ -1134,45 +1059,12 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         # But _ferry_deferred_tasks is not necessary to be thread-safe due to Visibility Guarantees of the Bridgic Concurrency Model.
         self._ferry_deferred_tasks.append(deferred_task)
     
-    def get_local_space(self, runtime_context: RuntimeContext) -> Dict[str, Any]:
-        """
-        Get the local space, if you want to clean the local space after automa.arun(), you can override the should_reset_local_space() method.
-
-        Parameters
-        ----------
-        runtime_context : RuntimeContext
-            The runtime context.
-
-        Returns
-        -------
-        Dict[str, Any]
-            The local space.
-        """
-        worker_key = runtime_context.worker_key
-        worker_obj = self._workers[worker_key]
-        return worker_obj.local_space
-
     def _clean_all_worker_local_space(self):
         """
         Clean the local space of all workers.
         """
         for worker_obj in self._workers.values():
             worker_obj.local_space = {}
-
-    def should_reset_local_space(self) -> bool:
-        """
-        This method indicates whether to reset the local space at the end of the arun method of GraphAutoma. 
-        By default, it returns True, standing for resetting. Otherwise, it means doing nothing.
-        
-        Examples:
-        --------
-        ```python
-        class MyAutoma(GraphAutoma):
-            def should_reset_local_space(self) -> bool:
-                return False
-        ```
-        """
-        return True
 
     async def arun(
         self, 
@@ -1534,272 +1426,6 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         else:
             return None
 
-    ###############################################################
-    ########## [Bridgic Event Handling Mechanism] starts ##########
-    ###############################################################
-
-    def register_event_handler(self, event_type: Optional[str], event_handler: EventHandlerType) -> None:
-        """
-        Register an event handler for the specified event type.
-
-        Note: Only event handlers registered on the top-level Automa will be invoked to handle events.
-
-        Parameters
-        ----------
-        event_type: Optional[str]
-            The type of event to be handled. If set to None, the event handler will be registered as the default handler and will be used to handle all event types.
-        event_handler: EventHandlerType
-            The event handler to be registered.
-        """
-        if event_type is None:
-            self._default_event_handler = event_handler
-        else:
-            self._event_handlers[event_type] = event_handler
-
-    def unregister_event_handler(self, event_type: Optional[str]) -> None:
-        """
-        Unregister an event handler for the specified event type.
-
-        Parameters
-        ----------
-        event_type: Optional[str]
-            The type of event to be unregistered. If set to None, the default event handler will be unregistered.
-        """
-        if event_type in self._event_handlers:
-            del self._event_handlers[event_type]
-        if event_type is None:
-            self._default_event_handler = None
-
-    def unregister_all_event_handlers(self) -> None:
-        """
-        Unregister all event handlers.
-        """
-        self._event_handlers.clear()
-        self._default_event_handler = None
-
-    class _FeedbackSender(FeedbackSender):
-        def __init__(
-                self, 
-                future: asyncio.Future[Feedback],
-                post_loop: AbstractEventLoop,
-                ):
-            self._future = future
-            self._post_loop = post_loop
-        
-        def send(self, feedback: Feedback) -> None:
-            try:
-                current_loop = asyncio.get_running_loop()
-            except Exception:
-                current_loop = None
-            try:
-                if current_loop is self._post_loop:
-                    self._future.set_result(feedback)
-                else:
-                    self._post_loop.call_soon_threadsafe(self._future.set_result, feedback)
-            except asyncio.InvalidStateError:
-                # Suppress the InvalidStateError to be raised, maybe due to timeout.
-                import warnings
-                warnings.warn(f"Feedback future already set. feedback: {feedback}", FutureWarning)
-
-    @override
-    def post_event(self, event: Event) -> None:
-        """
-        Post an event to the application layer outside the Automa.
-
-        The event handler implemented by the application layer will be called in the same thread as the worker (maybe the main thread or a new thread from the thread pool).
-        
-        Note that `post_event` can be called in a non-async method or an async method.
-
-        The event will be bubbled up to the top-level Automa, where it will be processed by the event handler registered with the event type.
-
-        Parameters
-        ----------
-        event: Event
-            The event to be posted.
-        """
-        def _handler_need_feedback_sender(handler: EventHandlerType):
-            positional_param_names = get_param_names_by_kind(handler, Parameter.POSITIONAL_ONLY) + get_param_names_by_kind(handler, Parameter.POSITIONAL_OR_KEYWORD)
-            var_positional_param_names = get_param_names_by_kind(handler, Parameter.VAR_POSITIONAL)
-            return len(var_positional_param_names) > 0 or len(positional_param_names) > 1
-
-        if self.parent is not None:
-            # Bubble up the event to the top-level Automa.
-            return self.parent.post_event(event)
-
-        # Here is the top-level Automa.
-        # Call event handlers
-        if event.event_type in self._event_handlers:
-            if _handler_need_feedback_sender(self._event_handlers[event.event_type]):
-                self._event_handlers[event.event_type](event, feedback_sender=None)
-            else:
-                self._event_handlers[event.event_type](event)
-        if self._default_event_handler is not None:
-            if _handler_need_feedback_sender(self._default_event_handler):
-                self._default_event_handler(event, feedback_sender=None)
-            else:
-                self._default_event_handler(event)
-
-    def request_feedback(
-        self, 
-        event: Event,
-        timeout: Optional[float] = None
-    ) -> Feedback:
-        """
-        Request feedback for the specified event from the application layer outside the Automa. This method blocks the caller until the feedback is received.
-
-        Note that `post_event` should only be called from within a non-async method running in the new thread of the Automa thread pool.
-
-        Parameters
-        ----------
-        event: Event
-            The event to be posted to the event handler implemented by the application layer.
-        timeout: Optional[float]
-            A float or int number of seconds to wait for if the feedback is not received. If None, then there is no limit on the wait time.
-
-        Returns
-        -------
-        Feedback
-            The feedback received from the application layer.
-
-        Raises
-        ------
-        TimeoutError
-            If the feedback is not received before the timeout. Note that the raised exception is the built-in `TimeoutError` exception, instead of asyncio.TimeoutError or concurrent.futures.TimeoutError!
-        """
-        if threading.get_ident() == self._main_thread_id:
-            raise AutomaRuntimeError(
-                f"`request_feedback` should only be called in a different thread from the main thread of the {self.name}. "
-            )
-        return asyncio.run_coroutine_threadsafe(
-            self.request_feedback_async(event, timeout),
-            self._main_loop
-        ).result()
-
-    async def request_feedback_async(
-        self, 
-        event: Event,
-        timeout: Optional[float] = None
-    ) -> Feedback:
-        """
-        Request feedback for the specified event from the application layer outside the Automa. This method blocks the caller until the feedback is received.
-
-        The event handler implemented by the application layer will be called in the next event loop, in the main thread.
-
-        Parameters
-        ----------
-        event: Event
-            The event to be posted to the event handler implemented by the application layer.
-        timeout: Optional[float]
-            A float or int number of seconds to wait for if the feedback is not received. If None, then there is no limit on the wait time.
-
-        Returns
-        -------
-        Feedback
-            The feedback received from the application layer.
-
-        Raises
-        ------
-        TimeoutError
-            If the feedback is not received before the timeout. Note that the raised exception is the built-in `TimeoutError` exception, instead of asyncio.TimeoutError!
-        """
-        if self.parent is not None:
-            # Bubble up the event to the top-level Automa.
-            return await self.parent.request_feedback_async(event, timeout)
-        
-        # Here is the top-level Automa.
-        event_loop = asyncio.get_running_loop()
-        future = event_loop.create_future()
-        feedback_sender = self._FeedbackSender(future, event_loop)
-        # Call event handlers
-        if event.event_type in self._event_handlers:
-            self._event_handlers[event.event_type](event, feedback_sender)
-        if self._default_event_handler is not None:
-            self._default_event_handler(event, feedback_sender)
-
-        try:
-            return await asyncio.wait_for(future, timeout)
-        except TimeoutError as e:
-            # When python >= 3.11 here.
-            raise TimeoutError(f"No feedback is received before timeout in Automa[{self.name}]") from e
-        except asyncio.TimeoutError as e:
-            # Version compatibility resolution: asyncio.wait_for raises asyncio.TimeoutError before python 3.11.
-            # https://docs.python.org/3/library/asyncio-task.html#asyncio.wait_for
-            raise TimeoutError(f"No feedback is received before timeout in Automa[{self.name}]") from e
-
-    ###############################################################
-    ########### [Bridgic Event Handling Mechanism] ends ###########
-    ###############################################################
-
-    ###############################################################
-    ######## [Bridgic Human Interaction Mechanism] starts #########
-    ###############################################################
-
-    def interact_with_human(self, event: Event) -> InteractionFeedback:
-        kickoff_worker_key: str = self._trace_back_kickoff_worker_key_from_stack()
-        if kickoff_worker_key:
-            return self.interact_with_human_from_worker_key(event, kickoff_worker_key)
-        raise AutomaRuntimeError(
-            f"Get kickoff worker failed in Automa[{self.name}] "
-            f"when trying to interact with human with event: {event}"
-        )
-
-    def interact_with_human_from_worker(
-        self,
-        event: Event,
-        worker: Worker
-    ) -> InteractionFeedback:
-        worker_key = self._loopup_worker_key_by_instance(worker)
-        if worker_key:
-            return self.interact_with_human_from_worker_key(event, worker_key)
-        raise AutomaRuntimeError(
-            f"Not found worker[{worker}] in Automa[{self.name}] "
-            f"when trying to interact with human with event: {event}"
-        )
-
-    def interact_with_human_from_worker_key(
-        self,
-        event: Event,
-        worker_key: str
-    ) -> InteractionFeedback:
-        # Match interaction_feedback to see if it matches
-        matched_feedback: _InteractionAndFeedback = None
-        cur_interact_index = self._get_and_increment_interaction_index(worker_key)
-        if worker_key in self._ongoing_interactions:
-            interaction_and_feedbacks = self._ongoing_interactions[worker_key]
-            if cur_interact_index < len(interaction_and_feedbacks):
-                matched_feedback = interaction_and_feedbacks[cur_interact_index]
-                # Check the event type
-                if event.event_type != matched_feedback.interaction.event.event_type:
-                    raise AutomaRuntimeError(
-                        f"Event type mismatch! Automa[{self.name}-worker[{worker_key}]]. "
-                        f"interact_with_human passed-in event: {event}\n"
-                        f"ongoing interaction && feedback: {matched_feedback}\n"
-                    )
-        if matched_feedback is None or matched_feedback.feedback is None:
-            # Important: The interaction_id should be unique for each human interaction.
-            interaction_id = uuid.uuid4().hex if matched_feedback is None else matched_feedback.interaction.interaction_id
-            # Match interaction_feedback failed, raise an exception to go into the human interactioin process.
-            raise _InteractionEventException(Interaction(
-                interaction_id=interaction_id,
-                event=event,
-            ))
-        else:
-            # Match interaction_feedback succeeded, return it.
-            return matched_feedback.feedback
-
-    def _get_and_increment_interaction_index(self, worker_key: str) -> int:
-        if worker_key not in self._worker_interaction_indices:
-            cur_index = 0
-            self._worker_interaction_indices[worker_key] = 0
-        else:
-            cur_index = self._worker_interaction_indices[worker_key]
-        self._worker_interaction_indices[worker_key] += 1
-        return cur_index
-
-    ###############################################################
-    ######### [Bridgic Human Interaction Mechanism] ends ##########
-    ###############################################################
-
     def _get_worker_dependencies(self, worker_key: str) -> List[str]:
         """
         Get the worker keys of all dependencies of the worker.
@@ -1836,10 +1462,26 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         # self._component_list, self._component_idx = component_list, component_idx
         # TODO: check how to use _component_list and _component_idx...
 
+    @override
+    def _get_worker_key(self, worker: Worker) -> Optional[str]:
+        for worker_key, worker_obj in self._workers.items():
+            if worker_obj == worker:
+                # Note: _GraphAdaptedWorker.__eq__() is overridden to support the '==' operator.
+                return worker_key
+        return None
+
+    @override
+    def _get_worker_instance(self, worker_key: str) -> Worker:
+        return self._workers[worker_key]
+
+    @override
+    def _locate_interacting_worker(self) -> Optional[str]:
+        return self._trace_back_kickoff_worker_key_from_stack()
+
     def _trace_back_kickoff_worker_key_from_stack(self) -> Optional[str]:
         worker = self._get_current_running_worker_instance_by_stacktrace()
         if worker:
-            return self._loopup_worker_key_by_instance(worker)
+            return self._get_worker_key(worker)
         return None
 
     def _get_current_running_worker_instance_by_stacktrace(self) -> Optional[Worker]:
@@ -1849,13 +1491,6 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
                 self_obj = frame.f_locals['self']
                 if isinstance(self_obj, Worker) and (not isinstance(self_obj, Automa)) and (frame_info.function == "arun" or frame_info.function == "run"):
                     return self_obj
-        return None
-
-    def _loopup_worker_key_by_instance(self, worker: Worker) -> Optional[str]:
-        for worker_key, worker_obj in self._workers.items():
-            if worker_obj == worker:
-                # Note: _GraphAdaptedWorker.__eq__() is overridden to support the '==' operator.
-                return worker_key
         return None
 
     def _mapping_args(
