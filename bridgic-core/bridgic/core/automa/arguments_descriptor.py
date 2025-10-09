@@ -7,7 +7,6 @@ from typing import List, Tuple, Optional, Any, Dict
 from bridgic.core.automa.worker import Worker
 from bridgic.core.types.error import AutomaDataInjectionError
 from bridgic.core.utils.args_map import safely_map_args
-from bridgic.core.automa.automa import Automa
 
 
 class InjectorNone: 

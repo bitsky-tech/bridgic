@@ -9,3 +9,4 @@ class AutomaType(Enum):
     Graph = 1
     Concurrent = 2
     Sequential = 3
+    ReAct = 4
