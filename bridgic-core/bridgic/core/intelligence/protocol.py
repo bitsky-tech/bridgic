@@ -1,4 +1,4 @@
-from typing import List, Protocol, Any, Dict, Type, Literal, Union, Optional, ClassVar
+from typing import List, Protocol, Any, Dict, Type, Literal, Union, Optional, ClassVar, Tuple
 from pydantic import BaseModel, Field
 
 from bridgic.core.intelligence.base_llm import Message
@@ -93,11 +93,11 @@ class ToolSelect(Protocol):
         messages: List[Message],
         tools: List[Tool],
         **kwargs,
-    ) -> List[ToolCall]: ...
+    ) -> Tuple[List[ToolCall], Union[str, None]]: ...
 
     async def atool_select(
         self,
         messages: List[Message],
         tools: List[Tool],
         **kwargs,
-    ) -> List[ToolCall]: ...
+    ) -> Tuple[List[ToolCall], Union[str, None]]: ...

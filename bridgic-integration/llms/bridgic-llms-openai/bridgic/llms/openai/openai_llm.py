@@ -1,8 +1,9 @@
 import json
+from typing_extensions import override
 import httpx
 import warnings
 
-from typing import List, overload, Literal
+from typing import List, Tuple, overload, Literal
 from openai.types.chat import ChatCompletion, ChatCompletionChunk, ChatCompletionMessageFunctionToolCall
 from pydantic import BaseModel
 from openai import Stream, OpenAI, AsyncOpenAI
@@ -72,9 +73,18 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelect):
 
     ```python
     tools = [Tool(name="calculator", description="Calculate math", parameters={})]
-    tool_calls = llm.tool_select(messages=messages, tools=tools, model="gpt-4")
+    tool_calls, tool_call_response = llm.tool_select(messages=messages, tools=tools, model="gpt-4")
     ```
     """
+
+    api_base: str
+    api_key: str
+    timeout: float
+    http_client: httpx.Client
+    http_async_client: httpx.AsyncClient
+
+    client: OpenAI
+    async_client: AsyncOpenAI
 
     def __init__(
         self,
@@ -100,6 +110,14 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelect):
         http_async_client : Optional[httpx.AsyncClient]
             Custom asynchronous HTTP client for requests. If None, creates a default client.
         """
+        # Record for serialization / deserialization.
+        self.api_base = api_base
+        self.api_key = api_key
+        self.timeout = timeout
+        self.http_client = http_client
+        self.http_async_client = http_async_client
+
+        # Initialize clients.
         self.client = OpenAI(base_url=api_base, api_key=api_key, timeout=timeout, http_client=http_client)
         self.async_client = AsyncOpenAI(base_url=api_base, api_key=api_key, timeout=timeout, http_client=http_async_client)
 
@@ -794,7 +812,7 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelect):
         parallel_tool_calls: Optional[bool] = True,
         tool_choice: Optional[Literal["auto", "required", "none"]] = "auto",
         **kwargs,
-    ) -> List[ToolCall]:
+    ) -> Tuple[List[ToolCall], Union[str, None]]:
         """
         Select and invoke tools from a list based on conversation context.
 
@@ -843,10 +861,12 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelect):
         -------
         List[ToolCall]
             List of selected tool calls with their IDs, names, and parsed arguments.
+        Union[str, None]
+            The content of the message from the model.
         """
         json_desc_tools = [self._convert_tool_to_json(tool) for tool in tools]
         msgs: List[ChatCompletionMessageParam] = [self._convert_message(msg) for msg in messages]
-        response: Dict[str, Any] = self.client.chat.completions.create(
+        response: ChatCompletion = self.client.chat.completions.create(
             model=model,
             messages=msgs,
             temperature=temperature,
@@ -860,7 +880,8 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelect):
             **kwargs,
         )
         tool_calls = response.choices[0].message.tool_calls
-        return self._convert_tool_calls(tool_calls)
+        content = response.choices[0].message.content
+        return (self._convert_tool_calls(tool_calls), content)
 
     async def atool_select(
         self,
@@ -875,7 +896,7 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelect):
         parallel_tool_calls: Optional[bool] = True,
         tool_choice: Optional[Literal["auto", "none", "required"]] = "auto",
         **kwargs,
-    ) -> List[ToolCall]:
+    )-> Tuple[List[ToolCall], Union[str, None]]:
         """
         Select and invoke tools from a list based on conversation context.
 
@@ -924,10 +945,12 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelect):
         -------
         List[ToolCall]
             List of selected tool calls with their IDs, names, and parsed arguments.
+        Union[str, None]
+            The content of the message from the model.
         """
         json_desc_tools = [self._convert_tool_to_json(tool) for tool in tools]
         msgs: List[ChatCompletionMessageParam] = [self._convert_message(msg) for msg in messages]
-        response: Dict[str, Any] = await self.async_client.chat.completions.create(
+        response: ChatCompletion = await self.async_client.chat.completions.create(
             model=model,
             messages=msgs,
             temperature=temperature,
@@ -941,7 +964,8 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelect):
             **kwargs,
         )
         tool_calls = response.choices[0].message.tool_calls
-        return self._convert_tool_calls(tool_calls)
+        content = response.choices[0].message.content
+        return (self._convert_tool_calls(tool_calls), content)
 
     def _convert_parameters(self, parameters: Dict[str, Any]) -> Dict[str, Any]:
         return {
@@ -969,3 +993,44 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelect):
                 arguments=json.loads(tool_call.function.arguments),
             ) for tool_call in tool_calls
         ]
+    
+    @override
+    def dump_to_dict(self) -> Dict[str, Any]:
+        state_dict = {
+            "api_base": self.api_base,
+            "api_key": self.api_key,
+            "timeout": self.timeout,
+        }
+        if self.http_client:
+            warnings.warn(
+                "httpx.Client is not serializable, so it will be set to None in the deserialization.",
+                RuntimeWarning,
+            )
+        if self.http_async_client:
+            warnings.warn(
+                "httpx.AsyncClient is not serializable, so it will be set to None in the deserialization.",
+                RuntimeWarning,
+            )
+        return state_dict
+
+    @override
+    def load_from_dict(self, state_dict: Dict[str, Any]) -> None:
+        self.api_base = state_dict["api_base"]
+        self.api_key = state_dict["api_key"]
+        self.timeout = state_dict["timeout"]
+
+        self.http_client = None
+        self.http_async_client = None
+
+        self.client = OpenAI(
+            base_url=self.api_base,
+            api_key=self.api_key,
+            timeout=self.timeout,
+            http_client=self.http_client,
+        )
+        self.async_client = AsyncOpenAI(
+            base_url=self.api_base,
+            api_key=self.api_key,
+            timeout=self.timeout,
+            http_client=self.http_async_client,
+        )
