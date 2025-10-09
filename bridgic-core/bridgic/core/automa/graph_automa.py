@@ -197,7 +197,7 @@ class GraphAutomaMeta(_ProtocolMeta):
             if worker_kwargs is not None:
                 complete_args = packup_worker_decorator_rumtime_args(
                     cls, 
-                    cls.worker_decorator_type(), 
+                    cls.automa_type(), 
                     worker_kwargs
                 )
                 default_paramap = get_worker_decorator_default_paramap(AutomaType.Graph)
@@ -252,7 +252,7 @@ class GraphAutomaMeta(_ProtocolMeta):
         setattr(cls, "_registered_worker_funcs", registered_worker_funcs)
         return cls
     
-    def worker_decorator_type(cls) -> AutomaType:
+    def automa_type(cls) -> AutomaType:
         return AutomaType.Graph
 
     @classmethod
@@ -445,7 +445,7 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         self._worker_output = {}
         self._workers_dynamic_states = {}
 
-        if cls.worker_decorator_type() == AutomaType.Graph:
+        if cls.automa_type() == AutomaType.Graph:
             # The _registered_worker_funcs data are from @worker decorators.
             for worker_key, worker_func in cls._registered_worker_funcs.items():
                 # The decorator based mechanism (i.e. @worker) is based on the add_worker() interface.

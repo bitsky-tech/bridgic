@@ -1,6 +1,6 @@
 [project]
 name = "bridgic-llms-openai"
-version = "0.1.0.dev1"
+version = "0.1.0.dev2"
 classifiers = [
     "Private :: Do Not Upload",
     "Programming Language :: Python :: 3",
