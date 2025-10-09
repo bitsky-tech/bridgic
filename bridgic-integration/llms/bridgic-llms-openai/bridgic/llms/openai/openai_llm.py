@@ -812,7 +812,7 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelect):
         parallel_tool_calls: Optional[bool] = True,
         tool_choice: Optional[Literal["auto", "required", "none"]] = "auto",
         **kwargs,
-    ) -> Tuple[List[ToolCall], Union[str, None]]:
+    ) -> Tuple[List[ToolCall], Optional[str]]:
         """
         Select and invoke tools from a list based on conversation context.
 
@@ -896,7 +896,7 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelect):
         parallel_tool_calls: Optional[bool] = True,
         tool_choice: Optional[Literal["auto", "none", "required"]] = "auto",
         **kwargs,
-    )-> Tuple[List[ToolCall], Union[str, None]]:
+    )-> Tuple[List[ToolCall], Optional[str]]:
         """
         Select and invoke tools from a list based on conversation context.
 

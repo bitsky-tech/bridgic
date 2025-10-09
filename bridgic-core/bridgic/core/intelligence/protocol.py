@@ -93,11 +93,11 @@ class ToolSelect(Protocol):
         messages: List[Message],
         tools: List[Tool],
         **kwargs,
-    ) -> Tuple[List[ToolCall], Union[str, None]]: ...
+    ) -> Tuple[List[ToolCall], Optional[str]]: ...
 
     async def atool_select(
         self,
         messages: List[Message],
         tools: List[Tool],
         **kwargs,
-    ) -> Tuple[List[ToolCall], Union[str, None]]: ...
+    ) -> Tuple[List[ToolCall], Optional[str]]: ...
