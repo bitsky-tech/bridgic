@@ -19,7 +19,7 @@ from bridgic.core.intelligence.content import *
 from bridgic.core.intelligence.protocol import *
 from bridgic.core.utils.console import printer
 
-class OpenAILlm(BaseLlm, StructuredOutput, ToolSelect):
+class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
     """
     Wrapper class for OpenAI, providing common chat and stream calling interfaces for OpenAI model
     and implementing the common protocols in the Bridgic framework.
@@ -73,7 +73,7 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelect):
 
     ```python
     tools = [Tool(name="calculator", description="Calculate math", parameters={})]
-    tool_calls, tool_call_response = llm.tool_select(messages=messages, tools=tools, model="gpt-4")
+    tool_calls, tool_call_response = llm.select_tool(messages=messages, tools=tools, model="gpt-4")
     ```
     """
 
@@ -799,7 +799,7 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelect):
             return json.loads(content)
         return content
 
-    def tool_select(
+    def select_tool(
         self,
         messages: List[Message],
         tools: List[Tool],
@@ -883,7 +883,7 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelect):
         content = response.choices[0].message.content
         return (self._convert_tool_calls(tool_calls), content)
 
-    async def atool_select(
+    async def aselect_tool(
         self,
         messages: List[Message],
         tools: List[Tool],

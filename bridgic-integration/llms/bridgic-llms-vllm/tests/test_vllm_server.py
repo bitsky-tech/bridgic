@@ -379,8 +379,8 @@ I am in Beijing. Please tell me the time in Beijing in ISO 8601 format.
     (_api_key is None) or (_api_base is None) or (_model_name is None),
     reason="VLLM_SERVER_API_KEY or VLLM_SERVER_API_BASE or VLLM_SERVER_MODEL_NAME is not set",
 )
-def test_vllm_server_tool_select(llm, date, tools):
-    response: List[ToolCall] = llm.tool_select(
+def test_vllm_server_select_tool(llm, date, tools):
+    response: List[ToolCall] = llm.select_tool(
         model=_model_name,
         tools=tools,
         min_tools=1,
@@ -410,8 +410,8 @@ def test_vllm_server_tool_select(llm, date, tools):
     reason="VLLM_SERVER_API_KEY or VLLM_SERVER_API_BASE or VLLM_SERVER_MODEL_NAME is not set",
 )
 @pytest.mark.asyncio
-async def test_vllm_server_atool_select(llm, date, tools):
-    response: List[ToolCall] = await llm.atool_select(
+async def test_vllm_server_aselect_tool(llm, date, tools):
+    response: List[ToolCall] = await llm.aselect_tool(
         model=_model_name,
         tools=tools,
         min_tools=0,

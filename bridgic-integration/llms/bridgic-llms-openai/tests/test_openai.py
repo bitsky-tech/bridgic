@@ -390,8 +390,8 @@ number ::= "2020" | "2021" | "2022" | "2023" | "2024"
     (_api_key is None) or (_model_name is None),
     reason="OPENAI_API_KEY or OPENAI_MODEL_NAME is not set",
 )
-def test_openai_server_tool_select(llm, date, tools):
-    response, _ = llm.tool_select(
+def test_openai_server_select_tool(llm, date, tools):
+    response, _ = llm.select_tool(
         model=_model_name,
         tools=tools,
         messages=[
@@ -420,8 +420,8 @@ def test_openai_server_tool_select(llm, date, tools):
     (_api_key is None) or (_model_name is None),
     reason="OPENAI_API_KEY or OPENAI_MODEL_NAME is not set",
 )
-def test_openai_server_tool_select_response(llm, tools):
-    tool_calls, response = llm.tool_select(
+def test_openai_server_select_tool_response(llm, tools):
+    tool_calls, response = llm.select_tool(
         model=_model_name,
         tools=tools,
         messages=[
@@ -445,8 +445,8 @@ def test_openai_server_tool_select_response(llm, tools):
     reason="OPENAI_API_KEY or OPENAI_MODEL_NAME is not set",
 )
 @pytest.mark.asyncio
-async def test_openai_server_atool_select(llm, date, tools):
-    response, _ = await llm.atool_select(
+async def test_openai_server_aselect_tool(llm, date, tools):
+    response, _ = await llm.aselect_tool(
         model=_model_name,
         tools=tools,
         messages=[
