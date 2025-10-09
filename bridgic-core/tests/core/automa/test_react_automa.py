@@ -1,12 +1,40 @@
 import pytest
+from enum import Enum
 
 from bridgic.core.intelligence.react import ReActAutoma
+
+
+class WeatherUnit(Enum):
+    CELSIUS = "celsius"
+    FAHRENHEIT = "fahrenheit"
+
+async def get_weather(
+    location: str,
+    unit: WeatherUnit,
+) -> str:
+    """
+    Retrieves current weather for the given location.
+
+    Parameters
+    ----------
+    location : str
+        City and country e.g. Bogotá, Colombia.
+    unit : WeatherUnit
+        Units the temperature will be returned in.
+    
+    Returns
+    -------
+    str
+        The weather for the given location.
+    """
+    ...
 
 
 @pytest.fixture
 def react_automa_1() -> ReActAutoma:
     return ReActAutoma(
         llm=None,
+        tools=[get_weather],
         system_prompt="You are a helpful assistant in a customer service scenario."
     )
 

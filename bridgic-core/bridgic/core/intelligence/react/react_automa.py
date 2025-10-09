@@ -9,6 +9,8 @@ from bridgic.core.intelligence.protocol import ToolCall
 from bridgic.core.automa.interaction import InteractionFeedback
 from bridgic.core.prompt.chat_message import ChatMessage, SystemMessage, UserTextMessage, AssistantTextMessage, ToolMessage
 from bridgic.core.automa import worker, ArgsMappingRule
+from bridgic.core.intelligence import FunctionToolSpec
+from bridgic.core.intelligence.worker import ToolSelectionWorker
 
 DEFAULT_MAX_ITERATIONS = 20
 DEFAULT_TEMPLATE_FILE = "bridgic/core/intelligence/react/default_template.txt"
@@ -36,6 +38,8 @@ class ReActAutoma(GraphAutoma):
 
     _llm: BaseLlm
     """ The LLM to be used by the react automa. """
+    _tools: Optional[List[Union[Callable, ToolSpec]]]
+    """ The candidate tools to be used by the react automa. """
     _system_prompt: Optional[Union[str, SystemMessage, Message]]
     """ The system prompt to be used by the react automa. """
     _max_iterations: int
@@ -46,6 +50,7 @@ class ReActAutoma(GraphAutoma):
     def __init__(
         self,
         llm: BaseLlm,
+        tools: Optional[List[Union[Callable, ToolSpec]]] = None,
         system_prompt: Optional[Union[str, SystemMessage, Message]] = None,
         name: Optional[str] = None,
         thread_pool: Optional[ThreadPoolExecutor] = None,
@@ -66,13 +71,22 @@ class ReActAutoma(GraphAutoma):
                 if system_prompt.role != Role.SYSTEM:
                     raise ValueError(f"Invalid `system_prompt` value received: {system_prompt}. It should contain `role`=`Role.SYSTEM`.")
 
+        self._tools = tools
         self._system_prompt = system_prompt
         self._max_iterations = max_iterations
         self._prompt_template = prompt_template
 
+        self.add_worker(
+            key="tool_selection",
+            worker=ToolSelectionWorker(tool_selection_llm=llm),
+            dependencies=["assemble_context"],
+            args_mapping_rule=ArgsMappingRule.UNPACK,
+        )
+
     @override
     def dump_to_dict(self) -> Dict[str, Any]:
         state_dict = super().dump_to_dict()
+        # TODO: tools
         state_dict["max_iterations"] = self._max_iterations
         state_dict["prompt_template"] = self._prompt_template
         return state_dict
@@ -106,7 +120,7 @@ class ReActAutoma(GraphAutoma):
         *,
         chat_history: Optional[List[Union[UserTextMessage, AssistantTextMessage, ToolMessage, Message]]] = None,
         messages: Optional[List[Union[ChatMessage, Message]]] = None,
-        candidate_tools: Optional[List[Union[Callable, ToolSpec]]] = None,
+        tools: Optional[List[Union[Callable, ToolSpec]]] = None,
         interaction_feedback: Optional[InteractionFeedback] = None,
         interaction_feedbacks: Optional[List[InteractionFeedback]] = None,
     ) -> Any:
@@ -114,7 +128,7 @@ class ReActAutoma(GraphAutoma):
             user_msg=user_msg,
             chat_history=chat_history,
             messages=messages,
-            candidate_tools=candidate_tools,
+            tools=tools,
             interaction_feedback=interaction_feedback,
             interaction_feedbacks=interaction_feedbacks,
         )
@@ -126,7 +140,7 @@ class ReActAutoma(GraphAutoma):
         *,
         chat_history: Optional[List[Union[UserTextMessage, AssistantTextMessage, ToolMessage, Message]]] = None,
         messages: Optional[List[Union[ChatMessage, Message]]] = None,
-        candidate_tools: Optional[List[Union[Callable, ToolSpec]]] = None,
+        tools: Optional[List[Union[Callable, ToolSpec]]] = None,
     ) -> Dict[str, Any]:
         """
         Validate and transform the input messages and tools to the format expected by the LLM.
@@ -189,12 +203,26 @@ class ReActAutoma(GraphAutoma):
                     raise ValueError(f"`role` must be `user` in user message: `{user_msg}`.")
             else:
                 raise TypeError(f"Invalid `user_msg` type: {type(user_msg)}, expected `str`, `UserTextMessage`, or `Message`.")
+        else:
+            raise ValueError(f"Either `messages` or `user_msg` must be provided.")
 
         # Part Two: validate and transform the intput tools.
         # Unify input tools of various types to the format expected by the LLM.
+        tools = tools or self._tools
+        if not tools:
+            raise ValueError(f"`tools` must be provided at runtime or initialization.")
+        tool_spec_list: List[ToolSpec] = []
+        for tool in tools:
+            if isinstance(tool, Callable):
+                tool_spec_list.append(FunctionToolSpec.from_raw(tool))
+            elif isinstance(tool, ToolSpec):
+                tool_spec_list.append(tool)
+            else:
+                raise TypeError(f"Invalid type: {type(tool)} in `tools`, expected `Callable` or `ToolSpec`.")
     
         return {
             "messages": llm_messages,
+            "tools": tool_spec_list,
         }
 
     @worker(dependencies=["validate_and_transform"], args_mapping_rule=ArgsMappingRule.UNPACK)
@@ -202,11 +230,14 @@ class ReActAutoma(GraphAutoma):
         self,
         *,
         messages: Optional[List[Message]] = None,
-        candidate_tools: Optional[List[ToolSpec]] = None,
+        tools: Optional[List[ToolSpec]] = None,
         # TODO: type of tool_results
         tool_results: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
-        print(f"\n***** in assemble_context, messages: {messages} *****")
+        return {
+            "messages": messages,
+            "tools": tools,
+        }
 
     async def plan_next_step(
         self,
