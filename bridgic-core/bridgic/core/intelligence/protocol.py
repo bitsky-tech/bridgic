@@ -1,4 +1,4 @@
-from typing import List, Protocol, Any, Dict, Type, Literal, Union, Optional, ClassVar
+from typing import List, Protocol, Any, Dict, Type, Literal, Union, Optional, ClassVar, Tuple
 from pydantic import BaseModel, Field
 
 from bridgic.core.intelligence.base_llm import Message
@@ -82,22 +82,22 @@ class ToolCall(BaseModel):
     name: str = Field(..., description="Name of the tool.")
     arguments: Dict[str, Any] = Field(..., default_factory=dict, description="Real arguments that are used to call the tool.")
 
-class ToolSelect(Protocol):
+class ToolSelection(Protocol):
     """
-    ToolSelect is a protocol that defines the interface for LLM providers that can select tools 
+    ToolSelection is a protocol that defines the interface for LLM providers that can select tools 
     to use and decide their specific parameters.
     """
 
-    def tool_select(
+    def select_tool(
         self,
         messages: List[Message],
         tools: List[Tool],
         **kwargs,
-    ) -> List[ToolCall]: ...
+    ) -> Tuple[List[ToolCall], Optional[str]]: ...
 
-    async def atool_select(
+    async def aselect_tool(
         self,
         messages: List[Message],
         tools: List[Tool],
         **kwargs,
-    ) -> List[ToolCall]: ...
+    ) -> Tuple[List[ToolCall], Optional[str]]: ...
