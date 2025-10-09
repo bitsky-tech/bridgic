@@ -986,7 +986,7 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelect):
         }
 
     def _convert_tool_calls(self, tool_calls: List[ChatCompletionMessageFunctionToolCall]) -> List[ToolCall]:
-        return [
+        return [] if tool_calls is None else [
             ToolCall(
                 id=tool_call.id,
                 name=tool_call.function.name,

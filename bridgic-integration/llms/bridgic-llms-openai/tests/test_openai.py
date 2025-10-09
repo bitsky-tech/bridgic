@@ -414,6 +414,32 @@ def test_openai_server_tool_select(llm, date, tools):
             assert tool_call.arguments["date"] == date
             assert len(tool_call.arguments["topic"]) > 0
 
+
+
+@pytest.mark.skipif(
+    (_api_key is None) or (_model_name is None),
+    reason="OPENAI_API_KEY or OPENAI_MODEL_NAME is not set",
+)
+def test_openai_server_tool_select_response(llm, tools):
+    tool_calls, response = llm.tool_select(
+        model=_model_name,
+        tools=tools,
+        messages=[
+            Message.from_text(
+                text="You are a helpful assistant. You are skilled at using the provided tools to solve problems. If the tool does not match the question, you can directly answer the answer",
+                role=Role.SYSTEM,
+            ),
+            Message.from_text(
+                text="What is 4 * 4 equal to when calculating",
+                role=Role.USER,
+            )
+        ],
+    )
+    printer.print("Tool Calls:")
+    assert len(tool_calls) == 0
+    assert len(response) > 0
+
+
 @pytest.mark.skipif(
     (_api_key is None) or (_model_name is None),
     reason="OPENAI_API_KEY or OPENAI_MODEL_NAME is not set",
