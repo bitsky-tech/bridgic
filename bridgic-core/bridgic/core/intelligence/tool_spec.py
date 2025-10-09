@@ -13,6 +13,62 @@ from bridgic.core.automa.worker import Worker, CallableWorker
 from bridgic.core.utils.json_schema import create_func_params_json_schema
 from bridgic.core.utils.inspect_tools import load_qualified_class_or_func
 
+def as_tool(spec_func: Callable) -> Callable:
+    """
+    A decorator that transforms a class to a tool that may be used by LLM.
+
+    Parameters
+    ----------
+    spec_func : Callable
+        The function used to declare the tool spec. Note that this function is not intended to be called directly.
+    """
+    def decorator(cls):
+        if not isinstance(spec_func, Callable):
+            raise ValueError(f"A function argument is expected, but got {type(spec_func)}.")
+        if isinstance(spec_func, MethodType):
+            raise ValueError(f"`spec_func` is not allowed to be a bound method: {spec_func}.")
+        cls.spec_func = spec_func
+        return cls
+    return decorator
+
+def get_tool_description_from(
+    spec_func: Callable,
+    tool_name: Optional[str] = None
+) -> str:
+    """
+    Get the tool description from the spec function.
+    """
+    docstring = parse_docstring(spec_func.__doc__)
+    tool_description = docstring.description
+    if tool_description:
+        tool_description = tool_description.strip()
+
+    if not tool_description:
+        # No description provided, use the function signature as the description.
+        fn_sig = inspect.signature(spec_func)
+        filtered_params = []
+        ignore_params: List[str] = ["self", "cls"]
+        for param_name, param in fn_sig.parameters.items():
+            if param_name in ignore_params:
+                continue
+
+            # Resolve the original type of the parameter.
+            param_type = param.annotation
+            if get_origin(param_type) is Annotated:
+                param_type = param_type.__origin__
+
+            # Note: Remove the default of the parameter.
+            filtered_params.append(param.replace(
+                annotation=param_type,
+                default=inspect.Parameter.empty
+            ))
+
+        fn_sig = fn_sig.replace(parameters=filtered_params)
+        if not tool_name:
+            tool_name = spec_func.__name__
+        tool_description = f"{tool_name}{fn_sig}\n"
+    return tool_description
+
 class ToolSpec(Serializable):
     """
     ToolSpec is an abstract class that represents a tool specification that describes all necessary information about a tool used by the LLM. 
@@ -139,32 +195,7 @@ class FunctionToolSpec(ToolSpec):
             tool_name = func.__name__
         
         if not tool_description:
-            docstring = parse_docstring(func.__doc__)
-            tool_description = docstring.description
-            if tool_description:
-                tool_description = tool_description.strip()
-        if not tool_description:
-            # No description provided, use the function signature as the description.
-            fn_sig = inspect.signature(func)
-            filtered_params = []
-            ignore_params: List[str] = ["self", "cls"]
-            for param_name, param in fn_sig.parameters.items():
-                if param_name in ignore_params:
-                    continue
-
-                # Resolve the original type of the parameter.
-                param_type = param.annotation
-                if get_origin(param_type) is Annotated:
-                    param_type = param_type.__origin__
-
-                # Note: Remove the default of the parameter.
-                filtered_params.append(param.replace(
-                    annotation=param_type,
-                    default=inspect.Parameter.empty
-                ))
-
-            fn_sig = fn_sig.replace(parameters=filtered_params)
-            tool_description = f"{tool_name}{fn_sig}\n"
+            tool_description = get_tool_description_from(func, tool_name)
 
         if not tool_parameters:
             tool_parameters = create_func_params_json_schema(func)
@@ -234,55 +265,61 @@ class AutomaToolSpec(ToolSpec):
     """A description of what the tool does, used by the model to choose when and how to call the tool."""
     _tool_parameters: Optional[Dict[str, Any]]
     """The JSON schema of the tool's parameters"""
-    # initialization arguments
-    _automa_name: Optional[str]
-    _automa_thread_pool: Optional[ThreadPoolExecutor]
-    _init_kwargs: Dict[str, Any]
+    # The Automa initialization arguments
+    _automa_init_kwargs: Dict[str, Any]
 
     def __init__(
         self,
         automa_cls: Type[Automa],
-        tool_name: Optional[str],
-        tool_description: Optional[str],
-        tool_parameters: Optional[Dict[str, Any]],
-        *,
-        automa_name: Optional[str] = None,
-        automa_thread_pool: Optional[ThreadPoolExecutor] = None,
-        **init_kwargs: Dict[str, Any],
+        tool_name: Optional[str] = None,
+        tool_description: Optional[str] = None,
+        tool_parameters: Optional[Dict[str, Any]] = None,
+        **automa_init_kwargs: Dict[str, Any],
     ):
         super().__init__()
         self._automa_cls = automa_cls
         self._tool_name = tool_name
         self._tool_description = tool_description
         self._tool_parameters = tool_parameters
-        self._automa_name = automa_name
-        self._automa_thread_pool = automa_thread_pool
-        self._init_kwargs = init_kwargs
+        self._automa_init_kwargs = automa_init_kwargs
 
     @classmethod
     def from_raw(
         cls,
         automa_cls: Type[Automa],
-        tool_name: Optional[str],
-        tool_description: Optional[str],
-        tool_parameters: Optional[Dict[str, Any]],
-        *,
-        automa_name: Optional[str] = None,
-        automa_thread_pool: Optional[ThreadPoolExecutor] = None,
-        **init_kwargs: Dict[str, Any],
+        tool_name: Optional[str] = None,
+        tool_description: Optional[str] = None,
+        tool_parameters: Optional[Dict[str, Any]] = None,
+        **automa_init_kwargs: Dict[str, Any],
     ) -> "AutomaToolSpec":
         """
         Create an AutomaToolSpec from an Automa class.
         """
-        # TODO: how to automatically extract tool metadata from the automa class?
+
+        def check_spec_func(automa_cls):
+            if hasattr(automa_cls, "spec_func") and isinstance(automa_cls.spec_func, Callable):
+                return
+            raise ValueError(f"The Automa class {automa_cls} must have a `spec_func` attribute in order to be used as a tool.")
+
+        if (not tool_name) or (not tool_description) or (not tool_parameters):
+            check_spec_func(automa_cls)
+
+        if not tool_name:
+            tool_name = automa_cls.spec_func.__name__
+        
+        if not tool_description:
+            tool_description = get_tool_description_from(automa_cls.spec_func, tool_name)
+
+        if not tool_parameters:
+            tool_parameters = create_func_params_json_schema(automa_cls.spec_func)
+            # TODO: whether to remove the `title` field of the params_schema?
+
         return cls(
             automa_cls=automa_cls,
             tool_name=tool_name,
             tool_description=tool_description,
             tool_parameters=tool_parameters,
-            automa_name=automa_name,
-            automa_thread_pool=automa_thread_pool,
-            **init_kwargs
+            **automa_init_kwargs
         )
 
     @override
@@ -311,11 +348,7 @@ class AutomaToolSpec(ToolSpec):
         Worker
             A new `Worker` object that can be added to an Automa to execute the tool.
         """
-        return self._automa_cls(
-            name=self._automa_name,
-            thread_pool=self._automa_thread_pool,
-            **self._init_kwargs
-        )
+        return self._automa_cls(**self._automa_init_kwargs)
 
     @override
     def dump_to_dict(self) -> Dict[str, Any]:
@@ -327,12 +360,8 @@ class AutomaToolSpec(ToolSpec):
             state_dict["tool_description"] = self._tool_description
         if self._tool_parameters:
             state_dict["tool_parameters"] = self._tool_parameters
-        if self._automa_name:
-            state_dict["automa_name"] = self._automa_name
-        if self._automa_thread_pool:
-            state_dict["automa_thread_pool"] = self._automa_thread_pool
-        if self._init_kwargs:
-            state_dict["init_kwargs"] = self._init_kwargs
+        if self._automa_init_kwargs:
+            state_dict["automa_init_kwargs"] = self._automa_init_kwargs
         return state_dict
 
     @override
@@ -342,6 +371,4 @@ class AutomaToolSpec(ToolSpec):
         self._tool_name = state_dict.get("tool_name")
         self._tool_description = state_dict.get("tool_description")
         self._tool_parameters = state_dict.get("tool_parameters")
-        self._automa_name = state_dict.get("automa_name")
-        self._automa_thread_pool = state_dict.get("automa_thread_pool")
-        self._init_kwargs = state_dict.get("init_kwargs") or {}
+        self._automa_init_kwargs = state_dict.get("automa_init_kwargs") or {}

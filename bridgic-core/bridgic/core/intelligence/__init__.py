@@ -1,3 +1,3 @@
-from .tool_spec import ToolSpec, FunctionToolSpec, AutomaToolSpec
+from .tool_spec import as_tool, ToolSpec, FunctionToolSpec, AutomaToolSpec
 
-__all__ = ["ToolSpec", "FunctionToolSpec", "AutomaToolSpec"]
+__all__ = ["as_tool", "ToolSpec", "FunctionToolSpec", "AutomaToolSpec"]
