@@ -4,9 +4,9 @@ import httpx
 import warnings
 
 from typing import List, Tuple, overload, Literal
-from openai.types.chat import ChatCompletion, ChatCompletionChunk, ChatCompletionMessageFunctionToolCall
+from openai.types.chat import ChatCompletion, ChatCompletionChunk, ChatCompletionMessageFunctionToolCall, ChatCompletionToolChoiceOptionParam
 from pydantic import BaseModel
-from openai import Stream, OpenAI, AsyncOpenAI
+from openai import Omit, Stream, OpenAI, AsyncOpenAI, omit
 from openai.types.chat.chat_completion_message import ChatCompletionMessage
 from openai.resources.chat.completions.completions import ChatCompletionMessageParam
 from openai.types.chat.chat_completion_system_message_param import ChatCompletionSystemMessageParam
@@ -804,13 +804,13 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
         messages: List[Message],
         tools: List[Tool],
         model: str,
-        temperature: Optional[float] = None,
-        top_p: Optional[float] = None,
-        presence_penalty: Optional[float] = None,
-        frequency_penalty: Optional[float] = None,
+        temperature: Optional[float] | Omit = omit,
+        top_p: Optional[float] | Omit = omit,
+        presence_penalty: Optional[float] | Omit = omit,
+        frequency_penalty: Optional[float] | Omit = omit,
         extra_body: Optional[Dict[str, Any]] = None,
-        parallel_tool_calls: Optional[bool] = None,
-        tool_choice: Optional[Literal["auto", "required", "none"]] = None,
+        parallel_tool_calls: bool | Omit = omit,
+        tool_choice: ChatCompletionToolChoiceOptionParam | Omit = omit,
         **kwargs,
     ) -> Tuple[List[ToolCall], Optional[str]]:
         """
@@ -888,13 +888,13 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
         messages: List[Message],
         tools: List[Tool],
         model: str,
-        temperature: Optional[float] = None,
-        top_p: Optional[float] = None,
-        presence_penalty: Optional[float] = None,
-        frequency_penalty: Optional[float] = None,
+        temperature: Optional[float] | Omit = omit,
+        top_p: Optional[float] | Omit = omit,
+        presence_penalty: Optional[float] | Omit = omit,
+        frequency_penalty: Optional[float] | Omit = omit,
         extra_body: Optional[Dict[str, Any]] = None,
-        parallel_tool_calls: Optional[bool] = None,
-        tool_choice: Optional[Literal["auto", "none", "required"]] = None,
+        parallel_tool_calls: bool | Omit = omit,
+        tool_choice: ChatCompletionToolChoiceOptionParam | Omit = omit,
         **kwargs,
     )-> Tuple[List[ToolCall], Optional[str]]:
         """
