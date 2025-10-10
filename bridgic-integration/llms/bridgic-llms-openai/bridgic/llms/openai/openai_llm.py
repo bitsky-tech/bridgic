@@ -1,12 +1,13 @@
 import json
+from openai.types.responses import EasyInputMessageParam, ResponseInputParam
 from typing_extensions import override
 import httpx
 import warnings
 
-from typing import List, Tuple, overload, Literal
+from typing import List, Tuple, overload
 from openai.types.chat import ChatCompletion, ChatCompletionChunk, ChatCompletionMessageFunctionToolCall, ChatCompletionToolChoiceOptionParam
 from pydantic import BaseModel
-from openai import Omit, Stream, OpenAI, AsyncOpenAI, omit
+from openai import Stream, OpenAI, AsyncOpenAI
 from openai.types.chat.chat_completion_message import ChatCompletionMessage
 from openai.resources.chat.completions.completions import ChatCompletionMessageParam
 from openai.types.chat.chat_completion_system_message_param import ChatCompletionSystemMessageParam
@@ -18,6 +19,9 @@ from bridgic.core.intelligence.base_llm import *
 from bridgic.core.intelligence.content import *
 from bridgic.core.intelligence.protocol import *
 from bridgic.core.utils.console import printer
+from bridgic.core.utils.collection import filter_dict
+
+CONSTRAINT_EXEC_BY_CUSTOM_TOOL_LIST = (Regex, LarkGrammar)
 
 class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
     """
@@ -174,19 +178,23 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
         Response
             A response object containing the generated message and raw API response.
         """
-        msgs: List[ChatCompletionMessageParam] = [self._convert_message(msg) for msg in messages]
-        response: ChatCompletion = self.client.chat.completions.create(
-            messages=msgs,
-            model=model,
-            temperature=temperature,
-            top_p=top_p,
-            presence_penalty=presence_penalty,
-            frequency_penalty=frequency_penalty,
-            max_tokens=max_tokens,
-            stop=stop,
-            extra_body=extra_body,
+        msgs: List[ChatCompletionMessageParam] = [self._convert_chat_completions_message(msg) for msg in messages]
+        
+        # Build parameters dictionary and filter out None values
+        params = filter_dict({
+            "messages": msgs,
+            "model": model,
+            "temperature": temperature,
+            "top_p": top_p,
+            "presence_penalty": presence_penalty,
+            "frequency_penalty": frequency_penalty,
+            "max_tokens": max_tokens,
+            "stop": stop,
+            "extra_body": extra_body,
             **kwargs,
-        )
+        }, exclude_none=True)
+        
+        response: ChatCompletion = self.client.chat.completions.create(**params)
         openai_message = response.choices[0].message
         text = openai_message.content if openai_message.content else ""
         if openai_message.refusal:
@@ -256,24 +264,29 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
         This method enables real-time streaming of the model's response,
         useful for providing incremental updates to users as the response is generated.
         """
-        msgs: List[ChatCompletionMessageParam] = [self._convert_message(msg) for msg in messages]
-        response: Stream[ChatCompletionChunk] = self.client.chat.completions.create(
-            messages=msgs,
-            model=model,
-            stream=True,
-            temperature=temperature,
-            top_p=top_p,
-            presence_penalty=presence_penalty,
-            frequency_penalty=frequency_penalty,
-            max_tokens=max_tokens,
-            stop=stop,
-            extra_body=extra_body,
+        msgs: List[ChatCompletionMessageParam] = [self._convert_chat_completions_message(msg) for msg in messages]
+        
+        # Build parameters dictionary and filter out None values
+        params = filter_dict({
+            "messages": msgs,
+            "model": model,
+            "stream": True,
+            "temperature": temperature,
+            "top_p": top_p,
+            "presence_penalty": presence_penalty,
+            "frequency_penalty": frequency_penalty,
+            "max_tokens": max_tokens,
+            "stop": stop,
+            "extra_body": extra_body,
             **kwargs,
-        )
+        }, exclude_none=True)
+        
+        response: Stream[ChatCompletionChunk] = self.client.chat.completions.create(**params)
         for chunk in response:
-            delta_content = chunk.choices[0].delta.content
-            delta_content = delta_content if delta_content else ""
-            yield MessageChunk(delta=delta_content, raw=chunk)
+            if chunk.choices and chunk.choices[0].delta.content:
+                delta_content = chunk.choices[0].delta.content
+                delta_content = delta_content if delta_content else ""
+                yield MessageChunk(delta=delta_content, raw=chunk)
 
     async def achat(
         self,
@@ -333,19 +346,23 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
         This is the asynchronous version of the chat method, suitable for
         concurrent processing and non-blocking I/O operations.
         """
-        msgs: List[ChatCompletionMessageParam] = [self._convert_message(msg) for msg in messages]
-        response = await self.async_client.chat.completions.create(
-            messages=msgs,
-            model=model,
-            temperature=temperature,
-            top_p=top_p,
-            presence_penalty=presence_penalty,
-            frequency_penalty=frequency_penalty,
-            max_tokens=max_tokens,
-            stop=stop,
-            extra_body=extra_body,
+        msgs: List[ChatCompletionMessageParam] = [self._convert_chat_completions_message(msg) for msg in messages]
+        
+        # Build parameters dictionary and filter out None values
+        params = filter_dict({
+            "messages": msgs,
+            "model": model,
+            "temperature": temperature,
+            "top_p": top_p,
+            "presence_penalty": presence_penalty,
+            "frequency_penalty": frequency_penalty,
+            "max_tokens": max_tokens,
+            "stop": stop,
+            "extra_body": extra_body,
             **kwargs,
-        )
+        }, exclude_none=True)
+        
+        response = await self.async_client.chat.completions.create(**params)
         openai_message: ChatCompletionMessage = response.choices[0].message
         text: str = openai_message.content if openai_message.content else ""
 
@@ -416,44 +433,31 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
         This is the asynchronous version of the stream method, suitable for
         concurrent processing and non-blocking streaming operations.
         """
-        msgs: List[ChatCompletionMessageParam] = [self._convert_message(msg) for msg in messages]
-        response = await self.async_client.chat.completions.create(
-            messages=msgs,
-            model=model,
-            stream=True,
-            temperature=temperature,
-            top_p=top_p,
-            presence_penalty=presence_penalty,
-            frequency_penalty=frequency_penalty,
-            max_tokens=max_tokens,
-            stop=stop,
-            extra_body=extra_body,
+        msgs: List[ChatCompletionMessageParam] = [self._convert_chat_completions_message(msg) for msg in messages]
+        
+        # Build parameters dictionary and filter out None values
+        params = filter_dict({
+            "messages": msgs,
+            "model": model,
+            "stream": True,
+            "temperature": temperature,
+            "top_p": top_p,
+            "presence_penalty": presence_penalty,
+            "frequency_penalty": frequency_penalty,
+            "max_tokens": max_tokens,
+            "stop": stop,
+            "extra_body": extra_body,
             **kwargs,
-        )
+        }, exclude_none=True)
+        
+        response = await self.async_client.chat.completions.create(**params)
         async for chunk in response:
-            delta_content = chunk.choices[0].delta.content
-            delta_content = delta_content if delta_content else ""
-            yield MessageChunk(delta=delta_content, raw=chunk)
+            if chunk.choices and chunk.choices[0].delta.content:
+                delta_content = chunk.choices[0].delta.content
+                delta_content = delta_content if delta_content else ""
+                yield MessageChunk(delta=delta_content, raw=chunk)
 
-    def _convert_message(self, message: Message) -> ChatCompletionMessageParam:
-        """
-        Convert a Bridgic Message object to OpenAI ChatCompletionMessageParam format.
-
-        Parameters
-        ----------
-        message : Message
-            The Bridgic message object containing role, content blocks, and metadata.
-
-        Returns
-        -------
-        ChatCompletionMessageParam
-            A message parameter object compatible with OpenAI's chat completion API.
-
-        Raises
-        ------
-        ValueError
-            If the message role is not supported (SYSTEM, USER, AI, or TOOL).
-        """
+    def _convert_chat_completions_message(self, message: Message) -> ChatCompletionMessageParam:
         content_list = []
         for block in message.blocks:
             if isinstance(block, TextBlock):
@@ -468,6 +472,24 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
             return ChatCompletionAssistantMessageParam(content=content_txt, role="assistant", name=name)
         elif message.role == Role.TOOL:
             return ChatCompletionToolMessageParam(content=content_txt, role="tool")
+        else:
+            raise ValueError(f"Invalid role: {message.role}")
+    
+    def _convert_responses_message(self, message: Message) -> ResponseInputParam:
+        content_list = []
+        for block in message.blocks:
+            if isinstance(block, TextBlock):
+                content_list.append(block.text)
+        content_txt = "\n\n".join(content_list)
+        if message.role == Role.SYSTEM:
+            return EasyInputMessageParam(content=content_txt, role="system")
+        elif message.role == Role.USER:
+            return EasyInputMessageParam(content=content_txt, role="user")
+        elif message.role == Role.AI:
+            return EasyInputMessageParam(content=content_txt, role="assistant")
+        # TODO: support tool message
+        elif message.role == Role.TOOL:
+            return EasyInputMessageParam(content=content_txt, role="tool")
         else:
             raise ValueError(f"Invalid role: {message.role}")
 
@@ -499,10 +521,34 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
         **kwargs,
     ) -> Dict[str, Any]: ...
 
+    @overload
     def structured_output(
         self,
         messages: List[Message],
-        constraint: Constraint,
+        constraint: Regex,
+        model: str,
+        temperature: Optional[float] = ...,
+        top_p: Optional[float] = ...,
+        extra_body: Optional[Dict[str, Any]] = ...,
+        **kwargs,
+    ) -> str: ...
+
+    @overload
+    def structured_output(
+        self,
+        messages: List[Message],
+        constraint: LarkGrammar,
+        model: str,
+        temperature: Optional[float] = ...,
+        top_p: Optional[float] = ...,
+        extra_body: Optional[Dict[str, Any]] = ...,
+        **kwargs,
+    ) -> str: ...
+
+    def structured_output(
+        self,
+        messages: List[Message],
+        constraint: Union[PydanticModel, JsonSchema, LarkGrammar, Regex],
         model: str,
         temperature: Optional[float] = None,
         top_p: Optional[float] = None,
@@ -590,23 +636,69 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
         - All schemas automatically have additionalProperties set to False
         - Best performance achieved with GPT-4o and later models (gpt-4o-mini, gpt-4o-2024-08-06, and later)
         """
-        msgs: List[ChatCompletionMessageParam] = [self._convert_message(msg) for msg in messages]
-        response = self.client.chat.completions.parse(
-            messages=msgs,
-            model=model,
-            temperature=temperature,
-            top_p=top_p,
-            presence_penalty=presence_penalty,
-            frequency_penalty=frequency_penalty,
-            response_format=self._get_response_format(constraint),
-            **kwargs,
-        )
-        return self._convert_response(constraint, response.choices[0].message)
+        if self._should_exec_by_custom_tool(constraint):
+            # support LarkGrammar, Regex
+            msgs: List[ResponseInputParam] = [self._convert_responses_message(msg) for msg in messages]
+            if presence_penalty is not None or frequency_penalty is not None:
+                import warnings
+                warnings.warn("presence_penalty and frequency_penalty are not supported by responses.create API. These parameters will be ignored.", RuntimeWarning)
+            
+            kwargs = self._get_kwargs_for_structured_output(constraint, kwargs)
+            
+            # Build parameters dictionary and filter out None values
+            params = filter_dict({
+                "input": msgs,
+                "model": model,
+                "temperature": temperature,
+                "top_p": top_p,
+                "extra_body": extra_body,
+                **kwargs,
+            }, exclude_none=True)
+            
+            response = self.client.responses.create(**params)
+            return self._convert_response(constraint, response.output[1].input)
+        else:
+            msgs: List[ChatCompletionMessageParam] = [self._convert_chat_completions_message(msg) for msg in messages]
+            # support JsonSchema, PydanticModel
+            
+            # Build parameters dictionary and filter out None values
+            params = filter_dict({
+                "messages": msgs,
+                "model": model,
+                "temperature": temperature,
+                "top_p": top_p,
+                "presence_penalty": presence_penalty,
+                "frequency_penalty": frequency_penalty,
+                "response_format": self._get_response_format(constraint),
+                "extra_body": extra_body,
+                **kwargs,
+            }, exclude_none=True)
+            
+            response = self.client.chat.completions.parse(**params)
+            return self._convert_response(constraint, response.choices[0].message.content)
 
+    def _get_kwargs_for_structured_output(self, constraint: Constraint, kwargs: Dict[str, Any]) -> Dict[str, Any]:
+        kwargs["tools"] = [self._get_custom_tool_format(constraint)]
+        # kwargs["tool_choice"] = "required"
+        # kwargs["parallel_tool_calls"] = False
+        return kwargs
+    
+    def _get_custom_tool_format(self, constraint: Union[LarkGrammar, Regex]) -> Dict[str, Any]:
+        # https://platform.openai.com/docs/api-reference/chat/create#chat-create-tools-custom-tool-custom-format
+        return {
+                "type": "custom",
+                "name": constraint.name,
+                "description": constraint.description,
+                "format": {
+                    "type": "grammar",
+                    "syntax": "lark" if isinstance(constraint, LarkGrammar) else "regex",
+                    "definition": constraint.syntax if isinstance(constraint, LarkGrammar) else constraint.pattern,
+                },
+            }
     async def astructured_output(
         self,
         messages: List[Message],
-        constraint: Constraint,
+        constraint: Union[PydanticModel, JsonSchema, LarkGrammar, Regex],
         model: str,
         temperature: Optional[float] = None,
         top_p: Optional[float] = None,
@@ -681,73 +773,64 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
         - Suitable for concurrent processing and high-throughput applications
         - Best performance achieved with GPT-4o and later models (gpt-4o-mini, gpt-4o-2024-08-06, and later)
         """
-        msgs: List[ChatCompletionMessageParam] = [self._convert_message(msg) for msg in messages]
-        response = await self.async_client.chat.completions.parse(
-            messages=msgs,
-            model=model,
-            temperature=temperature,
-            top_p=top_p,
-            presence_penalty=presence_penalty,
-            frequency_penalty=frequency_penalty,
-            response_format=self._get_response_format(constraint),
-            **kwargs,
-        )
-        return self._convert_response(constraint, response.choices[0].message)
+        if self._should_exec_by_custom_tool(constraint):
+            # support LarkGrammar, Regex
+            msgs: List[ResponseInputParam] = [self._convert_responses_message(msg) for msg in messages]
+            if presence_penalty is not None or frequency_penalty is not None:
+                import warnings
+                warnings.warn("presence_penalty and frequency_penalty are not supported by responses.create API. These parameters will be ignored.", RuntimeWarning)
+            kwargs = self._get_kwargs_for_structured_output(constraint, kwargs)
+            
+            # Build parameters dictionary and filter out None values
+            params = filter_dict({
+                "input": msgs,
+                "model": model,
+                "temperature": temperature,
+                "top_p": top_p,
+                "extra_body": extra_body,
+                **kwargs,
+            }, exclude_none=True)
+            
+            response = await self.async_client.responses.create(**params)
+            return self._convert_response(constraint, response.output[1].input)
+        else:
+            msgs: List[ChatCompletionMessageParam] = [self._convert_chat_completions_message(msg) for msg in messages]
+            
+            # Build parameters dictionary and filter out None values
+            params = filter_dict({
+                "messages": msgs,
+                "model": model,
+                "temperature": temperature,
+                "top_p": top_p,
+                "presence_penalty": presence_penalty,
+                "frequency_penalty": frequency_penalty,
+                "response_format": self._get_response_format(constraint),
+                "extra_body": extra_body,
+                **kwargs,
+            }, exclude_none=True)
+            
+            response = await self.async_client.chat.completions.parse(**params)
+            return self._convert_response(constraint, response.choices[0].message.content)
 
     def _add_schema_properties(self, schema: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Add required properties to JSON schema for OpenAI structured outputs.
-
-        Parameters
-        ----------
-        schema : Dict[str, Any]
-            The original JSON schema dictionary.
-
-        Returns
-        -------
-        Dict[str, Any]
-            The modified schema with additionalProperties set to False.
-
-        Notes
-        -----
         OpenAI requires additionalProperties to be set to False for all objects
         in structured output schemas. See:
         [AdditionalProperties False Must Always Be Set in Objects](https://platform.openai.com/docs/guides/structured-outputs?example=moderation#additionalproperties-false-must-always-be-set-in-objects)
         """
         schema["additionalProperties"] = False
         return schema
-
+    
+    def _should_exec_by_custom_tool(self, constraint: Constraint) -> bool:
+        return isinstance(constraint, CONSTRAINT_EXEC_BY_CUSTOM_TOOL_LIST)
+    
     def _get_response_format(self, constraint: Constraint) -> Dict[str, Any]:
-        """
-        Convert a Bridgic constraint to OpenAI response format specification.
-
-        Parameters
-        ----------
-        constraint : Constraint
-            The constraint object specifying the desired output format.
-            Can be PydanticModel or JsonSchema.
-
-        Returns
-        -------
-        Dict[str, Any]
-            OpenAI-compatible response format specification with JSON schema.
-
-        Raises
-        ------
-        ValueError
-            If the constraint type is not supported (not PydanticModel or JsonSchema).
-
-        Notes
-        -----
-        This method converts Bridgic constraint objects to the format expected
-        by OpenAI's structured output API. All schemas have strict validation enabled.
-        """
         if isinstance(constraint, PydanticModel):
             result = {
                 "type": "json_schema",
                 "json_schema": {
                     "schema": self._add_schema_properties(constraint.model.model_json_schema()),
-                    "name": constraint.__class__.__name__,
+                    "name": constraint.model.__name__,
                     "strict": True,
                 },
             }
@@ -757,7 +840,7 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
                 "type": "json_schema",
                 "json_schema": {
                     "schema": self._add_schema_properties(constraint.schema_dict),
-                    "name": constraint.__class__.__name__,
+                    "name": constraint.name,
                     "strict": True,
                 },
             }
@@ -767,32 +850,8 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
     def _convert_response(
         self,
         constraint: Constraint,
-        response: ChatCompletionMessage,
+        content: str,
     ) -> Union[BaseModel, Dict[str, Any], str]:
-        """
-        Convert OpenAI response to the appropriate format based on constraint type.
-
-        Parameters
-        ----------
-        constraint : Constraint
-            The constraint object that was used to request the structured output.
-        response : ChatCompletionMessage
-            The response message from OpenAI containing the structured content.
-
-        Returns
-        -------
-        Union[BaseModel, Dict[str, Any], str]
-            The parsed response in the format specified by the constraint:
-            - BaseModel instance if constraint is PydanticModel
-            - Dict if constraint is JsonSchema
-            - Raw string content for other constraint types
-
-        Notes
-        -----
-        This method assumes the response content is valid JSON when dealing with
-        PydanticModel or JsonSchema constraints.
-        """
-        content = response.content
         if isinstance(constraint, PydanticModel):
             return constraint.model.model_validate_json(content)
         elif isinstance(constraint, JsonSchema):
@@ -804,13 +863,13 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
         messages: List[Message],
         tools: List[Tool],
         model: str,
-        temperature: Optional[float] | Omit = omit,
-        top_p: Optional[float] | Omit = omit,
-        presence_penalty: Optional[float] | Omit = omit,
-        frequency_penalty: Optional[float] | Omit = omit,
+        temperature: Optional[float] = None,
+        top_p: Optional[float] = None,
+        presence_penalty: Optional[float] = None,
+        frequency_penalty: Optional[float] = None,
         extra_body: Optional[Dict[str, Any]] = None,
-        parallel_tool_calls: bool | Omit = omit,
-        tool_choice: ChatCompletionToolChoiceOptionParam | Omit = omit,
+        parallel_tool_calls: Optional[bool] = None,
+        tool_choice: Optional[ChatCompletionToolChoiceOptionParam] = None,
         **kwargs,
     ) -> Tuple[List[ToolCall], Optional[str]]:
         """
@@ -865,20 +924,24 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
             The content of the message from the model.
         """
         json_desc_tools = [self._convert_tool_to_json(tool) for tool in tools]
-        msgs: List[ChatCompletionMessageParam] = [self._convert_message(msg) for msg in messages]
-        response: ChatCompletion = self.client.chat.completions.create(
-            model=model,
-            messages=msgs,
-            temperature=temperature,
-            top_p=top_p,
-            presence_penalty=presence_penalty,
-            frequency_penalty=frequency_penalty,
-            tools=json_desc_tools,
-            tool_choice=tool_choice,
-            parallel_tool_calls=parallel_tool_calls,
-            extra_body=extra_body,
+        msgs: List[ChatCompletionMessageParam] = [self._convert_chat_completions_message(msg) for msg in messages]
+        
+        # Build parameters dictionary and filter out None values
+        params = filter_dict({
+            "model": model,
+            "messages": msgs,
+            "temperature": temperature,
+            "top_p": top_p,
+            "presence_penalty": presence_penalty,
+            "frequency_penalty": frequency_penalty,
+            "tools": json_desc_tools,
+            "tool_choice": tool_choice,
+            "parallel_tool_calls": parallel_tool_calls,
+            "extra_body": extra_body,
             **kwargs,
-        )
+        }, exclude_none=True)
+        
+        response: ChatCompletion = self.client.chat.completions.create(**params)
         tool_calls = response.choices[0].message.tool_calls
         content = response.choices[0].message.content
         return (self._convert_tool_calls(tool_calls), content)
@@ -888,13 +951,13 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
         messages: List[Message],
         tools: List[Tool],
         model: str,
-        temperature: Optional[float] | Omit = omit,
-        top_p: Optional[float] | Omit = omit,
-        presence_penalty: Optional[float] | Omit = omit,
-        frequency_penalty: Optional[float] | Omit = omit,
+        temperature: Optional[float] = None,
+        top_p: Optional[float] = None,
+        presence_penalty: Optional[float] = None,
+        frequency_penalty: Optional[float] = None,
         extra_body: Optional[Dict[str, Any]] = None,
-        parallel_tool_calls: bool | Omit = omit,
-        tool_choice: ChatCompletionToolChoiceOptionParam | Omit = omit,
+        parallel_tool_calls: Optional[bool] = None,
+        tool_choice: Optional[ChatCompletionToolChoiceOptionParam] = None,
         **kwargs,
     )-> Tuple[List[ToolCall], Optional[str]]:
         """
@@ -949,20 +1012,24 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
             The content of the message from the model.
         """
         json_desc_tools = [self._convert_tool_to_json(tool) for tool in tools]
-        msgs: List[ChatCompletionMessageParam] = [self._convert_message(msg) for msg in messages]
-        response: ChatCompletion = await self.async_client.chat.completions.create(
-            model=model,
-            messages=msgs,
-            temperature=temperature,
-            top_p=top_p,
-            presence_penalty=presence_penalty,
-            frequency_penalty=frequency_penalty,
-            tools=json_desc_tools,
-            tool_choice=tool_choice,
-            parallel_tool_calls=parallel_tool_calls,
-            extra_body=extra_body,
+        msgs: List[ChatCompletionMessageParam] = [self._convert_chat_completions_message(msg) for msg in messages]
+        
+        # Build parameters dictionary and filter out None values
+        params = filter_dict({
+            "model": model,
+            "messages": msgs,
+            "temperature": temperature,
+            "top_p": top_p,
+            "presence_penalty": presence_penalty,
+            "frequency_penalty": frequency_penalty,
+            "tools": json_desc_tools,
+            "tool_choice": tool_choice,
+            "parallel_tool_calls": parallel_tool_calls,
+            "extra_body": extra_body,
             **kwargs,
-        )
+        }, exclude_none=True)
+        
+        response: ChatCompletion = await self.async_client.chat.completions.create(**params)
         tool_calls = response.choices[0].message.tool_calls
         content = response.choices[0].message.content
         return (self._convert_tool_calls(tool_calls), content)

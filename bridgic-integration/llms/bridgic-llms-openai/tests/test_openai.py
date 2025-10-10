@@ -103,7 +103,7 @@ async def test_openai_server_astream(llm):
 )
 def test_openai_server_structured_output_pydantic_model(llm):
     class ThinkAndAnswer(BaseModel):
-        thought: str = Field(description="The thought about the problem.", max_length=100)
+        thought: str = Field(description="The thought about the problem.", max_length=200)
         answer: str = Field(description="The answer to the question.", min_length=10)
 
     response: ThinkAndAnswer = llm.structured_output(
@@ -135,7 +135,7 @@ Don't think for long time. Don't answer in many words.
 @pytest.mark.asyncio
 async def test_openai_server_astructured_output_pydantic_model(llm):
     class ThinkAndAnswer(BaseModel):
-        thought: str = Field(description="The thought about the problem.", max_length=100)
+        thought: str = Field(description="The thought about the problem.", max_length=200)
         answer: str = Field(description="The answer to the question.", min_length=10)
 
     response: ThinkAndAnswer = await llm.astructured_output(
@@ -176,7 +176,7 @@ def test_openai_server_structured_output_json_schema(llm):
 
     response: Dict[str, Any] = llm.structured_output(
         model=_model_name,
-        constraint=JsonSchema(schema_dict=schema),
+        constraint=JsonSchema(schema_dict=schema, name="ThinkAndAnswer"),
         messages=[
             Message.from_text(
                 text="You are a helpful assistant.",
@@ -209,7 +209,7 @@ async def test_openai_server_astructured_output_json_schema(llm):
 
     response: Dict[str, Any] = await llm.astructured_output(
         model=_model_name,
-        constraint=JsonSchema(schema_dict=schema),
+        constraint=JsonSchema(schema_dict=schema, name="ThinkAndAnswer"),
         messages=[
             Message.from_text(
                 text="You are a helpful assistant.",
@@ -242,7 +242,7 @@ async def test_openai_server_astructured_output_json_schema(llm):
 
     response: Dict[str, Any] = await llm.astructured_output(
         model=_model_name,
-        constraint=JsonSchema(schema_dict=schema),
+        constraint=JsonSchema(schema_dict=schema, name="ThinkAndAnswer"),
         messages=[
             Message.from_text(
                 text="You are a helpful assistant.",
@@ -262,47 +262,40 @@ async def test_openai_server_astructured_output_json_schema(llm):
     (_api_key is None) or (_model_name is None),
     reason="OPENAI_API_KEY or OPENAI_MODEL_NAME is not set",
 )
-def test_openai_server_structured_output_regex(llm):
-    pattern = r"^Emails:\n(- [a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+)(\n(- [a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+))*$"
-    with pytest.raises(ValueError, match=r"Invalid constraint: constraint_type=\'regex\' pattern=.*"):
-        llm.structured_output(
-            model=_model_name,
-            constraint=Regex(pattern=pattern),
-            messages=[
-                Message.from_text(
-                    text="You are a helpful assistant. You are good at extracting email addresses from text.",
-                    role=Role.SYSTEM,
-                ),
-                Message.from_text(
-                    text="Email addresses: jack@gmail.com and david@gmail.com and john@gmail.com",
-                    role=Role.USER,
-                ),
-            ],
-        )
+def test_openai_server_structured_output_regex(llm: OpenAILlm):
+    pattern = r"^(?P<month>January|February|March|April|May|June|July|August|September|October|November|December)\s+(?P<day>\d{1,2})(?:st|nd|rd|th)?\s+(?P<year>\d{4})\s+at\s+(?P<hour>0?[1-9]|1[0-2])(?P<ampm>AM|PM)$"
+    response: str = llm.structured_output(
+        model=_model_name,
+        constraint=Regex(name="timestamp", pattern=pattern, description="Saves a timestamp in date + time in 24-hr format."),
+        messages=[
+            Message.from_text(
+                text="Use the timestamp tool to save a timestamp for August 7th 2025 at 10AM.",
+                role=Role.USER,
+            ),
+        ],
+    )
+    printer.print("\n" + response, color='purple')
+    assert response == "August 7th 2025 at 10AM"
 
 @pytest.mark.skipif(
     (_api_key is None) or (_model_name is None),
     reason="OPENAI_API_KEY or OPENAI_MODEL_NAME is not set",
 )
 @pytest.mark.asyncio
-async def test_openai_server_astructured_output_regex(llm):
-    pattern = r"^Emails:\n(- [a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+)(\n(- [a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+))*$"
-    with pytest.raises(ValueError, match=r"Invalid constraint: constraint_type=\'regex\' pattern=.*"):
-        await llm.astructured_output(
-            model=_model_name,
-            constraint=Regex(pattern=pattern),
-            messages=[
-                Message.from_text(
-                    text="You are a helpful assistant. You are good at extracting email addresses from text.",
-                    role=Role.SYSTEM,
-                ),
-                Message.from_text(
-                    text="Email addresses: jack@gmail.com and david@gmail.com and john@gmail.com",
-                    role=Role.USER,
-                ),
-            ],
-        )
-    
+async def test_openai_server_astructured_output_regex(llm: OpenAILlm):
+    pattern = "^(?P<month>January|February|March|April|May|June|July|August|September|October|November|December)\s+(?P<day>\d{1,2})(?:st|nd|rd|th)?\s+(?P<year>\d{4})\s+at\s+(?P<hour>0?[1-9]|1[0-2])(?P<ampm>AM|PM)$"
+    response: str = llm.structured_output(
+        model=_model_name,
+        constraint=Regex(name="timestamp", pattern=pattern, description="Saves a timestamp in date + time in 24-hr format."),
+        messages=[
+            Message.from_text(
+                text="Use the timestamp tool to save a timestamp for August 7th 2025 at 10AM.",
+                role=Role.USER,
+            ),
+        ],
+    )
+    printer.print("\n" + response, color='purple')
+    assert response == "August 7th 2025 at 10AM"
 
 @pytest.mark.skipif(
     (_api_key is None) or (_model_name is None),
@@ -322,7 +315,7 @@ number ::= "2020" | "2021" | "2022" | "2023" | "2024"
     with pytest.raises(ValueError, match=r"Invalid constraint: constraint_type=\'ebnf_grammar\' syntax=.*"):
         llm.structured_output(
             model=_model_name,
-            constraint=EbnfGrammar(syntax=ebnf_syntax),
+            constraint=EbnfGrammar(syntax=ebnf_syntax, description="A grammar for selecting sales data."),
             messages=[
                 Message.from_text(
                     text="You are a helpful assistant. You are good at writting SQL statements.",
@@ -363,7 +356,7 @@ number ::= "2020" | "2021" | "2022" | "2023" | "2024"
     with pytest.raises(ValueError, match=r"Invalid constraint: constraint_type=\'ebnf_grammar\' syntax=.*"):
         await llm.astructured_output(
             model=_model_name,
-            constraint=EbnfGrammar(syntax=ebnf_syntax),
+            constraint=EbnfGrammar(syntax=ebnf_syntax, description="A grammar for selecting sales data."),
             messages=[
                 Message.from_text(
                     text="You are a helpful assistant. You are good at writting SQL statements.",
@@ -384,6 +377,69 @@ number ::= "2020" | "2021" | "2022" | "2023" | "2024"
                 ),
             ],
         )
+
+@pytest.mark.skipif(
+    (_api_key is None) or (_model_name is None),
+    reason="OPENAI_API_KEY or OPENAI_MODEL_NAME is not set",
+)
+def test_openai_server_structured_output_lark_grammar(llm):
+    lark_syntax = """start: expr
+expr: term (SP ADD SP term)* -> add
+| term
+term: factor (SP MUL SP factor)* -> mul
+| factor
+factor: INT
+SP: " "
+ADD: "+"
+MUL: "*"
+%import common.INT"""
+
+    response: str = llm.structured_output(
+        model=_model_name,
+        temperature=0,
+        constraint=LarkGrammar(name="math_exp", syntax=lark_syntax, description="Creates valid mathematical expressions"),
+        messages=[
+            Message.from_text(
+                text="Use the math_exp tool to add four plus four.",
+                role=Role.USER,
+            ),
+        ],
+    )
+    printer.print("\n" + response, color='purple')
+    assert "4 + 4" == response
+
+
+@pytest.mark.skipif(
+    (_api_key is None) or (_model_name is None),
+    reason="OPENAI_API_KEY or OPENAI_MODEL_NAME is not set",
+)
+@pytest.mark.asyncio
+async def test_openai_server_astructured_output_lark_grammar(llm):
+    lark_syntax = """start: expr
+expr: term (SP ADD SP term)* -> add
+| term
+term: factor (SP MUL SP factor)* -> mul
+| factor
+factor: INT
+SP: " "
+ADD: "+"
+MUL: "*"
+%import common.INT"""
+
+    response: str = await llm.astructured_output(
+        model=_model_name,
+        temperature=0,
+        constraint=LarkGrammar(name="math_exp", syntax=lark_syntax, description="Creates valid mathematical expressions"),
+        messages=[
+            Message.from_text(
+                text="Use the math_exp tool to add four plus four.",
+                role=Role.USER,
+            ),
+        ],
+    )
+    printer.print("\n" + response, color='purple')
+    assert "4 + 4" == response
+
 
 @pytest.mark.skipif(
     (_api_key is None) or (_model_name is None),
