@@ -1,19 +1,22 @@
-from typing import Optional, Dict, Any, List, Union, Callable
+from typing import Optional, Dict, Any, List, Union, Callable, cast
 from bridgic.core.intelligence.tool_spec import ToolSpec
-from typing_extensions import override, is_typeddict
+from typing_extensions import override
 from concurrent.futures import ThreadPoolExecutor
+from jinja2 import Environment, PackageLoader, Template
+import json
 
-from bridgic.core.automa import GraphAutoma
-from bridgic.core.intelligence.base_llm import BaseLlm, Message, Role
-from bridgic.core.intelligence.protocol import ToolCall
+from bridgic.core.automa import Automa, GraphAutoma
+from bridgic.core.intelligence.base_llm import Message
+from bridgic.core.intelligence.protocol import ToolCall, Tool, ToolSelection
 from bridgic.core.automa.interaction import InteractionFeedback
 from bridgic.core.prompt.chat_message import ChatMessage, SystemMessage, UserTextMessage, AssistantTextMessage, ToolMessage
 from bridgic.core.automa import worker, ArgsMappingRule
-from bridgic.core.intelligence import FunctionToolSpec
+from bridgic.core.intelligence import FunctionToolSpec, AutomaToolSpec
 from bridgic.core.intelligence.worker import ToolSelectionWorker
+from bridgic.core.prompt.utils.prompt_utils import transform_chat_message_to_llm_message
 
 DEFAULT_MAX_ITERATIONS = 20
-DEFAULT_TEMPLATE_FILE = "bridgic/core/intelligence/react/default_template.txt"
+DEFAULT_TEMPLATE_FILE = "tools_chat.jinja"
 
 ## Features:
 # - [1] flexible and convenient input message types.
@@ -36,22 +39,26 @@ class ReActAutoma(GraphAutoma):
     A react automa is a subclass of graph automa that implements the [ReAct](https://arxiv.org/abs/2210.03629) prompting framework.
     """
 
-    _llm: BaseLlm
+    _llm: ToolSelection
     """ The LLM to be used by the react automa. """
-    _tools: Optional[List[Union[Callable, ToolSpec]]]
+    _tools: Optional[List[ToolSpec]]
     """ The candidate tools to be used by the react automa. """
-    _system_prompt: Optional[Union[str, SystemMessage, Message]]
+    _system_prompt: Optional[SystemMessage]
     """ The system prompt to be used by the react automa. """
     _max_iterations: int
     """ The maximum number of iterations for the react automa. """
     _prompt_template: str
     """ The template file for the react automa. """
+    _jinja_env: Environment
+    """ The Jinja environment to be used by the react automa. """
+    _jinja_template: Template
+    """ The Jinja template to be used by the react automa. """
 
     def __init__(
         self,
-        llm: BaseLlm,
-        tools: Optional[List[Union[Callable, ToolSpec]]] = None,
-        system_prompt: Optional[Union[str, SystemMessage, Message]] = None,
+        llm: ToolSelection,
+        system_prompt: Optional[Union[str, SystemMessage]] = None,
+        tools: Optional[List[Union[Callable, Automa, ToolSpec]]] = None,
         name: Optional[str] = None,
         thread_pool: Optional[ThreadPoolExecutor] = None,
         max_iterations: int = DEFAULT_MAX_ITERATIONS,
@@ -62,22 +69,24 @@ class ReActAutoma(GraphAutoma):
 
         self._llm = llm
         if system_prompt:
-            # Validate...
-            if isinstance(system_prompt, dict):
-                # SystemMessage
-                if ("role" not in system_prompt) or (system_prompt["role"] != "system"):
-                    raise ValueError(f"Invalid `system_prompt` value received: {system_prompt}. It should contain `role`=`system`.")
-            elif isinstance(system_prompt, Message):
-                if system_prompt.role != Role.SYSTEM:
-                    raise ValueError(f"Invalid `system_prompt` value received: {system_prompt}. It should contain `role`=`Role.SYSTEM`.")
+            # Validate SystemMessage...
+            if isinstance(system_prompt, str):
+                system_prompt = SystemMessage(role="system", content=system_prompt)
+            elif ("role" not in system_prompt) or (system_prompt["role"] != "system"):
+                raise ValueError(f"Invalid `system_prompt` value received: {system_prompt}. It should contain `role`=`system`.")
 
-        self._tools = tools
         self._system_prompt = system_prompt
+        if tools:
+            self._tools = [self._ensure_tool_spec(tool) for tool in tools]
+        else:
+            self._tools = None
         self._max_iterations = max_iterations
         self._prompt_template = prompt_template
+        self._jinja_env = Environment(loader=PackageLoader("bridgic.core.intelligence.react"))
+        self._jinja_template = self._jinja_env.get_template(prompt_template)
 
         self.add_worker(
-            key="tool_selection",
+            key="tool_selector",
             worker=ToolSelectionWorker(tool_selection_llm=llm),
             dependencies=["assemble_context"],
             args_mapping_rule=ArgsMappingRule.UNPACK,
@@ -116,11 +125,11 @@ class ReActAutoma(GraphAutoma):
     @override
     async def arun(
         self,
-        user_msg: Optional[Union[str, UserTextMessage, Message]] = None,
+        user_msg: Optional[Union[str, UserTextMessage]] = None,
         *,
-        chat_history: Optional[List[Union[UserTextMessage, AssistantTextMessage, ToolMessage, Message]]] = None,
-        messages: Optional[List[Union[ChatMessage, Message]]] = None,
-        tools: Optional[List[Union[Callable, ToolSpec]]] = None,
+        chat_history: Optional[List[Union[UserTextMessage, AssistantTextMessage, ToolMessage]]] = None,
+        messages: Optional[List[ChatMessage]] = None,
+        tools: Optional[List[Union[Callable, Automa, ToolSpec]]] = None,
         interaction_feedback: Optional[InteractionFeedback] = None,
         interaction_feedbacks: Optional[List[InteractionFeedback]] = None,
     ) -> Any:
@@ -136,92 +145,61 @@ class ReActAutoma(GraphAutoma):
     @worker(is_start=True)
     async def validate_and_transform(
         self,
-        user_msg: Optional[Union[str, UserTextMessage, Message]] = None,
+        user_msg: Optional[Union[str, UserTextMessage]] = None,
         *,
-        chat_history: Optional[List[Union[UserTextMessage, AssistantTextMessage, ToolMessage, Message]]] = None,
-        messages: Optional[List[Union[ChatMessage, Message]]] = None,
-        tools: Optional[List[Union[Callable, ToolSpec]]] = None,
+        chat_history: Optional[List[Union[UserTextMessage, AssistantTextMessage, ToolMessage]]] = None,
+        messages: Optional[List[ChatMessage]] = None,
+        tools: Optional[List[Union[Callable, Automa, ToolSpec]]] = None,
     ) -> Dict[str, Any]:
         """
-        Validate and transform the input messages and tools to the format expected by the LLM.
+        Validate and transform the input messages and tools to the canonical format.
         """
          
         # Part One: validate and transform the input messages.
-        # Unify input messages of various types to the format expected by the LLM.
-        llm_messages: List[Message] = []
+        # Unify input messages of various types to the `ChatMessage` format.
+        chat_messages: List[ChatMessage] = []
         if messages:
             # If `messages` is provided, use it directly.
-            for message in messages:
-                if isinstance(message, dict):
-                    llm_messages.append(self._transform_chat_message_to_llm_message(message))
-                elif isinstance(message, Message):
-                    llm_messages.append(message)
-                else:
-                    raise TypeError(f"Invalid `messages` type: {type(message)}, expected `ChatMessage` or `Message`.")
+            chat_messages = messages
         elif user_msg:
             # Since `messages` is not provided, join the system prompt + `chat_history` + `user_msg`
+            # First, append the `system_prompt`
             if self._system_prompt:
-                if isinstance(self._system_prompt, str):
-                    llm_messages.append(Message.from_text(self._system_prompt, Role.SYSTEM))
-                elif isinstance(self._system_prompt, dict):
-                    llm_messages.append(self._transform_chat_message_to_llm_message(self._system_prompt))
-                elif isinstance(self._system_prompt, Message):
-                    llm_messages.append(self._system_prompt)
-                else:
-                    raise TypeError(f"Invalid `system_prompt` type: {type(self._system_prompt)}, expected `str`, `SystemMessage`, or `Message`.")
+                chat_messages.append(self._system_prompt)
             
+            # Second, append the `chat_history`
             if chat_history:
                 for history_msg in chat_history:
-                    if isinstance(history_msg, dict):
-                        # UserTextMessage, AssistantTextMessage, or ToolMessage
-                        role = history_msg["role"]
-                        if role == "user" or role == "assistant" or role == "tool":
-                            llm_messages.append(self._transform_chat_message_to_llm_message(history_msg))
-                        else:
-                            raise ValueError(f"Invalid role: `{role}` received in message: `{history_msg}`.")
-                    elif isinstance(history_msg, Message):
-                        if history_msg.role == Role.USER or history_msg.role == Role.AI or history_msg.role == Role.TOOL:
-                            llm_messages.append(history_msg)
-                        else:
-                            raise ValueError(f"Invalid role: `{history_msg.role}` received in message: `{history_msg}`.")
+                    # Validate the history messages...
+                    role = history_msg["role"]
+                    if role == "user" or role == "assistant" or role == "tool":
+                        chat_messages.append(history_msg)
                     else:
-                        raise TypeError(f"Invalid `chat_history` message type: {type(history_msg)}, expected `UserTextMessage`, `AssistantTextMessage`, `ToolMessage` or `Message`.")
+                        raise ValueError(f"Invalid role: `{role}` received in history message: `{history_msg}`, expected `user`, `assistant`, or `tool`.")
             
-            # Append the `user_msg`
+            # Third, append the `user_msg`
             if isinstance(user_msg, str):
-                llm_messages.append(Message.from_text(user_msg, Role.USER))
+                chat_messages.append(UserTextMessage(role="user", content=user_msg))
             elif isinstance(user_msg, dict):
-                role = user_msg["role"]
-                if role == "user":
-                    llm_messages.append(self._transform_chat_message_to_llm_message(user_msg))
+                if "role" in user_msg and user_msg["role"] == "user":
+                    chat_messages.append(user_msg)
                 else:
                     raise ValueError(f"`role` must be `user` in user message: `{user_msg}`.")
-            elif isinstance(user_msg, Message):
-                if user_msg.role == Role.USER:
-                    llm_messages.append(user_msg)
-                else:
-                    raise ValueError(f"`role` must be `user` in user message: `{user_msg}`.")
-            else:
-                raise TypeError(f"Invalid `user_msg` type: {type(user_msg)}, expected `str`, `UserTextMessage`, or `Message`.")
         else:
             raise ValueError(f"Either `messages` or `user_msg` must be provided.")
 
         # Part Two: validate and transform the intput tools.
-        # Unify input tools of various types to the format expected by the LLM.
-        tools = tools or self._tools
-        if not tools:
-            raise ValueError(f"`tools` must be provided at runtime or initialization.")
-        tool_spec_list: List[ToolSpec] = []
-        for tool in tools:
-            if isinstance(tool, Callable):
-                tool_spec_list.append(FunctionToolSpec.from_raw(tool))
-            elif isinstance(tool, ToolSpec):
-                tool_spec_list.append(tool)
-            else:
-                raise TypeError(f"Invalid type: {type(tool)} in `tools`, expected `Callable` or `ToolSpec`.")
+        # Unify input tools of various types to the `ToolSpec` format.
+        if self._tools:
+            tool_spec_list = self._tools
+        elif tools:
+            tool_spec_list = [self._ensure_tool_spec(tool) for tool in tools]
+        else:
+            # TODO: whether to support empty tool list?
+            tool_spec_list = []
     
         return {
-            "messages": llm_messages,
+            "messages": chat_messages,
             "tools": tool_spec_list,
         }
 
@@ -229,14 +207,23 @@ class ReActAutoma(GraphAutoma):
     async def assemble_context(
         self,
         *,
-        messages: Optional[List[Message]] = None,
+        messages: Optional[List[ChatMessage]] = None,
         tools: Optional[List[ToolSpec]] = None,
         # TODO: type of tool_results
         tool_results: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
+        # Note: here 'messages' and `tools` are injected into the template as variables.
+        raw_prompt = self._jinja_template.render(messages=messages, tools=tools)
+
+        # Transform this raw prompt to `List[Message]` format expected by the LLM.
+        messages = cast(List[Message], json.loads(raw_prompt))
+        llm_messages = [transform_chat_message_to_llm_message(message) for message in messages]
+
+        llm_tools: List[Tool] = [tool.to_tool() for tool in tools]
+        
         return {
-            "messages": messages,
-            "tools": tools,
+            "messages": llm_messages,
+            "tools": llm_tools,
         }
 
     async def plan_next_step(
@@ -247,28 +234,12 @@ class ReActAutoma(GraphAutoma):
         # TODO: call ReActStepDecisionMaker
         ...
 
-    def _transform_chat_message_to_llm_message(self, message: ChatMessage) -> Message:
-        role = message["role"]
-        extras = {}
-        if role == "system":
-            name = message.get("name", None)
-            if name:
-                extras["name"] = name
-            return Message.from_text(message["content"], Role.SYSTEM, extras)
-        elif role == "user":
-            name = message.get("name", None)
-            if name:
-                extras["name"] = name
-            return Message.from_text(message["content"], Role.USER, extras)
-        elif role == "assistant":
-            name = message.get("name", None)
-            if name:
-                extras["name"] = name
-            # TODO: handle tool_calls; choose between content and tool_calls
-            return Message.from_text(message["content"], Role.AI, extras)
-        elif role == "tool":
-            # tool_call_id is required
-            extras["tool_call_id"] = message["tool_call_id"]
-            return Message.from_text(message["content"], Role.TOOL, extras)
+    def _ensure_tool_spec(self, tool: Union[Callable, Automa, ToolSpec]) -> ToolSpec:
+        if isinstance(tool, Callable):
+            return FunctionToolSpec.from_raw(tool)
+        elif isinstance(tool, Automa):
+            return AutomaToolSpec.from_raw(tool)
+        elif isinstance(tool, ToolSpec):
+            return tool
         else:
-            raise ValueError(f"Invalid role: `{role}` received in message: `{message}`.")
+            raise TypeError(f"Invalid tool type: {type(tool)} detected, expected `Callable`, `Automa`, or `ToolSpec`.")

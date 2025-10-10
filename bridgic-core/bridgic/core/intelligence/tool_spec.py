@@ -299,7 +299,7 @@ class AutomaToolSpec(ToolSpec):
         def check_spec_func(automa_cls):
             if hasattr(automa_cls, "spec_func") and isinstance(automa_cls.spec_func, Callable):
                 return
-            raise ValueError(f"The Automa class {automa_cls} must have a `spec_func` attribute in order to be used as a tool.")
+            raise ValueError(f"The Automa class {automa_cls} must be decorated with `@as_tool` in order to be used as a tool.")
 
         if (not tool_name) or (not tool_description) or (not tool_parameters):
             check_spec_func(automa_cls)

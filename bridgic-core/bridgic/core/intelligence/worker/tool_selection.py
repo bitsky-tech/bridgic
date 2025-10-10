@@ -1,20 +1,21 @@
-from typing import Any, Dict, List, Tuple, Optional, cast
+from typing import List, Tuple, Union, Optional
 
 from bridgic.core.automa.worker import Worker
-from bridgic.core.intelligence.base_llm import Message
-from bridgic.core.intelligence.protocol import Tool, ToolSelect, ToolCall
-from bridgic.core.types.error import WorkerRuntimeError
+from bridgic.core.intelligence.base_llm import Message, Role
+from bridgic.core.prompt.chat_message import ChatMessage
+from bridgic.core.intelligence.protocol import Tool, ToolSelection, ToolCall
+from bridgic.core.prompt.utils.prompt_utils import transform_chat_message_to_llm_message
 
 class ToolSelectionWorker(Worker):
     """
     A worker that calls an LLM to select tools and/or generate a response.
     """
 
-    # TODO: How to serialize the ToolSelect LLM instance?
-    _tool_selection_llm: ToolSelect
+    # Note: the ToolSelection LLM instance need support serialization and deserialization.
+    _tool_selection_llm: ToolSelection
     """The LLM to be used for tool selection."""
 
-    def __init__(self, tool_selection_llm: ToolSelect):
+    def __init__(self, tool_selection_llm: ToolSelection):
         """
         Parameters
         ----------
@@ -26,29 +27,40 @@ class ToolSelectionWorker(Worker):
 
     async def arun(
         self,
-        messages: List[Message],
+        messages: List[Union[ChatMessage, Message]],
         tools: List[Tool],
         **kwargs,
-    ) -> Tuple[str, List[ToolCall]]:
+    ) -> Tuple[List[ToolCall], Optional[str]]:
         """
         Run the worker.
 
         Parameters
         ----------
-        messages: List[Message]
+        messages: List[Union[ChatMessage, Message]]
             The messages to send to the LLM.
         tools: List[Tool]
             The tool list for the LLM to select from.
+        **kwargs: Any
+            The keyword arguments passed through to the LLM. It depends on the LLM's implementation.
 
         Returns
         -------
-        Tuple[str, List[ToolCall]]
-            * The first element is the text response from the LLM.
-            * The second element is a list of `ToolCall` that the LLM selected.
-
-        **kwargs: Any
-            The keyword arguments passed through to the LLM. It depends on the LLM's implementation.
+        Tuple[List[ToolCall], Optional[str]]
+            * The first element is a list of `ToolCall` that the LLM selected.
+            * The second element is the text response from the LLM.
         """
-        # return await self._tool_selection_llm.atool_select(messages, tools, **kwargs)
+        # Validate and transform the input messages and tools to the format expected by the LLM.
+        llm_messages: List[Message] = []
+        for message in messages:
+            if isinstance(message, dict):
+                llm_messages.append(transform_chat_message_to_llm_message(message))
+            elif isinstance(message, Message):
+                llm_messages.append(message)
+            else:
+                raise TypeError(f"Invalid `messages` type: {type(message)}, expected `ChatMessage` or `Message`.")
+        # print(f"\n******* ToolSelectionWorker.arun *******\n")
+        # print(f"messallm_messagesges: {llm_messages}")
+        # print(f"tools: {tools}")
+        # return await self._tool_selection_llm.atool_select(llm_messages, tools, **kwargs)
         # TODO:
         return "", []

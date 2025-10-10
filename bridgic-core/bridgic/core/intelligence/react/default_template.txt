@@ -1,3 +1,0 @@
-TODO...
-{% msg role="system" %}You are a helpful assistant.{% endmsg %}
-{% msg role="user" %}{{ query }}{% endmsg %}
