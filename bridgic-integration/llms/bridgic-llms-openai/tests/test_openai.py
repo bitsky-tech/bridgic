@@ -16,7 +16,6 @@ _model_name = os.environ.get("OPENAI_MODEL_NAME")
 def llm():
     return OpenAILlm(
         api_key=_api_key,
-        timeout=5,
     )
 
 @pytest.fixture
@@ -469,3 +468,27 @@ async def test_openai_server_aselect_tool(llm, date, tools):
             assert tool_call.arguments["date"] == date
             assert len(tool_call.arguments["topic"]) > 0
 
+
+
+@pytest.mark.skipif(
+    (_api_key is None) or (_model_name is None),
+    reason="OPENAI_API_KEY or OPENAI_MODEL_NAME is not set",
+)
+def test_openai_server_extras_name(llm: OpenAILlm):
+    response = llm.chat(
+        model=_model_name,
+        messages=[
+            Message.from_text(
+                text="You are a helpful assistant.A friendly answer requires including the other party's name.",
+                role=Role.SYSTEM,
+            ),
+            Message.from_text(
+                text="Hey! What's your favorite food?",
+                role=Role.USER,
+                extras={
+                    "name": "Bob",
+                }
+            )
+        ],
+    )
+    assert 'Bob' in response.message.content

@@ -459,13 +459,13 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
             if isinstance(block, TextBlock):
                 content_list.append(block.text)
         content_txt = "\n\n".join(content_list)
-
+        name=message.extras.get("name")
         if message.role == Role.SYSTEM:
-            return ChatCompletionSystemMessageParam(content=content_txt, role="system")
+            return ChatCompletionSystemMessageParam(content=content_txt, role="system", name=name)
         elif message.role == Role.USER:
-            return ChatCompletionUserMessageParam(content=content_txt, role="user")
+            return ChatCompletionUserMessageParam(content=content_txt, role="user", name=name)
         elif message.role == Role.AI:
-            return ChatCompletionAssistantMessageParam(content=content_txt, role="assistant")
+            return ChatCompletionAssistantMessageParam(content=content_txt, role="assistant", name=name)
         elif message.role == Role.TOOL:
             return ChatCompletionToolMessageParam(content=content_txt, role="tool")
         else:
