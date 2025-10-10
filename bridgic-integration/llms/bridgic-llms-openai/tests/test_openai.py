@@ -469,12 +469,11 @@ async def test_openai_server_aselect_tool(llm, date, tools):
             assert len(tool_call.arguments["topic"]) > 0
 
 
-
 @pytest.mark.skipif(
     (_api_key is None) or (_model_name is None),
     reason="OPENAI_API_KEY or OPENAI_MODEL_NAME is not set",
 )
-def test_openai_server_extras_name(llm: OpenAILlm):
+def test_openai_server_extras_name_user(llm: OpenAILlm):
     response = llm.chat(
         model=_model_name,
         messages=[
@@ -485,10 +484,81 @@ def test_openai_server_extras_name(llm: OpenAILlm):
             Message.from_text(
                 text="Hey! What's your favorite food?",
                 role=Role.USER,
-                extras={
-                    "name": "Bob",
-                }
+                extras={"name": "Bob"},
             )
         ],
     )
     assert 'Bob' in response.message.content
+
+
+@pytest.mark.skipif((_api_key is None) or (_model_name is None), reason="env not set")
+def test_openai_server_extras_name_system(llm: OpenAILlm):
+    response = llm.chat(
+        model=_model_name,
+        messages=[
+            Message.from_text(
+                text="Next, we will engage in role-playing. I will provide you with a name field, and you will need to reply with your name when I ask who you are?",
+                role=Role.SYSTEM,
+                extras={"name": "BtskBot"},
+            ),
+            Message.from_text(text="What is your name?", role=Role.USER),
+        ],
+    )
+    assert "BtskBot" in response.message.content
+
+
+@pytest.mark.skipif((_api_key is None) or (_model_name is None), reason="env not set")
+def test_openai_server_extras_name_assistant(llm: OpenAILlm):
+    response = llm.chat(
+        model=_model_name,
+        messages=[
+            Message.from_text(text="Next, we will engage in role-playing. I will provide you with a name field, and you will need to reply with your name when I ask who you are?", role=Role.SYSTEM),
+            Message.from_text(text="Hello!", role=Role.USER),
+            Message.from_text(
+                text="Hi there, I'm a helpful LLM!",
+                role=Role.AI,
+                extras={"name": "BtskBot"},
+            ),
+            Message.from_text(text="What's your name again?", role=Role.USER),
+        ],
+    )
+    assert "BtskBot" in response.message.content
+
+
+@pytest.mark.skipif((_api_key is None) or (_model_name is None), reason="env not set")
+def test_openai_server_multiple_users(llm: OpenAILlm):
+    response = llm.chat(
+        model=_model_name,
+        messages=[
+            Message.from_text("You are a multi-user assistant.", role=Role.SYSTEM),
+            Message.from_text("Hello!", role=Role.USER, extras={"name": "Alice"}),
+            Message.from_text("Hi Alice! How are you?", role=Role.AI),
+            Message.from_text("I'm good, thanks!", role=Role.USER, extras={"name": "Bob"}),
+        ],
+    )
+    assert any(name in response.message.content for name in ["Alice", "Bob"])
+
+
+@pytest.mark.skipif((_api_key is None) or (_model_name is None), reason="env not set")
+def test_openai_server_no_name_extras(llm: OpenAILlm):
+    response = llm.chat(
+        model=_model_name,
+        messages=[
+            Message.from_text("You are a polite bot.", role=Role.SYSTEM),
+            Message.from_text("How are you?", role=Role.USER, extras={}),
+        ],
+    )
+    assert isinstance(response.message.content, str)
+    assert len(response.message.content) > 0
+
+
+@pytest.mark.skipif((_api_key is None) or (_model_name is None), reason="env not set")
+def test_openai_server_invalid_name_type(llm: OpenAILlm):
+    response = llm.chat(
+        model=_model_name,
+        messages=[
+            Message.from_text("You are a robust bot.", role=Role.SYSTEM),
+            Message.from_text("What do you think?", role=Role.USER, extras={"name": None}),
+        ],
+    )
+    assert len(response.message.content)
