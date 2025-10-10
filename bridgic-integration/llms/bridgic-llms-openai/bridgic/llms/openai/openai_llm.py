@@ -809,8 +809,8 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
         presence_penalty: Optional[float] = None,
         frequency_penalty: Optional[float] = None,
         extra_body: Optional[Dict[str, Any]] = None,
-        parallel_tool_calls: Optional[bool] = True,
-        tool_choice: Optional[Literal["auto", "required", "none"]] = "auto",
+        parallel_tool_calls: Optional[bool] = None,
+        tool_choice: Optional[Literal["auto", "required", "none"]] = None,
         **kwargs,
     ) -> Tuple[List[ToolCall], Optional[str]]:
         """
@@ -893,8 +893,8 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
         presence_penalty: Optional[float] = None,
         frequency_penalty: Optional[float] = None,
         extra_body: Optional[Dict[str, Any]] = None,
-        parallel_tool_calls: Optional[bool] = True,
-        tool_choice: Optional[Literal["auto", "none", "required"]] = "auto",
+        parallel_tool_calls: Optional[bool] = None,
+        tool_choice: Optional[Literal["auto", "none", "required"]] = None,
         **kwargs,
     )-> Tuple[List[ToolCall], Optional[str]]:
         """
