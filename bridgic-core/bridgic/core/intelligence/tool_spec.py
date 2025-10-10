@@ -81,9 +81,35 @@ class ToolSpec(Serializable):
     """
     _tool_id: Optional[Union[str, int]]
     """The unique ID of the tool, used to uniquely identify a tool across the entire system. This tool can be of various types."""
+    _tool_name: Optional[str]
+    """The name of the tool to be called"""
+    _tool_description: Optional[str]
+    """A description of what the tool does, used by the model to choose when and how to call the tool."""
+    _tool_parameters: Optional[Dict[str, Any]]
+    """The JSON schema of the tool's parameters"""
 
-    def __init__(self):
+    def __init__(
+        self,
+        tool_name: Optional[str] = None,
+        tool_description: Optional[str] = None,
+        tool_parameters: Optional[Dict[str, Any]] = None,
+    ):
         self._tool_id = None
+        self._tool_name = tool_name
+        self._tool_description = tool_description
+        self._tool_parameters = tool_parameters
+
+    @property
+    def tool_name(self) -> Optional[str]:
+        return self._tool_name
+
+    @property
+    def tool_description(self) -> Optional[str]:
+        return self._tool_description
+
+    @property
+    def tool_parameters(self) -> Optional[Dict[str, Any]]:
+        return self._tool_parameters
 
     ###############################################################
     ######## Part One of interfaces: Transformations to Tool ######
@@ -127,11 +153,20 @@ class ToolSpec(Serializable):
         state_dict = {}
         if self._tool_id:
             state_dict["tool_id"] = self._tool_id
+        if self._tool_name:
+            state_dict["tool_name"] = self._tool_name
+        if self._tool_description:
+            state_dict["tool_description"] = self._tool_description
+        if self._tool_parameters:
+            state_dict["tool_parameters"] = self._tool_parameters
         return state_dict
 
     @override
     def load_from_dict(self, state_dict: Dict[str, Any]) -> None:
         self._tool_id = state_dict.get("tool_id")
+        self._tool_name = state_dict.get("tool_name")
+        self._tool_description = state_dict.get("tool_description")
+        self._tool_parameters = state_dict.get("tool_parameters")
 
     ###############################################################
     ######## Part Four of interfaces: 
@@ -141,12 +176,7 @@ class ToolSpec(Serializable):
 
 class FunctionToolSpec(ToolSpec):
     _func: Callable
-    _tool_name: Optional[str]
-    """The name of the tool to be called"""
-    _tool_description: Optional[str]
-    """A description of what the tool does, used by the model to choose when and how to call the tool."""
-    _tool_parameters: Optional[Dict[str, Any]]
-    """The JSON schema of the tool's parameters"""
+    """The python function to be used as a tool"""
 
     def __init__(
         self,
@@ -155,11 +185,12 @@ class FunctionToolSpec(ToolSpec):
         tool_description: Optional[str] = None,
         tool_parameters: Optional[Dict[str, Any]] = None,
     ):
-        super().__init__()
+        super().__init__(
+            tool_name=tool_name,
+            tool_description=tool_description,
+            tool_parameters=tool_parameters
+        )
         self._func = func
-        self._tool_name = tool_name
-        self._tool_description = tool_description
-        self._tool_parameters = tool_parameters
 
     @classmethod
     def from_raw(
@@ -241,32 +272,18 @@ class FunctionToolSpec(ToolSpec):
     def dump_to_dict(self) -> Dict[str, Any]:
         state_dict = super().dump_to_dict()
         state_dict["func"] = self._func.__module__ + "." + self._func.__qualname__
-        if self._tool_name:
-            state_dict["tool_name"] = self._tool_name
-        if self._tool_description:
-            state_dict["tool_description"] = self._tool_description
-        if self._tool_parameters:
-            state_dict["tool_parameters"] = self._tool_parameters
         return state_dict
 
     @override
     def load_from_dict(self, state_dict: Dict[str, Any]) -> None:
         super().load_from_dict(state_dict)
         self._func = load_qualified_class_or_func(state_dict["func"])
-        self._tool_name = state_dict.get("tool_name")
-        self._tool_description = state_dict.get("tool_description")
-        self._tool_parameters = state_dict.get("tool_parameters")
 
 class AutomaToolSpec(ToolSpec):
     _automa_cls: Type[Automa]
-    _tool_name: Optional[str]
-    """The name of the tool to be called"""
-    _tool_description: Optional[str]
-    """A description of what the tool does, used by the model to choose when and how to call the tool."""
-    _tool_parameters: Optional[Dict[str, Any]]
-    """The JSON schema of the tool's parameters"""
-    # The Automa initialization arguments
+    """The Automa class to be used as a tool"""
     _automa_init_kwargs: Dict[str, Any]
+    """The initialization arguments for the Automa"""
 
     def __init__(
         self,
@@ -276,11 +293,12 @@ class AutomaToolSpec(ToolSpec):
         tool_parameters: Optional[Dict[str, Any]] = None,
         **automa_init_kwargs: Dict[str, Any],
     ):
-        super().__init__()
+        super().__init__(
+            tool_name=tool_name,
+            tool_description=tool_description,
+            tool_parameters=tool_parameters
+        )
         self._automa_cls = automa_cls
-        self._tool_name = tool_name
-        self._tool_description = tool_description
-        self._tool_parameters = tool_parameters
         self._automa_init_kwargs = automa_init_kwargs
 
     @classmethod
@@ -354,12 +372,6 @@ class AutomaToolSpec(ToolSpec):
     def dump_to_dict(self) -> Dict[str, Any]:
         state_dict = super().dump_to_dict()
         state_dict["automa_cls"] = self._automa_cls.__module__ + "." + self._automa_cls.__qualname__
-        if self._tool_name:
-            state_dict["tool_name"] = self._tool_name
-        if self._tool_description:
-            state_dict["tool_description"] = self._tool_description
-        if self._tool_parameters:
-            state_dict["tool_parameters"] = self._tool_parameters
         if self._automa_init_kwargs:
             state_dict["automa_init_kwargs"] = self._automa_init_kwargs
         return state_dict
@@ -368,7 +380,4 @@ class AutomaToolSpec(ToolSpec):
     def load_from_dict(self, state_dict: Dict[str, Any]) -> None:
         super().load_from_dict(state_dict)
         self._automa_cls = load_qualified_class_or_func(state_dict["automa_cls"])
-        self._tool_name = state_dict.get("tool_name")
-        self._tool_description = state_dict.get("tool_description")
-        self._tool_parameters = state_dict.get("tool_parameters")
         self._automa_init_kwargs = state_dict.get("automa_init_kwargs") or {}

@@ -29,7 +29,6 @@ class ToolSelectionWorker(Worker):
         self,
         messages: List[Union[ChatMessage, Message]],
         tools: List[Tool],
-        **kwargs,
     ) -> Tuple[List[ToolCall], Optional[str]]:
         """
         Run the worker.
@@ -40,8 +39,6 @@ class ToolSelectionWorker(Worker):
             The messages to send to the LLM.
         tools: List[Tool]
             The tool list for the LLM to select from.
-        **kwargs: Any
-            The keyword arguments passed through to the LLM. It depends on the LLM's implementation.
 
         Returns
         -------
@@ -58,9 +55,14 @@ class ToolSelectionWorker(Worker):
                 llm_messages.append(message)
             else:
                 raise TypeError(f"Invalid `messages` type: {type(message)}, expected `ChatMessage` or `Message`.")
-        # print(f"\n******* ToolSelectionWorker.arun *******\n")
-        # print(f"messallm_messagesges: {llm_messages}")
-        # print(f"tools: {tools}")
-        # return await self._tool_selection_llm.atool_select(llm_messages, tools, **kwargs)
-        # TODO:
-        return "", []
+        print(f"\n******* ToolSelectionWorker.arun *******\n")
+        print(f"messallm_messagesges: {llm_messages}")
+        print(f"tools: {tools}")
+        # TODO: 
+        model_name = "gpt-5-mini"
+        tool_calls, llm_response = await self._tool_selection_llm.aselect_tool(
+            model=model_name,
+            messages=llm_messages, 
+            tools=tools, 
+        )
+        return tool_calls, llm_response

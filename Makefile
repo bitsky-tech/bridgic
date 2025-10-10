@@ -1,3 +1,5 @@
+SHELL := /bin/bash
+
 .PHONY: init-dev test-all build build-all publish publish-all
 
 package_name := $(notdir $(CURDIR))

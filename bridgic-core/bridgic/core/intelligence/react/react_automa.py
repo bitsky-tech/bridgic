@@ -1,11 +1,11 @@
-from typing import Optional, Dict, Any, List, Union, Callable, cast
+from typing import Optional, Dict, Any, List, Union, Callable, cast, Tuple
 from bridgic.core.intelligence.tool_spec import ToolSpec
 from typing_extensions import override
 from concurrent.futures import ThreadPoolExecutor
 from jinja2 import Environment, PackageLoader, Template
 import json
 
-from bridgic.core.automa import Automa, GraphAutoma
+from bridgic.core.automa import Automa, GraphAutoma, From
 from bridgic.core.intelligence.base_llm import Message
 from bridgic.core.intelligence.protocol import ToolCall, Tool, ToolSelection
 from bridgic.core.automa.interaction import InteractionFeedback
@@ -14,6 +14,7 @@ from bridgic.core.automa import worker, ArgsMappingRule
 from bridgic.core.intelligence import FunctionToolSpec, AutomaToolSpec
 from bridgic.core.intelligence.worker import ToolSelectionWorker
 from bridgic.core.prompt.utils.prompt_utils import transform_chat_message_to_llm_message
+from bridgic.core.automa.arguments_descriptor import System
 
 DEFAULT_MAX_ITERATIONS = 20
 DEFAULT_TEMPLATE_FILE = "tools_chat.jinja"
@@ -25,14 +26,6 @@ DEFAULT_TEMPLATE_FILE = "tools_chat.jinja"
 # - [4] customize tool running concurrency.
 ## TODO: customize window composer, different from prompt template?
 
-
-class ReActStepDecisionMaker:
-    def decide_next_step(
-        self,
-        messages: List[Message],
-        tool_calls: Optional[List[ToolCall]] = None,
-    ) -> bool:
-        pass
 
 class ReActAutoma(GraphAutoma):
     """
@@ -154,7 +147,7 @@ class ReActAutoma(GraphAutoma):
         """
         Validate and transform the input messages and tools to the canonical format.
         """
-         
+        
         # Part One: validate and transform the input messages.
         # Unify input messages of various types to the `ChatMessage` format.
         chat_messages: List[ChatMessage] = []
@@ -209,15 +202,33 @@ class ReActAutoma(GraphAutoma):
         *,
         messages: Optional[List[ChatMessage]] = None,
         tools: Optional[List[ToolSpec]] = None,
-        # TODO: type of tool_results
-        tool_results: Optional[List[Dict[str, Any]]] = None,
+        tool_messages: Optional[List[ToolMessage]] = None,
+        rtx = System("runtime_context"),
     ) -> Dict[str, Any]:
+        local_space = self.get_local_space(rtx)
+        # Build messages memory with help of local space.
+        messages_memory: List[ChatMessage] = []
+        if messages:
+            # If `messages` is provided, use it to re-initialize the messages memory.
+            messages_memory = messages.copy()
+        else:
+            messages_memory = local_space.get("messages_memory", [])
+        if tool_messages:
+            messages_memory.extend(tool_messages)
+        local_space["messages_memory"] = messages_memory
+        
+        # Save & retrieve tools with help of local space.
+        if tools:
+            local_space["tools"] = tools
+        else:
+            tools = local_space.get("tools", [])
+
         # Note: here 'messages' and `tools` are injected into the template as variables.
-        raw_prompt = self._jinja_template.render(messages=messages, tools=tools)
+        raw_prompt = self._jinja_template.render(messages=messages_memory, tools=tools)
 
         # Transform this raw prompt to `List[Message]` format expected by the LLM.
-        messages = cast(List[Message], json.loads(raw_prompt))
-        llm_messages = [transform_chat_message_to_llm_message(message) for message in messages]
+        msgs_from_template = cast(List[Message], json.loads(raw_prompt))
+        llm_messages = [transform_chat_message_to_llm_message(message) for message in msgs_from_template]
 
         llm_tools: List[Tool] = [tool.to_tool() for tool in tools]
         
@@ -226,13 +237,74 @@ class ReActAutoma(GraphAutoma):
             "tools": llm_tools,
         }
 
+    @worker(dependencies=["tool_selector"], args_mapping_rule=ArgsMappingRule.UNPACK)
     async def plan_next_step(
         self,
-        messages: List[Message],
-        tool_calls: Optional[List[ToolCall]] = None,
+        tool_calls: List[ToolCall],
+        llm_response: Optional[str] = None,
+        messages_and_tools: dict = From("validate_and_transform")
     ) -> None:
-        # TODO: call ReActStepDecisionMaker
-        ...
+        # TODO: maybe hand over the control flow to users?
+        print(f"\n******* ReActAutoma.plan_next_step *******\n")
+        print(f"tool_calls: {tool_calls}")
+        print(f"llm_response: {llm_response}")
+        if tool_calls:
+            tool_spec_list = messages_and_tools["tools"]
+            matched_list = self._match_tool_calls_and_tool_specs(tool_calls, tool_spec_list)
+            if matched_list:
+                matched_tool_calls = []
+                tool_worker_keys = []
+                for tool_call, tool_spec in matched_list:
+                    matched_tool_calls.append(tool_call)
+                    tool_worker = tool_spec.create_worker()
+                    worker_key = f"tool_{tool_call.name}"
+                    self.add_worker(
+                        key=worker_key,
+                        worker=tool_worker,
+                    )
+                    # TODO: convert tool_call.arguments to the tool parameters types
+                    # TODO: validate the arguments against the tool parameters / json schema
+                    self.ferry_to(worker_key, **tool_call.arguments)
+                    tool_worker_keys.append(worker_key)
+                self.add_func_as_worker(
+                    key="merge_tools_results",
+                    func=self.merge_tools_results,
+                    dependencies=tool_worker_keys,
+                    args_mapping_rule=ArgsMappingRule.MERGE,
+                )
+                return matched_tool_calls
+            else:
+                # TODO
+                ...
+        else:
+            # Got final answer from the LLM.
+            print(f"\nGot final answer from the LLM: \n{llm_response}")
+
+    async def merge_tools_results(
+        self, 
+        tool_results: List[Any],
+        tool_calls: List[ToolCall] = From("plan_next_step"),
+    ) -> List[ToolMessage]:
+        """
+        Merge the results of the tools.
+        """
+        print(f"\n******* ReActAutoma.merge_tools_results *******\n")
+        print(f"tool_results: {tool_results}")
+        print(f"tool_calls: {tool_calls}")
+        assert len(tool_results) == len(tool_calls)
+        tool_messages = []
+        for tool_result, tool_call in zip(tool_results, tool_calls):
+            tool_messages.append(ToolMessage(
+                role="tool", 
+                content=tool_result, 
+                tool_call_id=tool_call.id
+            ))
+            # Remove the tool workers
+            self.remove_worker(f"tool_{tool_call.name}")
+        # Remove self...
+        self.remove_worker("merge_tools_results")
+        self.ferry_to("assemble_context", tool_messages=tool_messages)
+        return tool_messages
 
     def _ensure_tool_spec(self, tool: Union[Callable, Automa, ToolSpec]) -> ToolSpec:
         if isinstance(tool, Callable):
@@ -243,3 +315,30 @@ class ReActAutoma(GraphAutoma):
             return tool
         else:
             raise TypeError(f"Invalid tool type: {type(tool)} detected, expected `Callable`, `Automa`, or `ToolSpec`.")
+
+    def _match_tool_calls_and_tool_specs(
+        self,
+        tool_calls: List[ToolCall],
+        tool_spec_list: List[ToolSpec],
+    ) -> List[Tuple[ToolCall, ToolSpec]]:
+        """
+        This function is used to match the tool calls and the tool specs based on the tool name.
+
+        Parameters
+        ----------
+        tool_calls : List[ToolCall]
+            The tool calls to match.
+        tool_spec_list : List[ToolSpec]
+            The tool specs to match.
+
+        Returns
+        -------
+        List[(ToolCall, ToolSpec)]
+            The matched tool calls and tool specs.
+        """
+        matched_list: List[Tuple[ToolCall, ToolSpec]] = []
+        for tool_call in tool_calls:
+            for tool_spec in tool_spec_list:
+                if tool_call.name == tool_spec.tool_name:
+                    matched_list.append((tool_call, tool_spec))
+        return matched_list
