@@ -21,7 +21,7 @@ from bridgic.core.intelligence.protocol import *
 from bridgic.llms.openai_like.openai_like_llm import OpenAILikeLlm
 from bridgic.core.utils.console import printer
 
-class VllmServerLlm(OpenAILikeLlm, StructuredOutput, ToolSelect):
+class VllmServerLlm(OpenAILikeLlm, StructuredOutput, ToolSelection):
     """
     OpenAILikeLlm is a thin wrapper around the LLM providers that makes it compatible with the 
     services that provide OpenAI compatible API. To support the widest range of model providers, 
@@ -394,7 +394,7 @@ class VllmServerLlm(OpenAILikeLlm, StructuredOutput, ToolSelect):
             return json.loads(content)
         return content
 
-    def tool_select(
+    def select_tool(
         self,
         messages: List[Message],
         tools: List[Tool],
@@ -441,7 +441,7 @@ class VllmServerLlm(OpenAILikeLlm, StructuredOutput, ToolSelect):
         List[ToolCall]
             A list that contains the selected tools and their arguments.
         """
-        schema = self._convert_tool_select_schema(tools, min_tools, max_tools)
+        schema = self._convert_select_tool_schema(tools, min_tools, max_tools)
 
         response: Dict[str, Any] = self.structured_output(
             model=model,
@@ -457,7 +457,7 @@ class VllmServerLlm(OpenAILikeLlm, StructuredOutput, ToolSelect):
         tool_calls = response["tool_calls"]
         return self._convert_tool_calls(tool_calls)
 
-    async def atool_select(
+    async def aselect_tool(
         self,
         messages: List[Message],
         tools: List[Tool],
@@ -504,7 +504,7 @@ class VllmServerLlm(OpenAILikeLlm, StructuredOutput, ToolSelect):
         List[ToolCall]
             A list that contains the selected tools and their arguments.
         """
-        schema = self._convert_tool_select_schema(tools, min_tools, max_tools)
+        schema = self._convert_select_tool_schema(tools, min_tools, max_tools)
 
         response: Dict[str, Any] = await self.astructured_output(
             model=model,
@@ -520,7 +520,7 @@ class VllmServerLlm(OpenAILikeLlm, StructuredOutput, ToolSelect):
         tool_calls = response["tool_calls"]
         return self._convert_tool_calls(tool_calls)
 
-    def _convert_tool_select_schema(
+    def _convert_select_tool_schema(
         self,
         tools: List[Tool] = [],
         min_tools: Optional[int] = None,
