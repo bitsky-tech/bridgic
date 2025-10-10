@@ -8,7 +8,8 @@ In this tutorial, we’ll assume that Bridgic is already installed on your syste
 
 This tutorial will walk you through these tasks:
 
-1. [First Bridgic Project](first_bridgic_project.ipynb): The common way to write about the Bridgic project.
+1. [Worker](worker.ipynb): The most fundamental unit in Bridgic
+2. [Llm](llm.ipynb): Model invocation
 2. [Parameter Passing](parameter_passing.ipynb): Three ways of data transmission in Bridgic, including Arguments Mapping, Arguments Injection,  Inputs Propagation.
 3. [Dynamic Router](dynamic_router.ipynb): Dynamically determine the next execution worker at runtime.
 <!-- 3. [Dynamic DAG](dynamic_dag.ipynb): Dynamically add or remove worker to change the execution DAG at runtime. -->
