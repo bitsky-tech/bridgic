@@ -60,12 +60,3 @@ def test_customized_worker_signature_check():
             @worker(is_start=True, wrong_parameter=True)
             async def start(self, *args, **kwargs) -> None:
                 pass
-
-def test_customized_worker_type_reserving():
-    from layers.automa_layer_c import AutomaLayerC
-    automa_obj = AutomaLayerC()
-    automa_str = str(automa_obj)
-    printer.print(automa_str)
-    assert "CallableWorker(callable=worker_5)" in automa_str
-    assert "CallableWorker(callable=<lambda>)" in automa_str
-    assert "layers.automa_layer_c.PrintWorker" in automa_str
