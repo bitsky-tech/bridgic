@@ -4,7 +4,7 @@ import json
 import uuid
 import copy
 
-from typing import List
+from typing import List, Optional
 from typing_extensions import override
 from pydantic import BaseModel
 from openai import OpenAI, AsyncOpenAI
@@ -20,34 +20,103 @@ from bridgic.core.intelligence.content import *
 from bridgic.core.intelligence.protocol import *
 from bridgic.llms.openai_like.openai_like_llm import OpenAILikeLlm
 from bridgic.core.utils.console import printer
+from bridgic.core.utils.collection import filter_dict
+
+class VllmServerConfiguration(BaseModel):
+    """
+    Configuration class for vLLM server LLM providers.
+    
+    This class defines the default parameters that can be set for vLLM server
+    LLM providers, allowing for consistent configuration across different providers.
+    
+    Parameters
+    ----------
+    model : Optional[str]
+        The model identifier to use by default.
+    temperature : Optional[float]
+        Sampling temperature between 0 and 2. Higher values make output more random.
+    top_p : Optional[float]
+        Nucleus sampling parameter. Alternative to temperature.
+    presence_penalty : Optional[float]
+        Penalty for new tokens based on whether they appear in the text so far.
+    frequency_penalty : Optional[float]
+        Penalty for new tokens based on their frequency in the text so far.
+    max_tokens : Optional[int]
+        Maximum number of tokens to generate.
+    stop : Optional[List[str]]
+        List of sequences where the API will stop generating further tokens.
+    min_tools : Optional[int]
+        Minimum number of tools to select in tool selection.
+    max_tools : Optional[int]
+        Maximum number of tools to select in tool selection.
+    """
+    model: Optional[str] = None
+    temperature: Optional[float] = None
+    top_p: Optional[float] = None
+    presence_penalty: Optional[float] = None
+    frequency_penalty: Optional[float] = None
+    max_tokens: Optional[int] = None
+    stop: Optional[List[str]] = None
+    min_tools: Optional[int] = None
+    max_tools: Optional[int] = None
 
 class VllmServerLlm(OpenAILikeLlm, StructuredOutput, ToolSelection):
     """
-    OpenAILikeLlm is a thin wrapper around the LLM providers that makes it compatible with the 
-    services that provide OpenAI compatible API. To support the widest range of model providers, 
-    this wrapper only supports text-modal usage.
+    VllmServerLlm is a wrapper around vLLM server that provides OpenAI-compatible API.
+    It extends OpenAILikeLlm with additional vLLM-specific features like structured output
+    and tool selection capabilities.
 
     Parameters
     ----------
     api_base: str
-        The base URL of the LLM provider.
+        The base URL of the vLLM server.
     api_key: str
-        The API key of the LLM provider.
+        The API key for the vLLM server.
+    configuration: Optional[VllmServerConfiguration]
+        The configuration for the vLLM server. If None, uses the default configuration.
     timeout: Optional[float]
         The timeout in seconds.
+    http_client: Optional[httpx.Client]
+        Custom synchronous HTTP client for requests. If None, creates a default client.
+    http_async_client: Optional[httpx.AsyncClient]
+        Custom asynchronous HTTP client for requests. If None, creates a default client.
+
+    Attributes
+    ----------
+    client : openai.OpenAI
+        The synchronous OpenAI client instance.
+    async_client : openai.AsyncOpenAI
+        The asynchronous OpenAI client instance.
     """
 
     def __init__(
         self,
         api_base: str,
         api_key: str,
+        configuration: Optional[VllmServerConfiguration] = VllmServerConfiguration(),
         timeout: Optional[float] = None,
         http_client: Optional[httpx.Client] = None,
         http_async_client: Optional[httpx.AsyncClient] = None,
     ):
+        # Store vLLM-specific configuration
+        self.vllm_configuration = configuration
+        
+        # Initialize parent with OpenAILikeConfiguration
+        from bridgic.llms.openai_like.openai_like_llm import OpenAILikeConfiguration
+        openai_like_config = OpenAILikeConfiguration(
+            model=configuration.model,
+            temperature=configuration.temperature,
+            top_p=configuration.top_p,
+            presence_penalty=configuration.presence_penalty,
+            frequency_penalty=configuration.frequency_penalty,
+            max_tokens=configuration.max_tokens,
+            stop=configuration.stop,
+        )
+        
         super().__init__(
             api_base=api_base,
             api_key=api_key,
+            configuration=openai_like_config,
             timeout=timeout,
             http_client=http_client,
             http_async_client=http_async_client,
@@ -55,11 +124,14 @@ class VllmServerLlm(OpenAILikeLlm, StructuredOutput, ToolSelection):
 
     @override
     def dump_to_dict(self) -> Dict[str, Any]:
-        return super().dump_to_dict()
+        state_dict = super().dump_to_dict()
+        state_dict["vllm_configuration"] = self.vllm_configuration.model_dump()
+        return state_dict
 
     @override
     def load_from_dict(self, state_dict: Dict[str, Any]) -> None:
         super().load_from_dict(state_dict)
+        self.vllm_configuration = VllmServerConfiguration(**state_dict["vllm_configuration"])
 
     def chat(
         self,
@@ -75,18 +147,24 @@ class VllmServerLlm(OpenAILikeLlm, StructuredOutput, ToolSelection):
         **kwargs,
     ) -> Response:
         msgs: List[ChatCompletionMessageParam] = [self._convert_message(msg) for msg in messages]
-        response = self.client.chat.completions.create(
-            messages=msgs,
-            model=model,
-            temperature=temperature,
-            top_p=top_p,
-            presence_penalty=presence_penalty,
-            frequency_penalty=frequency_penalty,
-            max_tokens=max_tokens,
-            stop=stop,
-            extra_body=extra_body,
+        
+        # Build parameters dictionary and filter out None values
+        # The priority order is as follows: configuration passed through the interface > configuration of the instance itself.
+        params = filter_dict({
+            **self.vllm_configuration.model_dump(),
+            "messages": msgs,
+            "model": model,
+            "temperature": temperature,
+            "top_p": top_p,
+            "presence_penalty": presence_penalty,
+            "frequency_penalty": frequency_penalty,
+            "max_tokens": max_tokens,
+            "stop": stop,
+            "extra_body": extra_body,
             **kwargs,
-        )
+        }, exclude_none=True)
+        
+        response = self.client.chat.completions.create(**params)
         openai_message: ChatCompletionMessage = response.choices[0].message
         text: str = openai_message.content if openai_message.content else ""
 
@@ -112,19 +190,24 @@ class VllmServerLlm(OpenAILikeLlm, StructuredOutput, ToolSelection):
         **kwargs,
     ) -> StreamResponse:
         msgs: List[ChatCompletionMessageParam] = [self._convert_message(msg) for msg in messages]
-        response = self.client.chat.completions.create(
-            messages=msgs,
-            model=model,
-            stream=True,
-            temperature=temperature,
-            top_p=top_p,
-            presence_penalty=presence_penalty,
-            frequency_penalty=frequency_penalty,
-            max_tokens=max_tokens,
-            stop=stop,
-            extra_body=extra_body,
+        
+        # Build parameters dictionary and filter out None values
+        params = filter_dict({
+            **self.vllm_configuration.model_dump(),
+            "messages": msgs,
+            "model": model,
+            "stream": True,
+            "temperature": temperature,
+            "top_p": top_p,
+            "presence_penalty": presence_penalty,
+            "frequency_penalty": frequency_penalty,
+            "max_tokens": max_tokens,
+            "stop": stop,
+            "extra_body": extra_body,
             **kwargs,
-        )
+        }, exclude_none=True)
+        
+        response = self.client.chat.completions.create(**params)
         for chunk in response:
             delta_content = chunk.choices[0].delta.content
             delta_content = delta_content if delta_content else ""
@@ -144,18 +227,23 @@ class VllmServerLlm(OpenAILikeLlm, StructuredOutput, ToolSelection):
         **kwargs,
     ) -> Response:
         msgs: List[ChatCompletionMessageParam] = [self._convert_message(msg) for msg in messages]
-        response = await self.async_client.chat.completions.create(
-            messages=msgs,
-            model=model,
-            temperature=temperature,
-            top_p=top_p,
-            presence_penalty=presence_penalty,
-            frequency_penalty=frequency_penalty,
-            max_tokens=max_tokens,
-            stop=stop,
-            extra_body=extra_body,
+        
+        # Build parameters dictionary and filter out None values
+        params = filter_dict({
+            **self.vllm_configuration.model_dump(),
+            "messages": msgs,
+            "model": model,
+            "temperature": temperature,
+            "top_p": top_p,
+            "presence_penalty": presence_penalty,
+            "frequency_penalty": frequency_penalty,
+            "max_tokens": max_tokens,
+            "stop": stop,
+            "extra_body": extra_body,
             **kwargs,
-        )
+        }, exclude_none=True)
+        
+        response = await self.async_client.chat.completions.create(**params)
         openai_message: ChatCompletionMessage = response.choices[0].message
         text: str = openai_message.content if openai_message.content else ""
 
@@ -181,19 +269,24 @@ class VllmServerLlm(OpenAILikeLlm, StructuredOutput, ToolSelection):
         **kwargs,
     ) -> AsyncStreamResponse:
         msgs: List[ChatCompletionMessageParam] = [self._convert_message(msg) for msg in messages]
-        response = await self.async_client.chat.completions.create(
-            messages=msgs,
-            model=model,
-            stream=True,
-            temperature=temperature,
-            top_p=top_p,
-            presence_penalty=presence_penalty,
-            frequency_penalty=frequency_penalty,
-            max_tokens=max_tokens,
-            stop=stop,
-            extra_body=extra_body,
+        
+        # Build parameters dictionary and filter out None values
+        params = filter_dict({
+            **self.vllm_configuration.model_dump(),
+            "messages": msgs,
+            "model": model,
+            "stream": True,
+            "temperature": temperature,
+            "top_p": top_p,
+            "presence_penalty": presence_penalty,
+            "frequency_penalty": frequency_penalty,
+            "max_tokens": max_tokens,
+            "stop": stop,
+            "extra_body": extra_body,
             **kwargs,
-        )
+        }, exclude_none=True)
+        
+        response = await self.async_client.chat.completions.create(**params)
         async for chunk in response:
             delta_content = chunk.choices[0].delta.content
             delta_content = delta_content if delta_content else ""
@@ -441,6 +534,10 @@ class VllmServerLlm(OpenAILikeLlm, StructuredOutput, ToolSelection):
         List[ToolCall]
             A list that contains the selected tools and their arguments.
         """
+        # Use configuration defaults if not provided
+        min_tools = min_tools if min_tools is not None else self.vllm_configuration.min_tools
+        max_tools = max_tools if max_tools is not None else self.vllm_configuration.max_tools
+        
         schema = self._convert_select_tool_schema(tools, min_tools, max_tools)
 
         response: Dict[str, Any] = self.structured_output(
@@ -504,6 +601,10 @@ class VllmServerLlm(OpenAILikeLlm, StructuredOutput, ToolSelection):
         List[ToolCall]
             A list that contains the selected tools and their arguments.
         """
+        # Use configuration defaults if not provided
+        min_tools = min_tools if min_tools is not None else self.vllm_configuration.min_tools
+        max_tools = max_tools if max_tools is not None else self.vllm_configuration.max_tools
+        
         schema = self._convert_select_tool_schema(tools, min_tools, max_tools)
 
         response: Dict[str, Any] = await self.astructured_output(

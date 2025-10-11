@@ -22,6 +22,75 @@ from bridgic.core.utils.console import printer
 from bridgic.core.utils.collection import filter_dict
 
 class OpenAIConfiguration(BaseModel):
+    """
+    Configuration class for OpenAI LLM parameters.
+    
+    This class defines the default parameters that can be set for OpenAI API calls,
+    allowing for consistent configuration across different OpenAI models and endpoints.
+    All parameters are optional and will be overridden by method-level parameters when provided.
+    
+    Parameters
+    ----------
+    model : Optional[str]
+        The model identifier to use by default (e.g., 'gpt-4', 'gpt-3.5-turbo').
+        If None, must be specified in each API call.
+    temperature : Optional[float]
+        Sampling temperature between 0 and 2. Higher values like 0.8 will make the output
+        more random, while lower values like 0.2 will make it more focused and deterministic.
+        Default is None (uses OpenAI's default).
+    top_p : Optional[float]
+        Nucleus sampling parameter, an alternative to temperature. The model considers
+        the results of the tokens with top_p probability mass. Must be between 0 and 1.
+        Default is None (uses OpenAI's default).
+    presence_penalty : Optional[float]
+        Number between -2.0 and 2.0. Positive values penalize new tokens based on
+        whether they appear in the text so far, increasing the model's likelihood to
+        talk about new topics. Default is None (uses OpenAI's default).
+    frequency_penalty : Optional[float]
+        Number between -2.0 and 2.0. Positive values penalize new tokens based on
+        their existing frequency in the text so far, decreasing the model's likelihood
+        to repeat the same line verbatim. Default is None (uses OpenAI's default).
+    max_tokens : Optional[int]
+        The maximum number of tokens that can be generated in the chat completion.
+        This value is now deprecated in favor of `max_completion_tokens` in newer models.
+        Default is None (uses OpenAI's default).
+    stop : Optional[List[str]]
+        Up to 4 sequences where the API will stop generating further tokens.
+        Not supported with latest reasoning models `o3` and `o3-mini`.
+        Default is None (no stop sequences).
+    
+    Examples
+    --------
+    Basic configuration:
+    
+    ```python
+    config = OpenAIConfiguration(temperature=0.7, max_tokens=1000)
+    llm = OpenAILlm(api_key="your-key", configuration=config)
+    ```
+    
+    Advanced configuration with all parameters:
+    
+    ```python
+    config = OpenAIConfiguration(
+        model="gpt-4",
+        temperature=0.8,
+        top_p=0.9,
+        presence_penalty=0.1,
+        frequency_penalty=0.1,
+        max_tokens=2000,
+        stop=["\n\n", "Human:", "Assistant:"]
+    )
+    llm = OpenAILlm(api_key="your-key", configuration=config)
+    ```
+    
+    Notes
+    -----
+    - All parameters are optional and will be overridden by method-level parameters
+    - The configuration is applied using `filter_dict()` to exclude None values
+    - Method parameters take precedence over configuration defaults
+    - For more information about OpenAI parameters, see:
+      https://platform.openai.com/docs/api-reference/chat/create
+    """
     model: Optional[str] = None
     temperature: Optional[float] = None
     top_p: Optional[float] = None
@@ -41,6 +110,8 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
         The API key for OpenAI services. Required for authentication.
     api_base : Optional[str]
         The base URL for the OpenAI API. If None, uses the default OpenAI endpoint.
+    configuration : Optional[OpenAIConfiguration]
+        The configuration for the OpenAI API. If None, uses the default configuration.
     timeout : Optional[float]
         Request timeout in seconds. If None, no timeout is applied.
     http_client : Optional[httpx.Client]
@@ -88,12 +159,12 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
     ```
     """
 
-    api_base: str
+    api_base: Optional[str]
     api_key: str
     configuration: OpenAIConfiguration
-    timeout: float
-    http_client: httpx.Client
-    http_async_client: httpx.AsyncClient
+    timeout: Optional[float]
+    http_client: Optional[httpx.Client]
+    http_async_client: Optional[httpx.AsyncClient]
 
     client: OpenAI
     async_client: AsyncOpenAI
