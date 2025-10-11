@@ -6,10 +6,8 @@ from inspect import Parameter, _ParameterKind
 import json
 import threading
 import uuid
-from typing import _ProtocolMeta
 from typing import Any, List, Dict, Set, Mapping, Callable, Tuple, Optional, Literal, Union, ClassVar
 from types import MethodType
-from collections import defaultdict, deque
 from dataclasses import dataclass
 from pydantic import BaseModel, Field, ConfigDict
 from typing_extensions import override
@@ -24,6 +22,7 @@ from bridgic.core.types.common import AutomaType
 from bridgic.core.automa.worker.callable_worker import CallableWorker
 from bridgic.core.automa.serialization import Snapshot
 from bridgic.core.automa.arguments_descriptor import injector
+from bridgic.core.automa.graph_meta import GraphMeta
 from bridgic.core.utils import msgpackx
 
 class _GraphAdaptedWorker(Worker):
@@ -176,131 +175,7 @@ class _FerryDeferredTask(BaseModel):
     args: Tuple[Any, ...]
     kwargs: Dict[str, Any]
 
-class GraphAutomaMeta(_ProtocolMeta):
-    """
-    This metaclass is used to:
-        - Correctly handle inheritence of pre-defined workers during GraphAutoma class inheritence, 
-        particularly for multiple inheritence scenarios, enabling easy extension of GraphAutoma
-        - Maintain the static tables of trigger-workers and forward-workers for each worker
-        - Verify that all of the pre-defined worker dependencies satisfy the DAG constraints
-    """
-
-    def __new__(mcls, name, bases, dct):
-        cls = super().__new__(mcls, name, bases, dct)
-
-        # Inherit the graph structure from the parent classes and maintain the related data structures.
-        registered_worker_funcs: Dict[str, Callable] = {}
-        worker_static_forwards: Dict[str, List[str]] = {}
-        
-        for attr_name, attr_value in dct.items():
-            worker_kwargs = getattr(attr_value, "__worker_kwargs__", None)
-            if worker_kwargs is not None:
-                complete_args = packup_worker_decorator_rumtime_args(
-                    cls, 
-                    cls.automa_type(), 
-                    worker_kwargs
-                )
-                default_paramap = get_worker_decorator_default_paramap(AutomaType.Graph)
-                func = attr_value
-                setattr(func, "__is_worker__", True)
-                setattr(func, "__worker_key__", complete_args.get("key", default_paramap["key"]))
-                setattr(func, "__dependencies__", complete_args.get("dependencies", default_paramap["dependencies"]))
-                setattr(func, "__is_start__", complete_args.get("is_start", default_paramap["is_start"]))
-                setattr(func, "__is_output__", complete_args.get("is_output", default_paramap["is_output"]))
-                setattr(func, "__args_mapping_rule__", complete_args.get("args_mapping_rule", default_paramap["args_mapping_rule"]))
-        
-        for base in bases:
-            for worker_key, worker_func in getattr(base, "_registered_worker_funcs", {}).items():
-                if worker_key not in registered_worker_funcs.keys():
-                    registered_worker_funcs[worker_key] = worker_func
-                else:
-                    raise AutomaDeclarationError(
-                        f"worker is defined in multiple base classes: "
-                        f"base={base}, worker={worker_key}"
-                    )
-
-            for current, forward_list in getattr(base, "_worker_static_forwards", {}).items():
-                if current not in worker_static_forwards.keys():
-                    worker_static_forwards[current] = []
-                worker_static_forwards[current].extend(forward_list)
-
-        for attr_name, attr_value in dct.items():
-            # Attributes with __is_worker__ will be registered as workers.
-            if hasattr(attr_value, "__is_worker__"):
-                worker_key = getattr(attr_value, "__worker_key__", None) or attr_name
-                dependencies = list(set(attr_value.__dependencies__))
-
-                # Update the registered workers for current class.
-                if worker_key not in registered_worker_funcs.keys():
-                    registered_worker_funcs[worker_key] = attr_value
-                else:
-                    raise AutomaDeclarationError(
-                        f"Duplicate worker keys are not allowed: "
-                        f"worker={worker_key}"
-                    )
-
-                # Update the table of static forwards.
-                for trigger in dependencies:
-                    if trigger not in worker_static_forwards.keys():
-                        worker_static_forwards[trigger] = []
-                    worker_static_forwards[trigger].append(worker_key)
-
-        # Validate if the DAG constraint is met.
-        # TODO: this is indeed a chance to detect risks. Add more checks here or remove totally!
-        mcls.validate_dag_constraints(worker_static_forwards)
-
-        setattr(cls, "_registered_worker_funcs", registered_worker_funcs)
-        return cls
-    
-    def automa_type(cls) -> AutomaType:
-        return AutomaType.Graph
-
-    @classmethod
-    def validate_dag_constraints(mcls, forward_dict: Dict[str, List[str]]):
-        """
-        Use Kahn's algorithm to check if the input graph described by the forward_dict satisfies
-        the DAG constraints. If the graph doesn't meet the DAG constraints, AutomaDeclarationError will be raised. 
-
-        More about [Kahn's algorithm](https://en.wikipedia.org/wiki/Topological_sorting#Kahn's_algorithm)
-        could be read from the link.
-
-        Parameters
-        ----------
-        forward_dict : Dict[str, List[str]]
-            A dictionary that describes the graph structure. The keys are the nodes, and the values 
-            are the lists of nodes that are directly reachable from the keys.
-
-        Raises
-        ------
-        AutomaDeclarationError
-            If the graph doesn't meet the DAG constraints.
-        """
-        # 1. Initialize the in-degree.
-        in_degree = defaultdict(int)
-        for current, target_list in forward_dict.items():
-            for target in target_list:
-                in_degree[target] += 1
-
-        # 2. Create a queue of workers with in-degree 0.
-        queue = deque([node for node in forward_dict.keys() if in_degree[node] == 0])
-
-        # 3. Continuously pop workers from the queue and update the in-degree of their targets.
-        while queue:
-            node = queue.popleft()
-            for target in forward_dict.get(node, []):
-                in_degree[target] -= 1
-                if in_degree[target] == 0:
-                    queue.append(target)
-
-        # 4. If the in-degree were all 0, then the graph meets the DAG constraints.
-        if not all([in_degree[node] == 0 for node in in_degree.keys()]):
-            nodes_in_cycle = [node for node in forward_dict.keys() if in_degree[node] != 0]
-            raise AutomaCompilationError(
-                f"the graph automa does not meet the DAG constraints, because the "
-                f"following workers are in cycle: {nodes_in_cycle}"
-            )
-
-class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
+class GraphAutoma(Automa, metaclass=GraphMeta):
     """
     Dynamic Directed Graph (abbreviated as DDG) implementation of Automa. `GraphAutoma` manages 
     the running control flow between workers automatically, via `dependencies` and `ferry_to`.
@@ -347,6 +222,9 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
     asyncio.run(main())
     ```
     """
+
+    # Automa type.
+    AUTOMA_TYPE: ClassVar[AutomaType] = AutomaType.Graph
 
     # The initial topology defined by @worker functions.
     _registered_worker_funcs: ClassVar[Dict[str, Callable]] = {}
@@ -445,7 +323,7 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         self._worker_output = {}
         self._workers_dynamic_states = {}
 
-        if cls.automa_type() == AutomaType.Graph:
+        if cls.AUTOMA_TYPE == AutomaType.Graph:
             # The _registered_worker_funcs data are from @worker decorators.
             for worker_key, worker_func in cls._registered_worker_funcs.items():
                 # The decorator based mechanism (i.e. @worker) is based on the add_worker() interface.
@@ -994,7 +872,7 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
         # Validate the canonical graph.
         self._validate_canonical_graph()
         # Validate the DAG constraints.
-        GraphAutomaMeta.validate_dag_constraints(self._worker_forwards)
+        GraphMeta.validate_dag_constraints(self._worker_forwards)
         # TODO: More validations can be added here...
 
         # Find all connected components of the whole automa graph.
@@ -1347,7 +1225,7 @@ class GraphAutoma(Automa, metaclass=GraphAutomaMeta):
                 # 1. Validate the canonical graph.
                 self._validate_canonical_graph()
                 # 2. Validate the DAG constraints.
-                GraphAutomaMeta.validate_dag_constraints(self._worker_forwards)
+                GraphMeta.validate_dag_constraints(self._worker_forwards)
                 # TODO: more validations can be added here...
 
             # TODO: Ferry-related risk detection may be added here...
