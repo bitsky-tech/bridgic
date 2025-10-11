@@ -1,5 +1,6 @@
 version = 1
-revision = 2
+revision = 3
+revision = 3
 requires-python = ">=3.9"
 
 [[package]]
@@ -180,7 +181,7 @@ wheels = [
 
 [[package]]
 name = "bridgic-core"
-version = "0.1.0.dev10"
+version = "0.1.0.dev14"
 source = { directory = "../../../bridgic-core" }
 dependencies = [
     { name = "docstring-parser" },
@@ -205,7 +206,7 @@ dev = [
 
 [[package]]
 name = "bridgic-llms-openai"
-version = "0.1.0.dev1"
+version = "0.1.0.dev6"
 source = { editable = "." }
 dependencies = [
     { name = "bridgic-core" },

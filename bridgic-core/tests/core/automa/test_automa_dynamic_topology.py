@@ -579,14 +579,14 @@ def dynamic_flow_a():
     flow = DynamicFlow_A_DuplicateWorker()
     flow.add_func_as_worker(
         key="func_3",
-        func=DynamicFlow_A_DuplicateWorker.func_3,
+        func=flow.func_3,
         dependencies=["func_2"],
         args_mapping_rule=ArgsMappingRule.UNPACK,
     )
     with pytest.raises(AutomaRuntimeError, match="duplicate workers"):
         flow.add_func_as_worker(
             key="func_3",
-            func=DynamicFlow_A_DuplicateWorker.func_3,
+            func=flow.func_3,
             dependencies=["func_2"],
             args_mapping_rule=ArgsMappingRule.UNPACK,
         )
