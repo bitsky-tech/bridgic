@@ -563,14 +563,6 @@ async def test_dynamic_flow_11(dynamic_flow_11):
 ##############################################################
 
 class DynamicFlow_A_DuplicateWorker(GraphAutoma):
-    @staticmethod
-    def func_3(x: int, y: int):
-        return {"x": x+3, "y": y+3}
-
-    @classmethod
-    def func_3(cls, x: int, y: int):
-        return {"x": x+3, "y": y+3}
-
     @worker(is_start=True)
     async def func_1(self, x: int, y: int):
         return {"x": x+1, "y": y+1}
