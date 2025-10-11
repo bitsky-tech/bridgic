@@ -193,7 +193,7 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
         msgs: List[ChatCompletionMessageParam] = [self._convert_chat_completions_message(msg) for msg in messages]
         
         # Build parameters dictionary and filter out None values
-        # The priority order is as follows: kwargs > configuration passed through the interface > configuration of the instance itself.
+        # The priority order is as follows: configuration passed through the interface > configuration of the instance itself.
         params = filter_dict({
             **self.configuration.model_dump(),
             "messages": msgs,
