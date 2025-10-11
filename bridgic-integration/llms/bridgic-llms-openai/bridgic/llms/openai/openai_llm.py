@@ -148,6 +148,7 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
         frequency_penalty: Optional[float] = None,
         max_tokens: Optional[int] = None,
         stop: Optional[List[str]] = None,
+        tools: Optional[List[Tool]] = None,
         extra_body: Optional[Dict[str, Any]] = None,
         **kwargs,
     ) -> Response:
@@ -181,6 +182,8 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
         stop : Optional[List[str]]
             Up to 4 sequences where the API will stop generating further tokens.
             Not supported with latest reasoning models `o3` and `o3-mini`.
+        tools : Optional[List[Tool]]
+            A list of tools to use in the chat completion.
         extra_body : Optional[Dict[str, Any]]
             Add additional JSON properties to the request.
         **kwargs
@@ -193,6 +196,7 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
         """
         msgs: List[ChatCompletionMessageParam] = [self._convert_chat_completions_message(msg) for msg in messages]
         
+        json_desc_tools = [self._convert_tool_to_json(tool) for tool in tools]
         # Build parameters dictionary and filter out None values
         # The priority order is as follows: configuration passed through the interface > configuration of the instance itself.
         params = filter_dict({
@@ -205,6 +209,7 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
             "frequency_penalty": frequency_penalty,
             "max_tokens": max_tokens,
             "stop": stop,
+            "tools": json_desc_tools,
             "extra_body": extra_body,
             **kwargs,
         }, exclude_none=True)
@@ -337,6 +342,7 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
         frequency_penalty: Optional[float] = None,
         max_tokens: Optional[int] = None,
         stop: Optional[List[str]] = None,
+        tools: Optional[List[Tool]] = None,
         extra_body: Optional[Dict[str, Any]] = None,
         **kwargs,
     ) -> Response:
@@ -370,6 +376,8 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
         stop : Optional[List[str]]
             Up to 4 sequences where the API will stop generating further tokens.
             Not supported with latest reasoning models `o3` and `o3-mini`.
+        tools : Optional[List[Tool]]
+            A list of tools to use in the chat completion.
         extra_body : Optional[Dict[str, Any]]
             Add additional JSON properties to the request.
         **kwargs
@@ -387,6 +395,7 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
         """
         msgs: List[ChatCompletionMessageParam] = [self._convert_chat_completions_message(msg) for msg in messages]
         
+        json_desc_tools = [self._convert_tool_to_json(tool) for tool in tools]
         # Build parameters dictionary and filter out None values
         params = filter_dict({
             **self.configuration.model_dump(),
@@ -398,6 +407,7 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
             "frequency_penalty": frequency_penalty,
             "max_tokens": max_tokens,
             "stop": stop,
+            "tools": json_desc_tools,
             "extra_body": extra_body,
             **kwargs,
         }, exclude_none=True)
