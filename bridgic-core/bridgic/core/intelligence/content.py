@@ -9,6 +9,23 @@ class TextBlock(BaseModel):
     block_type: Literal["text"] = Field(default="text")
     text: str
 
+class ToolCallBlock(BaseModel):
+    """
+    A representation of tool call data that pass to/from the LLM.
+    """
+    block_type: Literal["tool_call"] = Field(default="tool_call")
+    id: str = Field(..., description="The ID of the tool call.")
+    name: str = Field(..., description="The name of the tool call.")
+    arguments: Dict[str, Any] = Field(..., description="The arguments of the tool call.")
+
+class ToolResultBlock(BaseModel):
+    """
+    A representation of tool result data that pass to/from the LLM.
+    """
+    block_type: Literal["tool_result"] = Field(default="tool_result")
+    id: str = Field(..., description="The ID of the tool call.")
+    content: str = Field(..., description="The result content of the tool call.")
+
 # TODO : Vision modal support.
 # class ImageBlock(BaseModel):
 #     """
@@ -55,6 +72,8 @@ class TextBlock(BaseModel):
 ContentBlock = Annotated[
     Union[
         TextBlock,
+        ToolCallBlock,
+        ToolResultBlock,
         # ImageBlock,
         # AudioBlock,
         # DocumentBlock,
