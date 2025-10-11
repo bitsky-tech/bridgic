@@ -23,6 +23,15 @@ from bridgic.core.utils.collection import filter_dict
 
 CONSTRAINT_EXEC_BY_CUSTOM_TOOL_LIST = (Regex, LarkGrammar)
 
+class OpenAIConfiguration(BaseModel):
+    model: Optional[str] = None
+    temperature: Optional[float] = None
+    top_p: Optional[float] = None
+    presence_penalty: Optional[float] = None
+    frequency_penalty: Optional[float] = None
+    max_tokens: Optional[int] = None
+    stop: Optional[List[str]] = None
+
 class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
     """
     Wrapper class for OpenAI, providing common chat and stream calling interfaces for OpenAI model
@@ -83,6 +92,7 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
 
     api_base: str
     api_key: str
+    configuration: OpenAIConfiguration
     timeout: float
     http_client: httpx.Client
     http_async_client: httpx.AsyncClient
@@ -94,6 +104,7 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
         self,
         api_key: str,
         api_base: Optional[str] = None,
+        configuration: Optional[OpenAIConfiguration] = OpenAIConfiguration(),
         timeout: Optional[float] = None,
         http_client: Optional[httpx.Client] = None,
         http_async_client: Optional[httpx.AsyncClient] = None,
@@ -107,6 +118,8 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
             The API key for OpenAI services. Required for authentication.
         api_base : Optional[str]
             The base URL for the OpenAI API. If None, uses the default OpenAI endpoint.
+        configuration : Optional[OpenAIConfiguration]
+            The configuration for the OpenAI API. If None, uses the default configuration.
         timeout : Optional[float]
             Request timeout in seconds. If None, no timeout is applied.
         http_client : Optional[httpx.Client]
@@ -117,6 +130,7 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
         # Record for serialization / deserialization.
         self.api_base = api_base
         self.api_key = api_key
+        self.configuration = configuration
         self.timeout = timeout
         self.http_client = http_client
         self.http_async_client = http_async_client
@@ -181,7 +195,9 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
         msgs: List[ChatCompletionMessageParam] = [self._convert_chat_completions_message(msg) for msg in messages]
         
         # Build parameters dictionary and filter out None values
+        # The priority order is as follows: kwargs > configuration passed through the interface > configuration of the instance itself.
         params = filter_dict({
+            **self.configuration.model_dump(),
             "messages": msgs,
             "model": model,
             "temperature": temperature,
@@ -268,6 +284,7 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
         
         # Build parameters dictionary and filter out None values
         params = filter_dict({
+            **self.configuration.model_dump(),
             "messages": msgs,
             "model": model,
             "stream": True,
@@ -350,6 +367,7 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
         
         # Build parameters dictionary and filter out None values
         params = filter_dict({
+            **self.configuration.model_dump(),
             "messages": msgs,
             "model": model,
             "temperature": temperature,
@@ -437,6 +455,7 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
         
         # Build parameters dictionary and filter out None values
         params = filter_dict({
+            **self.configuration.model_dump(),
             "messages": msgs,
             "model": model,
             "stream": True,
@@ -463,15 +482,14 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
             if isinstance(block, TextBlock):
                 content_list.append(block.text)
         content_txt = "\n\n".join(content_list)
-        name=message.extras.get("name")
         if message.role == Role.SYSTEM:
-            return ChatCompletionSystemMessageParam(content=content_txt, role="system", name=name)
+            return ChatCompletionSystemMessageParam(content=content_txt, role="system", **message.extras)
         elif message.role == Role.USER:
-            return ChatCompletionUserMessageParam(content=content_txt, role="user", name=name)
+            return ChatCompletionUserMessageParam(content=content_txt, role="user", **message.extras)
         elif message.role == Role.AI:
-            return ChatCompletionAssistantMessageParam(content=content_txt, role="assistant", name=name)
+            return ChatCompletionAssistantMessageParam(content=content_txt, role="assistant", **message.extras)
         elif message.role == Role.TOOL:
-            return ChatCompletionToolMessageParam(content=content_txt, role="tool")
+            return ChatCompletionToolMessageParam(content=content_txt, role="tool", **message.extras)
         else:
             raise ValueError(f"Invalid role: {message.role}")
     
@@ -647,6 +665,7 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
             
             # Build parameters dictionary and filter out None values
             params = filter_dict({
+                **self.configuration.model_dump(),
                 "input": msgs,
                 "model": model,
                 "temperature": temperature,
@@ -663,6 +682,7 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
             
             # Build parameters dictionary and filter out None values
             params = filter_dict({
+                **self.configuration.model_dump(),
                 "messages": msgs,
                 "model": model,
                 "temperature": temperature,
@@ -783,6 +803,7 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
             
             # Build parameters dictionary and filter out None values
             params = filter_dict({
+                **self.configuration.model_dump(),
                 "input": msgs,
                 "model": model,
                 "temperature": temperature,
@@ -798,6 +819,7 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
             
             # Build parameters dictionary and filter out None values
             params = filter_dict({
+                **self.configuration.model_dump(),
                 "messages": msgs,
                 "model": model,
                 "temperature": temperature,
@@ -928,6 +950,7 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
         
         # Build parameters dictionary and filter out None values
         params = filter_dict({
+            **self.configuration.model_dump(),
             "model": model,
             "messages": msgs,
             "temperature": temperature,
@@ -1016,6 +1039,7 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
         
         # Build parameters dictionary and filter out None values
         params = filter_dict({
+            **self.configuration.model_dump(),
             "model": model,
             "messages": msgs,
             "temperature": temperature,
@@ -1067,6 +1091,7 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
             "api_base": self.api_base,
             "api_key": self.api_key,
             "timeout": self.timeout,
+            "configuration": self.configuration.model_dump(),
         }
         if self.http_client:
             warnings.warn(
@@ -1085,7 +1110,7 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
         self.api_base = state_dict["api_base"]
         self.api_key = state_dict["api_key"]
         self.timeout = state_dict["timeout"]
-
+        self.configuration = OpenAIConfiguration(**state_dict["configuration"])
         self.http_client = None
         self.http_async_client = None
 

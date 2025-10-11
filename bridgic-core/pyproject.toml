@@ -1,6 +1,6 @@
 [project]
 name = "bridgic-core"
-version = "0.1.0.dev13"
+version = "0.1.0.dev14"
 classifiers = [
     "Private :: Do Not Upload",
     "Programming Language :: Python :: 3",
