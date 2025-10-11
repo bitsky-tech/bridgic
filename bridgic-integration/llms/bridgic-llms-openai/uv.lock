@@ -205,7 +205,7 @@ dev = [
 
 [[package]]
 name = "bridgic-llms-openai"
-version = "0.1.0.dev5"
+version = "0.1.0.dev6"
 source = { editable = "." }
 dependencies = [
     { name = "bridgic-core" },

@@ -262,40 +262,42 @@ async def test_openai_server_astructured_output_json_schema(llm):
     (_api_key is None) or (_model_name is None),
     reason="OPENAI_API_KEY or OPENAI_MODEL_NAME is not set",
 )
-def test_openai_server_structured_output_regex(llm: OpenAILlm):
+def test_openai_server_structured_output_regex_not_supported(llm: OpenAILlm):
+    """Test that Regex constraints are not supported and raise ValueError."""
     pattern = r"^(?P<month>January|February|March|April|May|June|July|August|September|October|November|December)\s+(?P<day>\d{1,2})(?:st|nd|rd|th)?\s+(?P<year>\d{4})\s+at\s+(?P<hour>0?[1-9]|1[0-2])(?P<ampm>AM|PM)$"
-    response: str = llm.structured_output(
-        model=_model_name,
-        constraint=Regex(name="timestamp", pattern=pattern, description="Saves a timestamp in date + time in 24-hr format."),
-        messages=[
-            Message.from_text(
-                text="Use the timestamp tool to save a timestamp for August 7th 2025 at 10AM.",
-                role=Role.USER,
-            ),
-        ],
-    )
-    printer.print("\n" + response, color='purple')
-    assert response == "August 7th 2025 at 10AM"
+    
+    with pytest.raises(ValueError, match=r"Invalid constraint: .*"):
+        llm.structured_output(
+            model=_model_name,
+            constraint=Regex(name="timestamp", pattern=pattern, description="Saves a timestamp in date + time in 24-hr format."),
+            messages=[
+                Message.from_text(
+                    text="Use the timestamp tool to save a timestamp for August 7th 2025 at 10AM.",
+                    role=Role.USER,
+                ),
+            ],
+        )
 
 @pytest.mark.skipif(
     (_api_key is None) or (_model_name is None),
     reason="OPENAI_API_KEY or OPENAI_MODEL_NAME is not set",
 )
 @pytest.mark.asyncio
-async def test_openai_server_astructured_output_regex(llm: OpenAILlm):
+async def test_openai_server_astructured_output_regex_not_supported(llm: OpenAILlm):
+    """Test that Regex constraints are not supported in async version and raise ValueError."""
     pattern = "^(?P<month>January|February|March|April|May|June|July|August|September|October|November|December)\s+(?P<day>\d{1,2})(?:st|nd|rd|th)?\s+(?P<year>\d{4})\s+at\s+(?P<hour>0?[1-9]|1[0-2])(?P<ampm>AM|PM)$"
-    response: str = llm.structured_output(
-        model=_model_name,
-        constraint=Regex(name="timestamp", pattern=pattern, description="Saves a timestamp in date + time in 24-hr format."),
-        messages=[
-            Message.from_text(
-                text="Use the timestamp tool to save a timestamp for August 7th 2025 at 10AM.",
-                role=Role.USER,
-            ),
-        ],
-    )
-    printer.print("\n" + response, color='purple')
-    assert response == "August 7th 2025 at 10AM"
+    
+    with pytest.raises(ValueError, match=r"Invalid constraint: .*"):
+        await llm.astructured_output(
+            model=_model_name,
+            constraint=Regex(name="timestamp", pattern=pattern, description="Saves a timestamp in date + time in 24-hr format."),
+            messages=[
+                Message.from_text(
+                    text="Use the timestamp tool to save a timestamp for August 7th 2025 at 10AM.",
+                    role=Role.USER,
+                ),
+            ],
+        )
 
 @pytest.mark.skipif(
     (_api_key is None) or (_model_name is None),
@@ -382,7 +384,8 @@ number ::= "2020" | "2021" | "2022" | "2023" | "2024"
     (_api_key is None) or (_model_name is None),
     reason="OPENAI_API_KEY or OPENAI_MODEL_NAME is not set",
 )
-def test_openai_server_structured_output_lark_grammar(llm):
+def test_openai_server_structured_output_lark_grammar_not_supported(llm):
+    """Test that LarkGrammar constraints are not supported and raise ValueError."""
     lark_syntax = """start: expr
 expr: term (SP ADD SP term)* -> add
 | term
@@ -394,19 +397,18 @@ ADD: "+"
 MUL: "*"
 %import common.INT"""
 
-    response: str = llm.structured_output(
-        model=_model_name,
-        temperature=0,
-        constraint=LarkGrammar(name="math_exp", syntax=lark_syntax, description="Creates valid mathematical expressions"),
-        messages=[
-            Message.from_text(
-                text="Use the math_exp tool to add four plus four.",
-                role=Role.USER,
-            ),
-        ],
-    )
-    printer.print("\n" + response, color='purple')
-    assert "4 + 4" == response
+    with pytest.raises(ValueError, match=r"Invalid constraint: .*"):
+        llm.structured_output(
+            model=_model_name,
+            temperature=0,
+            constraint=LarkGrammar(name="math_exp", syntax=lark_syntax, description="Creates valid mathematical expressions"),
+            messages=[
+                Message.from_text(
+                    text="Use the math_exp tool to add four plus four.",
+                    role=Role.USER,
+                ),
+            ],
+        )
 
 
 @pytest.mark.skipif(
@@ -414,7 +416,8 @@ MUL: "*"
     reason="OPENAI_API_KEY or OPENAI_MODEL_NAME is not set",
 )
 @pytest.mark.asyncio
-async def test_openai_server_astructured_output_lark_grammar(llm):
+async def test_openai_server_astructured_output_lark_grammar_not_supported(llm):
+    """Test that LarkGrammar constraints are not supported in async version and raise ValueError."""
     lark_syntax = """start: expr
 expr: term (SP ADD SP term)* -> add
 | term
@@ -426,19 +429,57 @@ ADD: "+"
 MUL: "*"
 %import common.INT"""
 
-    response: str = await llm.astructured_output(
-        model=_model_name,
-        temperature=0,
-        constraint=LarkGrammar(name="math_exp", syntax=lark_syntax, description="Creates valid mathematical expressions"),
-        messages=[
-            Message.from_text(
-                text="Use the math_exp tool to add four plus four.",
-                role=Role.USER,
-            ),
-        ],
-    )
-    printer.print("\n" + response, color='purple')
-    assert "4 + 4" == response
+    with pytest.raises(ValueError, match=r"Invalid constraint: .*"):
+        await llm.astructured_output(
+            model=_model_name,
+            temperature=0,
+            constraint=LarkGrammar(name="math_exp", syntax=lark_syntax, description="Creates valid mathematical expressions"),
+            messages=[
+                Message.from_text(
+                    text="Use the math_exp tool to add four plus four.",
+                    role=Role.USER,
+                ),
+            ],
+        )
+
+
+@pytest.mark.skipif(
+    (_api_key is None) or (_model_name is None),
+    reason="OPENAI_API_KEY or OPENAI_MODEL_NAME is not set",
+)
+def test_openai_server_structured_output_choice_not_supported(llm):
+    """Test that Choice constraints are not supported and raise ValueError."""
+    with pytest.raises(ValueError, match=r"Invalid constraint: .*"):
+        llm.structured_output(
+            model=_model_name,
+            constraint=Choice(choices=["option1", "option2", "option3"]),
+            messages=[
+                Message.from_text(
+                    text="Choose one of the options.",
+                    role=Role.USER,
+                ),
+            ],
+        )
+
+
+@pytest.mark.skipif(
+    (_api_key is None) or (_model_name is None),
+    reason="OPENAI_API_KEY or OPENAI_MODEL_NAME is not set",
+)
+@pytest.mark.asyncio
+async def test_openai_server_astructured_output_choice_not_supported(llm):
+    """Test that Choice constraints are not supported in async version and raise ValueError."""
+    with pytest.raises(ValueError, match=r"Invalid constraint: .*"):
+        await llm.astructured_output(
+            model=_model_name,
+            constraint=Choice(choices=["option1", "option2", "option3"]),
+            messages=[
+                Message.from_text(
+                    text="Choose one of the options.",
+                    role=Role.USER,
+                ),
+            ],
+        )
 
 
 @pytest.mark.skipif(

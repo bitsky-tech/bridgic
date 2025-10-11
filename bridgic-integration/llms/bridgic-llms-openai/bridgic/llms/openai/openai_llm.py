@@ -21,8 +21,6 @@ from bridgic.core.intelligence.protocol import *
 from bridgic.core.utils.console import printer
 from bridgic.core.utils.collection import filter_dict
 
-CONSTRAINT_EXEC_BY_CUSTOM_TOOL_LIST = (Regex, LarkGrammar)
-
 class OpenAIConfiguration(BaseModel):
     model: Optional[str] = None
     temperature: Optional[float] = None
@@ -539,34 +537,11 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
         **kwargs,
     ) -> Dict[str, Any]: ...
 
-    @overload
-    def structured_output(
-        self,
-        messages: List[Message],
-        constraint: Regex,
-        model: str,
-        temperature: Optional[float] = ...,
-        top_p: Optional[float] = ...,
-        extra_body: Optional[Dict[str, Any]] = ...,
-        **kwargs,
-    ) -> str: ...
-
-    @overload
-    def structured_output(
-        self,
-        messages: List[Message],
-        constraint: LarkGrammar,
-        model: str,
-        temperature: Optional[float] = ...,
-        top_p: Optional[float] = ...,
-        extra_body: Optional[Dict[str, Any]] = ...,
-        **kwargs,
-    ) -> str: ...
 
     def structured_output(
         self,
         messages: List[Message],
-        constraint: Union[PydanticModel, JsonSchema, LarkGrammar, Regex],
+        constraint: Union[PydanticModel, JsonSchema],
         model: str,
         temperature: Optional[float] = None,
         top_p: Optional[float] = None,
@@ -574,7 +549,7 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
         frequency_penalty: Optional[float] = None,
         extra_body: Optional[Dict[str, Any]] = None,
         **kwargs,
-    ) -> Union[BaseModel, Dict[str, Any], str]:
+    ) -> Union[BaseModel, Dict[str, Any]]:
         """
         Generate structured output in a specified format using OpenAI's structured output API.
 
@@ -611,11 +586,10 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
 
         Returns
         -------
-        Union[BaseModel, Dict[str, Any], str]
+        Union[BaseModel, Dict[str, Any]]
             The structured response in the format specified by the constraint:
             - BaseModel instance if constraint is PydanticModel
-            - Dict[str, Any] if constraint is JsonSchema  
-            - str for other constraint types
+            - Dict[str, Any] if constraint is JsonSchema
 
         Examples
         --------
@@ -654,71 +628,30 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
         - All schemas automatically have additionalProperties set to False
         - Best performance achieved with GPT-4o and later models (gpt-4o-mini, gpt-4o-2024-08-06, and later)
         """
-        if self._should_exec_by_custom_tool(constraint):
-            # support LarkGrammar, Regex
-            msgs: List[ResponseInputParam] = [self._convert_responses_message(msg) for msg in messages]
-            if presence_penalty is not None or frequency_penalty is not None:
-                import warnings
-                warnings.warn("presence_penalty and frequency_penalty are not supported by responses.create API. These parameters will be ignored.", RuntimeWarning)
-            
-            kwargs = self._get_kwargs_for_structured_output(constraint, kwargs)
-            
-            # Build parameters dictionary and filter out None values
-            params = filter_dict({
-                **self.configuration.model_dump(),
-                "input": msgs,
-                "model": model,
-                "temperature": temperature,
-                "top_p": top_p,
-                "extra_body": extra_body,
-                **kwargs,
-            }, exclude_none=True)
-            
-            response = self.client.responses.create(**params)
-            return self._convert_response(constraint, response.output[1].input)
-        else:
-            msgs: List[ChatCompletionMessageParam] = [self._convert_chat_completions_message(msg) for msg in messages]
-            # support JsonSchema, PydanticModel
-            
-            # Build parameters dictionary and filter out None values
-            params = filter_dict({
-                **self.configuration.model_dump(),
-                "messages": msgs,
-                "model": model,
-                "temperature": temperature,
-                "top_p": top_p,
-                "presence_penalty": presence_penalty,
-                "frequency_penalty": frequency_penalty,
-                "response_format": self._get_response_format(constraint),
-                "extra_body": extra_body,
-                **kwargs,
-            }, exclude_none=True)
-            
-            response = self.client.chat.completions.parse(**params)
-            return self._convert_response(constraint, response.choices[0].message.content)
+        msgs: List[ChatCompletionMessageParam] = [self._convert_chat_completions_message(msg) for msg in messages]
+        # support JsonSchema, PydanticModel
+        
+        # Build parameters dictionary and filter out None values
+        params = filter_dict({
+            **self.configuration.model_dump(),
+            "messages": msgs,
+            "model": model,
+            "temperature": temperature,
+            "top_p": top_p,
+            "presence_penalty": presence_penalty,
+            "frequency_penalty": frequency_penalty,
+            "response_format": self._get_response_format(constraint),
+            "extra_body": extra_body,
+            **kwargs,
+        }, exclude_none=True)
+        
+        response = self.client.chat.completions.parse(**params)
+        return self._convert_response(constraint, response.choices[0].message.content)
 
-    def _get_kwargs_for_structured_output(self, constraint: Constraint, kwargs: Dict[str, Any]) -> Dict[str, Any]:
-        kwargs["tools"] = [self._get_custom_tool_format(constraint)]
-        # kwargs["tool_choice"] = "required"
-        # kwargs["parallel_tool_calls"] = False
-        return kwargs
-    
-    def _get_custom_tool_format(self, constraint: Union[LarkGrammar, Regex]) -> Dict[str, Any]:
-        # https://platform.openai.com/docs/api-reference/chat/create#chat-create-tools-custom-tool-custom-format
-        return {
-                "type": "custom",
-                "name": constraint.name,
-                "description": constraint.description,
-                "format": {
-                    "type": "grammar",
-                    "syntax": "lark" if isinstance(constraint, LarkGrammar) else "regex",
-                    "definition": constraint.syntax if isinstance(constraint, LarkGrammar) else constraint.pattern,
-                },
-            }
     async def astructured_output(
         self,
         messages: List[Message],
-        constraint: Union[PydanticModel, JsonSchema, LarkGrammar, Regex],
+        constraint: Union[PydanticModel, JsonSchema],
         model: str,
         temperature: Optional[float] = None,
         top_p: Optional[float] = None,
@@ -726,7 +659,7 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
         frequency_penalty: Optional[float] = None,
         extra_body: Optional[Dict[str, Any]] = None,
         **kwargs,
-    ) -> Union[BaseModel, Dict[str, Any], str]:
+    ) -> Union[BaseModel, Dict[str, Any]]:
         """
         Asynchronously generate structured output in a specified format using OpenAI's API.
 
@@ -764,11 +697,10 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
 
         Returns
         -------
-        Union[BaseModel, Dict[str, Any], str]
+        Union[BaseModel, Dict[str, Any]]
             The structured response in the format specified by the constraint:
             - BaseModel instance if constraint is PydanticModel
             - Dict[str, Any] if constraint is JsonSchema
-            - str for other constraint types
 
         Examples
         --------
@@ -793,46 +725,24 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
         - Suitable for concurrent processing and high-throughput applications
         - Best performance achieved with GPT-4o and later models (gpt-4o-mini, gpt-4o-2024-08-06, and later)
         """
-        if self._should_exec_by_custom_tool(constraint):
-            # support LarkGrammar, Regex
-            msgs: List[ResponseInputParam] = [self._convert_responses_message(msg) for msg in messages]
-            if presence_penalty is not None or frequency_penalty is not None:
-                import warnings
-                warnings.warn("presence_penalty and frequency_penalty are not supported by responses.create API. These parameters will be ignored.", RuntimeWarning)
-            kwargs = self._get_kwargs_for_structured_output(constraint, kwargs)
-            
-            # Build parameters dictionary and filter out None values
-            params = filter_dict({
-                **self.configuration.model_dump(),
-                "input": msgs,
-                "model": model,
-                "temperature": temperature,
-                "top_p": top_p,
-                "extra_body": extra_body,
-                **kwargs,
-            }, exclude_none=True)
-            
-            response = await self.async_client.responses.create(**params)
-            return self._convert_response(constraint, response.output[1].input)
-        else:
-            msgs: List[ChatCompletionMessageParam] = [self._convert_chat_completions_message(msg) for msg in messages]
-            
-            # Build parameters dictionary and filter out None values
-            params = filter_dict({
-                **self.configuration.model_dump(),
-                "messages": msgs,
-                "model": model,
-                "temperature": temperature,
-                "top_p": top_p,
-                "presence_penalty": presence_penalty,
-                "frequency_penalty": frequency_penalty,
-                "response_format": self._get_response_format(constraint),
-                "extra_body": extra_body,
-                **kwargs,
-            }, exclude_none=True)
-            
-            response = await self.async_client.chat.completions.parse(**params)
-            return self._convert_response(constraint, response.choices[0].message.content)
+        msgs: List[ChatCompletionMessageParam] = [self._convert_chat_completions_message(msg) for msg in messages]
+        
+        # Build parameters dictionary and filter out None values
+        params = filter_dict({
+            **self.configuration.model_dump(),
+            "messages": msgs,
+            "model": model,
+            "temperature": temperature,
+            "top_p": top_p,
+            "presence_penalty": presence_penalty,
+            "frequency_penalty": frequency_penalty,
+            "response_format": self._get_response_format(constraint),
+            "extra_body": extra_body,
+            **kwargs,
+        }, exclude_none=True)
+        
+        response = await self.async_client.chat.completions.parse(**params)
+        return self._convert_response(constraint, response.choices[0].message.content)
 
     def _add_schema_properties(self, schema: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -843,10 +753,7 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
         schema["additionalProperties"] = False
         return schema
     
-    def _should_exec_by_custom_tool(self, constraint: Constraint) -> bool:
-        return isinstance(constraint, CONSTRAINT_EXEC_BY_CUSTOM_TOOL_LIST)
-    
-    def _get_response_format(self, constraint: Constraint) -> Dict[str, Any]:
+    def _get_response_format(self, constraint: Union[PydanticModel, JsonSchema]) -> Dict[str, Any]:
         if isinstance(constraint, PydanticModel):
             result = {
                 "type": "json_schema",
@@ -871,14 +778,15 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
 
     def _convert_response(
         self,
-        constraint: Constraint,
+        constraint: Union[PydanticModel, JsonSchema],
         content: str,
-    ) -> Union[BaseModel, Dict[str, Any], str]:
+    ) -> Union[BaseModel, Dict[str, Any]]:
         if isinstance(constraint, PydanticModel):
             return constraint.model.model_validate_json(content)
         elif isinstance(constraint, JsonSchema):
             return json.loads(content)
-        return content
+        else:
+            raise ValueError(f"Invalid constraint: {constraint}")
 
     def select_tool(
         self,
