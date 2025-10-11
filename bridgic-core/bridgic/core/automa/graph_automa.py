@@ -618,16 +618,17 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
         """
         The private version of the method `add_func_as_worker()`.
         """
-        # Register func as an instance of CallableWorker.
-        if not isinstance(func, MethodType):
+        if not isinstance(func, MethodType) and key in self._registered_worker_funcs:
             func = MethodType(func, self)
-        else:
-            # Validate: bounded __self__ of `func` must be self when add_func_as_worker() is called.
-            if func.__self__ is not self:
-                raise AutomaRuntimeError(
-                    f"the bounded instance of `func` must be the same as the instance of the GraphAutoma, "
-                    f"but got {func.__self__}"
-                )
+        
+        # Validate: if func is a method, its bounded __self__ must be self when add_func_as_worker() is called.
+        if hasattr(func, "__self__") and func.__self__ is not self:
+            raise AutomaRuntimeError(
+                f"the bounded instance of `func` must be the same as the instance of the GraphAutoma, "
+                f"but got {func.__self__}"
+            )
+
+        # Register func as an instance of CallableWorker.
         func_worker = CallableWorker(func)
 
         self._add_worker_internal(
@@ -1125,8 +1126,7 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
                 next_args, next_kwargs = injector.inject(
                     current_worker_key=kickoff_info.worker_key, 
                     current_worker_sig=worker_obj.get_input_param_names(), 
-                    worker_dict=self._workers, 
-                    worker_output=self._worker_output,
+                    current_automa=self,
                     next_args=next_args, 
                     next_kwargs=next_kwargs
                 )

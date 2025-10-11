@@ -2,11 +2,14 @@ import re
 from inspect import _ParameterKind
 from pydantic import BaseModel
 from dataclasses import dataclass
-from typing import List, Tuple, Optional, Any, Dict
+from typing import List, Tuple, Optional, Any, Dict, TYPE_CHECKING
 
 from bridgic.core.automa.worker import Worker
 from bridgic.core.types.error import AutomaDataInjectionError
 from bridgic.core.utils.args_map import safely_map_args
+
+if TYPE_CHECKING:
+    from bridgic.core.automa.graph_automa import GraphAutoma
 
 
 class InjectorNone: 
@@ -28,6 +31,15 @@ class From(ArgumentsDescriptor):
     key: str
     default: Optional[Any] = InjectorNone()
 
+def resolve_from(dep: From, worker_output: Dict[str, Any]) -> Any:
+    inject_res = worker_output.get(dep.key, dep.default)
+    if isinstance(inject_res, InjectorNone):
+        raise AutomaDataInjectionError(
+            f"the worker: `{dep.key}` is not found in the worker dictionary. "
+            "You may need to set the default value of the parameter to a `From` instance with the key of the worker."
+        )
+    return inject_res
+
 @dataclass
 class System(ArgumentsDescriptor):
     """
@@ -39,6 +51,7 @@ class System(ArgumentsDescriptor):
         allowed_patterns = [
             r"^runtime_context$",
             r"^automa:.*$",
+            r"^automa$",
         ]
         
         if not any(re.match(pattern, self.key) for pattern in allowed_patterns):
@@ -47,6 +60,27 @@ class System(ArgumentsDescriptor):
                 f"`runtime_context`: a context for data persistence of the current worker."
                 f"`automa:.*`: a sub-automa in current automa."
             )
+
+def resolve_system(dep: System, current_worker_key: str, worker_dict: Dict[str, Worker], current_automa: "GraphAutoma") -> Any:
+    if dep.key == "runtime_context":
+        return RuntimeContext(worker_key=current_worker_key)
+    elif dep.key.startswith("automa:"):
+        worker_key = dep.key[7:]
+
+        inject_res = worker_dict.get(worker_key, InjectorNone())
+        if isinstance(inject_res, InjectorNone):
+            raise AutomaDataInjectionError(
+                f"the sub-atoma: `{dep.key}` is not found in current automa. "
+            )
+
+        if not inject_res.is_automa():
+            raise AutomaDataInjectionError(
+                f"the `{dep.key}` instance is not an Automa. "
+            )
+        
+        return inject_res.get_decorated_worker()
+    elif dep.key == "automa":
+        return current_automa
 
 class RuntimeContext(BaseModel):
     worker_key: str
@@ -74,45 +108,12 @@ class WorkerInjector:
         Since WorkerInjector is stateless, we just return a new instance.
         """
         return cls()
-    
-    def _resolve_from(self, dep: From, worker_output: Dict[str, Any]) -> Any:
-        inject_res = worker_output.get(dep.key, dep.default)
-        if isinstance(inject_res, InjectorNone):
-            raise AutomaDataInjectionError(
-                f"the worker: `{dep.key}` is not found in the worker dictionary. "
-                "You may need to set the default value of the parameter to a `From` instance with the key of the worker."
-            )
-
-        if isinstance(inject_res, Worker):
-            return inject_res
-        else:
-            return inject_res
-
-    def _resolve_system(self, dep: System, current_worker_key: str, worker_dict: Dict[str, Worker]) -> Any:
-        if dep.key == "runtime_context":
-            return RuntimeContext(worker_key=current_worker_key)
-        elif dep.key.startswith("automa:"):
-            worker_key = dep.key[7:]
-
-            inject_res = worker_dict.get(worker_key, InjectorNone())
-            if isinstance(inject_res, InjectorNone):
-                raise AutomaDataInjectionError(
-                    f"the sub-atoma: `{dep.key}` is not found in current automa. "
-                )
-  
-            if not inject_res.is_automa():
-                raise AutomaDataInjectionError(
-                    f"the `{dep.key}` instance is not an Automa. "
-                )
-           
-            return inject_res.get_decorated_worker()
 
     def inject(
         self, 
         current_worker_key: str,
         current_worker_sig: Dict[_ParameterKind, List],
-        worker_dict: Dict[str, Worker],
-        worker_output: Dict[str, Any],
+        current_automa: "GraphAutoma",
         next_args: Tuple[Any, ...],
         next_kwargs: Dict[str, Any],
     ) -> Any:
@@ -125,10 +126,8 @@ class WorkerInjector:
             The key of the current worker being processed.
         current_worker_sig : Dict[_ParameterKind, List]
             Dictionary mapping parameters to their signature information of the current worker.
-        worker_dict : Dict[str, Worker]
-            Dictionary containing all available workers in the automa.
-        worker_output : Dict[str, Any]
-            Dictionary containing the output of all workers in the automa.
+        current_automa : GraphAutoma
+            The current automa instance.
         next_args : Tuple[Any, ...]
             Positional arguments to be passed to the current worker.
         next_kwargs : Dict[str, Any]
@@ -139,6 +138,9 @@ class WorkerInjector:
         Tuple[Tuple[Any, ...], Dict[str, Any]]
             A tuple containing the processed positional and keyword arguments for the current worker.
         """
+        worker_dict = current_automa._workers
+        worker_output = current_automa._worker_output
+
         param_list = [
             param
             for _, param_list in current_worker_sig.items()
@@ -149,10 +151,10 @@ class WorkerInjector:
         system_inject_kwargs = {}
         for name, default_value in param_list:
             if isinstance(default_value, From):
-                value = self._resolve_from(default_value, worker_output)
+                value = resolve_from(default_value, worker_output)
                 from_inject_kwargs[name] = value
             elif isinstance(default_value, System):
-                value = self._resolve_system(default_value, current_worker_key, worker_dict)
+                value = resolve_system(default_value, current_worker_key, worker_dict, current_automa)
                 system_inject_kwargs[name] = value
 
         if len(param_list) <= len(next_args) and (len(from_inject_kwargs) or len(system_inject_kwargs)):
