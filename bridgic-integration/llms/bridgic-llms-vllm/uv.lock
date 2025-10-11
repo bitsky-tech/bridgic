@@ -180,7 +180,7 @@ wheels = [
 
 [[package]]
 name = "bridgic-core"
-version = "0.1.0.dev11"
+version = "0.1.0.dev14"
 source = { directory = "../../../bridgic-core" }
 dependencies = [
     { name = "docstring-parser" },
