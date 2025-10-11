@@ -1,13 +1,12 @@
-from typing import Optional
+from typing import Optional, ClassVar
 from concurrent.futures import ThreadPoolExecutor
 from typing import List, Any, Callable, Final, cast, Tuple, Dict
 from typing_extensions import override
 
 from bridgic.core.automa import GraphAutoma
 from bridgic.core.automa.worker import Worker
-from bridgic.core.automa.worker_decorator import ArgsMappingRule
 from bridgic.core.types.error import AutomaRuntimeError
-from bridgic.core.types.common import AutomaType
+from bridgic.core.types.common import AutomaType, ArgsMappingRule
 from bridgic.core.automa.interaction import InteractionFeedback
 
 class ConcurrentAutoma(GraphAutoma):
@@ -24,6 +23,9 @@ class ConcurrentAutoma(GraphAutoma):
     When all the workers have finished running, the concurrent automa will merge their output results into a list and return it to the caller.    
     """
 
+    # Automa type.
+    AUTOMA_TYPE: ClassVar[AutomaType] = AutomaType.Concurrent
+
     _MERGER_WORKER_KEY: Final[str] = "__merger__"
     
     def __init__(
@@ -39,7 +41,7 @@ class ConcurrentAutoma(GraphAutoma):
         # 2. The Merger worker: This worker will merge the results of all the concurrent workers.
 
         cls = type(self)
-        if cls.automa_type() == AutomaType.Concurrent:
+        if cls.AUTOMA_TYPE == AutomaType.Concurrent:
             # The _registered_worker_funcs data are from @worker decorators.
             # Initialize the decorated concurrent workers.
             for worker_key, worker_func in self._registered_worker_funcs.items():
@@ -60,13 +62,6 @@ class ConcurrentAutoma(GraphAutoma):
 
     def _merge_workers_results(self, results: List[Any]) -> List[Any]:
         return results
-
-    @classmethod
-    def automa_type(cls) -> AutomaType:
-        """
-        Subclasses of GraphAutoma can declare this class method `automa_type` to specify the type of worker decorator.
-        """
-        return AutomaType.Concurrent
 
     @override
     def add_worker(
