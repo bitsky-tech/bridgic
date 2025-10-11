@@ -266,7 +266,7 @@ def test_openai_server_structured_output_regex_not_supported(llm: OpenAILlm):
     """Test that Regex constraints are not supported and raise ValueError."""
     pattern = r"^(?P<month>January|February|March|April|May|June|July|August|September|October|November|December)\s+(?P<day>\d{1,2})(?:st|nd|rd|th)?\s+(?P<year>\d{4})\s+at\s+(?P<hour>0?[1-9]|1[0-2])(?P<ampm>AM|PM)$"
     
-    with pytest.raises(ValueError, match=r"Invalid constraint: .*"):
+    with pytest.raises(ValueError, match=r"Unsupported constraint type.*More info about OpenAI structured output"):
         llm.structured_output(
             model=_model_name,
             constraint=Regex(name="timestamp", pattern=pattern, description="Saves a timestamp in date + time in 24-hr format."),
@@ -287,7 +287,7 @@ async def test_openai_server_astructured_output_regex_not_supported(llm: OpenAIL
     """Test that Regex constraints are not supported in async version and raise ValueError."""
     pattern = "^(?P<month>January|February|March|April|May|June|July|August|September|October|November|December)\s+(?P<day>\d{1,2})(?:st|nd|rd|th)?\s+(?P<year>\d{4})\s+at\s+(?P<hour>0?[1-9]|1[0-2])(?P<ampm>AM|PM)$"
     
-    with pytest.raises(ValueError, match=r"Invalid constraint: .*"):
+    with pytest.raises(ValueError, match=r"Unsupported constraint type.*More info about OpenAI structured output"):
         await llm.astructured_output(
             model=_model_name,
             constraint=Regex(name="timestamp", pattern=pattern, description="Saves a timestamp in date + time in 24-hr format."),
@@ -314,7 +314,7 @@ conditions ::= condition (" and " condition)*
 condition ::= column "=" number
 number ::= "2020" | "2021" | "2022" | "2023" | "2024"
 """
-    with pytest.raises(ValueError, match=r"Invalid constraint: constraint_type=\'ebnf_grammar\' syntax=.*"):
+    with pytest.raises(ValueError, match=r"Unsupported constraint type.*More info about OpenAI structured output"):
         llm.structured_output(
             model=_model_name,
             constraint=EbnfGrammar(syntax=ebnf_syntax, description="A grammar for selecting sales data."),
@@ -355,7 +355,7 @@ conditions ::= condition (" and " condition)*
 condition ::= column "=" number
 number ::= "2020" | "2021" | "2022" | "2023" | "2024"
 """
-    with pytest.raises(ValueError, match=r"Invalid constraint: constraint_type=\'ebnf_grammar\' syntax=.*"):
+    with pytest.raises(ValueError, match=r"Unsupported constraint type.*More info about OpenAI structured output"):
         await llm.astructured_output(
             model=_model_name,
             constraint=EbnfGrammar(syntax=ebnf_syntax, description="A grammar for selecting sales data."),
@@ -397,7 +397,7 @@ ADD: "+"
 MUL: "*"
 %import common.INT"""
 
-    with pytest.raises(ValueError, match=r"Invalid constraint: .*"):
+    with pytest.raises(ValueError, match=r"Unsupported constraint type.*More info about OpenAI structured output"):
         llm.structured_output(
             model=_model_name,
             temperature=0,
@@ -429,7 +429,7 @@ ADD: "+"
 MUL: "*"
 %import common.INT"""
 
-    with pytest.raises(ValueError, match=r"Invalid constraint: .*"):
+    with pytest.raises(ValueError, match=r"Unsupported constraint type.*More info about OpenAI structured output"):
         await llm.astructured_output(
             model=_model_name,
             temperature=0,
@@ -449,7 +449,7 @@ MUL: "*"
 )
 def test_openai_server_structured_output_choice_not_supported(llm):
     """Test that Choice constraints are not supported and raise ValueError."""
-    with pytest.raises(ValueError, match=r"Invalid constraint: .*"):
+    with pytest.raises(ValueError, match=r"Unsupported constraint type.*More info about OpenAI structured output"):
         llm.structured_output(
             model=_model_name,
             constraint=Choice(choices=["option1", "option2", "option3"]),
@@ -469,7 +469,7 @@ def test_openai_server_structured_output_choice_not_supported(llm):
 @pytest.mark.asyncio
 async def test_openai_server_astructured_output_choice_not_supported(llm):
     """Test that Choice constraints are not supported in async version and raise ValueError."""
-    with pytest.raises(ValueError, match=r"Invalid constraint: .*"):
+    with pytest.raises(ValueError, match=r"Unsupported constraint type.*More info about OpenAI structured output"):
         await llm.astructured_output(
             model=_model_name,
             constraint=Choice(choices=["option1", "option2", "option3"]),
