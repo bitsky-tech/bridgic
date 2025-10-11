@@ -491,24 +491,6 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
         else:
             raise ValueError(f"Invalid role: {message.role}")
     
-    def _convert_responses_message(self, message: Message) -> ResponseInputParam:
-        content_list = []
-        for block in message.blocks:
-            if isinstance(block, TextBlock):
-                content_list.append(block.text)
-        content_txt = "\n\n".join(content_list)
-        if message.role == Role.SYSTEM:
-            return EasyInputMessageParam(content=content_txt, role="system")
-        elif message.role == Role.USER:
-            return EasyInputMessageParam(content=content_txt, role="user")
-        elif message.role == Role.AI:
-            return EasyInputMessageParam(content=content_txt, role="assistant")
-        # TODO: support tool message
-        elif message.role == Role.TOOL:
-            return EasyInputMessageParam(content=content_txt, role="tool")
-        else:
-            raise ValueError(f"Invalid role: {message.role}")
-
     @overload
     def structured_output(
         self,
@@ -774,7 +756,7 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
                 },
             }
         else:
-            raise ValueError(f"Invalid constraint: {constraint}")
+            raise ValueError(f"Unsupported constraint type '{constraint.constraint_type}'. More info about OpenAI structured output: https://platform.openai.com/docs/guides/structured-outputs")
 
     def _convert_response(
         self,
@@ -786,7 +768,7 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
         elif isinstance(constraint, JsonSchema):
             return json.loads(content)
         else:
-            raise ValueError(f"Invalid constraint: {constraint}")
+            raise ValueError(f"Unsupported constraint type '{constraint.constraint_type}'. More info about OpenAI structured output: https://platform.openai.com/docs/guides/structured-outputs")
 
     def select_tool(
         self,
