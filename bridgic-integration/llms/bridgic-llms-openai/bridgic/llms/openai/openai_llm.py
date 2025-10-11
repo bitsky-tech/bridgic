@@ -161,7 +161,7 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
 
     api_base: Optional[str]
     api_key: str
-    configuration: OpenAIConfiguration
+    configuration: Optional[OpenAIConfiguration]
     timeout: Optional[float]
     http_client: Optional[httpx.Client]
     http_async_client: Optional[httpx.AsyncClient]

@@ -76,13 +76,12 @@ class OpenAILikeLlm(BaseLlm):
     async_client : openai.AsyncOpenAI
         The asynchronous OpenAI client instance.
     """
-
     api_base: str
     api_key: str
-    configuration: OpenAILikeConfiguration
-    timeout: float
-    http_client: httpx.Client
-    http_async_client: httpx.AsyncClient
+    configuration: Optional[OpenAILikeConfiguration]
+    timeout: Optional[float]
+    http_client: Optional[httpx.Client]
+    http_async_client: Optional[httpx.AsyncClient]
 
     client: OpenAI
     async_client: AsyncOpenAI
