@@ -10,7 +10,7 @@ from bridgic.core.automa.serialization import Snapshot
 
 ########## Test case 1: sequential automa with 0/1/multiple workers ############
 
-async def func_1_async(automa, x: int) -> int:
+async def func_1_async(x: int) -> int:
     return x + 1
 
 class Func2SyncWorker(Worker):
@@ -41,7 +41,7 @@ async def test_flow_1():
     assert result == 100 + 1 + 2
 
     @flow.worker(key="func_3")
-    def func_3(self, x: int) -> int:
+    def func_3(x: int) -> int:
         return x + 3
     result = await flow.arun(100)
     assert result == 100 + 1 + 2 + 3

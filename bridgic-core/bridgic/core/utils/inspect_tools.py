@@ -2,7 +2,7 @@ import inspect
 import importlib
 import enum
 
-from typing import Callable, List, Dict, Any, Tuple
+from typing import Callable, List, Dict, Any, Tuple, Union
 from typing_extensions import get_overloads, overload
 from bridgic.core.utils.collection import deep_hash
 
@@ -71,7 +71,8 @@ def get_param_names_by_kind(
 def get_param_names_all_kinds(
         func: Callable, 
         exclude_default: bool = False,
-    ) -> Dict[enum.IntEnum, List[Tuple[str, Any]]]:
+        return_signature: bool = False,
+    ) -> Union[Dict[enum.IntEnum, List[Tuple[str, Any]]], Tuple[Dict[enum.IntEnum, List[Tuple[str, Any]]], inspect.Signature]]:
     """
     Get the names of parameters of a function.
 
@@ -105,6 +106,9 @@ def get_param_names_all_kinds(
             param_names_dict[param.kind].append((name, inspect._empty))
         else:
             param_names_dict[param.kind].append((name, param.default))
+
+    if return_signature:
+        return param_names_dict, sig
     return param_names_dict
 
 def hash_kw_default_params(func: Callable) -> int:
