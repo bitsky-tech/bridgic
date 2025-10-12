@@ -1,5 +1,6 @@
 from bridgic.core.intelligence.base_llm import Message, Role
 from bridgic.core.prompt.chat_message import ChatMessage
+from bridgic.core.intelligence.content import ToolCallBlock
 
 def transform_chat_message_to_llm_message(message: ChatMessage) -> Message:
     """
@@ -22,16 +23,14 @@ def transform_chat_message_to_llm_message(message: ChatMessage) -> Message:
         if name:
             extras["name"] = name
         tool_calls = message.get("tool_calls", None)
-        if tool_calls:
-            # TODO: from_tool_call need to update to support multiple tool calls & content
-            msg = Message.from_tool_call(
-                tool_id=tool_calls[0]["id"],
-                tool_name=tool_calls[0]["function"]["name"],
-                arguments=tool_calls[0]["function"]["arguments"],
-            )
-        else:
-            msg = Message.from_text(message["content"], Role.AI, extras)
-        return msg
+        return Message.from_tool_call(
+            text=message["content"],
+            tool_calls=[ToolCallBlock(
+                id=tool_call["id"],
+                name=tool_call["function"]["name"],
+                arguments=tool_call["function"]["arguments"],
+            ) for tool_call in tool_calls],
+        )
     elif role == "tool":
         # tool_call_id is a required field
         return Message.from_tool_result(
