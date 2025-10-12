@@ -7,7 +7,8 @@ import datetime
 from bridgic.core.intelligence.base_llm import *
 from bridgic.core.intelligence.protocol import *
 from bridgic.core.utils.console import printer
-from bridgic.llms.openai.openai_llm import OpenAILlm
+from bridgic.llms.openai.openai_llm import OpenAIConfiguration, OpenAILlm
+
 
 _api_key = os.environ.get("OPENAI_API_KEY")
 _model_name = os.environ.get("OPENAI_MODEL_NAME")
@@ -16,6 +17,12 @@ _model_name = os.environ.get("OPENAI_MODEL_NAME")
 def llm():
     return OpenAILlm(
         api_key=_api_key,
+    )
+
+def get_configuration_llm(configuration: OpenAIConfiguration):
+    return OpenAILlm(
+        api_key=_api_key,
+        configuration=configuration
     )
 
 @pytest.fixture
@@ -1340,7 +1347,6 @@ async def test_openai_server_aselect_tool_tool_call_roundtrip_conversion(llm: Op
     assert response[0].arguments["city"] == "Paris"
 
 
-
 @pytest.mark.skipif(
     (_api_key is None) or (_model_name is None),
     reason="OPENAI_API_KEY or OPENAI_MODEL_NAME is not set",
@@ -2237,15 +2243,276 @@ def test_openai_server_flexible_from_tool_call_parameters(llm: OpenAILlm):
     assert serialized_args["city"] == "Tokyo"
     assert serialized_args["guests"] == 2
     assert serialized_args["preferences"]["amenities"] == ["wifi", "pool", "gym"]
+
+# Tests for parameter validation functionality
+
+@pytest.mark.skipif(
+    (_api_key is None) or (_model_name is None),
+    reason="OPENAI_API_KEY or OPENAI_MODEL_NAME is not set",
+)
+def test_openai_parameter_validation_with_configuration(llm: OpenAILlm):
+    """
+    Test parameter validation when using configuration with default model.
+    """
     
-    printer.print("✓ Complex ToolCallBlock test passed")
+    # Create LLM with configuration that has default model
+    config = OpenAIConfiguration(model=_model_name, temperature=0.7)
+    configured_llm = get_configuration_llm(config)
     
-    printer.print("\n=== Flexible from_tool_call method test summary ===")
-    printer.print("✓ Single ToolCallBlock")
-    printer.print("✓ List of ToolCallBlocks")
-    printer.print("✓ Mixed list (dicts and ToolCallBlocks)")
-    printer.print("✓ Error handling for invalid formats")
-    printer.print("✓ Complex arguments support")
-    printer.print("✓ OpenAI format conversion")
+    # Test that chat works without specifying model (uses config default)
+    response = configured_llm.chat(
+        messages=[Message.from_text(text="Hello, how are you?", role=Role.USER)]
+    )
+    assert response.message.role == Role.AI
+    assert response.message.content is not None
     
-    printer.print("\nFlexible from_tool_call method test completed successfully!")
+    # Test that stream works without specifying model
+    stream_response = configured_llm.stream(
+        messages=[Message.from_text(text="Hello, how are you?", role=Role.USER)]
+    )
+    result = ""
+    for chunk in stream_response:
+        result += chunk.delta
+    assert len(result) > 0
+    
+
+def test_openai_parameter_validation_missing_model_error():
+    """
+    Test that missing model parameter raises appropriate error.
+    """
+    from bridgic.llms.openai.openai_llm import OpenAIConfiguration
+    
+    # Create LLM without default model in configuration
+    config = OpenAIConfiguration(temperature=0.7)  # No model specified
+    configured_llm = OpenAILlm(api_key="mock-api-key", configuration=config)
+    
+    # Test that chat fails without model
+    with pytest.raises(ValueError, match="Missing required parameters: model"):
+        configured_llm.chat(
+            messages=[Message.from_text(text="Hello, how are you?", role=Role.USER)]
+        )
+    
+    # Test that stream fails without model (when iterating)
+    with pytest.raises(ValueError, match="Missing required parameters: model"):
+        stream_result = configured_llm.stream(
+            messages=[Message.from_text(text="Hello, how are you?", role=Role.USER)]
+        )
+        # Stream is a generator, need to iterate to trigger validation
+        next(stream_result)
+    
+    # Test that achat fails without model
+    with pytest.raises(ValueError, match="Missing required parameters: model"):
+        import asyncio
+        asyncio.run(configured_llm.achat(
+            messages=[Message.from_text(text="Hello, how are you?", role=Role.USER)]
+        ))
+    
+    # Test that astream fails without model (when iterating)
+    with pytest.raises(ValueError, match="Missing required parameters: model"):
+        import asyncio
+        async def test_astream():
+            stream_result = configured_llm.astream(
+                messages=[Message.from_text(text="Hello, how are you?", role=Role.USER)]
+            )
+            # Astream is an async generator, need to iterate to trigger validation
+            await stream_result.__anext__()
+        asyncio.run(test_astream())
+    
+    printer.print("✓ Missing model parameter error handling test passed")
+
+
+@pytest.mark.skipif(
+    (_api_key is None) or (_model_name is None),
+    reason="OPENAI_API_KEY or OPENAI_MODEL_NAME is not set",
+)
+def test_openai_parameter_validation_method_override_config(llm: OpenAILlm):
+    """
+    Test that method parameters override configuration parameters.
+    """
+    
+    # Create LLM with configuration that has default model
+    config = OpenAIConfiguration(model="gpt-3.5-turbo", temperature=0.5)
+    configured_llm = get_configuration_llm(config)
+    
+    # Test that method parameter overrides config model
+    response = configured_llm.chat(
+        model=_model_name,  # Override config model
+        temperature=0.8,   # Override config temperature
+        messages=[Message.from_text(text="Hello, how are you?", role=Role.USER)]
+    )
+    assert response.message.role == Role.AI
+    assert response.message.content is not None
+    
+    # Test that None model parameter still uses config default
+    response2 = configured_llm.chat(
+        model=None,  # Should use config default
+        messages=[Message.from_text(text="Hello, how are you?", role=Role.USER)]
+    )
+    assert response2.message.role == Role.AI
+    assert response2.message.content is not None
+    
+    printer.print("✓ Method parameter override test passed")
+
+
+@pytest.mark.skipif(
+    (_api_key is None) or (_model_name is None),
+    reason="OPENAI_API_KEY or OPENAI_MODEL_NAME is not set",
+)
+def test_openai_parameter_validation_structured_output(llm: OpenAILlm):
+    """
+    Test parameter validation for structured output methods.
+    """
+    
+    class SimpleResponse(BaseModel):
+        answer: str = Field(description="The answer to the question")
+    
+    # Create LLM with configuration
+    config = OpenAIConfiguration(model=_model_name, temperature=0.7)
+    configured_llm = get_configuration_llm(config)
+    
+    # Test structured_output with config model
+    response = configured_llm.structured_output(
+        constraint=PydanticModel(model=SimpleResponse),
+        messages=[Message.from_text(text="What is 2+2?", role=Role.USER)]
+    )
+    assert isinstance(response, SimpleResponse)
+    assert response.answer is not None
+    
+    # Test structured_output with method override
+    response2 = configured_llm.structured_output(
+        model=_model_name,  # Explicit model
+        constraint=PydanticModel(model=SimpleResponse),
+        messages=[Message.from_text(text="What is 3+3?", role=Role.USER)]
+    )
+    assert isinstance(response2, SimpleResponse)
+    assert response2.answer is not None
+    
+    # Test that missing model raises error
+    config_no_model = OpenAIConfiguration(temperature=0.7)  # No model
+    llm_no_model = get_configuration_llm(config_no_model)
+    
+    with pytest.raises(ValueError, match="Missing required parameters: model"):
+        llm_no_model.structured_output(
+            constraint=PydanticModel(model=SimpleResponse),
+            messages=[Message.from_text(text="What is 4+4?", role=Role.USER)]
+        )
+
+
+@pytest.mark.skipif(
+    (_api_key is None) or (_model_name is None),
+    reason="OPENAI_API_KEY or OPENAI_MODEL_NAME is not set",
+)
+def test_openai_parameter_validation_tool_selection(llm: OpenAILlm, tools):
+    """
+    Test parameter validation for tool selection methods.
+    """
+    
+    # Create LLM with configuration
+    config = OpenAIConfiguration(model=_model_name, temperature=0.7)
+    configured_llm = get_configuration_llm(config)
+    
+    # Test select_tool with config model
+    tool_calls, content = configured_llm.select_tool(
+        tools=tools,
+        messages=[Message.from_text(text="Get weather for Tokyo", role=Role.USER)]
+    )
+    assert isinstance(tool_calls, list)
+    assert len(tool_calls)
+    
+    # Test select_tool with method override
+    tool_calls2, content2 = configured_llm.select_tool(
+        model=_model_name,  # Explicit model
+        tools=tools,
+        messages=[Message.from_text(text="Get news about technology", role=Role.USER)]
+    )
+    assert isinstance(tool_calls2, list)
+    assert len(tool_calls2) > 0
+    
+    # Test that missing model raises error
+    config_no_model = OpenAIConfiguration(temperature=0.7)  # No model
+    llm_no_model = get_configuration_llm(config_no_model)
+    
+    with pytest.raises(ValueError, match="Missing required parameters: model"):
+        llm_no_model.select_tool(
+            tools=tools,
+            messages=[Message.from_text(text="Get weather for Tokyo", role=Role.USER)]
+        )
+
+
+def test_openai_parameter_validation_edge_cases():
+    """
+    Test edge cases for parameter validation.
+    """
+    
+    # Test with empty configuration
+    empty_config = OpenAIConfiguration()
+    empty_llm = get_configuration_llm(empty_config)
+    
+    # Should fail because no model is provided
+    with pytest.raises(ValueError, match="Missing required parameters: model"):
+        empty_llm.chat(
+            messages=[Message.from_text(text="Hello", role=Role.USER)]
+        )
+    
+    # Test with model=None explicitly
+    with pytest.raises(ValueError, match="Missing required parameters: model"):
+        empty_llm.chat(
+            model=None,
+            messages=[Message.from_text(text="Hello", role=Role.USER)]
+        )
+    
+    # Test with empty messages (should still validate model)
+    with pytest.raises(ValueError, match="Missing required parameters: model"):
+        empty_llm.chat(
+            messages=[]
+        )
+
+@pytest.mark.asyncio
+async def test_openai_parameter_validation_edge_cases_async():
+    """
+    Test edge cases for parameter validation.
+    """
+    
+    # Test with empty configuration
+    empty_config = OpenAIConfiguration()
+    empty_llm = get_configuration_llm(empty_config)
+    
+    # Should fail because no model is provided
+    with pytest.raises(ValueError, match="Missing required parameters: model"):
+        result = await empty_llm.achat(
+            messages=[Message.from_text(text="Hello", role=Role.USER)]
+        )
+    
+    # Test with model=None explicitly
+    with pytest.raises(ValueError, match="Missing required parameters: model"):
+        result = await empty_llm.achat(
+            model=None,
+            messages=[Message.from_text(text="Hello", role=Role.USER)]
+        )
+    
+    # Test with empty messages (should still validate model)
+    with pytest.raises(ValueError, match="Missing required parameters: model"):
+        result = await empty_llm.achat(
+            messages=[]
+        )
+
+
+def test_openai_parameter_validation_error_messages():
+    """
+    Test that error messages are clear and informative.
+    """
+    
+    # Test single missing parameter
+    config = OpenAIConfiguration(temperature=0.7)
+    configured_llm = get_configuration_llm(config)
+    
+    try:
+        configured_llm.chat(
+            messages=[Message.from_text(text="Hello", role=Role.USER)]
+        )
+        assert False, "Should have raised ValueError"
+    except ValueError as e:
+        error_msg = str(e)
+        assert "Missing required parameters:" in error_msg
+        assert "model" in error_msg
+        assert "," not in error_msg  # Single parameter, no comma

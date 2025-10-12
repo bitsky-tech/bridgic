@@ -20,7 +20,7 @@ from bridgic.core.intelligence.base_llm import *
 from bridgic.core.intelligence.content import *
 from bridgic.core.intelligence.protocol import *
 from bridgic.core.utils.console import printer
-from bridgic.core.utils.collection import filter_dict
+from bridgic.core.utils.collection import filter_dict, merge_dict, validate_required_params
 
 class OpenAIConfiguration(BaseModel):
     model: Optional[str] = None
@@ -141,7 +141,7 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
     def chat(
         self,
         messages: List[Message],
-        model: str,
+        model: Optional[str] = None,
         temperature: Optional[float] = None,
         top_p: Optional[float] = None,
         presence_penalty: Optional[float] = None,
@@ -196,11 +196,11 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
         """
         msgs: List[ChatCompletionMessageParam] = [self._convert_chat_completions_message(msg) for msg in messages]
         
-        json_desc_tools = [self._convert_tool_to_json(tool) for tool in tools]
+        # Handle tools parameter - convert to list if provided, otherwise use empty list
+        json_desc_tools = [self._convert_tool_to_json(tool) for tool in tools] if tools is not None else None
         # Build parameters dictionary and filter out None values
         # The priority order is as follows: configuration passed through the interface > configuration of the instance itself.
-        params = filter_dict({
-            **self.configuration.model_dump(),
+        params = merge_dict(self.configuration.model_dump(), {
             "messages": msgs,
             "model": model,
             "temperature": temperature,
@@ -212,7 +212,10 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
             "tools": json_desc_tools,
             "extra_body": extra_body,
             **kwargs,
-        }, exclude_none=True)
+        })
+        
+        # Validate required parameters for non-streaming chat completion
+        validate_required_params(params, ["messages", "model"])
         
         response: ChatCompletion = self.client.chat.completions.create(**params)
         openai_message = response.choices[0].message
@@ -251,7 +254,7 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
     def stream(
         self,
         messages: List[Message],
-        model: str,
+        model: Optional[str] = None,
         temperature: Optional[float] = None,
         top_p: Optional[float] = None,
         presence_penalty: Optional[float] = None,
@@ -308,22 +311,27 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
         useful for providing incremental updates to users as the response is generated.
         """
         msgs: List[ChatCompletionMessageParam] = [self._convert_chat_completions_message(msg) for msg in messages]
-        
+        # Build parameters dictionary and merge with None-value filtering
+        merge_params = merge_dict(
+            self.configuration.model_dump(),
+            {
+                "messages": msgs,
+                "model": model,
+                "stream": True,
+                "temperature": temperature,
+                "top_p": top_p,
+                "presence_penalty": presence_penalty,
+                "frequency_penalty": frequency_penalty,
+                "max_tokens": max_tokens,
+                "stop": stop,
+                "extra_body": extra_body,
+                **kwargs,
+            }
+        )
         # Build parameters dictionary and filter out None values
-        params = filter_dict({
-            **self.configuration.model_dump(),
-            "messages": msgs,
-            "model": model,
-            "stream": True,
-            "temperature": temperature,
-            "top_p": top_p,
-            "presence_penalty": presence_penalty,
-            "frequency_penalty": frequency_penalty,
-            "max_tokens": max_tokens,
-            "stop": stop,
-            "extra_body": extra_body,
-            **kwargs,
-        }, exclude_none=True)
+        params = filter_dict(merge_params, exclude_none=True)
+        # Validate required parameters for streaming chat completion
+        validate_required_params(params, ["messages", "model", "stream"])
         
         response: Stream[ChatCompletionChunk] = self.client.chat.completions.create(**params)
         for chunk in response:
@@ -335,7 +343,7 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
     async def achat(
         self,
         messages: List[Message],
-        model: str,
+        model: Optional[str] = None,
         temperature: Optional[float] = None,
         top_p: Optional[float] = None,
         presence_penalty: Optional[float] = None,
@@ -395,22 +403,29 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
         """
         msgs: List[ChatCompletionMessageParam] = [self._convert_chat_completions_message(msg) for msg in messages]
         
-        json_desc_tools = [self._convert_tool_to_json(tool) for tool in tools]
+        # Handle tools parameter - convert to list if provided, otherwise use empty list
+        json_desc_tools = [self._convert_tool_to_json(tool) for tool in tools] if tools is not None else None
+        # Build parameters dictionary and merge with None-value filtering
+        merge_params = merge_dict(
+            self.configuration.model_dump(),
+            {
+                "messages": msgs,
+                "model": model,
+                "temperature": temperature,
+                "top_p": top_p,
+                "presence_penalty": presence_penalty,
+                "frequency_penalty": frequency_penalty,
+                "max_tokens": max_tokens,
+                "stop": stop,
+                "tools": json_desc_tools,
+                "extra_body": extra_body,
+                **kwargs,
+            }
+        )
         # Build parameters dictionary and filter out None values
-        params = filter_dict({
-            **self.configuration.model_dump(),
-            "messages": msgs,
-            "model": model,
-            "temperature": temperature,
-            "top_p": top_p,
-            "presence_penalty": presence_penalty,
-            "frequency_penalty": frequency_penalty,
-            "max_tokens": max_tokens,
-            "stop": stop,
-            "tools": json_desc_tools,
-            "extra_body": extra_body,
-            **kwargs,
-        }, exclude_none=True)
+        params = filter_dict(merge_params, exclude_none=True)
+        # Validate required parameters for non-streaming chat completion
+        validate_required_params(params, ["messages", "model"])
         
         response = await self.async_client.chat.completions.create(**params)
         openai_message: ChatCompletionMessage = response.choices[0].message
@@ -450,7 +465,7 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
     async def astream(
         self,
         messages: List[Message],
-        model: str,
+        model: Optional[str] = None,
         temperature: Optional[float] = None,
         top_p: Optional[float] = None,
         presence_penalty: Optional[float] = None,
@@ -508,21 +523,27 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
         """
         msgs: List[ChatCompletionMessageParam] = [self._convert_chat_completions_message(msg) for msg in messages]
         
+        # Build parameters dictionary and merge with None-value filtering
+        merge_params = merge_dict(
+            self.configuration.model_dump(),
+            {
+                "messages": msgs,
+                "model": model,
+                "stream": True,
+                "temperature": temperature,
+                "top_p": top_p,
+                "presence_penalty": presence_penalty,
+                "frequency_penalty": frequency_penalty,
+                "max_tokens": max_tokens,
+                "stop": stop,
+                "extra_body": extra_body,
+                **kwargs,
+            }
+        )
         # Build parameters dictionary and filter out None values
-        params = filter_dict({
-            **self.configuration.model_dump(),
-            "messages": msgs,
-            "model": model,
-            "stream": True,
-            "temperature": temperature,
-            "top_p": top_p,
-            "presence_penalty": presence_penalty,
-            "frequency_penalty": frequency_penalty,
-            "max_tokens": max_tokens,
-            "stop": stop,
-            "extra_body": extra_body,
-            **kwargs,
-        }, exclude_none=True)
+        params = filter_dict(merge_params, exclude_none=True)
+        # Validate required parameters for streaming chat completion
+        validate_required_params(params, ["messages", "model", "stream"])
         
         response = await self.async_client.chat.completions.create(**params)
         async for chunk in response:
@@ -614,7 +635,7 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
         self,
         messages: List[Message],
         constraint: PydanticModel,
-        model: str,
+        model: Optional[str] = None,
         temperature: Optional[float] = ...,
         top_p: Optional[float] = ...,
         presence_penalty: Optional[float] = ...,
@@ -628,7 +649,7 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
         self,
         messages: List[Message],
         constraint: JsonSchema,
-        model: str,
+        model: Optional[str] = None,
         temperature: Optional[float] = ...,
         top_p: Optional[float] = ...,
         presence_penalty: Optional[float] = ...,
@@ -642,7 +663,7 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
         self,
         messages: List[Message],
         constraint: Union[PydanticModel, JsonSchema],
-        model: str,
+        model: Optional[str] = None,
         temperature: Optional[float] = None,
         top_p: Optional[float] = None,
         presence_penalty: Optional[float] = None,
@@ -731,19 +752,25 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
         msgs: List[ChatCompletionMessageParam] = [self._convert_chat_completions_message(msg) for msg in messages]
         # support JsonSchema, PydanticModel
         
+        # Build parameters dictionary and merge with None-value filtering
+        merge_params = merge_dict(
+            self.configuration.model_dump(),
+            {
+                "messages": msgs,
+                "model": model,
+                "temperature": temperature,
+                "top_p": top_p,
+                "presence_penalty": presence_penalty,
+                "frequency_penalty": frequency_penalty,
+                "response_format": self._get_response_format(constraint),
+                "extra_body": extra_body,
+                **kwargs,
+            }
+        )
         # Build parameters dictionary and filter out None values
-        params = filter_dict({
-            **self.configuration.model_dump(),
-            "messages": msgs,
-            "model": model,
-            "temperature": temperature,
-            "top_p": top_p,
-            "presence_penalty": presence_penalty,
-            "frequency_penalty": frequency_penalty,
-            "response_format": self._get_response_format(constraint),
-            "extra_body": extra_body,
-            **kwargs,
-        }, exclude_none=True)
+        params = filter_dict(merge_params, exclude_none=True)
+        # Validate required parameters for structured output
+        validate_required_params(params, ["messages", "model"])
         
         response = self.client.chat.completions.parse(**params)
         return self._convert_response(constraint, response.choices[0].message.content)
@@ -752,7 +779,7 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
         self,
         messages: List[Message],
         constraint: Union[PydanticModel, JsonSchema],
-        model: str,
+        model: Optional[str] = None,
         temperature: Optional[float] = None,
         top_p: Optional[float] = None,
         presence_penalty: Optional[float] = None,
@@ -827,19 +854,25 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
         """
         msgs: List[ChatCompletionMessageParam] = [self._convert_chat_completions_message(msg) for msg in messages]
         
+        # Build parameters dictionary and merge with None-value filtering
+        merge_params = merge_dict(
+            self.configuration.model_dump(),
+            {
+                "messages": msgs,
+                "model": model,
+                "temperature": temperature,
+                "top_p": top_p,
+                "presence_penalty": presence_penalty,
+                "frequency_penalty": frequency_penalty,
+                "response_format": self._get_response_format(constraint),
+                "extra_body": extra_body,
+                **kwargs,
+            }
+        )
         # Build parameters dictionary and filter out None values
-        params = filter_dict({
-            **self.configuration.model_dump(),
-            "messages": msgs,
-            "model": model,
-            "temperature": temperature,
-            "top_p": top_p,
-            "presence_penalty": presence_penalty,
-            "frequency_penalty": frequency_penalty,
-            "response_format": self._get_response_format(constraint),
-            "extra_body": extra_body,
-            **kwargs,
-        }, exclude_none=True)
+        params = filter_dict(merge_params, exclude_none=True)
+        # Validate required parameters for structured output
+        validate_required_params(params, ["messages", "model"])
         
         response = await self.async_client.chat.completions.parse(**params)
         return self._convert_response(constraint, response.choices[0].message.content)
@@ -892,7 +925,7 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
         self,
         messages: List[Message],
         tools: List[Tool],
-        model: str,
+        model: Optional[str] = None,
         temperature: Optional[float] = None,
         top_p: Optional[float] = None,
         presence_penalty: Optional[float] = None,
@@ -956,21 +989,27 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
         json_desc_tools = [self._convert_tool_to_json(tool) for tool in tools]
         msgs: List[ChatCompletionMessageParam] = [self._convert_chat_completions_message(msg) for msg in messages]
         
+        # Build parameters dictionary and merge with None-value filtering
+        merge_params = merge_dict(
+            self.configuration.model_dump(),
+            {
+                "model": model,
+                "messages": msgs,
+                "temperature": temperature,
+                "top_p": top_p,
+                "presence_penalty": presence_penalty,
+                "frequency_penalty": frequency_penalty,
+                "tools": json_desc_tools,
+                "tool_choice": tool_choice,
+                "parallel_tool_calls": parallel_tool_calls,
+                "extra_body": extra_body,
+                **kwargs,
+            }
+        )
         # Build parameters dictionary and filter out None values
-        params = filter_dict({
-            **self.configuration.model_dump(),
-            "model": model,
-            "messages": msgs,
-            "temperature": temperature,
-            "top_p": top_p,
-            "presence_penalty": presence_penalty,
-            "frequency_penalty": frequency_penalty,
-            "tools": json_desc_tools,
-            "tool_choice": tool_choice,
-            "parallel_tool_calls": parallel_tool_calls,
-            "extra_body": extra_body,
-            **kwargs,
-        }, exclude_none=True)
+        params = filter_dict(merge_params, exclude_none=True)
+        # Validate required parameters for tool selection
+        validate_required_params(params, ["messages", "model"])
         
         response: ChatCompletion = self.client.chat.completions.create(**params)
         tool_calls = response.choices[0].message.tool_calls
@@ -981,7 +1020,7 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
         self,
         messages: List[Message],
         tools: List[Tool],
-        model: str,
+        model: Optional[str] = None,
         temperature: Optional[float] = None,
         top_p: Optional[float] = None,
         presence_penalty: Optional[float] = None,
@@ -1045,21 +1084,27 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
         json_desc_tools = [self._convert_tool_to_json(tool) for tool in tools]
         msgs: List[ChatCompletionMessageParam] = [self._convert_chat_completions_message(msg) for msg in messages]
         
+        # Build parameters dictionary and merge with None-value filtering
+        merge_params = merge_dict(
+            self.configuration.model_dump(),
+            {
+                "model": model,
+                "messages": msgs,
+                "temperature": temperature,
+                "top_p": top_p,
+                "presence_penalty": presence_penalty,
+                "frequency_penalty": frequency_penalty,
+                "tools": json_desc_tools,
+                "tool_choice": tool_choice,
+                "parallel_tool_calls": parallel_tool_calls,
+                "extra_body": extra_body,
+                **kwargs,
+            }
+        )
         # Build parameters dictionary and filter out None values
-        params = filter_dict({
-            **self.configuration.model_dump(),
-            "model": model,
-            "messages": msgs,
-            "temperature": temperature,
-            "top_p": top_p,
-            "presence_penalty": presence_penalty,
-            "frequency_penalty": frequency_penalty,
-            "tools": json_desc_tools,
-            "tool_choice": tool_choice,
-            "parallel_tool_calls": parallel_tool_calls,
-            "extra_body": extra_body,
-            **kwargs,
-        }, exclude_none=True)
+        params = filter_dict(merge_params, exclude_none=True)
+        # Validate required parameters for tool selection
+        validate_required_params(params, ["messages", "model"])
         
         response: ChatCompletion = await self.async_client.chat.completions.create(**params)
         tool_calls = response.choices[0].message.tool_calls
