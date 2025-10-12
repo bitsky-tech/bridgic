@@ -2,7 +2,7 @@ from typing import Tuple
 
 import pytest
 
-from bridgic.core.automa import GraphAutoma, From, worker, ArgsMappingRule, System
+from bridgic.core.automa import GraphAutoma, From, worker, ArgsMappingRule, System, AutomaRuntimeError
 from bridgic.core.automa.interaction import Event, InteractionFeedback, InteractionException
 from bridgic.core.automa.worker import Worker
 from bridgic.core.automa.serialization import Snapshot
@@ -91,13 +91,13 @@ async def test_automa_with_sync_and_async_worker(automa_with_sync_and_async_work
 
 
 
-def worker_0(automa: GraphAutoma, user_input: int) -> int:
+def worker_0(user_input: int) -> int:
     return user_input + 1
 
-def worker_1(automa: GraphAutoma, x: int, z: int = 1) -> int:
+def worker_1(x: int, z: int = 1) -> int:
     return x + z
 
-def worker_2(automa: GraphAutoma, x: int, y: int = From("worker_0")) -> int:
+def worker_2(x: int, y: int = From("worker_0")) -> int:
     return x + y
 
 class AutomaWithFuncAsWorker(GraphAutoma): 
@@ -136,10 +136,10 @@ async def test_automa_with_func_as_worker(automa_with_func_as_worker: AutomaWith
     assert result == 5
 
 
-def worker_0(automa: GraphAutoma, user_input: int) -> int:
+def worker_0(user_input: int) -> int:
     return user_input + 1
 
-def worker_1(automa: GraphAutoma, x: int, z: int = 1) -> int:
+def worker_1(x: int, z: int = 1) -> int:
     return x + z
 
 class Worker2_Arun(Worker):
@@ -182,10 +182,10 @@ async def test_automa_with_class_worker_arun(automa_with_class_worker_arun: Auto
     assert result == 5
 
 
-def worker_0(automa: GraphAutoma, user_input: int) -> int:
+def worker_0(user_input: int) -> int:
     return user_input + 1
 
-def worker_1(automa: GraphAutoma, x: int, z: int = 1) -> int:
+def worker_1(x: int, z: int = 1) -> int:
     return x + z
 
 class Worker2_Run(Worker):
@@ -226,6 +226,131 @@ def automa_with_class_worker_run():
 async def test_automa_with_class_worker_run(automa_with_class_worker_run: AutomaWithClassWorkerRun):
     result = await automa_with_class_worker_run.arun(user_input=1)
     assert result == 5
+
+
+########################################################
+#### Test case: System("automa") to access the current automa
+########################################################
+
+
+def automa_system_worker_0(user_input: int) -> int:
+    return user_input + 1
+
+def automa_system_worker_1(x: int, a: GraphAutoma = System("automa")) -> int:
+    a.add_func_as_worker(
+        key="automa_system_worker_2",
+        func=automa_system_worker_2,
+        dependencies=["automa_system_worker_1"],
+        is_output=True,
+        args_mapping_rule=ArgsMappingRule.AS_IS,
+    )
+    return x + 1
+
+def automa_system_worker_2(x: int) -> int:
+    return x + 1
+
+class AutomaWithSystem(GraphAutoma): ...
+
+@pytest.fixture
+def automa_with_system():
+    automa_with_system = AutomaWithSystem()
+    automa_with_system.add_func_as_worker(
+        key="automa_system_worker_0",
+        func=automa_system_worker_0,
+        is_start=True,
+        args_mapping_rule=ArgsMappingRule.AS_IS,
+    )
+    automa_with_system.add_func_as_worker(
+        key="automa_system_worker_1",
+        func=automa_system_worker_1,
+        dependencies=["automa_system_worker_0"],
+        args_mapping_rule=ArgsMappingRule.AS_IS,
+    )
+    return automa_with_system
+
+@pytest.mark.asyncio
+async def test_automa_with_system_automa(automa_with_system: AutomaWithSystem):
+    result = await automa_with_system.arun(user_input=1)
+    assert result == 4
+
+def worker_0(user_input: int) -> int:
+    return user_input + 1
+
+def worker_1(x: int) -> int:
+    return x + 1
+
+class NameSpaceWorker:
+    @classmethod
+    def worker_2(cls, user_input: int) -> int:
+        return user_input + 1
+    
+    def worker_3(self, x: int) -> int:
+        return x + 1
+
+class AutomaWithNameSpaceWorker(GraphAutoma): ...
+
+@pytest.fixture
+def automa_with_name_space_worker_class_method():
+    automa_with_name_space_worker_class_method = AutomaWithNameSpaceWorker()
+    automa_with_name_space_worker_class_method.add_func_as_worker(
+        key="worker_0",
+        func=worker_0,
+        is_start=True,
+        args_mapping_rule=ArgsMappingRule.AS_IS,
+    )
+    automa_with_name_space_worker_class_method.add_func_as_worker(
+        key="worker_1",
+        func=worker_1,
+        dependencies=["worker_0"],
+        args_mapping_rule=ArgsMappingRule.AS_IS,
+    )
+    return automa_with_name_space_worker_class_method
+
+@pytest.mark.asyncio
+async def test_automa_with_name_space_worker_class_method(automa_with_name_space_worker_class_method: AutomaWithNameSpaceWorker):
+    with pytest.raises(
+        AutomaRuntimeError, 
+        match="the bounded instance of `func` must be the same as the instance of the GraphAutoma"
+    ):
+        automa_with_name_space_worker_class_method.add_func_as_worker(
+            key="worker_2",
+            func=NameSpaceWorker.worker_2,
+            dependencies=["worker_1"],
+            is_output=True,
+            args_mapping_rule=ArgsMappingRule.AS_IS,
+        )
+
+@pytest.fixture
+def automa_with_name_space_worker_instance_method():
+    automa_with_name_space_worker_instance_method = AutomaWithNameSpaceWorker()
+    automa_with_name_space_worker_instance_method.add_func_as_worker(
+        key="worker_0",
+        func=worker_0,
+        is_start=True,
+        args_mapping_rule=ArgsMappingRule.AS_IS,
+    )
+    automa_with_name_space_worker_instance_method.add_func_as_worker(
+        key="worker_1",
+        func=worker_1,
+        dependencies=["worker_0"],
+        args_mapping_rule=ArgsMappingRule.AS_IS,
+    )
+    return automa_with_name_space_worker_instance_method
+
+@pytest.mark.asyncio
+async def test_automa_with_name_space_worker_instance_method(automa_with_name_space_worker_instance_method: AutomaWithNameSpaceWorker):
+    name_space_worker = NameSpaceWorker()
+    with pytest.raises(
+        AutomaRuntimeError, 
+        match="the bounded instance of `func` must be the same as the instance of the GraphAutoma"
+    ):
+        automa_with_name_space_worker_instance_method.add_func_as_worker(
+            key="worker_3",
+            func=name_space_worker.worker_3,
+            dependencies=["worker_1"],
+            is_output=True,
+            args_mapping_rule=ArgsMappingRule.AS_IS,
+        )
 
 
 ########################################################
@@ -467,10 +592,10 @@ class AutomaWithSystem_1(GraphAutoma):
     async def worker_1(self, x: int) -> int:
         return x + 1  # 3
 
-def self_add(automa, x: int):
+def self_add(x: int):
     return x + 1
 
-def worker_with_system_2(automa, x: int, y: int = From("worker_0", 1), z: GraphAutoma = System("automa:worker_3")) -> int:
+def worker_with_system_2(x: int, y: int = From("worker_0", 1), z: GraphAutoma = System("automa:worker_3")) -> int:
     z.add_func_as_worker(
         key="self_add",
         func=self_add,
@@ -488,7 +613,7 @@ class AutomaWithSystem_2(GraphAutoma):
     async def worker_0(self, x: int) -> int:
         return x + 1  # 6
 
-async def end(automa, x: int):
+async def end(x: int):
     return x  # 7
 
 

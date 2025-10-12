@@ -8,10 +8,10 @@ from bridgic.core.types.error import WorkerSignatureError, AutomaRuntimeError
 
 ###################### Test case 1: single concurrent automa #############################
 
-async def func_1_async(automa, x: int) -> int:
+async def func_1_async(x: int) -> int:
     return x + 1
 
-def func_2(automa, x: int) -> int:
+def func_2(x: int) -> int:
     return x + 2
 
 class Func3AsyncWorker(Worker):
@@ -42,7 +42,7 @@ def concurrent_autom_1() -> ConcurrentAutoma:
         worker=Func4SyncWorker(),
     )
     @concurrent.worker(key="func_5")
-    async def func_5_async(automa, x: int) -> int:
+    async def func_5_async(x: int) -> int:
         return x + 5
     return concurrent
 

@@ -37,6 +37,94 @@ class Message(BaseModel):
             role = Role(role)
         return cls(role=role, blocks=[TextBlock(text=text)], extras=extras)
 
+    @classmethod
+    def from_tool_call(
+        cls,
+        tool_id: str,
+        tool_name: str,
+        arguments: Dict[str, Any],
+        role: Union[Role, str] = Role.AI,
+        extras: Optional[Dict[str, Any]] = {},
+    ) -> "Message":
+        """
+        Create a message with a tool call block.
+        
+        Parameters
+        ----
+        tool_id : str
+            The ID of the tool call
+        tool_name : str
+            The name of the tool to call
+        arguments : Dict[str, Any]
+            The arguments to pass to the tool
+        role : Union[Role, str], optional
+            The role of the message (default is Role.AI)
+        extras : Optional[Dict[str, Any]], optional
+            Additional metadata for the message
+            
+        Returns
+        ----
+        Message
+            A message containing the tool call block
+            
+        Examples
+        -----
+        >>> message = Message.from_tool_call(
+        ...     tool_id="call_123",
+        ...     tool_name="get_weather",
+        ...     arguments={"city": "Tokyo", "unit": "celsius"}
+        ... )
+        """
+        if isinstance(role, str):
+            role = Role(role)
+        return cls(
+            role=role, 
+            blocks=[ToolCallBlock(id=tool_id, name=tool_name, arguments=arguments)], 
+            extras=extras
+        )
+
+    @classmethod
+    def from_tool_result(
+        cls,
+        tool_id: str,
+        content: str,
+        role: Union[Role, str] = Role.TOOL,
+        extras: Optional[Dict[str, Any]] = {},
+    ) -> "Message":
+        """
+        Create a message with a tool result block.
+        
+        Parameters
+        ----
+        tool_id : str
+            The ID of the tool call that this result corresponds to
+        content : str
+            The result content from the tool execution
+        role : Union[Role, str], optional
+            The role of the message (default is Role.TOOL)
+        extras : Optional[Dict[str, Any]], optional
+            Additional metadata for the message
+            
+        Returns
+        ----
+        Message
+            A message containing the tool result block
+            
+        Examples
+        -----
+        >>> message = Message.from_tool_result(
+        ...     tool_id="call_123",
+        ...     content="The weather in Tokyo is 22°C and sunny."
+        ... )
+        """
+        if isinstance(role, str):
+            role = Role(role)
+        return cls(
+            role=role, 
+            blocks=[ToolResultBlock(id=tool_id, content=content)], 
+            extras=extras
+        )
+
     @property
     def content(self) -> str:
         return "\n\n".join([block.text for block in self.blocks if isinstance(block, TextBlock)])

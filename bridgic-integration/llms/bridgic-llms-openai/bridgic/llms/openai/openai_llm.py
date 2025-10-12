@@ -6,6 +6,7 @@ import warnings
 
 from typing import List, Tuple, overload
 from openai.types.chat import ChatCompletion, ChatCompletionChunk, ChatCompletionMessageFunctionToolCall, ChatCompletionToolChoiceOptionParam
+from openai.types.chat.chat_completion_message_tool_call_param import ChatCompletionMessageToolCallParam, Function
 from pydantic import BaseModel
 from openai import Stream, OpenAI, AsyncOpenAI
 from openai.types.chat.chat_completion_message import ChatCompletionMessage
@@ -147,6 +148,7 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
         frequency_penalty: Optional[float] = None,
         max_tokens: Optional[int] = None,
         stop: Optional[List[str]] = None,
+        tools: Optional[List[Tool]] = None,
         extra_body: Optional[Dict[str, Any]] = None,
         **kwargs,
     ) -> Response:
@@ -180,6 +182,8 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
         stop : Optional[List[str]]
             Up to 4 sequences where the API will stop generating further tokens.
             Not supported with latest reasoning models `o3` and `o3-mini`.
+        tools : Optional[List[Tool]]
+            A list of tools to use in the chat completion.
         extra_body : Optional[Dict[str, Any]]
             Add additional JSON properties to the request.
         **kwargs
@@ -192,6 +196,7 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
         """
         msgs: List[ChatCompletionMessageParam] = [self._convert_chat_completions_message(msg) for msg in messages]
         
+        json_desc_tools = [self._convert_tool_to_json(tool) for tool in tools]
         # Build parameters dictionary and filter out None values
         # The priority order is as follows: configuration passed through the interface > configuration of the instance itself.
         params = filter_dict({
@@ -204,6 +209,7 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
             "frequency_penalty": frequency_penalty,
             "max_tokens": max_tokens,
             "stop": stop,
+            "tools": json_desc_tools,
             "extra_body": extra_body,
             **kwargs,
         }, exclude_none=True)
@@ -214,8 +220,31 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
         if openai_message.refusal:
             warnings.warn(openai_message.refusal, RuntimeWarning)
 
+        # Handle tool calls in the response
+        if openai_message.tool_calls:
+            # Create a message with both text content and tool calls
+            blocks = []
+            if text:
+                blocks.append(TextBlock(text=text))
+            else:
+                # Ensure there's always some text content, even if empty
+                blocks.append(TextBlock(text=""))
+            
+            for tool_call in openai_message.tool_calls:
+                tool_call_block = ToolCallBlock(
+                    id=tool_call.id,
+                    name=tool_call.function.name,
+                    arguments=json.loads(tool_call.function.arguments)
+                )
+                blocks.append(tool_call_block)
+            
+            message = Message(role=Role.AI, blocks=blocks)
+        else:
+            # Regular text response
+            message = Message.from_text(text, role=Role.AI)
+
         return Response(
-            message=Message.from_text(text, role=Role.AI),
+            message=message,
             raw=response,
         )
 
@@ -313,6 +342,7 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
         frequency_penalty: Optional[float] = None,
         max_tokens: Optional[int] = None,
         stop: Optional[List[str]] = None,
+        tools: Optional[List[Tool]] = None,
         extra_body: Optional[Dict[str, Any]] = None,
         **kwargs,
     ) -> Response:
@@ -346,6 +376,8 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
         stop : Optional[List[str]]
             Up to 4 sequences where the API will stop generating further tokens.
             Not supported with latest reasoning models `o3` and `o3-mini`.
+        tools : Optional[List[Tool]]
+            A list of tools to use in the chat completion.
         extra_body : Optional[Dict[str, Any]]
             Add additional JSON properties to the request.
         **kwargs
@@ -363,6 +395,7 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
         """
         msgs: List[ChatCompletionMessageParam] = [self._convert_chat_completions_message(msg) for msg in messages]
         
+        json_desc_tools = [self._convert_tool_to_json(tool) for tool in tools]
         # Build parameters dictionary and filter out None values
         params = filter_dict({
             **self.configuration.model_dump(),
@@ -374,6 +407,7 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
             "frequency_penalty": frequency_penalty,
             "max_tokens": max_tokens,
             "stop": stop,
+            "tools": json_desc_tools,
             "extra_body": extra_body,
             **kwargs,
         }, exclude_none=True)
@@ -385,8 +419,31 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
         if openai_message.refusal:
             warnings.warn(openai_message.refusal, RuntimeWarning)
 
+        # Handle tool calls in the response
+        if openai_message.tool_calls:
+            # Create a message with both text content and tool calls
+            blocks = []
+            if text:
+                blocks.append(TextBlock(text=text))
+            else:
+                # Ensure there's always some text content, even if empty
+                blocks.append(TextBlock(text=""))
+            
+            for tool_call in openai_message.tool_calls:
+                tool_call_block = ToolCallBlock(
+                    id=tool_call.id,
+                    name=tool_call.function.name,
+                    arguments=json.loads(tool_call.function.arguments)
+                )
+                blocks.append(tool_call_block)
+            
+            message = Message(role=Role.AI, blocks=blocks)
+        else:
+            # Regular text response
+            message = Message.from_text(text, role=Role.AI)
+
         return Response(
-            message=Message.from_text(text, role=Role.AI),
+            message=message,
             raw=response,
         )
 
@@ -475,19 +532,80 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
                 yield MessageChunk(delta=delta_content, raw=chunk)
 
     def _convert_chat_completions_message(self, message: Message) -> ChatCompletionMessageParam:
+        """
+        Convert a Bridgic Message to OpenAI ChatCompletionMessageParam.
+        
+        This method handles different message types including:
+        - Text messages
+        - Messages with tool calls (ToolCallBlock)
+        - Messages with tool results (ToolResultBlock)
+        
+        Parameters
+        ----
+        message : Message
+            The Bridgic message to convert
+            
+        Returns
+        ----
+        ChatCompletionMessageParam
+            The converted OpenAI message parameter
+        """
+        # Extract text content from TextBlocks and ToolResultBlocks
         content_list = []
         for block in message.blocks:
             if isinstance(block, TextBlock):
                 content_list.append(block.text)
-        content_txt = "\n\n".join(content_list)
+            elif isinstance(block, ToolResultBlock):
+                content_list.append(block.content)
+        content_txt = "\n\n".join(content_list) if content_list else ""
+        
+        # Extract tool calls from ToolCallBlocks
+        tool_calls = []
+        for block in message.blocks:
+            if isinstance(block, ToolCallBlock):
+                tool_call = ChatCompletionMessageToolCallParam(
+                    id=block.id,
+                    type="function",
+                    function=Function(
+                        name=block.name,
+                        arguments=json.dumps(block.arguments)
+                    )
+                )
+                tool_calls.append(tool_call)
+        
+        # Handle different message roles
         if message.role == Role.SYSTEM:
             return ChatCompletionSystemMessageParam(content=content_txt, role="system", **message.extras)
         elif message.role == Role.USER:
             return ChatCompletionUserMessageParam(content=content_txt, role="user", **message.extras)
         elif message.role == Role.AI:
-            return ChatCompletionAssistantMessageParam(content=content_txt, role="assistant", **message.extras)
+            # For AI messages, include tool calls if present
+            if tool_calls:
+                return ChatCompletionAssistantMessageParam(
+                    content=content_txt, 
+                    role="assistant", 
+                    tool_calls=tool_calls,
+                    **message.extras
+                )
+            else:
+                return ChatCompletionAssistantMessageParam(content=content_txt, role="assistant", **message.extras)
         elif message.role == Role.TOOL:
-            return ChatCompletionToolMessageParam(content=content_txt, role="tool", **message.extras)
+            # For tool messages, extract tool_call_id from ToolResultBlock
+            tool_call_id = None
+            for block in message.blocks:
+                if isinstance(block, ToolResultBlock):
+                    tool_call_id = block.id
+                    break
+            
+            if tool_call_id is None:
+                raise ValueError("Tool message must contain a ToolResultBlock with an ID")
+            
+            return ChatCompletionToolMessageParam(
+                content=content_txt, 
+                role="tool", 
+                tool_call_id=tool_call_id,
+                **message.extras
+            )
         else:
             raise ValueError(f"Invalid role: {message.role}")
     
