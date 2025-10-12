@@ -174,7 +174,7 @@ markdown_extensions:
   - md_in_html
   - toc:
       permalink: true
-      title: On this page
+      title: Outline
   # Python Markdown Extensions
   - pymdownx.arithmatex:
       generic: true
