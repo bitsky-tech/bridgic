@@ -310,8 +310,7 @@ class ReActAutoma(GraphAutoma):
                 ...
         else:
             # Got final answer from the LLM.
-            # TODO:
-            print(f"\nGot final answer from the LLM: \n{llm_response}")
+            self.ferry_to("finally_summarize", final_answer=llm_response)
 
     async def merge_tools_results(
         self, 
@@ -338,6 +337,10 @@ class ReActAutoma(GraphAutoma):
         self.remove_worker("merge_tools_results")
         self.ferry_to("assemble_context", tool_result_messages=tool_messages)
         return tool_messages
+
+    @worker(is_output=True)
+    async def finally_summarize(self, final_answer: str) -> str:
+        return final_answer
 
     def _ensure_tool_spec(self, tool: Union[Callable, Automa, ToolSpec]) -> ToolSpec:
         if isinstance(tool, Callable):

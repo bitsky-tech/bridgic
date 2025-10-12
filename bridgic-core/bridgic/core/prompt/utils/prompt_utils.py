@@ -21,11 +21,22 @@ def transform_chat_message_to_llm_message(message: ChatMessage) -> Message:
         name = message.get("name", None)
         if name:
             extras["name"] = name
-        # TODO: handle tool_calls; choose between content and tool_calls
-        return Message.from_text(message["content"], Role.AI, extras)
+        tool_calls = message.get("tool_calls", None)
+        if tool_calls:
+            # TODO: from_tool_call need to update to support multiple tool calls & content
+            msg = Message.from_tool_call(
+                tool_id=tool_calls[0]["id"],
+                tool_name=tool_calls[0]["function"]["name"],
+                arguments=tool_calls[0]["function"]["arguments"],
+            )
+        else:
+            msg = Message.from_text(message["content"], Role.AI, extras)
+        return msg
     elif role == "tool":
-        # tool_call_id is required
-        extras["tool_call_id"] = message["tool_call_id"]
-        return Message.from_text(message["content"], Role.TOOL, extras)
+        # tool_call_id is a required field
+        return Message.from_tool_result(
+            tool_id=message["tool_call_id"],
+            content=message["content"],
+        )
     else:
         raise ValueError(f"Invalid role: `{role}` in message: `{message}`.")

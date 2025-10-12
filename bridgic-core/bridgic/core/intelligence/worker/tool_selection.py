@@ -56,7 +56,7 @@ class ToolSelectionWorker(Worker):
             else:
                 raise TypeError(f"Invalid `messages` type: {type(message)}, expected `ChatMessage` or `Message`.")
         print(f"\n******* ToolSelectionWorker.arun *******\n")
-        print(f"messallm_messagesges: {llm_messages}")
+        print(f"llm_messages: {llm_messages}")
         print(f"tools: {tools}")
         # TODO: 
         model_name = "gpt-5-mini"
