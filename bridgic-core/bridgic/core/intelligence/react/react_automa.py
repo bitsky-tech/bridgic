@@ -10,6 +10,7 @@ from bridgic.core.intelligence.base_llm import Message
 from bridgic.core.intelligence.protocol import ToolCall, Tool, ToolSelection
 from bridgic.core.automa.interaction import InteractionFeedback
 from bridgic.core.prompt.chat_message import ChatMessage, SystemMessage, UserTextMessage, AssistantTextMessage, ToolMessage
+from bridgic.core.prompt.chat_message import FunctionToolCall, Function
 from bridgic.core.automa import worker, ArgsMappingRule
 from bridgic.core.intelligence import FunctionToolSpec, AutomaToolSpec
 from bridgic.core.intelligence.worker import ToolSelectionWorker
@@ -192,45 +193,76 @@ class ReActAutoma(GraphAutoma):
             tool_spec_list = []
     
         return {
-            "messages": chat_messages,
-            "tools": tool_spec_list,
+            "initial_messages": chat_messages,
+            "candidate_tools": tool_spec_list,
         }
 
     @worker(dependencies=["validate_and_transform"], args_mapping_rule=ArgsMappingRule.UNPACK)
     async def assemble_context(
         self,
         *,
-        messages: Optional[List[ChatMessage]] = None,
-        tools: Optional[List[ToolSpec]] = None,
-        tool_messages: Optional[List[ToolMessage]] = None,
+        initial_messages: Optional[List[ChatMessage]] = None,
+        candidate_tools: Optional[List[ToolSpec]] = None,
+        tool_selection_outputs: Tuple[List[ToolCall], Optional[str]] = From("tool_selector", default=None),
+        tool_result_messages: Optional[List[ToolMessage]] = None,
         rtx = System("runtime_context"),
     ) -> Dict[str, Any]:
+        print(f"\n******* ReActAutoma.assemble_context *******\n")
+        print(f"initial_messages: {initial_messages}")
+        print(f"candidate_tools: {candidate_tools}")
+        print(f"tool_selection_outputs: {tool_selection_outputs}")
+        print(f"tool_result_messages: {tool_result_messages}")
+    
         local_space = self.get_local_space(rtx)
         # Build messages memory with help of local space.
         messages_memory: List[ChatMessage] = []
-        if messages:
+        if initial_messages:
             # If `messages` is provided, use it to re-initialize the messages memory.
-            messages_memory = messages.copy()
+            messages_memory = initial_messages.copy()
         else:
             messages_memory = local_space.get("messages_memory", [])
-        if tool_messages:
-            messages_memory.extend(tool_messages)
+        if tool_selection_outputs:
+            # Transform tools_calls format:
+            tool_calls = tool_selection_outputs[0]
+            tool_calls_list = [
+                FunctionToolCall(
+                    id=tool_call.id,
+                    type="function",
+                    function=Function(
+                        name=tool_call.name,
+                        arguments=tool_call.arguments,
+                    ),
+                ) for tool_call in tool_calls
+            ]
+            llm_response = tool_selection_outputs[1]
+            assistant_message = AssistantTextMessage(
+                role="assistant",
+                # TOD: name?
+                content=llm_response,
+                tool_calls=tool_calls_list,
+            )
+            messages_memory.append(assistant_message)
+        if tool_result_messages:
+            messages_memory.extend(tool_result_messages)
         local_space["messages_memory"] = messages_memory
+        print("--------------------------------")
+        print(f"messages_memory: {messages_memory}")
         
         # Save & retrieve tools with help of local space.
-        if tools:
-            local_space["tools"] = tools
+        if candidate_tools:
+            local_space["tools"] = candidate_tools
         else:
-            tools = local_space.get("tools", [])
+            candidate_tools = local_space.get("tools", [])
 
         # Note: here 'messages' and `tools` are injected into the template as variables.
-        raw_prompt = self._jinja_template.render(messages=messages_memory, tools=tools)
+        raw_prompt = self._jinja_template.render(messages=messages_memory, tools=candidate_tools)
+        print(f"\n ##### raw_prompt ##### \n{raw_prompt}")
 
         # Transform this raw prompt to `List[Message]` format expected by the LLM.
-        msgs_from_template = cast(List[Message], json.loads(raw_prompt))
+        msgs_from_template = cast(List[ChatMessage], json.loads(raw_prompt))
         llm_messages = [transform_chat_message_to_llm_message(message) for message in msgs_from_template]
 
-        llm_tools: List[Tool] = [tool.to_tool() for tool in tools]
+        llm_tools: List[Tool] = [tool.to_tool() for tool in candidate_tools]
         
         return {
             "messages": llm_messages,
@@ -249,7 +281,7 @@ class ReActAutoma(GraphAutoma):
         print(f"tool_calls: {tool_calls}")
         print(f"llm_response: {llm_response}")
         if tool_calls:
-            tool_spec_list = messages_and_tools["tools"]
+            tool_spec_list = messages_and_tools["candidate_tools"]
             matched_list = self._match_tool_calls_and_tool_specs(tool_calls, tool_spec_list)
             if matched_list:
                 matched_tool_calls = []
@@ -278,6 +310,7 @@ class ReActAutoma(GraphAutoma):
                 ...
         else:
             # Got final answer from the LLM.
+            # TODO:
             print(f"\nGot final answer from the LLM: \n{llm_response}")
 
     async def merge_tools_results(
@@ -303,7 +336,7 @@ class ReActAutoma(GraphAutoma):
             self.remove_worker(f"tool_{tool_call.name}")
         # Remove self...
         self.remove_worker("merge_tools_results")
-        self.ferry_to("assemble_context", tool_messages=tool_messages)
+        self.ferry_to("assemble_context", tool_result_messages=tool_messages)
         return tool_messages
 
     def _ensure_tool_spec(self, tool: Union[Callable, Automa, ToolSpec]) -> ToolSpec:

@@ -111,6 +111,12 @@ class ToolSpec(Serializable):
     def tool_parameters(self) -> Optional[Dict[str, Any]]:
         return self._tool_parameters
 
+    def __str__(self) -> str:
+        return f"{self.__class__.__name__}(tool_name={self._tool_name}, tool_description={self._tool_description}, tool_parameters={self._tool_parameters})"
+    
+    def __repr__(self) -> str:
+        return f"<{self.__class__.__name__}(tool_name={self._tool_name}, tool_description={self._tool_description}, tool_parameters={self._tool_parameters})>"
+
     ###############################################################
     ######## Part One of interfaces: Transformations to Tool ######
     ###############################################################
