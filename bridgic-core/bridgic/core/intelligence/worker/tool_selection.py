@@ -56,11 +56,10 @@ class ToolSelectionWorker(Worker):
             else:
                 raise TypeError(f"Invalid `messages` type: {type(message)}, expected `ChatMessage` or `Message`.")
         model_name = "gpt-5-mini"
+        # TODO: model_name should be initialized from the LLM instance.
         print(f"\n******* ToolSelectionWorker.arun *******\n")
-        print(f"model_name: {model_name}")
         print(f"messages: {llm_messages}")
         print(f"tools: {tools}")
-        # TODO: 
         tool_calls, llm_response = await self._tool_selection_llm.aselect_tool(
             model=model_name,
             messages=llm_messages, 

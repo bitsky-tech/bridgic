@@ -22,7 +22,7 @@ dependencies = [
 dev = [
     "pytest>=8.4.0",
     "pytest-asyncio>=1.0.0",
-    "bridgic-llms-openai>=0.1.0.dev5",
+    "bridgic-llms-openai>=0.1.0.dev7",
 ]
 
 [tool.pytest.ini_options]

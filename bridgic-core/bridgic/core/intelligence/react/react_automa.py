@@ -6,7 +6,6 @@ from jinja2 import Environment, PackageLoader, Template
 import json
 
 from bridgic.core.automa import Automa, GraphAutoma, From
-from bridgic.core.intelligence.base_llm import Message
 from bridgic.core.intelligence.protocol import ToolCall, Tool, ToolSelection
 from bridgic.core.automa.interaction import InteractionFeedback
 from bridgic.core.prompt.chat_message import ChatMessage, SystemMessage, UserTextMessage, AssistantTextMessage, ToolMessage
@@ -19,14 +18,6 @@ from bridgic.core.automa.arguments_descriptor import System
 
 DEFAULT_MAX_ITERATIONS = 20
 DEFAULT_TEMPLATE_FILE = "tools_chat.jinja"
-
-## Features:
-# - [1] flexible and convenient input message types.
-# - [2] full support of human interaction, including serialization and deserialization.
-# - [3] customize ToolSpec encoding.
-# - [4] customize tool running concurrency.
-## TODO: customize window composer, different from prompt template?
-
 
 class ReActAutoma(GraphAutoma):
     """
@@ -57,7 +48,6 @@ class ReActAutoma(GraphAutoma):
         thread_pool: Optional[ThreadPoolExecutor] = None,
         max_iterations: int = DEFAULT_MAX_ITERATIONS,
         prompt_template: str = DEFAULT_TEMPLATE_FILE,
-        timeout: Optional[float] = None,
     ):
         super().__init__(name=name, thread_pool=thread_pool)
 
@@ -258,8 +248,8 @@ class ReActAutoma(GraphAutoma):
         raw_prompt = self._jinja_template.render(messages=messages_memory, tools=candidate_tools)
         print(f"\n ##### raw_prompt ##### \n{raw_prompt}")
 
-        # Transform this raw prompt to `List[Message]` format expected by the LLM.
         msgs_from_template = cast(List[ChatMessage], json.loads(raw_prompt))
+        # Transform this raw prompt to `List[Message]` format expected by the LLM.
         llm_messages = [transform_chat_message_to_llm_message(message) for message in msgs_from_template]
 
         llm_tools: List[Tool] = [tool.to_tool() for tool in candidate_tools]
@@ -274,8 +264,21 @@ class ReActAutoma(GraphAutoma):
         self,
         tool_calls: List[ToolCall],
         llm_response: Optional[str] = None,
-        messages_and_tools: dict = From("validate_and_transform")
+        messages_and_tools: dict = From("validate_and_transform"),
+        rtx = System("runtime_context"),
     ) -> None:
+        local_space = self.get_local_space(rtx)
+        iterations_count = local_space.get("iterations_count", 0)
+        iterations_count += 1
+        local_space["iterations_count"] = iterations_count
+        if iterations_count > self._max_iterations:
+            # TODO: how to report this to users?
+            self.ferry_to(
+                "finally_summarize", 
+                final_answer=f"Sorry, I am unable to answer your question after {self._max_iterations} iterations. Please try again later."
+            )
+            return
+
         # TODO: maybe hand over the control flow to users?
         print(f"\n******* ReActAutoma.plan_next_step *******\n")
         print(f"tool_calls: {tool_calls}")
@@ -328,7 +331,9 @@ class ReActAutoma(GraphAutoma):
         for tool_result, tool_call in zip(tool_results, tool_calls):
             tool_messages.append(ToolMessage(
                 role="tool", 
-                content=tool_result, 
+                # Note: Convert the tool result to string, since a tool can return any type of data.
+                # TODO: maybe we can use a better way to serialize the tool result?
+                content=str(tool_result), 
                 tool_call_id=tool_call.id
             ))
             # Remove the tool workers
@@ -343,12 +348,13 @@ class ReActAutoma(GraphAutoma):
         return final_answer
 
     def _ensure_tool_spec(self, tool: Union[Callable, Automa, ToolSpec]) -> ToolSpec:
-        if isinstance(tool, Callable):
-            return FunctionToolSpec.from_raw(tool)
-        elif isinstance(tool, Automa):
-            return AutomaToolSpec.from_raw(tool)
-        elif isinstance(tool, ToolSpec):
+        if isinstance(tool, ToolSpec):
             return tool
+        elif isinstance(tool, type) and issubclass(tool, Automa):
+            return AutomaToolSpec.from_raw(tool)
+        elif isinstance(tool, Callable):
+            # Note: this test against `Callable` should be placed at last.
+            return FunctionToolSpec.from_raw(tool)
         else:
             raise TypeError(f"Invalid tool type: {type(tool)} detected, expected `Callable`, `Automa`, or `ToolSpec`.")
 

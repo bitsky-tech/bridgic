@@ -23,13 +23,17 @@ def transform_chat_message_to_llm_message(message: ChatMessage) -> Message:
         if name:
             extras["name"] = name
         tool_calls = message.get("tool_calls", None)
-        return Message.from_tool_call(
-            text=message["content"],
-            tool_calls=[ToolCallBlock(
+        if tool_calls:
+            tool_call_blocks = [ToolCallBlock(
                 id=tool_call["id"],
                 name=tool_call["function"]["name"],
                 arguments=tool_call["function"]["arguments"],
-            ) for tool_call in tool_calls],
+            ) for tool_call in tool_calls]
+        else:
+            tool_call_blocks = []
+        return Message.from_tool_call(
+            text=message.get("content", None),
+            tool_calls=tool_call_blocks,
         )
     elif role == "tool":
         # tool_call_id is a required field
