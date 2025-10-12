@@ -1231,7 +1231,7 @@ def test_openai_server_tool_call_with_extras(llm: OpenAILlm):
     (_api_key is None) or (_model_name is None),
     reason="OPENAI_API_KEY or OPENAI_MODEL_NAME is not set",
 )
-def test_openai_server_chat_tool_call_roundtrip_conversion(llm: OpenAILlm, tools):
+def test_openai_server_select_tool_tool_call_roundtrip_conversion(llm: OpenAILlm, tools):
     """
     Test roundtrip conversion of tool call messages.
     This test simulates a complete conversation with tool calls.
@@ -1249,7 +1249,7 @@ def test_openai_server_chat_tool_call_roundtrip_conversion(llm: OpenAILlm, tools
         Message.from_text("Get me the weather in Tokyo and news about technology at 2024-01-15.", role=Role.USER),
     ]
     
-    response,_ = llm.select_tool(conversation, model=_model_name, tools=tools)
+    response,msg = llm.select_tool(conversation, model=_model_name, tools=tools)
     print(response)
     assert len(response) == 2
     assert response[0].name == "get_weather"
@@ -1258,11 +1258,7 @@ def test_openai_server_chat_tool_call_roundtrip_conversion(llm: OpenAILlm, tools
     assert response[1].arguments["topic"] == "technology"
     assert response[1].arguments["date"] == "2024-01-15"
     # add ai message with select_tool result to conversation
-    result = Message(
-            role=Role.AI,
-            blocks=[ToolCallBlock(id=tool_call.id, name=tool_call.name, arguments=tool_call.arguments) for tool_call in response]
-    )
-    conversation.append(result)
+    conversation.append(Message.from_tool_call(tool_calls=response, text=msg))
     # add tool result to conversation
     for tool_call in response:
         if tool_call.name == "get_weather":
@@ -1281,6 +1277,63 @@ def test_openai_server_chat_tool_call_roundtrip_conversion(llm: OpenAILlm, tools
             conversation.append(tool_result)
     conversation.append(Message.from_text("Thanks! What about the weather in Paris?", role=Role.USER))
     response,_ = llm.select_tool(conversation, model=_model_name, tools=tools)
+    print(response)
+    assert len(response) == 1
+    assert response[0].name == "get_weather"
+    assert response[0].arguments["city"] == "Paris"
+
+
+@pytest.mark.skipif(
+    (_api_key is None) or (_model_name is None),
+    reason="OPENAI_API_KEY or OPENAI_MODEL_NAME is not set",
+)
+@pytest.mark.asyncio
+async def test_openai_server_aselect_tool_tool_call_roundtrip_conversion(llm: OpenAILlm, tools):
+    """
+    Test roundtrip conversion of tool call messages.
+    This test simulates a complete conversation with tool calls.
+    """
+    def get_weather(city: str):
+        return f"{city} weather: 22°C, sunny with light clouds."
+    def get_news(topic: str, date: str):
+        return f"Latest tech news: {topic} on {date}."
+    # Simulate a complete conversation
+    conversation = [
+        # System message
+        Message.from_text("You are a helpful assistant.", role=Role.SYSTEM),
+        
+        # User message
+        Message.from_text("Get me the weather in Tokyo and news about technology at 2024-01-15.", role=Role.USER),
+    ]
+    
+    response,msg = await llm.aselect_tool(conversation, model=_model_name, tools=tools)
+    print(response)
+    assert len(response) == 2
+    assert response[0].name == "get_weather"
+    assert response[1].name == "get_news"
+    assert response[0].arguments["city"] == "Tokyo"
+    assert response[1].arguments["topic"] == "technology"
+    assert response[1].arguments["date"] == "2024-01-15"
+    # add ai message with select_tool result to conversation
+    conversation.append(Message.from_tool_call(tool_calls=response, text=msg))
+    # add tool result to conversation
+    for tool_call in response:
+        if tool_call.name == "get_weather":
+            result = get_weather(tool_call.arguments["city"])
+            tool_result = Message.from_tool_result(
+                tool_id=tool_call.id,
+                content=result
+            )
+            conversation.append(tool_result)
+        if tool_call.name == "get_news":
+            result = get_news(tool_call.arguments["topic"], tool_call.arguments["date"])
+            tool_result = Message.from_tool_result(
+                tool_id=tool_call.id,
+                content=result
+            )
+            conversation.append(tool_result)
+    conversation.append(Message.from_text("Thanks! What about the weather in Paris?", role=Role.USER))
+    response,_ = await llm.aselect_tool(conversation, model=_model_name, tools=tools)
     print(response)
     assert len(response) == 1
     assert response[0].name == "get_weather"
@@ -1757,3 +1810,442 @@ def test_openai_server_tool_call_integration_scenario(llm: OpenAILlm):
         elif original.role == Role.TOOL:
             printer.print(f"  - Tool call ID: {converted.get('tool_call_id', 'None')}")
             printer.print(f"  - Content preview: {converted.get('content', '')[:50]}...")
+
+
+@pytest.mark.skipif(
+    (_api_key is None) or (_model_name is None),
+    reason="OPENAI_API_KEY or OPENAI_MODEL_NAME is not set",
+)
+def test_openai_server_enhanced_from_tool_call_method(llm: OpenAILlm):
+    """
+    Test the enhanced from_tool_call method that supports multiple tool calls with optional text.
+    """
+    printer.print("Testing enhanced from_tool_call method...")
+    
+    # Test 1: Single tool call with text
+    printer.print("\n=== Test 1: Single tool call with text ===")
+    message1 = Message.from_tool_call(
+        tool_calls={
+            "id": "call_123",
+            "name": "get_weather",
+            "arguments": {"city": "Tokyo", "unit": "celsius"}
+        },
+        text="I will check the weather for you.",
+        role=Role.AI
+    )
+    
+    # Verify message structure
+    assert message1.role == Role.AI
+    assert len(message1.blocks) == 2
+    assert isinstance(message1.blocks[0], TextBlock)
+    assert isinstance(message1.blocks[1], ToolCallBlock)
+    assert message1.blocks[0].text == "I will check the weather for you."
+    assert message1.blocks[1].id == "call_123"
+    assert message1.blocks[1].name == "get_weather"
+    
+    # Convert to OpenAI format
+    converted1 = llm._convert_chat_completions_message(message1)
+    assert converted1["role"] == "assistant"
+    assert converted1["content"] == "I will check the weather for you."
+    assert len(converted1["tool_calls"]) == 1
+    assert converted1["tool_calls"][0]["id"] == "call_123"
+    assert converted1["tool_calls"][0]["function"]["name"] == "get_weather"
+    
+    printer.print("✓ Single tool call with text test passed")
+    
+    # Test 2: Multiple tool calls with text
+    printer.print("\n=== Test 2: Multiple tool calls with text ===")
+    message2 = Message.from_tool_call(
+        tool_calls=[
+            {
+                "id": "call_124",
+                "name": "get_weather",
+                "arguments": {"city": "Tokyo", "unit": "celsius"}
+            },
+            {
+                "id": "call_125",
+                "name": "get_news",
+                "arguments": {"topic": "weather", "city": "Tokyo"}
+            },
+            {
+                "id": "call_126",
+                "name": "get_attractions",
+                "arguments": {"city": "Tokyo", "limit": 5}
+            }
+        ],
+        text="I will get weather, news, and attractions for you.",
+        role=Role.AI
+    )
+    
+    # Verify message structure
+    assert message2.role == Role.AI
+    assert len(message2.blocks) == 4  # 1 TextBlock + 3 ToolCallBlocks
+    assert isinstance(message2.blocks[0], TextBlock)
+    assert message2.blocks[0].text == "I will get weather, news, and attractions for you."
+    
+    # Verify all tool calls
+    tool_call_blocks = [block for block in message2.blocks if isinstance(block, ToolCallBlock)]
+    assert len(tool_call_blocks) == 3
+    assert tool_call_blocks[0].id == "call_124"
+    assert tool_call_blocks[0].name == "get_weather"
+    assert tool_call_blocks[1].id == "call_125"
+    assert tool_call_blocks[1].name == "get_news"
+    assert tool_call_blocks[2].id == "call_126"
+    assert tool_call_blocks[2].name == "get_attractions"
+    
+    # Convert to OpenAI format
+    converted2 = llm._convert_chat_completions_message(message2)
+    assert converted2["role"] == "assistant"
+    assert converted2["content"] == "I will get weather, news, and attractions for you."
+    assert len(converted2["tool_calls"]) == 3
+    
+    # Verify tool call IDs and names
+    tool_call_ids = [tc["id"] for tc in converted2["tool_calls"]]
+    tool_call_names = [tc["function"]["name"] for tc in converted2["tool_calls"]]
+    assert "call_124" in tool_call_ids
+    assert "call_125" in tool_call_ids
+    assert "call_126" in tool_call_ids
+    assert "get_weather" in tool_call_names
+    assert "get_news" in tool_call_names
+    assert "get_attractions" in tool_call_names
+    
+    printer.print("✓ Multiple tool calls with text test passed")
+    
+    # Test 3: Multiple tool calls without text
+    printer.print("\n=== Test 3: Multiple tool calls without text ===")
+    message3 = Message.from_tool_call(
+        tool_calls=[
+            {
+                "id": "call_127",
+                "name": "get_time",
+                "arguments": {"timezone": "UTC"}
+            },
+            {
+                "id": "call_128",
+                "name": "get_date",
+                "arguments": {"format": "iso"}
+            }
+        ],
+        role=Role.AI
+    )
+    
+    # Verify message structure
+    assert message3.role == Role.AI
+    assert len(message3.blocks) == 2  # Only ToolCallBlocks, no TextBlock
+    assert all(isinstance(block, ToolCallBlock) for block in message3.blocks)
+    
+    # Verify tool calls
+    assert message3.blocks[0].id == "call_127"
+    assert message3.blocks[0].name == "get_time"
+    assert message3.blocks[1].id == "call_128"
+    assert message3.blocks[1].name == "get_date"
+    
+    # Convert to OpenAI format
+    converted3 = llm._convert_chat_completions_message(message3)
+    assert converted3["role"] == "assistant"
+    assert converted3["content"] == ""  # Empty content when no text
+    assert len(converted3["tool_calls"]) == 2
+    
+    printer.print("✓ Multiple tool calls without text test passed")
+    
+    # Test 4: Edge case - empty tool calls list
+    printer.print("\n=== Test 4: Edge case - empty tool calls list ===")
+    try:
+        message4 = Message.from_tool_call(
+            tool_calls=[],
+            text="This should not work.",
+            role=Role.AI
+        )
+        # This should not raise an error, but should create a message with only text
+        assert len(message4.blocks) == 1
+        assert isinstance(message4.blocks[0], TextBlock)
+        assert message4.blocks[0].text == "This should not work."
+        
+        converted4 = llm._convert_chat_completions_message(message4)
+        assert converted4["role"] == "assistant"
+        assert converted4["content"] == "This should not work."
+        assert "tool_calls" not in converted4
+        
+        printer.print("✓ Empty tool calls list handled correctly")
+    except Exception as e:
+        printer.print(f"❌ Empty tool calls list failed: {e}")
+        raise
+    
+    # Test 5: Complex arguments
+    printer.print("\n=== Test 5: Complex arguments ===")
+    message5 = Message.from_tool_call(
+        tool_calls=[
+            {
+                "id": "call_129",
+                "name": "search_hotels",
+                "arguments": {
+                    "city": "Tokyo",
+                    "check_in": "2024-03-15",
+                    "check_out": "2024-03-18",
+                    "guests": 2,
+                    "preferences": {
+                        "amenities": ["wifi", "pool", "gym"],
+                        "price_range": {"min": 100, "max": 300},
+                        "rating": 4.0
+                    }
+                }
+            }
+        ],
+        text="I will search for hotels in Tokyo with your preferences.",
+        role=Role.AI
+    )
+    
+    # Verify complex arguments are preserved
+    tool_call_block = message5.blocks[1]  # Second block should be the tool call
+    assert tool_call_block.arguments["city"] == "Tokyo"
+    assert tool_call_block.arguments["guests"] == 2
+    assert tool_call_block.arguments["preferences"]["amenities"] == ["wifi", "pool", "gym"]
+    assert tool_call_block.arguments["preferences"]["price_range"]["min"] == 100
+    
+    # Convert to OpenAI format
+    converted5 = llm._convert_chat_completions_message(message5)
+    assert converted5["role"] == "assistant"
+    assert converted5["content"] == "I will search for hotels in Tokyo with your preferences."
+    assert len(converted5["tool_calls"]) == 1
+    
+    # Verify arguments are properly serialized
+    import json
+    serialized_args = json.loads(converted5["tool_calls"][0]["function"]["arguments"])
+    assert serialized_args["city"] == "Tokyo"
+    assert serialized_args["guests"] == 2
+    assert serialized_args["preferences"]["amenities"] == ["wifi", "pool", "gym"]
+    
+    printer.print("✓ Complex arguments test passed")
+    
+    printer.print("\n=== Enhanced from_tool_call method test summary ===")
+    printer.print("✓ Single tool call with text")
+    printer.print("✓ Multiple tool calls with text")
+    printer.print("✓ Multiple tool calls without text")
+    printer.print("✓ Empty tool calls list handling")
+    printer.print("✓ Complex arguments support")
+    printer.print("✓ OpenAI format conversion")
+    
+    printer.print("\nEnhanced from_tool_call method test completed successfully!")
+
+
+@pytest.mark.skipif(
+    (_api_key is None) or (_model_name is None),
+    reason="OPENAI_API_KEY or OPENAI_MODEL_NAME is not set",
+)
+def test_openai_server_flexible_from_tool_call_parameters(llm: OpenAILlm):
+    """
+    Test the flexible from_tool_call method that supports various parameter types.
+    """
+    printer.print("Testing flexible from_tool_call method with various parameter types...")
+    
+    # Test 1: Single ToolCallBlock
+    printer.print("\n=== Test 1: Single ToolCallBlock ===")
+    tool_call_block = ToolCallBlock(
+        id="call_133",
+        name="get_weather",
+        arguments={"city": "Tokyo", "unit": "celsius"}
+    )
+    
+    message1 = Message.from_tool_call(
+        tool_calls=tool_call_block,
+        text="I will check the weather for you.",
+        role=Role.AI
+    )
+    
+    # Verify message structure
+    assert message1.role == Role.AI
+    assert len(message1.blocks) == 2
+    assert isinstance(message1.blocks[0], TextBlock)
+    assert isinstance(message1.blocks[1], ToolCallBlock)
+    assert message1.blocks[1].id == "call_133"
+    assert message1.blocks[1].name == "get_weather"
+    
+    # Convert to OpenAI format
+    converted1 = llm._convert_chat_completions_message(message1)
+    assert converted1["role"] == "assistant"
+    assert converted1["content"] == "I will check the weather for you."
+    assert len(converted1["tool_calls"]) == 1
+    assert converted1["tool_calls"][0]["id"] == "call_133"
+    
+    printer.print("✓ Single ToolCallBlock test passed")
+    
+    # Test 2: List of ToolCallBlocks
+    printer.print("\n=== Test 2: List of ToolCallBlocks ===")
+    tool_call_blocks = [
+        ToolCallBlock(
+            id="call_134",
+            name="get_weather",
+            arguments={"city": "Tokyo", "unit": "celsius"}
+        ),
+        ToolCallBlock(
+            id="call_135",
+            name="get_news",
+            arguments={"topic": "weather", "city": "Tokyo"}
+        ),
+        ToolCallBlock(
+            id="call_136",
+            name="get_attractions",
+            arguments={"city": "Tokyo", "limit": 5}
+        )
+    ]
+    
+    message2 = Message.from_tool_call(
+        tool_calls=tool_call_blocks,
+        text="I will get weather, news, and attractions for you.",
+        role=Role.AI
+    )
+    
+    # Verify message structure
+    assert message2.role == Role.AI
+    assert len(message2.blocks) == 4  # 1 TextBlock + 3 ToolCallBlocks
+    assert isinstance(message2.blocks[0], TextBlock)
+    
+    # Verify all tool calls
+    tool_call_blocks_result = [block for block in message2.blocks if isinstance(block, ToolCallBlock)]
+    assert len(tool_call_blocks_result) == 3
+    assert tool_call_blocks_result[0].id == "call_134"
+    assert tool_call_blocks_result[0].name == "get_weather"
+    assert tool_call_blocks_result[1].id == "call_135"
+    assert tool_call_blocks_result[1].name == "get_news"
+    assert tool_call_blocks_result[2].id == "call_136"
+    assert tool_call_blocks_result[2].name == "get_attractions"
+    
+    # Convert to OpenAI format
+    converted2 = llm._convert_chat_completions_message(message2)
+    assert converted2["role"] == "assistant"
+    assert converted2["content"] == "I will get weather, news, and attractions for you."
+    assert len(converted2["tool_calls"]) == 3
+    
+    printer.print("✓ List of ToolCallBlocks test passed")
+    
+    # Test 3: Mixed list (dicts and ToolCallBlocks)
+    printer.print("\n=== Test 3: Mixed list (dicts and ToolCallBlocks) ===")
+    mixed_tool_calls = [
+        {
+            "id": "call_137",
+            "name": "get_weather",
+            "arguments": {"city": "Tokyo", "unit": "celsius"}
+        },
+        ToolCallBlock(
+            id="call_138",
+            name="get_news",
+            arguments={"topic": "weather", "city": "Tokyo"}
+        ),
+        {
+            "id": "call_139",
+            "name": "get_attractions",
+            "arguments": {"city": "Tokyo", "limit": 5}
+        }
+    ]
+    
+    message3 = Message.from_tool_call(
+        tool_calls=mixed_tool_calls,
+        text="I will get weather, news, and attractions for you.",
+        role=Role.AI
+    )
+    
+    # Verify message structure
+    assert message3.role == Role.AI
+    assert len(message3.blocks) == 4  # 1 TextBlock + 3 ToolCallBlocks
+    assert isinstance(message3.blocks[0], TextBlock)
+    
+    # Verify all tool calls
+    tool_call_blocks_result = [block for block in message3.blocks if isinstance(block, ToolCallBlock)]
+    assert len(tool_call_blocks_result) == 3
+    assert tool_call_blocks_result[0].id == "call_137"
+    assert tool_call_blocks_result[0].name == "get_weather"
+    assert tool_call_blocks_result[1].id == "call_138"
+    assert tool_call_blocks_result[1].name == "get_news"
+    assert tool_call_blocks_result[2].id == "call_139"
+    assert tool_call_blocks_result[2].name == "get_attractions"
+    
+    # Convert to OpenAI format
+    converted3 = llm._convert_chat_completions_message(message3)
+    assert converted3["role"] == "assistant"
+    assert converted3["content"] == "I will get weather, news, and attractions for you."
+    assert len(converted3["tool_calls"]) == 3
+    
+    # Verify tool call IDs and names
+    tool_call_ids = [tc["id"] for tc in converted3["tool_calls"]]
+    tool_call_names = [tc["function"]["name"] for tc in converted3["tool_calls"]]
+    assert "call_137" in tool_call_ids
+    assert "call_138" in tool_call_ids
+    assert "call_139" in tool_call_ids
+    assert "get_weather" in tool_call_names
+    assert "get_news" in tool_call_names
+    assert "get_attractions" in tool_call_names
+    
+    printer.print("✓ Mixed list test passed")
+    
+    # Test 4: Error handling - invalid format
+    printer.print("\n=== Test 4: Error handling - invalid format ===")
+    try:
+        # This should raise a ValueError
+        Message.from_tool_call(
+            tool_calls="invalid_format",
+            text="This should fail.",
+            role=Role.AI
+        )
+        printer.print("❌ Error handling test failed - should have raised ValueError")
+        assert False, "Should have raised ValueError for invalid format"
+    except ValueError as e:
+        printer.print(f"✓ Error handling test passed - caught ValueError: {e}")
+    except Exception as e:
+        printer.print(f"❌ Unexpected error: {e}")
+        raise
+    
+    # Test 5: Complex ToolCallBlock with nested arguments
+    printer.print("\n=== Test 5: Complex ToolCallBlock with nested arguments ===")
+    complex_tool_call = ToolCallBlock(
+        id="call_140",
+        name="search_hotels",
+        arguments={
+            "city": "Tokyo",
+            "check_in": "2024-03-15",
+            "check_out": "2024-03-18",
+            "guests": 2,
+            "preferences": {
+                "amenities": ["wifi", "pool", "gym"],
+                "price_range": {"min": 100, "max": 300},
+                "rating": 4.0
+            }
+        }
+    )
+    
+    message5 = Message.from_tool_call(
+        tool_calls=complex_tool_call,
+        text="I will search for hotels in Tokyo with your preferences.",
+        role=Role.AI
+    )
+    
+    # Verify complex arguments are preserved
+    tool_call_block = message5.blocks[1]  # Second block should be the tool call
+    assert tool_call_block.arguments["city"] == "Tokyo"
+    assert tool_call_block.arguments["guests"] == 2
+    assert tool_call_block.arguments["preferences"]["amenities"] == ["wifi", "pool", "gym"]
+    assert tool_call_block.arguments["preferences"]["price_range"]["min"] == 100
+    
+    # Convert to OpenAI format
+    converted5 = llm._convert_chat_completions_message(message5)
+    assert converted5["role"] == "assistant"
+    assert converted5["content"] == "I will search for hotels in Tokyo with your preferences."
+    assert len(converted5["tool_calls"]) == 1
+    
+    # Verify arguments are properly serialized
+    import json
+    serialized_args = json.loads(converted5["tool_calls"][0]["function"]["arguments"])
+    assert serialized_args["city"] == "Tokyo"
+    assert serialized_args["guests"] == 2
+    assert serialized_args["preferences"]["amenities"] == ["wifi", "pool", "gym"]
+    
+    printer.print("✓ Complex ToolCallBlock test passed")
+    
+    printer.print("\n=== Flexible from_tool_call method test summary ===")
+    printer.print("✓ Single ToolCallBlock")
+    printer.print("✓ List of ToolCallBlocks")
+    printer.print("✓ Mixed list (dicts and ToolCallBlocks)")
+    printer.print("✓ Error handling for invalid formats")
+    printer.print("✓ Complex arguments support")
+    printer.print("✓ OpenAI format conversion")
+    
+    printer.print("\nFlexible from_tool_call method test completed successfully!")

@@ -3,6 +3,7 @@ from typing import List, Generator, AsyncGenerator
 from enum import Enum
 
 from bridgic.core.intelligence.content import *
+# from bridgic.core.intelligence.protocol import ToolCall
 from bridgic.core.types.serialization import Serializable
 
 class Role(str, Enum):
@@ -40,23 +41,31 @@ class Message(BaseModel):
     @classmethod
     def from_tool_call(
         cls,
-        tool_id: str,
-        tool_name: str,
-        arguments: Dict[str, Any],
+        tool_calls: Union[
+            Dict[str, Any], 
+            List[Dict[str, Any]], 
+            "ToolCallBlock", 
+            List["ToolCallBlock"],
+            # "ToolCall",
+            # List["ToolCall"]
+        ],
+        text: Optional[str] = None,
         role: Union[Role, str] = Role.AI,
         extras: Optional[Dict[str, Any]] = {},
     ) -> "Message":
         """
-        Create a message with a tool call block.
+        Create a message with tool call blocks and optional text content.
         
         Parameters
         ----
-        tool_id : str
-            The ID of the tool call
-        tool_name : str
-            The name of the tool to call
-        arguments : Dict[str, Any]
-            The arguments to pass to the tool
+        tool_calls : Union[Dict[str, Any], List[Dict[str, Any]], ToolCallBlock, List[ToolCallBlock]]
+            Tool call data in various formats:
+            - Single tool call dict: {"id": "call_123", "name": "get_weather", "arguments": {...}}
+            - List of tool call dicts: [{"id": "call_123", ...}, {"id": "call_124", ...}]
+            - Single ToolCallBlock instance
+            - List of ToolCallBlock instances
+        text : Optional[str], optional
+            Optional text content to include in the message
         role : Union[Role, str], optional
             The role of the message (default is Role.AI)
         extras : Optional[Dict[str, Any]], optional
@@ -65,23 +74,93 @@ class Message(BaseModel):
         Returns
         ----
         Message
-            A message containing the tool call block
+            A message containing the tool call blocks and optional text
             
         Examples
         -----
+        # Single tool call dict
         >>> message = Message.from_tool_call(
-        ...     tool_id="call_123",
-        ...     tool_name="get_weather",
-        ...     arguments={"city": "Tokyo", "unit": "celsius"}
+        ...     tool_calls={
+        ...         "id": "call_123",
+        ...         "name": "get_weather",
+        ...         "arguments": {"city": "Tokyo", "unit": "celsius"}
+        ...     },
+        ...     text="I will check the weather for you."
         ... )
+        
+        # Multiple tool call dicts
+        >>> message = Message.from_tool_call(
+        ...     tool_calls=[
+        ...         {"id": "call_123", "name": "get_weather", "arguments": {"city": "Tokyo"}},
+        ...         {"id": "call_124", "name": "get_news", "arguments": {"topic": "weather"}}
+        ...     ],
+        ...     text="I will get weather and news for you."
+        ... )
+        
+        # Single ToolCallBlock
+        >>> tool_call = ToolCallBlock(id="call_123", name="get_weather", arguments={"city": "Tokyo"})
+        >>> message = Message.from_tool_call(tool_calls=tool_call, text="I will check the weather.")
+        
+        # Multiple ToolCallBlocks
+        >>> tool_calls = [
+        ...     ToolCallBlock(id="call_123", name="get_weather", arguments={"city": "Tokyo"}),
+        ...     ToolCallBlock(id="call_124", name="get_news", arguments={"topic": "weather"})
+        ... ]
+        >>> message = Message.from_tool_call(tool_calls=tool_calls, text="I will get weather and news.")
         """
         if isinstance(role, str):
             role = Role(role)
-        return cls(
-            role=role, 
-            blocks=[ToolCallBlock(id=tool_id, name=tool_name, arguments=arguments)], 
-            extras=extras
-        )
+        
+        blocks = []
+        
+        # Add text content if provided
+        if text:
+            blocks.append(TextBlock(text=text))
+        
+        # Handle different tool_calls formats
+        if isinstance(tool_calls, dict):
+            # Single tool call dict
+            blocks.append(ToolCallBlock(
+                id=tool_calls["id"],
+                name=tool_calls["name"],
+                arguments=tool_calls["arguments"]
+            ))
+        elif isinstance(tool_calls, list):
+            # List of tool calls (dicts or ToolCallBlocks)
+            for tool_call in tool_calls:
+                if isinstance(tool_call, dict):
+                    # Tool call dict
+                    blocks.append(ToolCallBlock(
+                        id=tool_call["id"],
+                        name=tool_call["name"],
+                        arguments=tool_call["arguments"]
+                    ))
+                elif hasattr(tool_call, 'id') and hasattr(tool_call, 'name') and hasattr(tool_call, 'arguments'):
+                    # ToolCallBlock instance - check if it's already a ToolCallBlock
+                    if isinstance(tool_call, ToolCallBlock):
+                        blocks.append(tool_call)
+                    else:
+                        blocks.append(ToolCallBlock(
+                            id=tool_call.id,
+                            name=tool_call.name,
+                            arguments=tool_call.arguments
+                        ))
+                else:
+                    raise ValueError(f"Invalid tool call format: {tool_call}")
+        elif hasattr(tool_calls, 'id') and hasattr(tool_calls, 'name') and hasattr(tool_calls, 'arguments'):
+            # Single ToolCallBlock instance
+            if isinstance(tool_calls, ToolCallBlock):
+                blocks.append(tool_calls)
+            else:
+                blocks.append(ToolCallBlock(
+                    id=tool_calls.id,
+                    name=tool_calls.name,
+                    arguments=tool_calls.arguments
+                ))
+        else:
+            raise ValueError(f"Invalid tool_calls format: {type(tool_calls)}")
+        
+        return cls(role=role, blocks=blocks, extras=extras)
 
     @classmethod
     def from_tool_result(
