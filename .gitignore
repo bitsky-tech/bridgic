@@ -6,3 +6,4 @@ dist/
 docs/site
 docs/debug.log
 .cursor
+.env
