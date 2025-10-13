@@ -1,9 +1,10 @@
 from abc import ABC, abstractmethod
-from typing import List, Generator, AsyncGenerator
+from typing import List, Generator, AsyncGenerator, TYPE_CHECKING
 from enum import Enum
 
 from bridgic.core.intelligence.content import *
-# from bridgic.core.intelligence.protocol import ToolCall
+if TYPE_CHECKING:
+    from bridgic.core.intelligence.protocol import ToolCall
 from bridgic.core.types.serialization import Serializable
 
 class Role(str, Enum):
@@ -44,13 +45,10 @@ class Message(BaseModel):
         tool_calls: Union[
             Dict[str, Any], 
             List[Dict[str, Any]], 
-            "ToolCallBlock", 
-            List["ToolCallBlock"],
-            # "ToolCall",
-            # List["ToolCall"]
+            "ToolCall",
+            List["ToolCall"]
         ],
         text: Optional[str] = None,
-        role: Union[Role, str] = Role.AI,
         extras: Optional[Dict[str, Any]] = {},
     ) -> "Message":
         """
@@ -58,16 +56,14 @@ class Message(BaseModel):
         
         Parameters
         ----
-        tool_calls : Union[Dict[str, Any], List[Dict[str, Any]], ToolCallBlock, List[ToolCallBlock]]
+        tool_calls : Union[Dict[str, Any], List[Dict[str, Any]], ToolCall, List[ToolCall]]
             Tool call data in various formats:
             - Single tool call dict: {"id": "call_123", "name": "get_weather", "arguments": {...}}
             - List of tool call dicts: [{"id": "call_123", ...}, {"id": "call_124", ...}]
-            - Single ToolCallBlock instance
-            - List of ToolCallBlock instances
+            - Single ToolCall instance
+            - List of ToolCall instances
         text : Optional[str], optional
             Optional text content to include in the message
-        role : Union[Role, str], optional
-            The role of the message (default is Role.AI)
         extras : Optional[Dict[str, Any]], optional
             Additional metadata for the message
             
@@ -97,19 +93,18 @@ class Message(BaseModel):
         ...     text="I will get weather and news for you."
         ... )
         
-        # Single ToolCallBlock
-        >>> tool_call = ToolCallBlock(id="call_123", name="get_weather", arguments={"city": "Tokyo"})
+        # Single ToolCall
+        >>> tool_call = ToolCall(id="call_123", name="get_weather", arguments={"city": "Tokyo"})
         >>> message = Message.from_tool_call(tool_calls=tool_call, text="I will check the weather.")
         
-        # Multiple ToolCallBlocks
+        # Multiple ToolCall
         >>> tool_calls = [
-        ...     ToolCallBlock(id="call_123", name="get_weather", arguments={"city": "Tokyo"}),
-        ...     ToolCallBlock(id="call_124", name="get_news", arguments={"topic": "weather"})
+        ...     ToolCall(id="call_123", name="get_weather", arguments={"city": "Tokyo"}),
+        ...     ToolCall(id="call_124", name="get_news", arguments={"topic": "weather"})
         ... ]
         >>> message = Message.from_tool_call(tool_calls=tool_calls, text="I will get weather and news.")
         """
-        if isinstance(role, str):
-            role = Role(role)
+        role = Role(Role.AI)
         
         blocks = []
         
@@ -120,13 +115,9 @@ class Message(BaseModel):
         # Handle different tool_calls formats
         if isinstance(tool_calls, dict):
             # Single tool call dict
-            blocks.append(ToolCallBlock(
-                id=tool_calls["id"],
-                name=tool_calls["name"],
-                arguments=tool_calls["arguments"]
-            ))
-        elif isinstance(tool_calls, list):
-            # List of tool calls (dicts or ToolCallBlocks)
+            tool_calls = [tool_calls]
+        if isinstance(tool_calls, list):
+            # List of tool calls (dicts or ToolCall)
             for tool_call in tool_calls:
                 if isinstance(tool_call, dict):
                     # Tool call dict
@@ -136,27 +127,19 @@ class Message(BaseModel):
                         arguments=tool_call["arguments"]
                     ))
                 elif hasattr(tool_call, 'id') and hasattr(tool_call, 'name') and hasattr(tool_call, 'arguments'):
-                    # ToolCallBlock instance - check if it's already a ToolCallBlock
-                    if isinstance(tool_call, ToolCallBlock):
-                        blocks.append(tool_call)
-                    else:
-                        blocks.append(ToolCallBlock(
-                            id=tool_call.id,
-                            name=tool_call.name,
-                            arguments=tool_call.arguments
-                        ))
+                    blocks.append(ToolCallBlock(
+                        id=tool_call.id,
+                        name=tool_call.name,
+                        arguments=tool_call.arguments
+                    ))
                 else:
                     raise ValueError(f"Invalid tool call format: {tool_call}")
         elif hasattr(tool_calls, 'id') and hasattr(tool_calls, 'name') and hasattr(tool_calls, 'arguments'):
-            # Single ToolCallBlock instance
-            if isinstance(tool_calls, ToolCallBlock):
-                blocks.append(tool_calls)
-            else:
-                blocks.append(ToolCallBlock(
-                    id=tool_calls.id,
-                    name=tool_calls.name,
-                    arguments=tool_calls.arguments
-                ))
+            blocks.append(ToolCallBlock(
+                id=tool_calls.id,
+                name=tool_calls.name,
+                arguments=tool_calls.arguments
+            ))
         else:
             raise ValueError(f"Invalid tool_calls format: {type(tool_calls)}")
         
@@ -167,7 +150,6 @@ class Message(BaseModel):
         cls,
         tool_id: str,
         content: str,
-        role: Union[Role, str] = Role.TOOL,
         extras: Optional[Dict[str, Any]] = {},
     ) -> "Message":
         """
@@ -179,8 +161,6 @@ class Message(BaseModel):
             The ID of the tool call that this result corresponds to
         content : str
             The result content from the tool execution
-        role : Union[Role, str], optional
-            The role of the message (default is Role.TOOL)
         extras : Optional[Dict[str, Any]], optional
             Additional metadata for the message
             
@@ -196,8 +176,7 @@ class Message(BaseModel):
         ...     content="The weather in Tokyo is 22°C and sunny."
         ... )
         """
-        if isinstance(role, str):
-            role = Role(role)
+        role = Role(Role.TOOL)
         return cls(
             role=role, 
             blocks=[ToolResultBlock(id=tool_id, content=content)], 

@@ -892,84 +892,6 @@ def test_openai_server_function_call_error_handling(llm: OpenAILlm):
     printer.print("Function call error handling test passed!")
     printer.print(f"Error result: {error_block.model_dump()}")
 
-
-@pytest.mark.skipif(
-    (_api_key is None) or (_model_name is None),
-    reason="OPENAI_API_KEY or OPENAI_MODEL_NAME is not set",
-)
-def test_openai_server_from_tool_methods(llm: OpenAILlm):
-    """
-    Test the new from_tool_call and from_tool_result methods.
-    This test demonstrates the simplified API for creating tool-related messages.
-    """
-    # Test from_tool_call method
-    tool_call_message = Message.from_tool_call(
-        tool_id="call_simple_123",
-        tool_name="calculate",
-        arguments={"operation": "add", "a": 5, "b": 3}
-    )
-    
-    # Verify the tool call message
-    assert tool_call_message.role == Role.AI  # Default role
-    assert len(tool_call_message.blocks) == 1
-    assert isinstance(tool_call_message.blocks[0], ToolCallBlock)
-    
-    tool_call_block = tool_call_message.blocks[0]
-    assert tool_call_block.id == "call_simple_123"
-    assert tool_call_block.name == "calculate"
-    assert tool_call_block.arguments["operation"] == "add"
-    assert tool_call_block.arguments["a"] == 5
-    assert tool_call_block.arguments["b"] == 3
-    
-    # Test from_tool_result method
-    tool_result_message = Message.from_tool_result(
-        tool_id="call_simple_123",
-        content="The result is 8."
-    )
-    
-    # Verify the tool result message
-    assert tool_result_message.role == Role.TOOL  # Default role
-    assert len(tool_result_message.blocks) == 1
-    assert isinstance(tool_result_message.blocks[0], ToolResultBlock)
-    
-    tool_result_block = tool_result_message.blocks[0]
-    assert tool_result_block.id == "call_simple_123"
-    assert tool_result_block.content == "The result is 8."
-    
-    # Test with custom role
-    custom_tool_call = Message.from_tool_call(
-        tool_id="call_custom_456",
-        tool_name="get_time",
-        arguments={"timezone": "UTC"},
-        role=Role.USER  # Custom role
-    )
-    assert custom_tool_call.role == Role.USER
-    
-    custom_tool_result = Message.from_tool_result(
-        tool_id="call_custom_456",
-        content="Current time: 2024-01-15 10:30:00 UTC",
-        role=Role.AI  # Custom role
-    )
-    assert custom_tool_result.role == Role.AI
-    
-    # Test with extras
-    tool_call_with_extras = Message.from_tool_call(
-        tool_id="call_extras_789",
-        tool_name="search",
-        arguments={"query": "Python programming"},
-        extras={"priority": "high", "source": "user_request"}
-    )
-    assert tool_call_with_extras.extras["priority"] == "high"
-    assert tool_call_with_extras.extras["source"] == "user_request"
-    
-    printer.print("from_tool methods test passed!")
-    printer.print(f"Tool call message: {tool_call_message.model_dump()}")
-    printer.print(f"Tool result message: {tool_result_message.model_dump()}")
-    printer.print(f"Custom role tool call: {custom_tool_call.model_dump()}")
-    printer.print(f"Custom role tool result: {custom_tool_result.model_dump()}")
-    printer.print(f"Tool call with extras: {tool_call_with_extras.model_dump()}")
-
-
 @pytest.mark.skipif(
     (_api_key is None) or (_model_name is None),
     reason="OPENAI_API_KEY or OPENAI_MODEL_NAME is not set",
@@ -1837,7 +1759,6 @@ def test_openai_server_enhanced_from_tool_call_method(llm: OpenAILlm):
             "arguments": {"city": "Tokyo", "unit": "celsius"}
         },
         text="I will check the weather for you.",
-        role=Role.AI
     )
     
     # Verify message structure
@@ -1880,7 +1801,6 @@ def test_openai_server_enhanced_from_tool_call_method(llm: OpenAILlm):
             }
         ],
         text="I will get weather, news, and attractions for you.",
-        role=Role.AI
     )
     
     # Verify message structure
@@ -1932,7 +1852,6 @@ def test_openai_server_enhanced_from_tool_call_method(llm: OpenAILlm):
                 "arguments": {"format": "iso"}
             }
         ],
-        role=Role.AI
     )
     
     # Verify message structure
@@ -1960,7 +1879,6 @@ def test_openai_server_enhanced_from_tool_call_method(llm: OpenAILlm):
         message4 = Message.from_tool_call(
             tool_calls=[],
             text="This should not work.",
-            role=Role.AI
         )
         # This should not raise an error, but should create a message with only text
         assert len(message4.blocks) == 1
@@ -1998,7 +1916,6 @@ def test_openai_server_enhanced_from_tool_call_method(llm: OpenAILlm):
             }
         ],
         text="I will search for hotels in Tokyo with your preferences.",
-        role=Role.AI
     )
     
     # Verify complex arguments are preserved
@@ -2055,7 +1972,6 @@ def test_openai_server_flexible_from_tool_call_parameters(llm: OpenAILlm):
     message1 = Message.from_tool_call(
         tool_calls=tool_call_block,
         text="I will check the weather for you.",
-        role=Role.AI
     )
     
     # Verify message structure
@@ -2098,7 +2014,6 @@ def test_openai_server_flexible_from_tool_call_parameters(llm: OpenAILlm):
     message2 = Message.from_tool_call(
         tool_calls=tool_call_blocks,
         text="I will get weather, news, and attractions for you.",
-        role=Role.AI
     )
     
     # Verify message structure
@@ -2147,7 +2062,6 @@ def test_openai_server_flexible_from_tool_call_parameters(llm: OpenAILlm):
     message3 = Message.from_tool_call(
         tool_calls=mixed_tool_calls,
         text="I will get weather, news, and attractions for you.",
-        role=Role.AI
     )
     
     # Verify message structure
@@ -2190,7 +2104,6 @@ def test_openai_server_flexible_from_tool_call_parameters(llm: OpenAILlm):
         Message.from_tool_call(
             tool_calls="invalid_format",
             text="This should fail.",
-            role=Role.AI
         )
         printer.print("❌ Error handling test failed - should have raised ValueError")
         assert False, "Should have raised ValueError for invalid format"
@@ -2221,7 +2134,6 @@ def test_openai_server_flexible_from_tool_call_parameters(llm: OpenAILlm):
     message5 = Message.from_tool_call(
         tool_calls=complex_tool_call,
         text="I will search for hotels in Tokyo with your preferences.",
-        role=Role.AI
     )
     
     # Verify complex arguments are preserved
