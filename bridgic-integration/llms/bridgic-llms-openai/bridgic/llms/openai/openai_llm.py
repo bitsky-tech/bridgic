@@ -1114,7 +1114,7 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
         self.api_base = state_dict["api_base"]
         self.api_key = state_dict["api_key"]
         self.timeout = state_dict["timeout"]
-        self.configuration = OpenAIConfiguration(**state_dict["configuration"])
+        self.configuration = OpenAIConfiguration(**state_dict.get("configuration", {}))
         self.http_client = None
         self.http_async_client = None
 
