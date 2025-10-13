@@ -15,8 +15,8 @@ nav:
     - Examples: home/examples.md
   - Tutorials:
     - Index: tutorials/index.md
-    - Worker: tutorials/worker.ipynb
-    - Llm: tutorials/llm.ipynb
+    - Logic Arrangement: tutorials/logic_arrangement.ipynb
+    - Model Usage: tutorials/model_usage.ipynb
     - Parameter Passing: tutorials/parameter_passing.ipynb
     - Dynamic Router: tutorials/dynamic_router.ipynb
     # - Dynamic DAG: tutorials/dynamic_dag.ipynb
