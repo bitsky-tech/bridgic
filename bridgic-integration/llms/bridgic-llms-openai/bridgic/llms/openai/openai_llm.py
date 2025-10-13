@@ -194,62 +194,24 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
         Response
             A response object containing the generated message and raw API response.
         """
-        msgs: List[ChatCompletionMessageParam] = [self._convert_chat_completions_message(msg) for msg in messages]
-        
-        # Handle tools parameter - convert to list if provided, otherwise use empty list
-        json_desc_tools = [self._convert_tool_to_json(tool) for tool in tools] if tools is not None else None
-        # Build parameters dictionary and filter out None values
-        # The priority order is as follows: configuration passed through the interface > configuration of the instance itself.
-        params = merge_dict(self.configuration.model_dump(), {
-            "messages": msgs,
-            "model": model,
-            "temperature": temperature,
-            "top_p": top_p,
-            "presence_penalty": presence_penalty,
-            "frequency_penalty": frequency_penalty,
-            "max_tokens": max_tokens,
-            "stop": stop,
-            "tools": json_desc_tools,
-            "extra_body": extra_body,
+        params = self._build_parameters(
+            messages=messages,
+            model=model,
+            temperature=temperature,
+            top_p=top_p,
+            presence_penalty=presence_penalty,
+            frequency_penalty=frequency_penalty,
+            max_tokens=max_tokens,
+            stop=stop,
+            tools=tools,
+            extra_body=extra_body,
             **kwargs,
-        })
-        
+        )
         # Validate required parameters for non-streaming chat completion
         validate_required_params(params, ["messages", "model"])
         
         response: ChatCompletion = self.client.chat.completions.create(**params)
-        openai_message = response.choices[0].message
-        text = openai_message.content if openai_message.content else ""
-        if openai_message.refusal:
-            warnings.warn(openai_message.refusal, RuntimeWarning)
-
-        # Handle tool calls in the response
-        if openai_message.tool_calls:
-            # Create a message with both text content and tool calls
-            blocks = []
-            if text:
-                blocks.append(TextBlock(text=text))
-            else:
-                # Ensure there's always some text content, even if empty
-                blocks.append(TextBlock(text=""))
-            
-            for tool_call in openai_message.tool_calls:
-                tool_call_block = ToolCallBlock(
-                    id=tool_call.id,
-                    name=tool_call.function.name,
-                    arguments=json.loads(tool_call.function.arguments)
-                )
-                blocks.append(tool_call_block)
-            
-            message = Message(role=Role.AI, blocks=blocks)
-        else:
-            # Regular text response
-            message = Message.from_text(text, role=Role.AI)
-
-        return Response(
-            message=message,
-            raw=response,
-        )
+        return self._handle_chat_response(response)
 
     def stream(
         self,
@@ -310,26 +272,19 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
         This method enables real-time streaming of the model's response,
         useful for providing incremental updates to users as the response is generated.
         """
-        msgs: List[ChatCompletionMessageParam] = [self._convert_chat_completions_message(msg) for msg in messages]
-        # Build parameters dictionary and merge with None-value filtering
-        merge_params = merge_dict(
-            self.configuration.model_dump(),
-            {
-                "messages": msgs,
-                "model": model,
-                "stream": True,
-                "temperature": temperature,
-                "top_p": top_p,
-                "presence_penalty": presence_penalty,
-                "frequency_penalty": frequency_penalty,
-                "max_tokens": max_tokens,
-                "stop": stop,
-                "extra_body": extra_body,
-                **kwargs,
-            }
+        params = self._build_parameters(
+            messages=messages,
+            model=model,
+            temperature=temperature,
+            top_p=top_p,
+            presence_penalty=presence_penalty,
+            frequency_penalty=frequency_penalty,
+            max_tokens=max_tokens,
+            stop=stop,
+            extra_body=extra_body,
+            stream=True,
+            **kwargs,
         )
-        # Build parameters dictionary and filter out None values
-        params = filter_dict(merge_params, exclude_none=True)
         # Validate required parameters for streaming chat completion
         validate_required_params(params, ["messages", "model", "stream"])
         
@@ -401,66 +356,24 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
         This is the asynchronous version of the chat method, suitable for
         concurrent processing and non-blocking I/O operations.
         """
-        msgs: List[ChatCompletionMessageParam] = [self._convert_chat_completions_message(msg) for msg in messages]
-        
-        # Handle tools parameter - convert to list if provided, otherwise use empty list
-        json_desc_tools = [self._convert_tool_to_json(tool) for tool in tools] if tools is not None else None
-        # Build parameters dictionary and merge with None-value filtering
-        merge_params = merge_dict(
-            self.configuration.model_dump(),
-            {
-                "messages": msgs,
-                "model": model,
-                "temperature": temperature,
-                "top_p": top_p,
-                "presence_penalty": presence_penalty,
-                "frequency_penalty": frequency_penalty,
-                "max_tokens": max_tokens,
-                "stop": stop,
-                "tools": json_desc_tools,
-                "extra_body": extra_body,
-                **kwargs,
-            }
+        params = self._build_parameters(
+            messages=messages,
+            model=model,
+            temperature=temperature,
+            top_p=top_p,
+            presence_penalty=presence_penalty,
+            frequency_penalty=frequency_penalty,
+            max_tokens=max_tokens,
+            stop=stop,
+            tools=tools,
+            extra_body=extra_body,
+            **kwargs,
         )
-        # Build parameters dictionary and filter out None values
-        params = filter_dict(merge_params, exclude_none=True)
         # Validate required parameters for non-streaming chat completion
         validate_required_params(params, ["messages", "model"])
         
         response = await self.async_client.chat.completions.create(**params)
-        openai_message: ChatCompletionMessage = response.choices[0].message
-        text: str = openai_message.content if openai_message.content else ""
-
-        if openai_message.refusal:
-            warnings.warn(openai_message.refusal, RuntimeWarning)
-
-        # Handle tool calls in the response
-        if openai_message.tool_calls:
-            # Create a message with both text content and tool calls
-            blocks = []
-            if text:
-                blocks.append(TextBlock(text=text))
-            else:
-                # Ensure there's always some text content, even if empty
-                blocks.append(TextBlock(text=""))
-            
-            for tool_call in openai_message.tool_calls:
-                tool_call_block = ToolCallBlock(
-                    id=tool_call.id,
-                    name=tool_call.function.name,
-                    arguments=json.loads(tool_call.function.arguments)
-                )
-                blocks.append(tool_call_block)
-            
-            message = Message(role=Role.AI, blocks=blocks)
-        else:
-            # Regular text response
-            message = Message.from_text(text, role=Role.AI)
-
-        return Response(
-            message=message,
-            raw=response,
-        )
+        return self._handle_chat_response(response)
 
     async def astream(
         self,
@@ -521,27 +434,19 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
         This is the asynchronous version of the stream method, suitable for
         concurrent processing and non-blocking streaming operations.
         """
-        msgs: List[ChatCompletionMessageParam] = [self._convert_chat_completions_message(msg) for msg in messages]
-        
-        # Build parameters dictionary and merge with None-value filtering
-        merge_params = merge_dict(
-            self.configuration.model_dump(),
-            {
-                "messages": msgs,
-                "model": model,
-                "stream": True,
-                "temperature": temperature,
-                "top_p": top_p,
-                "presence_penalty": presence_penalty,
-                "frequency_penalty": frequency_penalty,
-                "max_tokens": max_tokens,
-                "stop": stop,
-                "extra_body": extra_body,
-                **kwargs,
-            }
+        params = self._build_parameters(
+            messages=messages,
+            model=model,
+            temperature=temperature,
+            top_p=top_p,
+            presence_penalty=presence_penalty,
+            frequency_penalty=frequency_penalty,
+            max_tokens=max_tokens,
+            stop=stop,
+            extra_body=extra_body,
+            stream=True,
+            **kwargs,
         )
-        # Build parameters dictionary and filter out None values
-        params = filter_dict(merge_params, exclude_none=True)
         # Validate required parameters for streaming chat completion
         validate_required_params(params, ["messages", "model", "stream"])
         
@@ -551,6 +456,87 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
                 delta_content = chunk.choices[0].delta.content
                 delta_content = delta_content if delta_content else ""
                 yield MessageChunk(delta=delta_content, raw=chunk)
+
+    def _build_parameters(
+        self,
+        messages: List[Message],
+        model: Optional[str] = None,
+        temperature: Optional[float] = None,
+        top_p: Optional[float] = None,
+        presence_penalty: Optional[float] = None,
+        frequency_penalty: Optional[float] = None,
+        max_tokens: Optional[int] = None,
+        stop: Optional[List[str]] = None,
+        tools: Optional[List[Tool]] = None,
+        extra_body: Optional[Dict[str, Any]] = None,
+        stream: Optional[bool] = None,
+        response_format: Optional[Dict[str, Any]] = None,
+        tool_choice: Optional[ChatCompletionToolChoiceOptionParam] = None,
+        parallel_tool_calls: Optional[bool] = None,
+        **kwargs,
+    ) -> Dict[str, Any]:
+        msgs: List[ChatCompletionMessageParam] = [self._convert_chat_completions_message(msg) for msg in messages]
+        
+        # Handle tools parameter - convert to list if provided, otherwise use empty list
+        json_desc_tools = [self._convert_tool_to_json(tool) for tool in tools] if tools is not None else None
+        
+        # Build parameters dictionary and filter out None values
+        # The priority order is as follows: configuration passed through the interface > configuration of the instance itself.
+        merge_params = merge_dict(self.configuration.model_dump(), {
+            "messages": msgs,
+            "model": model,
+            "temperature": temperature,
+            "top_p": top_p,
+            "presence_penalty": presence_penalty,
+            "frequency_penalty": frequency_penalty,
+            "max_tokens": max_tokens,
+            "stop": stop,
+            "tools": json_desc_tools,
+            "extra_body": extra_body,
+            "stream": stream,
+            "response_format": response_format,
+            "tool_choice": tool_choice,
+            "parallel_tool_calls": parallel_tool_calls,
+            **kwargs,
+        })
+        
+        params = filter_dict(merge_params, exclude_none=True)
+        return params
+
+    def _handle_chat_response(self, response: ChatCompletion) -> Response:
+        openai_message = response.choices[0].message
+        text = openai_message.content if openai_message.content else ""
+        
+        if openai_message.refusal:
+            warnings.warn(openai_message.refusal, RuntimeWarning)
+
+        # Handle tool calls in the response
+        if openai_message.tool_calls:
+            # Create a message with both text content and tool calls
+            blocks = []
+            if text:
+                blocks.append(TextBlock(text=text))
+            else:
+                # Ensure there's always some text content, even if empty
+                blocks.append(TextBlock(text=""))
+            
+            for tool_call in openai_message.tool_calls:
+                tool_call_block = ToolCallBlock(
+                    id=tool_call.id,
+                    name=tool_call.function.name,
+                    arguments=json.loads(tool_call.function.arguments)
+                )
+                blocks.append(tool_call_block)
+            
+            message = Message(role=Role.AI, blocks=blocks)
+        else:
+            # Regular text response
+            message = Message.from_text(text, role=Role.AI)
+
+        return Response(
+            message=message,
+            raw=response,
+        )
 
     def _convert_chat_completions_message(self, message: Message) -> ChatCompletionMessageParam:
         """
@@ -749,26 +735,17 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
         - All schemas automatically have additionalProperties set to False
         - Best performance achieved with GPT-4o and later models (gpt-4o-mini, gpt-4o-2024-08-06, and later)
         """
-        msgs: List[ChatCompletionMessageParam] = [self._convert_chat_completions_message(msg) for msg in messages]
-        # support JsonSchema, PydanticModel
-        
-        # Build parameters dictionary and merge with None-value filtering
-        merge_params = merge_dict(
-            self.configuration.model_dump(),
-            {
-                "messages": msgs,
-                "model": model,
-                "temperature": temperature,
-                "top_p": top_p,
-                "presence_penalty": presence_penalty,
-                "frequency_penalty": frequency_penalty,
-                "response_format": self._get_response_format(constraint),
-                "extra_body": extra_body,
-                **kwargs,
-            }
+        params = self._build_parameters(
+            messages=messages,
+            model=model,
+            temperature=temperature,
+            top_p=top_p,
+            presence_penalty=presence_penalty,
+            frequency_penalty=frequency_penalty,
+            extra_body=extra_body,
+            response_format=self._get_response_format(constraint),
+            **kwargs,
         )
-        # Build parameters dictionary and filter out None values
-        params = filter_dict(merge_params, exclude_none=True)
         # Validate required parameters for structured output
         validate_required_params(params, ["messages", "model"])
         
@@ -852,25 +829,17 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
         - Suitable for concurrent processing and high-throughput applications
         - Best performance achieved with GPT-4o and later models (gpt-4o-mini, gpt-4o-2024-08-06, and later)
         """
-        msgs: List[ChatCompletionMessageParam] = [self._convert_chat_completions_message(msg) for msg in messages]
-        
-        # Build parameters dictionary and merge with None-value filtering
-        merge_params = merge_dict(
-            self.configuration.model_dump(),
-            {
-                "messages": msgs,
-                "model": model,
-                "temperature": temperature,
-                "top_p": top_p,
-                "presence_penalty": presence_penalty,
-                "frequency_penalty": frequency_penalty,
-                "response_format": self._get_response_format(constraint),
-                "extra_body": extra_body,
-                **kwargs,
-            }
+        params = self._build_parameters(
+            messages=messages,
+            model=model,
+            temperature=temperature,
+            top_p=top_p,
+            presence_penalty=presence_penalty,
+            frequency_penalty=frequency_penalty,
+            extra_body=extra_body,
+            response_format=self._get_response_format(constraint),
+            **kwargs,
         )
-        # Build parameters dictionary and filter out None values
-        params = filter_dict(merge_params, exclude_none=True)
         # Validate required parameters for structured output
         validate_required_params(params, ["messages", "model"])
         
@@ -986,28 +955,19 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
         Union[str, None]
             The content of the message from the model.
         """
-        json_desc_tools = [self._convert_tool_to_json(tool) for tool in tools]
-        msgs: List[ChatCompletionMessageParam] = [self._convert_chat_completions_message(msg) for msg in messages]
-        
-        # Build parameters dictionary and merge with None-value filtering
-        merge_params = merge_dict(
-            self.configuration.model_dump(),
-            {
-                "model": model,
-                "messages": msgs,
-                "temperature": temperature,
-                "top_p": top_p,
-                "presence_penalty": presence_penalty,
-                "frequency_penalty": frequency_penalty,
-                "tools": json_desc_tools,
-                "tool_choice": tool_choice,
-                "parallel_tool_calls": parallel_tool_calls,
-                "extra_body": extra_body,
-                **kwargs,
-            }
+        params = self._build_parameters(
+            messages=messages,
+            model=model,
+            temperature=temperature,
+            top_p=top_p,
+            presence_penalty=presence_penalty,
+            frequency_penalty=frequency_penalty,
+            tools=tools,
+            tool_choice=tool_choice,
+            parallel_tool_calls=parallel_tool_calls,
+            extra_body=extra_body,
+            **kwargs,
         )
-        # Build parameters dictionary and filter out None values
-        params = filter_dict(merge_params, exclude_none=True)
         # Validate required parameters for tool selection
         validate_required_params(params, ["messages", "model"])
         
@@ -1081,28 +1041,19 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
         Union[str, None]
             The content of the message from the model.
         """
-        json_desc_tools = [self._convert_tool_to_json(tool) for tool in tools]
-        msgs: List[ChatCompletionMessageParam] = [self._convert_chat_completions_message(msg) for msg in messages]
-        
-        # Build parameters dictionary and merge with None-value filtering
-        merge_params = merge_dict(
-            self.configuration.model_dump(),
-            {
-                "model": model,
-                "messages": msgs,
-                "temperature": temperature,
-                "top_p": top_p,
-                "presence_penalty": presence_penalty,
-                "frequency_penalty": frequency_penalty,
-                "tools": json_desc_tools,
-                "tool_choice": tool_choice,
-                "parallel_tool_calls": parallel_tool_calls,
-                "extra_body": extra_body,
-                **kwargs,
-            }
+        params = self._build_parameters(
+            messages=messages,
+            model=model,
+            temperature=temperature,
+            top_p=top_p,
+            presence_penalty=presence_penalty,
+            frequency_penalty=frequency_penalty,
+            tools=tools,
+            tool_choice=tool_choice,
+            parallel_tool_calls=parallel_tool_calls,
+            extra_body=extra_body,
+            **kwargs,
         )
-        # Build parameters dictionary and filter out None values
-        params = filter_dict(merge_params, exclude_none=True)
         # Validate required parameters for tool selection
         validate_required_params(params, ["messages", "model"])
         
