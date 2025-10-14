@@ -1,5 +1,6 @@
 import httpx
 import warnings
+import json
 
 from typing import List, Dict, Any, Optional
 from typing_extensions import override
@@ -10,6 +11,7 @@ from openai.types.chat.chat_completion_system_message_param import ChatCompletio
 from openai.types.chat.chat_completion_user_message_param import ChatCompletionUserMessageParam
 from openai.types.chat.chat_completion_assistant_message_param import ChatCompletionAssistantMessageParam
 from openai.types.chat.chat_completion_tool_message_param import ChatCompletionToolMessageParam
+from openai.types.chat.chat_completion_message_function_tool_call_param import ChatCompletionMessageFunctionToolCallParam
 from pydantic import BaseModel
 
 from bridgic.core.intelligence.base_llm import *
@@ -385,7 +387,13 @@ class OpenAILikeLlm(BaseLlm):
         })
         return filter_dict(merge_params, exclude_none=True)
 
-    def _convert_message(self, message: Message) -> ChatCompletionMessageParam:
+    def _convert_message(self, message: Message, strict: bool = False) -> ChatCompletionMessageParam:
+        if strict:
+            return self._convert_message_strict(message)
+        else:
+            return self._convert_message_normal(message)
+
+    def _convert_message_normal(self, message: Message) -> ChatCompletionMessageParam:
         content_list = []
         for block in message.blocks:
             if isinstance(block, TextBlock):
@@ -412,6 +420,42 @@ class OpenAILikeLlm(BaseLlm):
         else:
             raise ValueError(f"Invalid role: {message.role}")
 
+    def _convert_message_strict(self, message: Message) -> ChatCompletionMessageParam:
+        content_list = []
+        tool_call_list = []
+        tool_result = ""
+        tool_result_call_id = None
+
+        for block in message.blocks:
+            if isinstance(block, TextBlock):
+                content_list.append(block.text)
+            if isinstance(block, ToolCallBlock):
+                tool_call: ChatCompletionMessageFunctionToolCallParam = {
+                    "type": "function",
+                    "id": block.id,
+                    "function": {
+                        "name": block.name,
+                        "arguments": json.dumps(block.arguments),
+                    },
+                }
+                tool_call_list.append(tool_call)
+            if isinstance(block, ToolResultBlock):
+                tool_result = block.content
+                tool_result_call_id = block.id
+
+        content_txt = "\n\n".join(content_list)
+
+        if message.role == Role.SYSTEM:
+            return ChatCompletionSystemMessageParam(content=content_txt, role="system")
+        elif message.role == Role.USER:
+            return ChatCompletionUserMessageParam(content=content_txt, role="user")
+        elif message.role == Role.AI:
+            return ChatCompletionAssistantMessageParam(content=content_txt, tool_calls=tool_call_list, role="assistant")
+        elif message.role == Role.TOOL:
+            content_txt = "\n\n".join([content_txt, tool_result])
+            return ChatCompletionToolMessageParam(content=content_txt, tool_call_id=tool_result_call_id, role="tool")
+        else:
+            raise ValueError(f"Invalid role: {message.role}")
 
     @override
     def dump_to_dict(self) -> Dict[str, Any]:
