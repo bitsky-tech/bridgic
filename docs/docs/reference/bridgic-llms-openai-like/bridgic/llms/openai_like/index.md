@@ -1,12 +1,10 @@
-# worker_decorator
+# openai_like
 
-> Bridgic Core
-
-::: bridgic.core.automa.worker_decorator
+::: bridgic.llms.openai_like
     options:
       show_source: true
-      show_root_heading: true
-      show_root_toc_entry: true
+      show_root_heading: false
+      show_root_toc_entry: false
       docstring_options:
         ignore_init_summary: true
       filters:
@@ -16,3 +14,4 @@
       merge_init_into_class: false
       separate_signature: true
       signature_crossrefs: true
+      summary: false

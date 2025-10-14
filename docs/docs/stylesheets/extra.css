@@ -94,25 +94,9 @@
 }
 
 /* ========================================== */
-/* CODE BLOCK STYLES */
+/* CODE BLOCK STYLES: use Material defaults  */
 /* ========================================== */
-
-/* Enhanced code blocks with rounded corners */
-.md-typeset .highlight {
-  border-radius: 0.5rem;
-  overflow: hidden;
-}
-
-/* Code block filename styling */
-.md-typeset .highlight .filename {
-  background: var(--md-code-bg-color);
-  border-bottom: 1px solid var(--md-default-fg-color--lightest);
-  color: var(--md-default-fg-color--light);
-  font-size: 0.75rem;
-  font-weight: 700;
-  padding: 0.5rem 1rem;
-  margin: 0;
-}
+/* We intentionally avoid overriding code block layout to match langgraph-docs. */
 
 /* ========================================== */
 /* ADMONITION STYLES */
@@ -207,11 +191,12 @@
 
 /* Special heading styling for documentation sections */
 .doc-heading {
-  padding: 1rem;
-  background: var(--bridgic-primary-light);
-  border-left: 4px solid var(--bridgic-purple);
-  border-radius: 0 0.5rem 0.5rem 0;
-  margin: 1.5rem 0 1rem 0;
+  /* Lighter, more neutral look similar to langgraph */
+  padding: 0;
+  background: transparent;
+  border-left: 0;
+  border-radius: 0;
+  margin: 0;
 }
 
 /* Documentation heading text styling */
@@ -219,7 +204,7 @@
 .doc-heading h2,
 .doc-heading h3 {
   margin: 0;
-  color: var(--bridgic-purple);
+  color: inherit; /* keep headings consistent with theme */
 }
 
 /* ========================================== */
@@ -288,6 +273,28 @@
   --md-default-bg-color--lightest: #4a4a4a;
 }
 
+/* Soften quote borders (regular blockquote + details.quote) */
+.md-typeset blockquote {
+  border-left-color: var(--md-default-fg-color--lightest);
+}
+
+.md-typeset details.quote {
+  border-color: var(--md-default-fg-color--lightest);
+}
+
+[data-md-color-scheme="slate"] .md-typeset blockquote {
+  border-left-color: rgba(255, 255, 255, 0.12);
+}
+
+[data-md-color-scheme="slate"] .md-typeset details.quote {
+  border-color: rgba(255, 255, 255, 0.12);
+}
+
+/* Remove drop shadows from details components (including quote/source blocks) */
+.md-typeset details {
+  box-shadow: none !important;
+}
+
 /* Dark mode hero section */
 [data-md-color-scheme="slate"] .md-typeset .hero {
   background: #4338ca;
@@ -295,15 +302,15 @@
 
 /* Dark mode documentation headings */
 [data-md-color-scheme="slate"] .doc-heading {
-  background: rgba(167, 139, 250, 0.1);
-  border-left-color: #a78bfa;
+  background: transparent;
+  border: 0;
 }
 
 /* Dark mode heading text colors */
 [data-md-color-scheme="slate"] .doc-heading h1,
 [data-md-color-scheme="slate"] .doc-heading h2,
 [data-md-color-scheme="slate"] .doc-heading h3 {
-  color: #a78bfa;
+  color: inherit;
 }
 
 /* ========================================== */
@@ -382,3 +389,114 @@
 .badge--deprecated {
   background: #ef4444; /* Red for deprecated features */
 }
+
+/* ========================================== */
+/* API REFERENCE SYMBOL BADGES (func / meth)  */
+/* Mirrors the behavior used in langgraph-docs */
+/* ========================================== */
+
+/* Base style for symbol badges injected by custom mkdocstrings template */
+.doc-symbol {
+  display: inline-block;
+  vertical-align: middle;
+  border-radius: 0.375rem; /* slightly rounder, more premium */
+  background: var(--bridgic-primary);
+  color: #fff;
+  font-weight: 700; /* a bit bolder */
+  font-size: 0.75rem; /* larger for presence */
+  line-height: 1.15;
+  padding: 0.12rem 0.45rem; /* roomier */
+  margin-right: 0.4rem;
+  text-transform: lowercase;
+  letter-spacing: 0.2px; /* subtle tracking for air */
+  opacity: 0.98;
+}
+
+/* Size/context variants */
+.doc-symbol-heading {
+  font-size: 0.8rem; /* Larger in headings */
+}
+
+.doc-symbol-toc {
+  font-size: 0.66rem; /* Compact in ToC but readable */
+  opacity: 0.95;
+}
+
+/* Symbol type content */
+.doc-symbol-function::after {
+  content: "func";
+}
+
+.doc-symbol-method::after {
+  content: "meth";
+}
+
+/* Improve spacing when placed before titles */
+.doc .doc-heading .doc-symbol-heading + .doc-function-name,
+.doc .doc-heading .doc-symbol-heading + .doc-object-name {
+  margin-left: 0.125rem;
+}
+
+/* ToC alignment for symbol + text */
+.md-nav__link .doc-symbol-toc {
+  position: relative;
+  top: -0.02rem; /* Optical alignment */
+}
+
+/* Dark mode adjustments for contrast */
+[data-md-color-scheme="slate"] .doc-symbol {
+  background: #4f46e5; /* Keep strong contrast in dark mode */
+  color: #fff;
+}
+
+/* ========================================== */
+/* API REFERENCE TYPOGRAPHY & SPACING         */
+/* ========================================== */
+
+/* Scope tweaks to mkdocstrings objects only to avoid global overrides */
+.md-typeset .doc.doc-object {
+  margin: 1.1rem 0 1.25rem 0;
+}
+
+/* Heading block for functions/classes inside API reference */
+.md-typeset .doc .doc-heading {
+  margin: 0.4rem 0 0.6rem 0;
+}
+
+/* Level mapping in mkdocstrings pages typically starts from h2 under content */
+.md-typeset .doc h2.doc-heading { /* Top-level object (e.g., class/function) */
+  font-size: 1.35rem;
+  font-weight: 700;
+}
+
+.md-typeset .doc h3.doc-heading { /* Members of class / nested objects */
+  font-size: 1.2rem;
+  font-weight: 650;
+}
+
+.md-typeset .doc h4.doc-heading { /* Subsections like Parameters/Returns */
+  font-size: 1.05rem;
+  font-weight: 600;
+}
+
+/* Lists inside API sections: slightly tighter for dense reference pages */
+.md-typeset .doc ul,
+.md-typeset .doc ol {
+  margin-top: 0.25rem;
+  margin-bottom: 0.75rem;
+}
+
+/* Parameter/attribute tables usually inherit Material styles; add subtle spacing */
+.md-typeset .doc table:not([class]) {
+  margin: 0.75rem 0 1rem 0;
+}
+
+/* Docstring paragraph spacing trimmed slightly */
+.md-typeset .doc p {
+  margin: 0.35rem 0 0.6rem 0;
+}
+
+/* Dark mode keeps the same proportions */
+[data-md-color-scheme="slate"] .md-typeset .doc h2.doc-heading { font-size: 1.35rem; }
+[data-md-color-scheme="slate"] .md-typeset .doc h3.doc-heading { font-size: 1.2rem; }
+[data-md-color-scheme="slate"] .md-typeset .doc h4.doc-heading { font-size: 1.05rem; }
