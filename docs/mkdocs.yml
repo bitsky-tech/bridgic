@@ -15,10 +15,11 @@ nav:
     - Examples: home/examples.md
   - Tutorials:
     - Index: tutorials/index.md
-    - Logic Arrangement: tutorials/logic_arrangement.ipynb
-    - Model Usage: tutorials/model_usage.ipynb
-    - Parameter Passing: tutorials/parameter_passing.ipynb
-    - Dynamic Router: tutorials/dynamic_router.ipynb
+    - Logic Arrangement: tutorials/notebooks/logic_arrangement.ipynb
+    - Model Usage: tutorials/notebooks/model_usage.ipynb
+    - Parameter Passing: tutorials/notebooks/parameter_passing.ipynb
+    - Dynamic Router: tutorials/notebooks/dynamic_router.ipynb
+    - Interaction Event: tutorials/notebooks/interaction_event.ipynb
     # - Dynamic DAG: tutorials/dynamic_dag.ipynb
   - API Reference:
       - Index: reference/bridgic-core/index.md

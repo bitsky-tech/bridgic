@@ -9,9 +9,10 @@ In this tutorial, we’ll assume that Bridgic is already installed on your syste
 This tutorial will walk you through these tasks:
 
 1. [Logic Arrangement](logic_arrangement.ipynb): Write the logic arragenment using Bridgic.
-2. [model_usage](llm.ipynb): Use model in Bridgic.
-2. [Parameter Passing](parameter_passing.ipynb): Three ways of data transmission in Bridgic, including Arguments Mapping, Arguments Injection,  Inputs Propagation.
-3. [Dynamic Router](dynamic_router.ipynb): Dynamically determine the next execution worker at runtime.
+2. [Model Usage](llm.ipynb): Use model in Bridgic.
+3. [Parameter Passing](parameter_passing.ipynb): Three ways of data transmission in Bridgic, including Arguments Mapping, Arguments Injection,  Inputs Propagation.
+4. [Dynamic Router](dynamic_router.ipynb): Dynamically determine the next execution worker at runtime.
+5. [Interaction Event](interaction_event.ipynb): Interaction with the external environment during operation
 <!-- 3. [Dynamic DAG](dynamic_dag.ipynb): Dynamically add or remove worker to change the execution DAG at runtime. -->
 
 
