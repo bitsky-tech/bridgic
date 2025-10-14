@@ -1,5 +1,5 @@
 version = 1
-revision = 2
+revision = 3
 requires-python = ">=3.9"
 
 [[package]]
@@ -180,22 +180,33 @@ wheels = [
 
 [[package]]
 name = "bridgic-core"
-version = "0.1.0.dev10"
-source = { registry = "http://8.130.156.165:3141/btsk/test/+simple" }
+version = "0.1.0.dev16"
+source = { directory = "../../../bridgic-core" }
 dependencies = [
     { name = "docstring-parser" },
     { name = "jinja2" },
     { name = "msgpack" },
     { name = "pydantic" },
 ]
-sdist = { url = "http://8.130.156.165:3141/btsk/test/+f/1b5/c43e84d1519a4/bridgic_core-0.1.0.dev10.tar.gz", hash = "sha256:1b5c43e84d1519a4e3489ff3cab51c589919ba0641f46be05159b5ab704d0164" }
-wheels = [
-    { url = "http://8.130.156.165:3141/btsk/test/+f/f00/d409a01503f52/bridgic_core-0.1.0.dev10-py3-none-any.whl", hash = "sha256:f00d409a01503f5222448ba26d451861aaf0f139a84407b0066d8b2679e1c2cf" },
+
+[package.metadata]
+requires-dist = [
+    { name = "docstring-parser", specifier = ">=0.16.0" },
+    { name = "jinja2", specifier = ">=3.1.0" },
+    { name = "msgpack", specifier = ">=1.1.1" },
+    { name = "pydantic", specifier = ">=2.8.0" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "bridgic-llms-openai", specifier = ">=0.1.0.dev8", index = "http://8.130.156.165:3141/btsk/test/+simple" },
+    { name = "pytest", specifier = ">=8.4.0" },
+    { name = "pytest-asyncio", specifier = ">=1.0.0" },
 ]
 
 [[package]]
 name = "bridgic-llms-openai-like"
-version = "0.1.0.dev4"
+version = "0.1.0.dev8"
 source = { editable = "." }
 dependencies = [
     { name = "bridgic-core" },
@@ -212,7 +223,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "bridgic-core", specifier = ">=0.1.0.dev10", index = "http://8.130.156.165:3141/btsk/test/+simple" },
+    { name = "bridgic-core", directory = "../../../bridgic-core" },
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "httpx-aiohttp", specifier = ">=0.1.8" },
     { name = "openai", specifier = ">=1.60.0" },
