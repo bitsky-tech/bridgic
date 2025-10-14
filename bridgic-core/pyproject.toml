@@ -22,6 +22,7 @@ dependencies = [
 dev = [
     "pytest>=8.4.0",
     "pytest-asyncio>=1.0.0",
+    "bridgic-llms-openai>=0.1.0.dev8",
 ]
 
 [tool.pytest.ini_options]
@@ -33,6 +34,9 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build]
 include = ["bridgic/"]
+
+[tool.uv.sources]
+bridgic-llms-openai = { index = "btsk-repo" }
 
 [[tool.uv.index]]
 name = "btsk-repo"

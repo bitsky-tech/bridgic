@@ -148,6 +148,7 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
         frequency_penalty: Optional[float] = None,
         max_tokens: Optional[int] = None,
         stop: Optional[List[str]] = None,
+        tools: Optional[List[Tool]] = None,
         extra_body: Optional[Dict[str, Any]] = None,
         **kwargs,
     ) -> Response:
@@ -181,6 +182,8 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
         stop : Optional[List[str]]
             Up to 4 sequences where the API will stop generating further tokens.
             Not supported with latest reasoning models `o3` and `o3-mini`.
+        tools : Optional[List[Tool]]
+            A list of tools to use in the chat completion.
         extra_body : Optional[Dict[str, Any]]
             Add additional JSON properties to the request.
         **kwargs
@@ -301,6 +304,7 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
         frequency_penalty: Optional[float] = None,
         max_tokens: Optional[int] = None,
         stop: Optional[List[str]] = None,
+        tools: Optional[List[Tool]] = None,
         extra_body: Optional[Dict[str, Any]] = None,
         **kwargs,
     ) -> Response:
@@ -334,6 +338,8 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
         stop : Optional[List[str]]
             Up to 4 sequences where the API will stop generating further tokens.
             Not supported with latest reasoning models `o3` and `o3-mini`.
+        tools : Optional[List[Tool]]
+            A list of tools to use in the chat completion.
         extra_body : Optional[Dict[str, Any]]
             Add additional JSON properties to the request.
         **kwargs

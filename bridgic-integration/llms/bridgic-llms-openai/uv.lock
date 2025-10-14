@@ -199,6 +199,7 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "bridgic-llms-openai", specifier = ">=0.1.0.dev8", index = "http://8.130.156.165:3141/btsk/test/+simple" },
     { name = "pytest", specifier = ">=8.4.0" },
     { name = "pytest-asyncio", specifier = ">=1.0.0" },
 ]

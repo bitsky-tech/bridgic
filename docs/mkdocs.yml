@@ -23,6 +23,7 @@ nav:
               - Automa: reference/bridgic-core/bridgic/core/automa/automa.md
               - Concurrent Automa: reference/bridgic-core/bridgic/core/automa/concurrent_automa.md
               - Graph Automa: reference/bridgic-core/bridgic/core/automa/graph_automa.md
+              - Graph Meta: reference/bridgic-core/bridgic/core/automa/graph_meta.md
               - Interaction:
                 - Event Handling: reference/bridgic-core/bridgic/core/automa/interaction/event_handling.md
                 - Human Interaction: reference/bridgic-core/bridgic/core/automa/interaction/human_interaction.md
@@ -36,10 +37,18 @@ nav:
               - Base LLM: reference/bridgic-core/bridgic/core/intelligence/base_llm.md
               - Content: reference/bridgic-core/bridgic/core/intelligence/content.md
               - Protocol: reference/bridgic-core/bridgic/core/intelligence/protocol.md
+              - React:
+                - React Automa: reference/bridgic-core/bridgic/core/intelligence/react/react_automa.md
+              - Tool Spec: reference/bridgic-core/bridgic/core/intelligence/tool_spec.md
+              - Worker:
+                - Tool Selection: reference/bridgic-core/bridgic/core/intelligence/worker/tool_selection.md
             - Prompt:
               - Base Template: reference/bridgic-core/bridgic/core/prompt/base_template.md
+              - Chat Message: reference/bridgic-core/bridgic/core/prompt/chat_message.md
               - Ejinja Template: reference/bridgic-core/bridgic/core/prompt/ejinja_template.md
               - Fstring Template: reference/bridgic-core/bridgic/core/prompt/fstring_template.md
+              - Utils:
+                - Prompt Utils: reference/bridgic-core/bridgic/core/prompt/utils/prompt_utils.md
             - Types:
               - Common: reference/bridgic-core/bridgic/core/types/common.md
               - Error: reference/bridgic-core/bridgic/core/types/error.md
@@ -50,6 +59,7 @@ nav:
               - Collection: reference/bridgic-core/bridgic/core/utils/collection.md
               - Console: reference/bridgic-core/bridgic/core/utils/console.md
               - Inspect Tools: reference/bridgic-core/bridgic/core/utils/inspect_tools.md
+              - JSON Schema: reference/bridgic-core/bridgic/core/utils/json_schema.md
               - Msgpackx: reference/bridgic-core/bridgic/core/utils/msgpackx.md
 
   - About: about/index.md
