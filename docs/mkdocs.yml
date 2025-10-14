@@ -15,11 +15,12 @@ nav:
     - Examples: home/examples.md
   - Tutorials:
     - Index: tutorials/index.md
-    - Logic Arrangement: tutorials/notebooks/logic_arrangement.ipynb
+    - Logic Arrangement: tutorials/notebooks/getting_started.ipynb
     - Model Usage: tutorials/notebooks/model_usage.ipynb
     - Parameter Passing: tutorials/notebooks/parameter_passing.ipynb
     - Dynamic Router: tutorials/notebooks/dynamic_router.ipynb
     - Interaction Event: tutorials/notebooks/interaction_event.ipynb
+    - Nested Automa: tutorials/notebooks/nested_automa.ipynb
     # - Dynamic DAG: tutorials/dynamic_dag.ipynb
   - API Reference:
       - Index: reference/bridgic-core/index.md
