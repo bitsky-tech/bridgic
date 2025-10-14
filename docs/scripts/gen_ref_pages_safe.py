@@ -450,14 +450,14 @@ class DocumentationGenerator:
                 
                 if source_path.name == '__init__.py':
                     # Special index page content sourced from __init__.py
-                    docstring, exports = self._parse_init_doc_and_all(source_path)
-                    if docstring:
-                        fd.write(f"{docstring}\n\n")
-                    if exports:
-                        fd.write("## Exports\n\n")
-                        for name in exports:
-                            fd.write(f"- `{name}`\n")
-                        fd.write("\n")
+                    # docstring, exports = self._parse_init_doc_and_all(source_path)
+                    # if docstring:
+                    #     fd.write(f"{docstring}\n\n")
+                    # if exports:
+                    #     fd.write("## Exports\n\n")
+                    #     for name in exports:
+                    #         fd.write(f"- `{name}`\n")
+                    #     fd.write("\n")
                     # Also include mkdocstrings block for the package itself
                     fd.write(f"::: {identifier}\n")
                     fd.write("    options:\n")

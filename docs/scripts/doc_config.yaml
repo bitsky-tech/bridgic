@@ -52,11 +52,11 @@ generation_options:
   # Whether to show source code
   show_source: true
   
-  # Whether to show root heading
-  show_root_heading: true
+  # Whether to show root heading (module-level). We prefer starting at class level.
+  show_root_heading: false
   
-  # Whether to show root toc entry
-  show_root_toc_entry: true
+  # Whether to show root toc entry (module-level link in toc)
+  show_root_toc_entry: false
   
   # Whether to generate index pages
   generate_index_pages: true
@@ -79,6 +79,7 @@ mkdocstrings_options:
   merge_init_into_class: false
   separate_signature: true
   signature_crossrefs: true
+  summary: false
 
 # Logging configuration
 logging:
