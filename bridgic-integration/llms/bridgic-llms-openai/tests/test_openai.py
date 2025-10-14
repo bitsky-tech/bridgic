@@ -2350,7 +2350,10 @@ def test_openai_parameter_validation_tool_selection(llm: OpenAILlm, tools):
             messages=[Message.from_text(text="Get weather for Tokyo", role=Role.USER)]
         )
 
-
+@pytest.mark.skipif(
+    (_api_key is None) or (_model_name is None),
+    reason="OPENAI_API_KEY or OPENAI_MODEL_NAME is not set",
+)
 def test_openai_parameter_validation_edge_cases():
     """
     Test edge cases for parameter validation.
@@ -2378,7 +2381,10 @@ def test_openai_parameter_validation_edge_cases():
         empty_llm.chat(
             messages=[]
         )
-
+@pytest.mark.skipif(
+    (_api_key is None) or (_model_name is None),
+    reason="OPENAI_API_KEY or OPENAI_MODEL_NAME is not set",
+)
 @pytest.mark.asyncio
 async def test_openai_parameter_validation_edge_cases_async():
     """
@@ -2408,7 +2414,10 @@ async def test_openai_parameter_validation_edge_cases_async():
             messages=[]
         )
 
-
+@pytest.mark.skipif(
+    (_api_key is None) or (_model_name is None),
+    reason="OPENAI_API_KEY or OPENAI_MODEL_NAME is not set",
+)
 def test_openai_parameter_validation_error_messages():
     """
     Test that error messages are clear and informative.
