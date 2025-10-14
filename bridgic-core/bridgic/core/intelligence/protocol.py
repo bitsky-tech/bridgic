@@ -1,4 +1,4 @@
-from typing import List, Protocol, Any, Dict, Type, Literal, Union, Optional, ClassVar, Tuple
+from typing import List, Protocol, Any, Dict, Type, Literal, Union, Optional, ClassVar, Tuple, TypedDict
 from pydantic import BaseModel, Field
 
 from bridgic.core.intelligence.base_llm import Message
@@ -69,6 +69,14 @@ class StructuredOutput(Protocol):
 ###########################################################
 # Structures and protocols for tool use.
 ###########################################################
+
+class ToolCallDict(TypedDict):
+    """
+    TypedDict for tool call dictionary structure.
+    """
+    id: str
+    name: str
+    arguments: Dict[str, Any]
 
 class Tool(BaseModel):
     name: str = Field(..., description="Name of the tool.")
