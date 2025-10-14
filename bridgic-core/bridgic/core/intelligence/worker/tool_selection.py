@@ -4,7 +4,7 @@ from bridgic.core.automa.worker import Worker
 from bridgic.core.intelligence.base_llm import Message, Role
 from bridgic.core.prompt.chat_message import ChatMessage
 from bridgic.core.intelligence.protocol import Tool, ToolSelection, ToolCall
-from bridgic.core.prompt.utils.prompt_utils import transform_chat_message_to_llm_message
+from bridgic.core.prompt.utils import transform_chat_message_to_llm_message
 
 class ToolSelectionWorker(Worker):
     """
