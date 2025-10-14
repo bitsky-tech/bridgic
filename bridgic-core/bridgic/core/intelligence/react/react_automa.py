@@ -196,11 +196,11 @@ class ReActAutoma(GraphAutoma):
         tool_result_messages: Optional[List[ToolMessage]] = None,
         rtx = System("runtime_context"),
     ) -> Dict[str, Any]:
-        print(f"\n******* ReActAutoma.assemble_context *******\n")
-        print(f"initial_messages: {initial_messages}")
-        print(f"candidate_tools: {candidate_tools}")
-        print(f"tool_selection_outputs: {tool_selection_outputs}")
-        print(f"tool_result_messages: {tool_result_messages}")
+        # print(f"\n******* ReActAutoma.assemble_context *******\n")
+        # print(f"initial_messages: {initial_messages}")
+        # print(f"candidate_tools: {candidate_tools}")
+        # print(f"tool_selection_outputs: {tool_selection_outputs}")
+        # print(f"tool_result_messages: {tool_result_messages}")
     
         local_space = self.get_local_space(rtx)
         # Build messages memory with help of local space.
@@ -234,8 +234,8 @@ class ReActAutoma(GraphAutoma):
         if tool_result_messages:
             messages_memory.extend(tool_result_messages)
         local_space["messages_memory"] = messages_memory
-        print("--------------------------------")
-        print(f"messages_memory: {messages_memory}")
+        # print("--------------------------------")
+        # print(f"messages_memory: {messages_memory}")
         
         # Save & retrieve tools with help of local space.
         if candidate_tools:
@@ -245,7 +245,7 @@ class ReActAutoma(GraphAutoma):
 
         # Note: here 'messages' and `tools` are injected into the template as variables.
         raw_prompt = self._jinja_template.render(messages=messages_memory, tools=candidate_tools)
-        print(f"\n ##### raw_prompt ##### \n{raw_prompt}")
+        # print(f"\n ##### raw_prompt ##### \n{raw_prompt}")
 
         # Note: the jinjia template must conform to the TypedDict `ChatMessage` format (in json).
         llm_messages = cast(List[ChatMessage], json.loads(raw_prompt))
@@ -277,9 +277,9 @@ class ReActAutoma(GraphAutoma):
             return
 
         # TODO: maybe hand over the control flow to users?
-        print(f"\n******* ReActAutoma.plan_next_step *******\n")
-        print(f"tool_calls: {tool_calls}")
-        print(f"llm_response: {llm_response}")
+        # print(f"\n******* ReActAutoma.plan_next_step *******\n")
+        # print(f"tool_calls: {tool_calls}")
+        # print(f"llm_response: {llm_response}")
         if tool_calls:
             tool_spec_list = messages_and_tools["candidate_tools"]
             matched_list = self._match_tool_calls_and_tool_specs(tool_calls, tool_spec_list)
@@ -320,9 +320,9 @@ class ReActAutoma(GraphAutoma):
         """
         Merge the results of the tools.
         """
-        print(f"\n******* ReActAutoma.merge_tools_results *******\n")
-        print(f"tool_results: {tool_results}")
-        print(f"tool_calls: {tool_calls}")
+        # print(f"\n******* ReActAutoma.merge_tools_results *******\n")
+        # print(f"tool_results: {tool_results}")
+        # print(f"tool_calls: {tool_calls}")
         assert len(tool_results) == len(tool_calls)
         tool_messages = []
         for tool_result, tool_call in zip(tool_results, tool_calls):

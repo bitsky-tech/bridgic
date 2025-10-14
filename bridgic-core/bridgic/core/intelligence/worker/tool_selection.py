@@ -50,9 +50,9 @@ class ToolSelectionWorker(Worker):
         llm_messages: List[Message] = []
         for message in messages:
             llm_messages.append(transform_chat_message_to_llm_message(message))
-        print(f"\n******* ToolSelectionWorker.arun *******\n")
-        print(f"messages: {llm_messages}")
-        print(f"tools: {tools}")
+        # print(f"\n******* ToolSelectionWorker.arun *******\n")
+        # print(f"messages: {llm_messages}")
+        # print(f"tools: {tools}")
         tool_calls, llm_response = await self._tool_selection_llm.aselect_tool(
             messages=llm_messages, 
             tools=tools, 

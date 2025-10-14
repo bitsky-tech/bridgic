@@ -1,5 +1,5 @@
 version = 1
-revision = 2
+revision = 3
 requires-python = ">=3.9"
 
 [[package]]
@@ -240,14 +240,14 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "bridgic-llms-openai", specifier = ">=0.1.0.dev7", index = "http://8.130.156.165:3141/btsk/test/+simple" },
+    { name = "bridgic-llms-openai", specifier = ">=0.1.0.dev8", index = "http://8.130.156.165:3141/btsk/test/+simple" },
     { name = "pytest", specifier = ">=8.4.0" },
     { name = "pytest-asyncio", specifier = ">=1.0.0" },
 ]
 
 [[package]]
 name = "bridgic-llms-openai"
-version = "0.1.0.dev7"
+version = "0.1.0.dev8"
 source = { registry = "http://8.130.156.165:3141/btsk/test/+simple" }
 dependencies = [
     { name = "bridgic-core" },
@@ -255,9 +255,9 @@ dependencies = [
     { name = "httpx-aiohttp" },
     { name = "openai" },
 ]
-sdist = { url = "http://8.130.156.165:3141/btsk/test/+f/02a/1d289c2759c43/bridgic_llms_openai-0.1.0.dev7.tar.gz", hash = "sha256:02a1d289c2759c431c02727aa024f81a3432a88bddc6084b52117dd27238e795" }
+sdist = { url = "http://8.130.156.165:3141/btsk/test/+f/598/67cc8b04228f6/bridgic_llms_openai-0.1.0.dev8.tar.gz", hash = "sha256:59867cc8b04228f68f16cda4b00ee8559afd3f5292b42c40f8cfef80b0320dde" }
 wheels = [
-    { url = "http://8.130.156.165:3141/btsk/test/+f/76e/f341121f5fb64/bridgic_llms_openai-0.1.0.dev7-py3-none-any.whl", hash = "sha256:76ef341121f5fb64e18ab2c4ca99f5778adbca55ef1d4a446683d0c3b66c460e" },
+    { url = "http://8.130.156.165:3141/btsk/test/+f/a9e/b6f52d1c05aa8/bridgic_llms_openai-0.1.0.dev8-py3-none-any.whl", hash = "sha256:a9eb6f52d1c05aa8e94f7450e59c4303877e1cdc8daee954ea5694eb8f063cb5" },
 ]
 
 [[package]]
