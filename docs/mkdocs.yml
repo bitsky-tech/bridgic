@@ -14,7 +14,6 @@ nav:
     - Quick Start: home/quick_start.md
     - Examples: home/examples.md
   - API Reference:
-      - Index: reference/bridgic-core/index.md
       - Bridgic-Core:
         - bridgic.core.automa:
           - Index: reference/bridgic-core/bridgic/core/automa/index.md
@@ -22,6 +21,15 @@ nav:
           - worker: reference/bridgic-core/bridgic/core/automa/worker/index.md
         - bridgic.core.intelligence:
           - Index: reference/bridgic-core/bridgic/core/intelligence/index.md
+      - Bridgic-LLMs-Openai:
+        - bridgic.llms.openai:
+          - Index: reference/bridgic-llms-openai/bridgic/llms/openai/index.md
+      - Bridgic-LLMs-Openai-Like:
+        - bridgic.llms.openai_like:
+          - Index: reference/bridgic-llms-openai-like/bridgic/llms/openai_like/index.md
+      - Bridgic-LLMs-Vllm:
+        - bridgic.llms.vllm:
+          - Index: reference/bridgic-llms-vllm/bridgic/llms/vllm/index.md
 
   - About: about/index.md
 
@@ -145,6 +153,9 @@ plugins:
             show_symbol_type_toc: true
           paths: 
             - ../bridgic-core
+            - ../bridgic-integration/llms/bridgic-llms-openai
+            - ../bridgic-integration/llms/bridgic-llms-openai-like
+            - ../bridgic-integration/llms/bridgic-llms-vllm
 
 markdown_extensions:
   # Python Markdown

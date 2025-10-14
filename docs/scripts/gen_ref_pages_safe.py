@@ -283,7 +283,7 @@ class SafeMkDocsConfigUpdater:
     
     def _build_api_reference_nav(self, nav_structure: Dict[str, Any]) -> List[Any]:
         """Build navigation structure for API Reference"""
-        api_nav = [{'Index': 'reference/bridgic-core/index.md'}]
+        api_nav = []
         
         for package_name, package_structure in nav_structure.items():
             formatted_name = self._format_display_name(package_name)
@@ -721,9 +721,9 @@ class DocumentationGenerator:
         
         for package_path in self.config.packages:
             self.process_package(package_path)
-            self.generate_package_index(package_path)
+            # self.generate_package_index(package_path)
         
-        self.generate_summary()
+        # self.generate_summary()
         self.update_mkdocs_config()
         self.print_statistics()
         
