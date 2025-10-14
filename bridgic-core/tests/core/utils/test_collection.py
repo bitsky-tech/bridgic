@@ -2,7 +2,7 @@
 Test cases for collection utility functions.
 """
 import pytest
-from bridgic.core.utils.collection import filter_dict, unique_list_in_order, deep_hash
+from bridgic.core.utils.collection import filter_dict, unique_list_in_order, deep_hash, validate_required_params
 
 
 def test_filter_dict_basic_none_filtering():
@@ -240,3 +240,90 @@ def test_deep_hash_consistent_hashing():
     data1 = {"a": [1, 2], "b": {"c": 3}}
     data2 = {"b": {"c": 3}, "a": [1, 2]}  # Different order
     assert deep_hash(data1) == deep_hash(data2)
+
+
+# Tests for validate_required_params function
+
+def test_validate_required_params_success():
+    """Test successful validation with all required parameters present."""
+    params = {"messages": [{"role": "user", "content": "Hello"}], "model": "gpt-4", "temperature": 0.7}
+    validate_required_params(params, ["messages", "model"])
+    # Should not raise any exception
+
+
+def test_validate_required_params_missing_single_parameter():
+    """Test validation failure with one missing parameter."""
+    params = {"messages": [{"role": "user", "content": "Hello"}], "temperature": 0.7}
+    with pytest.raises(ValueError, match="Missing required parameters: model"):
+        validate_required_params(params, ["messages", "model"])
+
+
+def test_validate_required_params_missing_multiple_parameters():
+    """Test validation failure with multiple missing parameters."""
+    params = {"temperature": 0.7}
+    with pytest.raises(ValueError, match="Missing required parameters: messages, model"):
+        validate_required_params(params, ["messages", "model"])
+
+
+def test_validate_required_params_none_values():
+    """Test validation failure with None values for required parameters."""
+    params = {"messages": [{"role": "user", "content": "Hello"}], "model": None, "temperature": 0.7}
+    with pytest.raises(ValueError, match="Missing required parameters: model"):
+        validate_required_params(params, ["messages", "model"])
+
+
+def test_validate_required_params_mixed_missing_and_none():
+    """Test validation failure with both missing parameters and None values."""
+    params = {"messages": None, "temperature": 0.7}
+    with pytest.raises(ValueError, match="Missing required parameters: messages, model"):
+        validate_required_params(params, ["messages", "model"])
+
+
+def test_validate_required_params_empty_required_list():
+    """Test validation with empty required parameters list."""
+    params = {"messages": [{"role": "user", "content": "Hello"}], "model": "gpt-4"}
+    validate_required_params(params, [])
+    # Should not raise any exception
+
+
+def test_validate_required_params_empty_params_dict():
+    """Test validation with empty parameters dictionary."""
+    params = {}
+    with pytest.raises(ValueError, match="Missing required parameters: messages, model"):
+        validate_required_params(params, ["messages", "model"])
+
+
+def test_validate_required_params_false_values():
+    """Test that False values are considered valid (not None)."""
+    params = {"messages": [{"role": "user", "content": "Hello"}], "model": "gpt-4", "stream": False}
+    validate_required_params(params, ["messages", "model", "stream"])
+    # Should not raise any exception
+
+
+def test_validate_required_params_zero_values():
+    """Test that zero values are considered valid (not None)."""
+    params = {"messages": [{"role": "user", "content": "Hello"}], "model": "gpt-4", "temperature": 0}
+    validate_required_params(params, ["messages", "model", "temperature"])
+    # Should not raise any exception
+
+
+def test_validate_required_params_empty_string():
+    """Test that empty strings are considered valid (not None)."""
+    params = {"messages": [{"role": "user", "content": "Hello"}], "model": "gpt-4", "content": ""}
+    validate_required_params(params, ["messages", "model", "content"])
+    # Should not raise any exception
+
+
+def test_validate_required_params_empty_list():
+    """Test that empty lists are considered valid (not None)."""
+    params = {"messages": [], "model": "gpt-4"}
+    validate_required_params(params, ["messages", "model"])
+    # Should not raise any exception
+
+
+def test_validate_required_params_empty_dict():
+    """Test that empty dictionaries are considered valid (not None)."""
+    params = {"messages": [{"role": "user", "content": "Hello"}], "model": "gpt-4", "extra": {}}
+    validate_required_params(params, ["messages", "model", "extra"])
+    # Should not raise any exception
+

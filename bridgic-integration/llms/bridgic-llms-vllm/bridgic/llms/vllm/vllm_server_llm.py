@@ -9,7 +9,7 @@ from openai.types.chat import ChatCompletionNamedToolChoiceParam, ChatCompletion
 from bridgic.core.intelligence.base_llm import *
 from bridgic.core.intelligence.content import *
 from bridgic.core.intelligence.protocol import *
-from bridgic.llms.openai_like.openai_like_llm import OpenAILikeLlm
+from bridgic.llms.openai_like.openai_like_llm import OpenAILikeLlm, OpenAILikeConfiguration
 from bridgic.core.utils.console import printer
 
 class VllmServerLlm(OpenAILikeLlm, StructuredOutput, ToolSelection):
@@ -32,6 +32,7 @@ class VllmServerLlm(OpenAILikeLlm, StructuredOutput, ToolSelection):
         self,
         api_base: str,
         api_key: str,
+        configuration: Optional[OpenAILikeConfiguration] = OpenAILikeConfiguration(),
         timeout: Optional[float] = None,
         http_client: Optional[httpx.Client] = None,
         http_async_client: Optional[httpx.AsyncClient] = None,
@@ -39,6 +40,7 @@ class VllmServerLlm(OpenAILikeLlm, StructuredOutput, ToolSelection):
         super().__init__(
             api_base=api_base,
             api_key=api_key,
+            configuration=configuration,
             timeout=timeout,
             http_client=http_client,
             http_async_client=http_async_client,
