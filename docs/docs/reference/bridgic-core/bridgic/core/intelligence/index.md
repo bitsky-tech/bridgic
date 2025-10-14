@@ -1,8 +1,13 @@
-# worker_decorator
+# intelligence
 
-> Bridgic Core
+## Exports
 
-::: bridgic.core.automa.worker_decorator
+- `as_tool`
+- `ToolSpec`
+- `FunctionToolSpec`
+- `AutomaToolSpec`
+
+::: bridgic.core.intelligence
     options:
       show_source: true
       show_root_heading: true

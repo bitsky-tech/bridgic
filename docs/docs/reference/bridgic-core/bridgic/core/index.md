@@ -1,7 +1,5 @@
 # core
 
-> Bridgic Core
-
 ::: bridgic.core
     options:
       show_source: true

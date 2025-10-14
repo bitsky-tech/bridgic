@@ -1,6 +1,14 @@
 # interaction
 
-> Bridgic Core
+## Exports
+
+- `Event`
+- `Feedback`
+- `InteractionFeedback`
+- `FeedbackSender`
+- `EventHandlerType`
+- `InteractionException`
+- `Interaction`
 
 ::: bridgic.core.automa.interaction
     options:

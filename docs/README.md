@@ -50,6 +50,28 @@ scripts/doc_config.yaml
 
 **Note:** Both `serve-doc` and `build-doc` commands automatically run `make gen-ref-pages` to ensure API documentation is always up-to-date.
 
+#### Generation behavior and configuration
+
+The generator reads options from `scripts/doc_config.yaml`. Key options:
+
+```yaml
+generation_options:
+  # Output base directory under docs/docs
+  docs_base_path: "reference"
+
+  # Generate only index pages (default: true)
+  # When true, only directories containing __init__.py will get an index.md.
+  # Each index.md shows the package docstring and the names from __all__.
+  only_index_pages: true
+
+  # Generate package-level index pages under each top-level package (default: true)
+  generate_index_pages: true
+```
+
+Navigation is auto-updated in `mkdocs.yml` under "API Reference". The structure groups by dotted package, e.g. `bridgic.core.automa`, with:
+- Index at the 3rd level (no fold)
+- Immediate subpackages at the 4th level (foldable if deeper levels exist)
+
 ### Configurable Parameters ⚙️
 
 The Makefile supports the following configurable parameters:

@@ -1,6 +1,9 @@
 # worker
 
-> Bridgic Core
+## Exports
+
+- `Worker`
+- `CallableWorker`
 
 ::: bridgic.core.automa.worker
     options:

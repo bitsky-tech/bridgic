@@ -60,6 +60,10 @@ generation_options:
   
   # Whether to generate index pages
   generate_index_pages: true
+  # Only generate index pages (from __init__.py) and skip module pages
+  only_index_pages: true
+  # Render single-entry packages as groups with Index child in nav (ensures visibility)
+  single_entry_as_group: true
   
   # Docstring style (numpy, google, sphinx)
   docstring_style: "numpy"

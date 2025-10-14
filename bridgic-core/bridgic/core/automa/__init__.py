@@ -1,3 +1,7 @@
+"""
+This module contains the core automa classes and functions.
+"""
+
 from bridgic.core.automa.automa import Automa, _InteractionAndFeedback, _InteractionEventException
 from bridgic.core.automa.graph_automa import GraphAutoma
 from bridgic.core.automa.concurrent_automa import ConcurrentAutoma

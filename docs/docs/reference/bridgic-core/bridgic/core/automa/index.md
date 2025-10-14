@@ -1,6 +1,26 @@
 # automa
 
-> Bridgic Core
+This module contains the core automa classes and functions.
+
+## Exports
+
+- `Automa`
+- `_InteractionAndFeedback`
+- `_InteractionEventException`
+- `GraphAutoma`
+- `ConcurrentAutoma`
+- `SequentialAutoma`
+- `worker`
+- `AutomaCompilationError`
+- `AutomaDeclarationError`
+- `WorkerSignatureError`
+- `WorkerArgsMappingError`
+- `AutomaRuntimeError`
+- `AutomaDataInjectionError`
+- `ArgsMappingRule`
+- `From`
+- `RuntimeContext`
+- `System`
 
 ::: bridgic.core.automa
     options:
