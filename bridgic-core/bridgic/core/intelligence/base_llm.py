@@ -4,7 +4,7 @@ from enum import Enum
 
 from bridgic.core.intelligence.content import *
 if TYPE_CHECKING:
-    from bridgic.core.intelligence.protocol import ToolCall
+    from bridgic.core.intelligence.protocol import ToolCall, ToolCallDict
 from bridgic.core.types.serialization import Serializable
 
 class Role(str, Enum):
@@ -43,8 +43,8 @@ class Message(BaseModel):
     def from_tool_call(
         cls,
         tool_calls: Union[
-            Dict[str, Any], 
-            List[Dict[str, Any]], 
+            "ToolCallDict", 
+            List["ToolCallDict"], 
             "ToolCall",
             List["ToolCall"]
         ],
@@ -56,7 +56,7 @@ class Message(BaseModel):
         
         Parameters
         ----
-        tool_calls : Union[Dict[str, Any], List[Dict[str, Any]], ToolCall, List[ToolCall]]
+        tool_calls : Union[ToolCallDict, List[ToolCallDict], ToolCall, List[ToolCall]]
             Tool call data in various formats:
             - Single tool call dict: {"id": "call_123", "name": "get_weather", "arguments": {...}}
             - List of tool call dicts: [{"id": "call_123", ...}, {"id": "call_124", ...}]
