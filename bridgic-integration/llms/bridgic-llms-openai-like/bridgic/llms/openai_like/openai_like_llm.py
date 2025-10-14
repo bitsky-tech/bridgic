@@ -201,6 +201,15 @@ class OpenAILikeLlm(BaseLlm):
         for block in message.blocks:
             if isinstance(block, TextBlock):
                 content_list.append(block.text)
+            if isinstance(block, ToolCallBlock):
+                content_list.append(
+                    f"Tool call:\n"
+                    f"- id: {block.id}\n"
+                    f"- name: {block.name}\n"
+                    f"- arguments: {block.arguments}"
+                )
+            if isinstance(block, ToolResultBlock):
+                content_list.append(f"Tool result: {block.content}")
         content_txt = "\n\n".join(content_list)
 
         if message.role == Role.SYSTEM:
@@ -213,6 +222,7 @@ class OpenAILikeLlm(BaseLlm):
             return ChatCompletionToolMessageParam(content=content_txt, role="tool")
         else:
             raise ValueError(f"Invalid role: {message.role}")
+
 
     @override
     def dump_to_dict(self) -> Dict[str, Any]:
