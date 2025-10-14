@@ -70,7 +70,6 @@ async def test_react_automa_case_1(react_automa_1: ReActAutoma):
         {
             "role": "user",
             "content": "What is the weather in Tokyo?",
-            "name": "Jack"
         }
     ]
     result = await react_automa_1.arun(messages=messages)

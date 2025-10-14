@@ -13,7 +13,6 @@ from bridgic.core.prompt.chat_message import FunctionToolCall, Function
 from bridgic.core.automa import worker, ArgsMappingRule
 from bridgic.core.intelligence import FunctionToolSpec, AutomaToolSpec
 from bridgic.core.intelligence.worker import ToolSelectionWorker
-from bridgic.core.prompt.utils.prompt_utils import transform_chat_message_to_llm_message
 from bridgic.core.automa.arguments_descriptor import System
 
 DEFAULT_MAX_ITERATIONS = 20
@@ -248,10 +247,8 @@ class ReActAutoma(GraphAutoma):
         raw_prompt = self._jinja_template.render(messages=messages_memory, tools=candidate_tools)
         print(f"\n ##### raw_prompt ##### \n{raw_prompt}")
 
-        msgs_from_template = cast(List[ChatMessage], json.loads(raw_prompt))
-        # Transform this raw prompt to `List[Message]` format expected by the LLM.
-        llm_messages = [transform_chat_message_to_llm_message(message) for message in msgs_from_template]
-
+        # Note: the jinjia template must conform to the TypedDict `ChatMessage` format (in json).
+        llm_messages = cast(List[ChatMessage], json.loads(raw_prompt))
         llm_tools: List[Tool] = [tool.to_tool() for tool in candidate_tools]
         
         return {
@@ -292,7 +289,7 @@ class ReActAutoma(GraphAutoma):
                 for tool_call, tool_spec in matched_list:
                     matched_tool_calls.append(tool_call)
                     tool_worker = tool_spec.create_worker()
-                    worker_key = f"tool_{tool_call.name}"
+                    worker_key = f"tool_{tool_call.name}_{tool_call.id}"
                     self.add_worker(
                         key=worker_key,
                         worker=tool_worker,
@@ -337,7 +334,7 @@ class ReActAutoma(GraphAutoma):
                 tool_call_id=tool_call.id
             ))
             # Remove the tool workers
-            self.remove_worker(f"tool_{tool_call.name}")
+            self.remove_worker(f"tool_{tool_call.name}_{tool_call.id}")
         # Remove self...
         self.remove_worker("merge_tools_results")
         self.ferry_to("assemble_context", tool_result_messages=tool_messages)

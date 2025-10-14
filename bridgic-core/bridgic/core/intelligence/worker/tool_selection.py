@@ -27,7 +27,7 @@ class ToolSelectionWorker(Worker):
 
     async def arun(
         self,
-        messages: List[Union[ChatMessage, Message]],
+        messages: List[ChatMessage],
         tools: List[Tool],
     ) -> Tuple[List[ToolCall], Optional[str]]:
         """
@@ -35,7 +35,7 @@ class ToolSelectionWorker(Worker):
 
         Parameters
         ----------
-        messages: List[Union[ChatMessage, Message]]
+        messages: List[ChatMessage]
             The messages to send to the LLM.
         tools: List[Tool]
             The tool list for the LLM to select from.
@@ -49,19 +49,11 @@ class ToolSelectionWorker(Worker):
         # Validate and transform the input messages and tools to the format expected by the LLM.
         llm_messages: List[Message] = []
         for message in messages:
-            if isinstance(message, dict):
-                llm_messages.append(transform_chat_message_to_llm_message(message))
-            elif isinstance(message, Message):
-                llm_messages.append(message)
-            else:
-                raise TypeError(f"Invalid `messages` type: {type(message)}, expected `ChatMessage` or `Message`.")
-        model_name = "gpt-5-mini"
-        # TODO: model_name should be initialized from the LLM instance.
+            llm_messages.append(transform_chat_message_to_llm_message(message))
         print(f"\n******* ToolSelectionWorker.arun *******\n")
         print(f"messages: {llm_messages}")
         print(f"tools: {tools}")
         tool_calls, llm_response = await self._tool_selection_llm.aselect_tool(
-            model=model_name,
             messages=llm_messages, 
             tools=tools, 
         )
