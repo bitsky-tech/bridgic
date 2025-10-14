@@ -148,7 +148,6 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
         frequency_penalty: Optional[float] = None,
         max_tokens: Optional[int] = None,
         stop: Optional[List[str]] = None,
-        tools: Optional[List[Tool]] = None,
         extra_body: Optional[Dict[str, Any]] = None,
         **kwargs,
     ) -> Response:
@@ -182,8 +181,6 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
         stop : Optional[List[str]]
             Up to 4 sequences where the API will stop generating further tokens.
             Not supported with latest reasoning models `o3` and `o3-mini`.
-        tools : Optional[List[Tool]]
-            A list of tools to use in the chat completion.
         extra_body : Optional[Dict[str, Any]]
             Add additional JSON properties to the request.
         **kwargs
@@ -203,7 +200,6 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
             frequency_penalty=frequency_penalty,
             max_tokens=max_tokens,
             stop=stop,
-            tools=tools,
             extra_body=extra_body,
             **kwargs,
         )
@@ -305,7 +301,6 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
         frequency_penalty: Optional[float] = None,
         max_tokens: Optional[int] = None,
         stop: Optional[List[str]] = None,
-        tools: Optional[List[Tool]] = None,
         extra_body: Optional[Dict[str, Any]] = None,
         **kwargs,
     ) -> Response:
@@ -339,8 +334,6 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
         stop : Optional[List[str]]
             Up to 4 sequences where the API will stop generating further tokens.
             Not supported with latest reasoning models `o3` and `o3-mini`.
-        tools : Optional[List[Tool]]
-            A list of tools to use in the chat completion.
         extra_body : Optional[Dict[str, Any]]
             Add additional JSON properties to the request.
         **kwargs
@@ -365,7 +358,6 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
             frequency_penalty=frequency_penalty,
             max_tokens=max_tokens,
             stop=stop,
-            tools=tools,
             extra_body=extra_body,
             **kwargs,
         )
@@ -511,30 +503,30 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
             warnings.warn(openai_message.refusal, RuntimeWarning)
 
         # Handle tool calls in the response
-        if openai_message.tool_calls:
-            # Create a message with both text content and tool calls
-            blocks = []
-            if text:
-                blocks.append(TextBlock(text=text))
-            else:
-                # Ensure there's always some text content, even if empty
-                blocks.append(TextBlock(text=""))
+        # if openai_message.tool_calls:
+        #     # Create a message with both text content and tool calls
+        #     blocks = []
+        #     if text:
+        #         blocks.append(TextBlock(text=text))
+        #     else:
+        #         # Ensure there's always some text content, even if empty
+        #         blocks.append(TextBlock(text=""))
             
-            for tool_call in openai_message.tool_calls:
-                tool_call_block = ToolCallBlock(
-                    id=tool_call.id,
-                    name=tool_call.function.name,
-                    arguments=json.loads(tool_call.function.arguments)
-                )
-                blocks.append(tool_call_block)
+        #     for tool_call in openai_message.tool_calls:
+        #         tool_call_block = ToolCallBlock(
+        #             id=tool_call.id,
+        #             name=tool_call.function.name,
+        #             arguments=json.loads(tool_call.function.arguments)
+        #         )
+        #         blocks.append(tool_call_block)
             
-            message = Message(role=Role.AI, blocks=blocks)
-        else:
-            # Regular text response
-            message = Message.from_text(text, role=Role.AI)
+        #     message = Message(role=Role.AI, blocks=blocks)
+        # else:
+        #     # Regular text response
+        #     message = Message.from_text(text, role=Role.AI)
 
         return Response(
-            message=message,
+            message=Message.from_text(text, role=Role.AI),
             raw=response,
         )
 
