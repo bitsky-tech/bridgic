@@ -1,19 +1,10 @@
 import httpx
-import warnings
 import json
-import uuid
-import copy
 
 from typing import List
-from typing_extensions import override
+from typing_extensions import override, overload
 from pydantic import BaseModel
-from openai import OpenAI, AsyncOpenAI
-from openai.types.chat.chat_completion_message import ChatCompletionMessage
-from openai.resources.chat.completions.completions import ChatCompletionMessageParam
-from openai.types.chat.chat_completion_system_message_param import ChatCompletionSystemMessageParam
-from openai.types.chat.chat_completion_user_message_param import ChatCompletionUserMessageParam
-from openai.types.chat.chat_completion_assistant_message_param import ChatCompletionAssistantMessageParam
-from openai.types.chat.chat_completion_tool_message_param import ChatCompletionToolMessageParam
+from openai.types.chat import ChatCompletionNamedToolChoiceParam, ChatCompletionMessageFunctionToolCall
 
 from bridgic.core.intelligence.base_llm import *
 from bridgic.core.intelligence.content import *
@@ -23,9 +14,9 @@ from bridgic.core.utils.console import printer
 
 class VllmServerLlm(OpenAILikeLlm, StructuredOutput, ToolSelection):
     """
-    OpenAILikeLlm is a thin wrapper around the LLM providers that makes it compatible with the 
-    services that provide OpenAI compatible API. To support the widest range of model providers, 
-    this wrapper only supports text-modal usage.
+    VllmServerLlm is a wrapper around the vLLM server, providing common calling interfaces for 
+    self-hosted LLM service, such as chat, stream, as well as with encapsulation of common 
+    seen high-level functionality.
 
     Parameters
     ----------
@@ -63,164 +54,6 @@ class VllmServerLlm(OpenAILikeLlm, StructuredOutput, ToolSelection):
     def load_from_dict(self, state_dict: Dict[str, Any]) -> None:
         super().load_from_dict(state_dict)
 
-    def chat(
-        self,
-        messages: List[Message],
-        model: str,
-        temperature: Optional[float] = None,
-        top_p: Optional[float] = None,
-        presence_penalty: Optional[float] = None,
-        frequency_penalty: Optional[float] = None,
-        max_tokens: Optional[int] = None,
-        stop: Optional[List[str]] = None,
-        extra_body: Optional[Dict[str, Any]] = None,
-        **kwargs,
-    ) -> Response:
-        msgs: List[ChatCompletionMessageParam] = [self._convert_message(msg) for msg in messages]
-        response = self.client.chat.completions.create(
-            messages=msgs,
-            model=model,
-            temperature=temperature,
-            top_p=top_p,
-            presence_penalty=presence_penalty,
-            frequency_penalty=frequency_penalty,
-            max_tokens=max_tokens,
-            stop=stop,
-            extra_body=extra_body,
-            **kwargs,
-        )
-        openai_message: ChatCompletionMessage = response.choices[0].message
-        text: str = openai_message.content if openai_message.content else ""
-
-        if openai_message.refusal:
-            warnings.warn(openai_message.refusal, RuntimeWarning)
-
-        return Response(
-            message=Message.from_text(text, role=Role.AI),
-            raw=response,
-        )
-
-    def stream(
-        self,
-        messages: List[Message],
-        model: str,
-        temperature: Optional[float] = None,
-        top_p: Optional[float] = None,
-        presence_penalty: Optional[float] = None,
-        frequency_penalty: Optional[float] = None,
-        max_tokens: Optional[int] = None,
-        stop: Optional[List[str]] = None,
-        extra_body: Optional[Dict[str, Any]] = None,
-        **kwargs,
-    ) -> StreamResponse:
-        msgs: List[ChatCompletionMessageParam] = [self._convert_message(msg) for msg in messages]
-        response = self.client.chat.completions.create(
-            messages=msgs,
-            model=model,
-            stream=True,
-            temperature=temperature,
-            top_p=top_p,
-            presence_penalty=presence_penalty,
-            frequency_penalty=frequency_penalty,
-            max_tokens=max_tokens,
-            stop=stop,
-            extra_body=extra_body,
-            **kwargs,
-        )
-        for chunk in response:
-            delta_content = chunk.choices[0].delta.content
-            delta_content = delta_content if delta_content else ""
-            yield MessageChunk(delta=delta_content, raw=chunk)
-
-    async def achat(
-        self,
-        messages: List[Message],
-        model: str,
-        temperature: Optional[float] = None,
-        top_p: Optional[float] = None,
-        presence_penalty: Optional[float] = None,
-        frequency_penalty: Optional[float] = None,
-        max_tokens: Optional[int] = None,
-        stop: Optional[List[str]] = None,
-        extra_body: Optional[Dict[str, Any]] = None,
-        **kwargs,
-    ) -> Response:
-        msgs: List[ChatCompletionMessageParam] = [self._convert_message(msg) for msg in messages]
-        response = await self.async_client.chat.completions.create(
-            messages=msgs,
-            model=model,
-            temperature=temperature,
-            top_p=top_p,
-            presence_penalty=presence_penalty,
-            frequency_penalty=frequency_penalty,
-            max_tokens=max_tokens,
-            stop=stop,
-            extra_body=extra_body,
-            **kwargs,
-        )
-        openai_message: ChatCompletionMessage = response.choices[0].message
-        text: str = openai_message.content if openai_message.content else ""
-
-        if openai_message.refusal:
-            warnings.warn(openai_message.refusal, RuntimeWarning)
-
-        return Response(
-            message=Message.from_text(text, role=Role.AI),
-            raw=response,
-        )
-
-    async def astream(
-        self,
-        messages: List[Message],
-        model: str,
-        temperature: Optional[float] = None,
-        top_p: Optional[float] = None,
-        presence_penalty: Optional[float] = None,
-        frequency_penalty: Optional[float] = None,
-        max_tokens: Optional[int] = None,
-        stop: Optional[List[str]] = None,
-        extra_body: Optional[Dict[str, Any]] = None,
-        **kwargs,
-    ) -> AsyncStreamResponse:
-        msgs: List[ChatCompletionMessageParam] = [self._convert_message(msg) for msg in messages]
-        response = await self.async_client.chat.completions.create(
-            messages=msgs,
-            model=model,
-            stream=True,
-            temperature=temperature,
-            top_p=top_p,
-            presence_penalty=presence_penalty,
-            frequency_penalty=frequency_penalty,
-            max_tokens=max_tokens,
-            stop=stop,
-            extra_body=extra_body,
-            **kwargs,
-        )
-        async for chunk in response:
-            delta_content = chunk.choices[0].delta.content
-            delta_content = delta_content if delta_content else ""
-            yield MessageChunk(delta=delta_content, raw=chunk)
-
-    def _convert_message(self, message: Message) -> ChatCompletionMessageParam:
-        content_list = []
-        for block in message.blocks:
-            if isinstance(block, TextBlock):
-                content_list.append(block.text)
-        content_txt = "\n\n".join(content_list)
-
-        if message.role == Role.SYSTEM:
-            return ChatCompletionSystemMessageParam(content=content_txt, role="system")
-        elif message.role == Role.USER:
-            return ChatCompletionUserMessageParam(content=content_txt, role="user")
-        elif message.role == Role.AI:
-            return ChatCompletionAssistantMessageParam(content=content_txt, role="assistant")
-        elif message.role == Role.TOOL:
-            return ChatCompletionToolMessageParam(content=content_txt, role="tool")
-        else:
-            raise ValueError(f"Invalid role: {message.role}")
-
-    from typing import overload, Literal
-
     @overload
     def structured_output(
         self,
@@ -248,6 +81,20 @@ class VllmServerLlm(OpenAILikeLlm, StructuredOutput, ToolSelection):
         extra_body: Optional[Dict[str, Any]] = ...,
         **kwargs,
     ) -> Dict[str, Any]: ...
+
+    @overload
+    def structured_output(
+        self,
+        messages: List[Message],
+        constraint: Choice,
+        model: str,
+        temperature: Optional[float] = ...,
+        top_p: Optional[float] = ...,
+        presence_penalty: Optional[float] = ...,
+        frequency_penalty: Optional[float] = ...,
+        extra_body: Optional[Dict[str, Any]] = ...,
+        **kwargs,
+    ) -> str: ...
 
     def structured_output(
         self,
@@ -376,6 +223,8 @@ class VllmServerLlm(OpenAILikeLlm, StructuredOutput, ToolSelection):
             extra_body["guided_json"] = constraint.schema_dict
         elif isinstance(constraint, Regex):
             extra_body["guided_regex"] = constraint.pattern
+        elif isinstance(constraint, Choice):
+            extra_body["guided_choice"] = constraint.choices
         elif isinstance(constraint, EbnfGrammar):
             extra_body["guided_grammar"] = constraint.syntax
         else:
@@ -406,10 +255,9 @@ class VllmServerLlm(OpenAILikeLlm, StructuredOutput, ToolSelection):
         presence_penalty: Optional[float] = None,
         frequency_penalty: Optional[float] = None,
         extra_body: Optional[Dict[str, Any]] = None,
-        min_tools: Optional[int] = None,
-        max_tools: Optional[int] = None,
+        tool_choice: Union[Literal["auto", "required", "none"], ChatCompletionNamedToolChoiceParam] = "auto",
         **kwargs,
-    ) -> List[ToolCall]:
+    ) -> Tuple[List[ToolCall], Optional[Dict]]:
         """
         Select tools from a specified list of tools.
 
@@ -431,33 +279,62 @@ class VllmServerLlm(OpenAILikeLlm, StructuredOutput, ToolSelection):
             The frequency_penalty to use for the tool select.
         extra_body: Optional[Dict[str, Any]]
             The extra_body to use for the tool select.
-        min_tools: Optional[int]
-            The minimum number of tools to select.
-        max_tools: Optional[int]
-            The maximum number of tools to select.
+        tool_choice : Union[Literal["auto", "required", "none"], ChatCompletionNamedToolChoiceParam]
+            Tool choice mode for tool calling. There are 4 choices that are supported:
+            - `auto` means the model can pick between generating a message or calling one or more tools.
+            To enable this feature, you should set the tags `--enable-auto-tool-choice` and `--tool-call-parser` 
+            when starting the vLLM server.
+            - `required` means the model must generate one or more tool calls based on the specified tool list 
+            in the `tools` parameter. The number of tool calls depends on the user's query.
+            - `none` means the model will not call any tool and instead generates a message. When tools are 
+            specified in the request, vLLM includes tool definitions in the prompt by default, regardless 
+            of the tool_choice setting. To exclude tool definitions when tool_choice='none', use the 
+            `--exclude-tools-when-tool-choice-none` option when starting the vLLM server.
+            - You can also specify a particular function using named function calling by setting `tool_choice` 
+            parameter to a json object, like `tool_choice={"type": "function", "function": {"name": "get_weather"}}`.
+
         **kwargs: Any
             The kwargs to use for the tool select.
 
         Returns
         -------
-        List[ToolCall]
+        Tuple[List[ToolCall], Optional[str]]
             A list that contains the selected tools and their arguments.
-        """
-        schema = self._convert_select_tool_schema(tools, min_tools, max_tools)
 
-        response: Dict[str, Any] = self.structured_output(
+        Notes
+        -----
+        See more on [Tool Calling](https://docs.vllm.ai/en/stable/features/tool_calling.html).
+        """
+        input_messages = [self._convert_message(message=msg, strict=True) for msg in messages]
+        input_tools = [
+            {
+                "type": "function",
+                "function": {
+                    "name": tool.name,
+                    "description": tool.description,
+                    "parameters": tool.parameters,
+                },
+            } for tool in tools
+        ]
+
+        response = self.client.chat.completions.create(
             model=model,
-            constraint=JsonSchema(schema_dict=schema, name=""),
-            messages=messages,
-            temperature=temperature,
-            top_p=top_p,
-            presence_penalty=presence_penalty,
-            frequency_penalty=frequency_penalty,
-            extra_body=extra_body,
+            messages=input_messages,
+            tools=input_tools,
+            tool_choice=tool_choice,
             **kwargs,
         )
-        tool_calls = response["tool_calls"]
-        return self._convert_tool_calls(tool_calls)
+        tool_calls = response.choices[0].message.tool_calls
+
+        output_content = ""
+        if response.choices[0].message.content:
+            output_content = response.choices[0].message.content
+
+        output_tool_calls = []
+        if tool_calls:
+            output_tool_calls = self._convert_tool_calls(tool_calls)
+
+        return (output_tool_calls, output_content)
 
     async def aselect_tool(
         self,
@@ -469,10 +346,9 @@ class VllmServerLlm(OpenAILikeLlm, StructuredOutput, ToolSelection):
         presence_penalty: Optional[float] = None,
         frequency_penalty: Optional[float] = None,
         extra_body: Optional[Dict[str, Any]] = None,
-        min_tools: Optional[int] = None,
-        max_tools: Optional[int] = None,
+        tool_choice: Union[Literal["auto", "required", "none"], ChatCompletionNamedToolChoiceParam] = "auto",
         **kwargs,
-    ) -> List[ToolCall]:
+    ) -> Tuple[List[ToolCall], Optional[str]]:
         """
         Select tools from a specified list of tools.
 
@@ -494,93 +370,69 @@ class VllmServerLlm(OpenAILikeLlm, StructuredOutput, ToolSelection):
             The frequency_penalty to use for the tool select.
         extra_body: Optional[Dict[str, Any]]
             The extra_body to use for the tool select.
-        min_tools: Optional[int]
-            The minimum number of tools to select.
-        max_tools: Optional[int]
-            The maximum number of tools to select.
+        tool_choice : Union[Literal["auto", "required", "none"], ChatCompletionNamedToolChoiceParam]
+            Tool choice mode for tool calling. There are 4 choices that are supported:
+            - `auto` means the model can pick between generating a message or calling one or more tools.
+            To enable this feature, you should set the tags `--enable-auto-tool-choice` and `--tool-call-parser` 
+            when starting the vLLM server.
+            - `required` means the model must generate one or more tool calls based on the specified tool list 
+            in the `tools` parameter. The number of tool calls depends on the user's query.
+            - `none` means the model will not call any tool and instead generates a message. When tools are 
+            specified in the request, vLLM includes tool definitions in the prompt by default, regardless 
+            of the tool_choice setting. To exclude tool definitions when tool_choice='none', use the 
+            `--exclude-tools-when-tool-choice-none` option when starting the vLLM server.
+            - You can also specify a particular function using named function calling by setting `tool_choice` 
+            parameter to a json object, like `tool_choice={"type": "function", "function": {"name": "get_weather"}}`.
+
         **kwargs: Any
             The kwargs to use for the tool select.
 
         Returns
         -------
-        List[ToolCall]
+        Tuple[List[ToolCall], Optional[str]]
             A list that contains the selected tools and their arguments.
-        """
-        schema = self._convert_select_tool_schema(tools, min_tools, max_tools)
 
-        response: Dict[str, Any] = await self.astructured_output(
+        Notes
+        -----
+        See more on [Tool Calling](https://docs.vllm.ai/en/stable/features/tool_calling.html).
+        """
+        input_messages = [self._convert_message(message=msg, strict=True) for msg in messages]
+        input_tools = [
+            {
+                "type": "function",
+                "function": {
+                    "name": tool.name,
+                    "description": tool.description,
+                    "parameters": tool.parameters,
+                },
+            } for tool in tools
+        ]
+
+        response = self.client.chat.completions.create(
             model=model,
-            constraint=JsonSchema(schema_dict=schema, name=""),
-            messages=messages,
-            temperature=temperature,
-            top_p=top_p,
-            presence_penalty=presence_penalty,
-            frequency_penalty=frequency_penalty,
-            extra_body=extra_body,
+            messages=input_messages,
+            tools=input_tools,
+            tool_choice=tool_choice,
             **kwargs,
         )
-        tool_calls = response["tool_calls"]
-        return self._convert_tool_calls(tool_calls)
+        tool_calls = response.choices[0].message.tool_calls
 
-    def _convert_select_tool_schema(
-        self,
-        tools: List[Tool] = [],
-        min_tools: Optional[int] = None,
-        max_tools: Optional[int] = None,
-    ) -> Dict[str, Any]:
-        if min_tools is not None and min_tools < 0:
-            raise ValueError("min_tools must be greater than or equal to 0.")
-        if max_tools is not None and max_tools < 0:
-            raise ValueError("max_tools must be greater than or equal to 0.")
-        if min_tools is not None and max_tools is not None and min_tools > max_tools:
-            raise ValueError("min_tools must be less than or equal to max_tools.")
+        output_content = ""
+        if response.choices[0].message.content:
+            output_content = response.choices[0].message.content
 
-        schema = {
-            "$defs": {},
-            "properties": {
-                "tool_calls": {
-                    "items": {
-                        "anyOf": []
-                    },
-                    "type": "array",
-                    "title": "ToolCallList",
-                },
-            },
-        }
+        output_tool_calls = []
+        if tool_calls:
+            output_tool_calls = self._convert_tool_calls(tool_calls)
 
-        if min_tools is not None:
-            schema["properties"]["tool_calls"]["minItems"] = min_tools
-        if max_tools is not None:
-            schema["properties"]["tool_calls"]["maxItems"] = max_tools
+        return (output_tool_calls, output_content)
 
-        for tool in tools:
-            if tool.name in schema["$defs"]:
-                raise ValueError(f"Tool name {tool.name} is duplicated.")
-
-            schema["$defs"][tool.name] = {
-                "type": "object",
-                "title": tool.name,
-                "properties": {
-                    "name": {
-                        "type": "string",
-                        "const": tool.name,
-                        "title": "Name",
-                    },
-                    "arguments": tool.parameters,
-                },
-                "required": ["name", "arguments"],
-            }
-            schema["properties"]["tool_calls"]["items"]["anyOf"].append({
-                "$ref": f"#/$defs/{tool.name}",
-            })
-
-        return schema
-
-    def _convert_tool_calls(self, tool_calls: List[Dict[str, Any]]) -> List[ToolCall]:
+    def _convert_tool_calls(self, tool_calls: List[ChatCompletionMessageFunctionToolCall]) -> List[ToolCall]:
         return [
             ToolCall(
-                id=str(uuid.uuid4()),
-                name=tool_call["name"],
-                arguments=tool_call["arguments"],
+                id=tool_call.id,
+                name=tool_call.function.name,
+                arguments=json.loads(tool_call.function.arguments),
             ) for tool_call in tool_calls
         ]
+
