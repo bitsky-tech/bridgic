@@ -305,7 +305,7 @@ class VllmServerLlm(OpenAILikeLlm, StructuredOutput, ToolSelection):
         -----
         See more on [Tool Calling](https://docs.vllm.ai/en/stable/features/tool_calling.html).
         """
-        input_messages = [self._convert_message(msg) for msg in messages]
+        input_messages = [self._convert_message(message=msg, strict=True) for msg in messages]
         input_tools = [
             {
                 "type": "function",
@@ -396,7 +396,7 @@ class VllmServerLlm(OpenAILikeLlm, StructuredOutput, ToolSelection):
         -----
         See more on [Tool Calling](https://docs.vllm.ai/en/stable/features/tool_calling.html).
         """
-        input_messages = [self._convert_message(msg) for msg in messages]
+        input_messages = [self._convert_message(message=msg, strict=True) for msg in messages]
         input_tools = [
             {
                 "type": "function",
@@ -435,3 +435,4 @@ class VllmServerLlm(OpenAILikeLlm, StructuredOutput, ToolSelection):
                 arguments=json.loads(tool_call.function.arguments),
             ) for tool_call in tool_calls
         ]
+

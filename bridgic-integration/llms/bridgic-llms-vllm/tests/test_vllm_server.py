@@ -49,6 +49,39 @@ def tools():
     ]
     return tools
 
+@pytest.fixture
+def weather_messages(date):
+    messages = [
+        Message.from_text(
+            text="You are a helpful assistant. You are good at calling the provided tools to solve problems.",
+            role=Role.SYSTEM,
+        ),
+        Message.from_text(
+            text="The weather of London.",
+            role=Role.USER
+        ),
+        Message.from_tool_call(
+            tool_calls=ToolCall(
+                id="tool_123",
+                name="get_weather",
+                arguments={"city": "London"},
+            ),
+        ),
+        Message.from_tool_result(
+            tool_id="tool_123",
+            content="London, 22°C, sunny with light clouds",
+        ),
+        Message.from_text(
+            text="The weather in London is 22°C and sunny with light clouds.",
+            role=Role.AI,
+        ),
+        Message.from_text(
+            text=f"Thanks! Tell me the weather of Tokyo and today's sports news. Remember today is {date}.",
+            role=Role.USER,
+        ),
+    ]
+    return messages
+
 def handle_response(date, response: Tuple[List[ToolCall], Optional[str]]):
     assert len(response) == 2
     tool_calls, content = response
@@ -415,17 +448,7 @@ def test_vllm_server_structured_output_choice(llm):
     (_api_key is None) or (_api_base is None) or (_model_name is None),
     reason="VLLM_SERVER_API_KEY or VLLM_SERVER_API_BASE or VLLM_SERVER_MODEL_NAME is not set",
 )
-def test_vllm_server_select_tool(llm, date, tools):
-    messages = [
-        Message.from_text(
-            text="You are a helpful assistant. You are good at calling the provided tools to solve problems.",
-            role=Role.SYSTEM,
-        ),
-        Message.from_text(
-            text=f"Today is {date}, get the weather of Tokyo and today's sports news.",
-            role=Role.USER,
-        ),
-    ]
+def test_vllm_server_select_tool(llm, date, tools, weather_messages):
     options = ["auto", "required", "none", {"type": "function", "function": {"name": "get_weather"}}]
     for option in options:
         printer.print(f"\nTool choice: [{option}]")
@@ -433,7 +456,7 @@ def test_vllm_server_select_tool(llm, date, tools):
             model=_model_name,
             tools=tools,
             tool_choice=option,
-            messages=messages,
+            messages=weather_messages,
         )
         handle_response(date, response)
 
@@ -442,17 +465,7 @@ def test_vllm_server_select_tool(llm, date, tools):
     reason="VLLM_SERVER_API_KEY or VLLM_SERVER_API_BASE or VLLM_SERVER_MODEL_NAME is not set",
 )
 @pytest.mark.asyncio
-async def test_vllm_server_aselect_tool(llm, date, tools):
-    messages = [
-        Message.from_text(
-            text="You are a helpful assistant. You are good at calling the provided tools to solve problems.",
-            role=Role.SYSTEM,
-        ),
-        Message.from_text(
-            text=f"Today is {date}, get the weather of Tokyo and today's sports news.",
-            role=Role.USER,
-        )
-    ]
+async def test_vllm_server_aselect_tool(llm, date, tools, weather_messages):
     options = ["auto", "required", "none", {"type": "function", "function": {"name": "get_weather"}}]
     for option in options:
         printer.print(f"\n[tool_choice: {option}]")
@@ -460,6 +473,6 @@ async def test_vllm_server_aselect_tool(llm, date, tools):
             model=_model_name,
             tools=tools,
             tool_choice=option,
-            messages=messages,
+            messages=weather_messages,
         )
         handle_response(date, await response)
