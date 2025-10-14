@@ -5,7 +5,7 @@ import httpx
 import warnings
 
 from typing import List, Tuple, overload
-from openai.types.chat import ChatCompletion, ChatCompletionChunk, ChatCompletionMessageFunctionToolCall, ChatCompletionToolChoiceOptionParam
+from openai.types.chat import ChatCompletion, ChatCompletionChunk, ChatCompletionMessageFunctionToolCall, ChatCompletionNamedToolChoiceParam, ChatCompletionToolChoiceOptionParam
 from openai.types.chat.chat_completion_message_tool_call_param import ChatCompletionMessageToolCallParam, Function
 from pydantic import BaseModel
 from openai import Stream, OpenAI, AsyncOpenAI
@@ -893,7 +893,7 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
         frequency_penalty: Optional[float] = None,
         extra_body: Optional[Dict[str, Any]] = None,
         parallel_tool_calls: Optional[bool] = None,
-        tool_choice: Optional[ChatCompletionToolChoiceOptionParam] = None,
+        tool_choice: Union[Literal["auto", "required", "none"], ChatCompletionNamedToolChoiceParam] = None,
         **kwargs,
     ) -> Tuple[List[ToolCall], Optional[str]]:
         """
@@ -932,11 +932,12 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
             Add additional JSON properties to the request.
         parallel_tool_calls : Optional[bool]
             Whether to enable parallel function calling during tool use.
-        tool_choice : Optional[Literal["auto", "required", "none"]]
-            Controls which (if any) tool is called by the model. `none` means the model will
-            not call any tool and instead generates a message. `auto` means the model can
-            pick between generating a message or calling one or more tools. `required` means
-            the model must call one or more tools.
+        tool_choice : Union[Literal["auto", "required", "none"], ChatCompletionNamedToolChoiceParam]
+            Controls which tool, if any, the model may call.
+            - `none`: The model will not call any tool and will instead generate a message. This is the default when no tools are provided.
+            - `auto`: The model may choose to generate a message or call one or more tools. This is the default when tools are provided.
+            - `required`: The model must call one or more tools.
+            - To force a specific tool, pass `{"type": "function", "function": {"name": "my_function"}}`.
         **kwargs
             Additional keyword arguments passed to the OpenAI API.
 
@@ -979,7 +980,7 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
         frequency_penalty: Optional[float] = None,
         extra_body: Optional[Dict[str, Any]] = None,
         parallel_tool_calls: Optional[bool] = None,
-        tool_choice: Optional[ChatCompletionToolChoiceOptionParam] = None,
+        tool_choice: Union[Literal["auto", "required", "none"], ChatCompletionNamedToolChoiceParam] = None,
         **kwargs,
     )-> Tuple[List[ToolCall], Optional[str]]:
         """
@@ -1018,11 +1019,13 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
             Add additional JSON properties to the request.
         parallel_tool_calls : Optional[bool]
             Whether to enable parallel function calling during tool use.
-        tool_choice : Optional[Literal["auto", "required", "none"]]
-            Controls which (if any) tool is called by the model. `none` means the model will
-            not call any tool and instead generates a message. `auto` means the model can
-            pick between generating a message or calling one or more tools. `required` means
-            the model must call one or more tools.
+        tool_choice : Union[Literal["auto", "required", "none"], ChatCompletionNamedToolChoiceParam]
+            Controls which tool, if any, the model may call.
+            - `none`: The model will not call any tool and will instead generate a message. This is the default when no tools are provided.
+            - `auto`: The model may choose to generate a message or call one or more tools. This is the default when tools are provided.
+            - `required`: The model must call one or more tools.
+            - To force a specific tool, pass `{"type": "function", "function": {"name": "my_function"}}`.
+        
         **kwargs
             Additional keyword arguments passed to the OpenAI API.
 
@@ -1106,7 +1109,7 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
         self.api_base = state_dict["api_base"]
         self.api_key = state_dict["api_key"]
         self.timeout = state_dict["timeout"]
-        self.configuration = OpenAIConfiguration(**state_dict["configuration"])
+        self.configuration = OpenAIConfiguration(**state_dict.get("configuration", {}))
         self.http_client = None
         self.http_async_client = None
 
