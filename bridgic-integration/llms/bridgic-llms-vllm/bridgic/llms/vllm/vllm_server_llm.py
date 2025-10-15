@@ -315,13 +315,11 @@ class VllmServerLlm(OpenAILikeLlm, StructuredOutput, ToolSelection):
         # Build parameters dictionary for validation
         params = filter_dict(merge_dict(self.configuration.model_dump(), {
             "model": model,
-            "tools": tools,
             "temperature": temperature,
             "top_p": top_p,
             "presence_penalty": presence_penalty,
             "frequency_penalty": frequency_penalty,
             "extra_body": extra_body,
-            "tool_choice": tool_choice,
             **kwargs,
         }))
         
@@ -422,13 +420,11 @@ class VllmServerLlm(OpenAILikeLlm, StructuredOutput, ToolSelection):
         # Build parameters dictionary for validation
         params = filter_dict(merge_dict(self.configuration.model_dump(), {
             "model": model,
-            "tools": tools,
             "temperature": temperature,
             "top_p": top_p,
             "presence_penalty": presence_penalty,
             "frequency_penalty": frequency_penalty,
             "extra_body": extra_body,
-            "tool_choice": tool_choice,
             **kwargs,
         }))
         
