@@ -6,7 +6,8 @@ This file only covers test cases for workers decorated by @worker, while test ca
 import pytest
 import re
 
-from bridgic.core.automa import GraphAutoma, worker, WorkerArgsMappingError, ArgsMappingRule
+from bridgic.core.automa import GraphAutoma, worker, WorkerArgsMappingError
+from bridgic.core.automa.args import ArgsMappingRule
 from typing import List, Tuple
 
 class Coordinate:

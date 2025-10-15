@@ -4,9 +4,10 @@ Test cases for the inputs propagation mechanism of Bridgic framework.
 
 import pytest
 
-from bridgic.core.automa import GraphAutoma, worker, ArgsMappingRule
+from bridgic.core.automa import GraphAutoma, worker
+from bridgic.core.automa.args import ArgsMappingRule
 from bridgic.core.automa.worker import Worker
-from typing import List, Tuple, Any
+from typing import Tuple, Any
 
 ###########################################################
 ###### Part One: Test decorated workers -- async def ######

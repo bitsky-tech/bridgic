@@ -4,7 +4,7 @@ import asyncio
 from bridgic.core.automa import GraphAutoma
 from bridgic.core.automa import worker
 from bridgic.core.automa.worker import Worker
-from bridgic.core.automa.interaction.event_handling import ProgressEvent, Event, Feedback, FeedbackSender
+from bridgic.core.automa.interaction._event_handling import ProgressEvent, Event, Feedback, FeedbackSender
 
 class TopGraph(GraphAutoma):
     @worker(is_start=True)

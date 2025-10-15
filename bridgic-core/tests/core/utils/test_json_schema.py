@@ -5,7 +5,7 @@ from enum import Enum
 from datetime import datetime, date, time
 import json
 
-from bridgic.core.utils.json_schema import create_func_params_json_schema
+from bridgic.core.utils._json_schema import create_func_params_json_schema
 
 # Test case 1: the simplest case
 def f1():

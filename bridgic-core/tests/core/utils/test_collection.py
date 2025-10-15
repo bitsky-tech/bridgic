@@ -2,7 +2,7 @@
 Test cases for collection utility functions.
 """
 import pytest
-from bridgic.core.utils.collection import filter_dict, unique_list_in_order, deep_hash, validate_required_params
+from bridgic.core.utils._collection import filter_dict, unique_list_in_order, deep_hash, validate_required_params
 
 
 def test_filter_dict_basic_none_filtering():

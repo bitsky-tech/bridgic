@@ -1,4 +1,7 @@
-from bridgic.core.automa.worker.worker import Worker
-from bridgic.core.automa.worker.callable_worker import CallableWorker
+from ._worker import Worker
+from ._callable_worker import CallableWorker
 
-__all__ = ["Worker", "CallableWorker"]
+__all__ = [
+    "Worker",
+    "CallableWorker",
+]
