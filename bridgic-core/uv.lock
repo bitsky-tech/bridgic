@@ -214,7 +214,7 @@ wheels = [
 
 [[package]]
 name = "bridgic-core"
-version = "0.1.0.dev17"
+version = "0.1.0.dev21"
 source = { editable = "." }
 dependencies = [
     { name = "docstring-parser" },
@@ -247,7 +247,7 @@ dev = [
 
 [[package]]
 name = "bridgic-llms-openai"
-version = "0.1.0.dev9"
+version = "0.1.0.dev11"
 source = { directory = "../bridgic-integration/llms/bridgic-llms-openai" }
 dependencies = [
     { name = "bridgic-core" },

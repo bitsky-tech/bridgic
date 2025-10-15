@@ -1,9 +1,10 @@
-from typing import List, Tuple, Optional
+from typing import List, Tuple, Optional, Dict, Any
 from typing_extensions import override
 import json
 
 from bridgic.core.model.types import *
-from bridgic.core.model import ToolSelection, ToolCall, Tool
+from bridgic.core.model import BaseLlm
+from bridgic.core.model.protocols import ToolSelection
 from bridgic.core.model.types import Message
 
 

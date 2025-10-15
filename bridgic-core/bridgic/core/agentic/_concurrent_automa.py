@@ -5,8 +5,8 @@ from typing_extensions import override
 
 from bridgic.core.automa import GraphAutoma
 from bridgic.core.automa.worker import Worker
-from bridgic.core.types.error import AutomaRuntimeError
-from bridgic.core.types.common import AutomaType, ArgsMappingRule
+from bridgic.core.types._error import AutomaRuntimeError
+from bridgic.core.types._common import AutomaType, ArgsMappingRule
 from bridgic.core.automa.interaction import InteractionFeedback
 
 class ConcurrentAutoma(GraphAutoma):

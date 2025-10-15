@@ -3,7 +3,7 @@ import os
 import httpx_aiohttp
 
 from bridgic.core.model.types import *
-from bridgic.core.utils.console import printer
+from bridgic.core.utils._console import printer
 from bridgic.llms.openai_like.openai_like_llm import OpenAILikeLlm
 
 _api_base = os.environ.get("OPENAI_LIKE_API_BASE")

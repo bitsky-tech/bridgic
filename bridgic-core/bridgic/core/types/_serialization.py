@@ -1,4 +1,5 @@
-from typing import Protocol, TypeVar, runtime_checkable, Dict, Any
+from pydantic import BaseModel
+from typing import Protocol, runtime_checkable, Dict, Any
 from abc import abstractmethod
 
 @runtime_checkable
@@ -35,3 +36,10 @@ class Picklable(Protocol):
         Since it is not necessary to implement this method in the subclass, no @abstractmethod is used here.
         """
         ...
+
+class Snapshot(BaseModel):
+    """
+    Snapshot is a class that represents the current state of an Automa.
+    """
+    serialized_bytes: bytes
+    serialization_version: str

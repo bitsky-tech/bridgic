@@ -4,12 +4,12 @@ from enum import Enum
 from typing import List, Callable, Optional, Dict, Any, Union, Iterable
 from typing_extensions import overload, get_overloads
 
-from bridgic.core.utils.inspect_tools import (
+from bridgic.core.utils._inspect_tools import (
     mark_overload,
     get_mark_by_func,
 )
-from bridgic.core.types.error import WorkerSignatureError
-from bridgic.core.types.common import AutomaType, ArgsMappingRule
+from bridgic.core.types._error import WorkerSignatureError
+from bridgic.core.types._common import AutomaType, ArgsMappingRule
 
 @mark_overload("__automa_type__", AutomaType.Graph)
 def worker(

@@ -4,10 +4,10 @@ from typing import List, Union
 from jinja2 import Environment, Template, nodes
 from jinja2.ext import Extension
 
-from bridgic.core.types.error import PromptRenderError, PromptSyntaxError
+from bridgic.core.types._error import PromptRenderError, PromptSyntaxError
 from bridgic.core.model.types import Message, Role, ContentBlock, TextBlock
-from bridgic.core.prompt.base_template import BasePromptTemplate
-from bridgic.core.utils.cache import MemoryCache
+from bridgic.core.prompt._base_template import BasePromptTemplate
+from bridgic.core.utils._cache import MemoryCache
 
 SUPPORTED_TYPES = Role.get_all_roles()
 CONTENT_BLOCK_REGEX = re.compile(r"(<content_block>\{.*?\}<\/content_block>)|([^<](?:(?!<content_block>)[\s\S])*)")

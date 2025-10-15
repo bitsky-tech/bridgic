@@ -2,7 +2,7 @@ import pytest
 
 from typing import List
 
-from bridgic.core.prompt.ejinja_template import EjinjaPromptTemplate
+from bridgic.core.prompt._ejinja_template import EjinjaPromptTemplate
 from bridgic.core.model.types import Message
 
 @pytest.mark.asyncio

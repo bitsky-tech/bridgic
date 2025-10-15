@@ -15,10 +15,11 @@ from openai.types.chat.chat_completion_user_message_param import ChatCompletionU
 from openai.types.chat.chat_completion_assistant_message_param import ChatCompletionAssistantMessageParam
 from openai.types.chat.chat_completion_tool_message_param import ChatCompletionToolMessageParam
 
+from bridgic.core.model import BaseLlm
 from bridgic.core.model.types import *
-from bridgic.core.model import BaseLlm, StructuredOutput, ToolSelection, PydanticModel, JsonSchema, Constraint
-from bridgic.core.utils.console import printer
-from bridgic.core.utils.collection import filter_dict, merge_dict, validate_required_params
+from bridgic.core.model.protocols import StructuredOutput, ToolSelection, PydanticModel, JsonSchema, Constraint
+from bridgic.core.utils._console import printer
+from bridgic.core.utils._collection import filter_dict, merge_dict, validate_required_params
 
 class OpenAIConfiguration(BaseModel):
     model: Optional[str] = None

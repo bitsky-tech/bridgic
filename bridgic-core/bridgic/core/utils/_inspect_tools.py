@@ -4,7 +4,7 @@ import enum
 
 from typing import Callable, List, Dict, Any, Tuple
 from typing_extensions import get_overloads, overload
-from bridgic.core.utils.collection import deep_hash
+from bridgic.core.utils._collection import deep_hash
 
 _marked_overloads: Dict[str, Dict[str, Any]] = {}
 

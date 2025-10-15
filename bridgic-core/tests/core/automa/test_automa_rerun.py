@@ -7,7 +7,7 @@ from bridgic.core.automa import worker, GraphAutoma
 from bridgic.core.automa import RuntimeContext
 from bridgic.core.automa.interaction import Event
 from bridgic.core.automa.interaction import InteractionFeedback, InteractionException
-from bridgic.core.automa._serialization import Snapshot
+from bridgic.core.types._serialization import Snapshot
 
 #### Test case: rerun an Automa instance.
 

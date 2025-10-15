@@ -4,10 +4,10 @@ import re
 from bridgic.core.automa import worker
 from bridgic.core.agentic import SequentialAutoma
 from bridgic.core.automa.worker import Worker
-from bridgic.core.types.error import WorkerSignatureError, AutomaRuntimeError
+from bridgic.core.types._error import WorkerSignatureError, AutomaRuntimeError
 from bridgic.core.automa.interaction import Event
 from bridgic.core.automa.interaction import InteractionFeedback, InteractionException
-from bridgic.core.automa._serialization import Snapshot
+from bridgic.core.types._serialization import Snapshot
 
 ########## Test case 1: sequential automa with 0/1/multiple workers ############
 

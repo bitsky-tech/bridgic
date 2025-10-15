@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 from typing import List
 
-from bridgic.core.types.serialization import Serializable
+from bridgic.core.types._serialization import Serializable
 from bridgic.core.model.types import *
 
 class BaseLlm(ABC, Serializable):

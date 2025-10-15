@@ -5,12 +5,12 @@ from abc import abstractmethod
 from types import MethodType
 from docstring_parser import parse as parse_docstring # type: ignore
 
-from bridgic.core.types.serialization import Serializable
+from bridgic.core.types._serialization import Serializable
 from bridgic.core.model.types import Tool
 from bridgic.core.automa import Automa
 from bridgic.core.automa.worker import Worker, CallableWorker
-from bridgic.core.utils.json_schema import create_func_params_json_schema
-from bridgic.core.utils.inspect_tools import load_qualified_class_or_func
+from bridgic.core.utils._json_schema import create_func_params_json_schema
+from bridgic.core.utils._inspect_tools import load_qualified_class_or_func
 
 def as_tool(spec_func: Callable) -> Callable:
     """

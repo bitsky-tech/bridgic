@@ -5,7 +5,7 @@ from bridgic.core.automa import GraphAutoma
 from bridgic.core.automa import worker
 from bridgic.core.automa.interaction import Event
 from bridgic.core.automa.interaction import InteractionFeedback, InteractionException
-from bridgic.core.automa._serialization import Snapshot
+from bridgic.core.types._serialization import Snapshot
 
 # Shared fixtures for all test cases.
 @pytest.fixture(scope="session")

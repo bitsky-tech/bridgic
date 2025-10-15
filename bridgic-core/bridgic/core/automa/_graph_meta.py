@@ -2,8 +2,8 @@ from typing import Dict, List, Callable, _ProtocolMeta
 from collections import defaultdict, deque
 
 from bridgic.core.automa.worker._worker_decorator import packup_worker_decorator_rumtime_args, get_worker_decorator_default_paramap
-from bridgic.core.types.common import AutomaType
-from bridgic.core.types.error import AutomaDeclarationError, AutomaCompilationError
+from bridgic.core.types._common import AutomaType
+from bridgic.core.types._error import AutomaDeclarationError, AutomaCompilationError
 
 class GraphMeta(_ProtocolMeta):
     """

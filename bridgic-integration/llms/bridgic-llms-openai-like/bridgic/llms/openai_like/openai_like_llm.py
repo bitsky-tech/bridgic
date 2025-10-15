@@ -14,9 +14,9 @@ from openai.types.chat.chat_completion_tool_message_param import ChatCompletionT
 from openai.types.chat.chat_completion_message_function_tool_call_param import ChatCompletionMessageFunctionToolCallParam
 from pydantic import BaseModel
 
+from bridgic.core.model import BaseLlm
 from bridgic.core.model.types import *
-from bridgic.core.model.types import *
-from bridgic.core.utils.collection import filter_dict, merge_dict, validate_required_params
+from bridgic.core.utils._collection import filter_dict, merge_dict, validate_required_params
 
 class OpenAILikeConfiguration(BaseModel):
     """

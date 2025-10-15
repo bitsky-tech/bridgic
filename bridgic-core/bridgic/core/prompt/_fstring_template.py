@@ -3,9 +3,9 @@ import re
 from typing import List, Union
 
 from bridgic.core.model.types import Message, Role
-from bridgic.core.types.error import PromptRenderError
-from bridgic.core.prompt.base_template import BasePromptTemplate
-from bridgic.core.utils.collection import unique_list_in_order
+from bridgic.core.types._error import PromptRenderError
+from bridgic.core.prompt._base_template import BasePromptTemplate
+from bridgic.core.utils._collection import unique_list_in_order
 
 class FstringPromptTemplate(BasePromptTemplate):
     """

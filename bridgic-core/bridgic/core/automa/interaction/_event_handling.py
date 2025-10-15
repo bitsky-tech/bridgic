@@ -30,7 +30,7 @@ from datetime import datetime
 from typing import Optional, Any, Callable, Union
 from typing_extensions import TypeAlias
 from abc import ABC, abstractmethod
-from bridgic.core.types.common import ZeroToOne
+from bridgic.core.types._common import ZeroToOne
 
 class Event(BaseModel):
     """

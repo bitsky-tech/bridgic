@@ -5,7 +5,7 @@ import re
 from bridgic.core.automa import GraphAutoma, worker
 from bridgic.core.agentic import ConcurrentAutoma
 from bridgic.core.automa.worker import Worker
-from bridgic.core.types.error import WorkerSignatureError, AutomaRuntimeError
+from bridgic.core.types._error import WorkerSignatureError, AutomaRuntimeError
 
 ###################### Test case 1: single concurrent automa #############################
 

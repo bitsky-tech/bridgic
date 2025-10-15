@@ -6,11 +6,12 @@ from typing_extensions import override, overload
 from pydantic import BaseModel
 from openai.types.chat import ChatCompletionNamedToolChoiceParam, ChatCompletionMessageFunctionToolCall
 
+from bridgic.core.model import BaseLlm
 from bridgic.core.model.types import *
-from bridgic.core.model import BaseLlm, StructuredOutput, ToolSelection, PydanticModel, JsonSchema, Constraint
+from bridgic.core.model.protocols import StructuredOutput, ToolSelection, PydanticModel, JsonSchema, Constraint, EbnfGrammar, Regex, Choice
 from bridgic.llms.openai_like.openai_like_llm import OpenAILikeLlm, OpenAILikeConfiguration
-from bridgic.core.utils.console import printer
-from bridgic.core.utils.collection import validate_required_params, merge_dict, filter_dict
+from bridgic.core.utils._console import printer
+from bridgic.core.utils._collection import validate_required_params, merge_dict, filter_dict
 
 class VllmServerConfiguration(OpenAILikeConfiguration):
     """

@@ -17,10 +17,10 @@ from typing_extensions import override
 from functools import partial
 from inspect import _ParameterKind
 from bridgic.core.automa.interaction import Event, InteractionFeedback, Feedback
-from bridgic.core.types.error import WorkerRuntimeError
-from bridgic.core.types.serialization import Serializable
-from bridgic.core.utils.inspect_tools import get_param_names_all_kinds
-from bridgic.core.utils.args_map import safely_map_args
+from bridgic.core.types._error import WorkerRuntimeError
+from bridgic.core.types._serialization import Serializable
+from bridgic.core.utils._inspect_tools import get_param_names_all_kinds
+from bridgic.core.utils._args_map import safely_map_args
 
 if TYPE_CHECKING:
     from bridgic.core.automa._automa import Automa

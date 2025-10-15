@@ -2,7 +2,7 @@ import pytest
 import os
 
 from bridgic.core.automa import GraphAutoma, worker
-from bridgic.core.model import ToolSelection
+from bridgic.core.model.protocols import ToolSelection
 from bridgic.core.agentic.tool import as_tool
 from bridgic.core.agentic import ReActAutoma
 from bridgic.llms.openai.openai_llm import OpenAILlm, OpenAIConfiguration

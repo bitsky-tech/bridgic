@@ -17,8 +17,8 @@ import pickle
 
 from typing import Any, Optional
 from enum import Enum
-from bridgic.core.utils.inspect_tools import load_qualified_class_or_func
-from bridgic.core.types.serialization import Serializable, Picklable
+from bridgic.core.utils._inspect_tools import load_qualified_class_or_func
+from bridgic.core.types._serialization import Serializable, Picklable
 from datetime import datetime
 from pydantic import BaseModel
 

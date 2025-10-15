@@ -1,14 +1,13 @@
-from typing import Callable, Dict, Optional, TYPE_CHECKING, Tuple, List
-from bridgic.core.automa.worker import Worker
-from typing import Any
-from types import MethodType
 import inspect
+import pickle
+
+from typing import Callable, Dict, Optional, TYPE_CHECKING, Tuple, List, Any
+from types import MethodType
 from inspect import _ParameterKind
 from typing_extensions import override
-import pickle
-from bridgic.core.types.error import WorkerRuntimeError
-from bridgic.core.utils.inspect_tools import load_qualified_class_or_func
-from bridgic.core.utils.inspect_tools import get_param_names_all_kinds
+from bridgic.core.automa.worker import Worker
+from bridgic.core.types._error import WorkerRuntimeError
+from bridgic.core.utils._inspect_tools import load_qualified_class_or_func, get_param_names_all_kinds
 
 if TYPE_CHECKING:
     from bridgic.core.automa._automa import Automa
