@@ -10,6 +10,13 @@ from bridgic.core.model.types import *
 from bridgic.core.model import BaseLlm, StructuredOutput, ToolSelection, PydanticModel, JsonSchema, Constraint
 from bridgic.llms.openai_like.openai_like_llm import OpenAILikeLlm, OpenAILikeConfiguration
 from bridgic.core.utils.console import printer
+from bridgic.core.utils.collection import validate_required_params, merge_dict, filter_dict
+
+class VllmServerConfiguration(OpenAILikeConfiguration):
+    """
+    Configuration for the vLLM server.
+    """
+    pass
 
 class VllmServerLlm(OpenAILikeLlm, StructuredOutput, ToolSelection):
     """
@@ -31,7 +38,7 @@ class VllmServerLlm(OpenAILikeLlm, StructuredOutput, ToolSelection):
         self,
         api_base: str,
         api_key: str,
-        configuration: Optional[OpenAILikeConfiguration] = OpenAILikeConfiguration(),
+        configuration: Optional[VllmServerConfiguration] = VllmServerConfiguration(),
         timeout: Optional[float] = None,
         http_client: Optional[httpx.Client] = None,
         http_async_client: Optional[httpx.AsyncClient] = None,
@@ -58,7 +65,7 @@ class VllmServerLlm(OpenAILikeLlm, StructuredOutput, ToolSelection):
         self,
         messages: List[Message],
         constraint: PydanticModel,
-        model: str,
+        model: Optional[str] = None,
         temperature: Optional[float] = ...,
         top_p: Optional[float] = ...,
         presence_penalty: Optional[float] = ...,
@@ -72,7 +79,7 @@ class VllmServerLlm(OpenAILikeLlm, StructuredOutput, ToolSelection):
         self,
         messages: List[Message],
         constraint: JsonSchema,
-        model: str,
+        model: Optional[str] = None,
         temperature: Optional[float] = ...,
         top_p: Optional[float] = ...,
         presence_penalty: Optional[float] = ...,
@@ -86,7 +93,7 @@ class VllmServerLlm(OpenAILikeLlm, StructuredOutput, ToolSelection):
         self,
         messages: List[Message],
         constraint: Choice,
-        model: str,
+        model: Optional[str] = None,
         temperature: Optional[float] = ...,
         top_p: Optional[float] = ...,
         presence_penalty: Optional[float] = ...,
@@ -99,7 +106,7 @@ class VllmServerLlm(OpenAILikeLlm, StructuredOutput, ToolSelection):
         self,
         messages: List[Message],
         constraint: Constraint,
-        model: str,
+        model: Optional[str] = None,
         temperature: Optional[float] = None,
         top_p: Optional[float] = None,
         presence_penalty: Optional[float] = None,
@@ -117,7 +124,7 @@ class VllmServerLlm(OpenAILikeLlm, StructuredOutput, ToolSelection):
             The messages to send to the LLM.
         constraint: Constraint
             The constraint to use for the structured output.
-        model: str
+        model: Optional[str]
             The model to use for the structured output.
         temperature: Optional[float]
             The temperature to use for the structured output.
@@ -156,7 +163,7 @@ class VllmServerLlm(OpenAILikeLlm, StructuredOutput, ToolSelection):
         self,
         messages: List[Message],
         constraint: Constraint,
-        model: str,
+        model: Optional[str] = None,
         temperature: Optional[float] = None,
         top_p: Optional[float] = None,
         presence_penalty: Optional[float] = None,
@@ -174,7 +181,7 @@ class VllmServerLlm(OpenAILikeLlm, StructuredOutput, ToolSelection):
             The messages to send to the LLM.
         constraint: Constraint
             The constraint to use for the structured output.
-        model: str
+        model: Optional[str]
             The model to use for the structured output.
         temperature: Optional[float]
             The temperature to use for the structured output.
@@ -248,7 +255,7 @@ class VllmServerLlm(OpenAILikeLlm, StructuredOutput, ToolSelection):
         self,
         messages: List[Message],
         tools: List[Tool],
-        model: str,
+        model: Optional[str] = None,
         temperature: Optional[float] = None,
         top_p: Optional[float] = None,
         presence_penalty: Optional[float] = None,
@@ -266,7 +273,7 @@ class VllmServerLlm(OpenAILikeLlm, StructuredOutput, ToolSelection):
             The messages to send to the LLM.
         tools: List[Tool]
             The tools to use for the tool select.
-        model: str
+        model: Optional[str]
             The model to use for the tool select.
         temperature: Optional[float]
             The temperature to use for the tool select.
@@ -304,6 +311,20 @@ class VllmServerLlm(OpenAILikeLlm, StructuredOutput, ToolSelection):
         -----
         See more on [Tool Calling](https://docs.vllm.ai/en/stable/features/tool_calling.html).
         """
+        # Build parameters dictionary for validation
+        params = filter_dict(merge_dict(self.configuration.model_dump(), {
+            "model": model,
+            "temperature": temperature,
+            "top_p": top_p,
+            "presence_penalty": presence_penalty,
+            "frequency_penalty": frequency_penalty,
+            "extra_body": extra_body,
+            **kwargs,
+        }))
+        
+        # Validate required parameters for tool selection
+        validate_required_params(params, ["model"])
+        
         input_messages = [self._convert_message(message=msg, strict=True) for msg in messages]
         input_tools = [
             {
@@ -339,7 +360,7 @@ class VllmServerLlm(OpenAILikeLlm, StructuredOutput, ToolSelection):
         self,
         messages: List[Message],
         tools: List[Tool],
-        model: str,
+        model: Optional[str] = None,
         temperature: Optional[float] = None,
         top_p: Optional[float] = None,
         presence_penalty: Optional[float] = None,
@@ -357,7 +378,7 @@ class VllmServerLlm(OpenAILikeLlm, StructuredOutput, ToolSelection):
             The messages to send to the LLM.
         tools: List[Tool]
             The tools to use for the tool select.
-        model: str
+        model: Optional[str]
             The model to use for the tool select.
         temperature: Optional[float]
             The temperature to use for the tool select.
@@ -395,6 +416,20 @@ class VllmServerLlm(OpenAILikeLlm, StructuredOutput, ToolSelection):
         -----
         See more on [Tool Calling](https://docs.vllm.ai/en/stable/features/tool_calling.html).
         """
+        # Build parameters dictionary for validation
+        params = filter_dict(merge_dict(self.configuration.model_dump(), {
+            "model": model,
+            "temperature": temperature,
+            "top_p": top_p,
+            "presence_penalty": presence_penalty,
+            "frequency_penalty": frequency_penalty,
+            "extra_body": extra_body,
+            **kwargs,
+        }))
+        
+        # Validate required parameters for tool selection
+        validate_required_params(params, ["model"])
+        
         input_messages = [self._convert_message(message=msg, strict=True) for msg in messages]
         input_tools = [
             {
