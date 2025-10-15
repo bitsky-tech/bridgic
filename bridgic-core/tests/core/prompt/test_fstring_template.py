@@ -1,7 +1,7 @@
 import pytest
 
 from bridgic.core.prompt.fstring_template import FstringPromptTemplate
-from bridgic.core.intelligence.base_llm import Message
+from bridgic.core.model.base_llm import Message
 from bridgic.core.types.error import PromptRenderError
 
 TEMPLATE_STR = "Hello, {name}! Here I will introduce a project named {project} to you."

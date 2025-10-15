@@ -7,7 +7,7 @@ import inspect
 from concurrent.futures import ThreadPoolExecutor
 
 from bridgic.core.types.serialization import Serializable
-from bridgic.core.intelligence.protocol import Tool
+from bridgic.core.model.protocol import Tool
 from bridgic.core.automa.automa import Automa
 from bridgic.core.automa.worker import Worker, CallableWorker
 from bridgic.core.utils.json_schema import create_func_params_json_schema

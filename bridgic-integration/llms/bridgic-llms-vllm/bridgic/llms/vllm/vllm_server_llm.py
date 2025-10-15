@@ -6,9 +6,9 @@ from typing_extensions import override, overload
 from pydantic import BaseModel
 from openai.types.chat import ChatCompletionNamedToolChoiceParam, ChatCompletionMessageFunctionToolCall
 
-from bridgic.core.intelligence.base_llm import *
-from bridgic.core.intelligence.content import *
-from bridgic.core.intelligence.protocol import *
+from bridgic.core.model.base_llm import *
+from bridgic.core.model.content import *
+from bridgic.core.model.protocol import *
 from bridgic.llms.openai_like.openai_like_llm import OpenAILikeLlm, OpenAILikeConfiguration
 from bridgic.core.utils.console import printer
 

@@ -16,9 +16,9 @@ from openai.types.chat.chat_completion_user_message_param import ChatCompletionU
 from openai.types.chat.chat_completion_assistant_message_param import ChatCompletionAssistantMessageParam
 from openai.types.chat.chat_completion_tool_message_param import ChatCompletionToolMessageParam
 
-from bridgic.core.intelligence.base_llm import *
-from bridgic.core.intelligence.content import *
-from bridgic.core.intelligence.protocol import *
+from bridgic.core.model.base_llm import *
+from bridgic.core.model.content import *
+from bridgic.core.model.protocol import *
 from bridgic.core.utils.console import printer
 from bridgic.core.utils.collection import filter_dict, merge_dict, validate_required_params
 

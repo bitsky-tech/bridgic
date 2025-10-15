@@ -1,18 +1,17 @@
 from typing import Optional, Dict, Any, List, Union, Callable, cast, Tuple
-from bridgic.core.intelligence.tool_spec import ToolSpec
 from typing_extensions import override
 from concurrent.futures import ThreadPoolExecutor
 from jinja2 import Environment, PackageLoader, Template
 import json
 
 from bridgic.core.automa import Automa, GraphAutoma, From
-from bridgic.core.intelligence.protocol import ToolCall, Tool, ToolSelection
+from bridgic.core.model.protocol import ToolCall, Tool, ToolSelection
 from bridgic.core.automa.interaction import InteractionFeedback
 from bridgic.core.prompt.chat_message import ChatMessage, SystemMessage, UserTextMessage, AssistantTextMessage, ToolMessage
 from bridgic.core.prompt.chat_message import FunctionToolCall, Function
 from bridgic.core.automa import worker, ArgsMappingRule
-from bridgic.core.intelligence import FunctionToolSpec, AutomaToolSpec
-from bridgic.core.intelligence.worker import ToolSelectionWorker
+from bridgic.core.agentic.tool import ToolSpec, FunctionToolSpec, AutomaToolSpec
+from bridgic.core.agentic.workers import ToolSelectionWorker
 from bridgic.core.automa.arguments_descriptor import System
 
 DEFAULT_MAX_ITERATIONS = 20
@@ -65,7 +64,7 @@ class ReActAutoma(GraphAutoma):
             self._tools = None
         self._max_iterations = max_iterations
         self._prompt_template = prompt_template
-        self._jinja_env = Environment(loader=PackageLoader("bridgic.core.intelligence.react"))
+        self._jinja_env = Environment(loader=PackageLoader("bridgic.core.agentic.react"))
         self._jinja_template = self._jinja_env.get_template(prompt_template)
 
         self.add_worker(
