@@ -1,6 +1,6 @@
-# react
+# workers
 
-::: bridgic.core.intelligence.react
+::: bridgic.core.agentic.workers
     options:
       show_source: true
       show_root_heading: false

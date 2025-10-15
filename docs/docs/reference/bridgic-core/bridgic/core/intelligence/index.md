@@ -1,6 +1,6 @@
-# worker
+# intelligence
 
-::: bridgic.core.intelligence.worker
+::: bridgic.core.intelligence
     options:
       show_source: true
       show_root_heading: false

@@ -14,7 +14,7 @@ nav:
     - Quick Start: home/quick_start.md
     - Examples: home/examples.md
   - Tutorials:
-    - Index: tutorials/index.md
+    - Tutorials: tutorials/index.md
     - Logic Arrangement: tutorials/notebooks/getting_started.ipynb
     - Model Usage: tutorials/notebooks/model_usage.ipynb
     - Dual-Mode Worker Execution: tutorials/notebooks/dual_mode_worker_execution.ipynb

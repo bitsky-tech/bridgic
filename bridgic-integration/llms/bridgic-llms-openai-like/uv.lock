@@ -1,5 +1,5 @@
 version = 1
-revision = 2
+revision = 3
 requires-python = ">=3.9"
 
 [[package]]
@@ -201,7 +201,7 @@ requires-dist = [
 dev = [
     { name = "bridgic-llms-openai", specifier = ">=0.1.0.dev9", index = "http://8.130.156.165:3141/btsk/test/+simple" },
     { name = "bridgic-llms-openai-like", specifier = ">=0.1.0.dev9", index = "http://8.130.156.165:3141/btsk/test/+simple" },
-    { name = "bridgic-llms-vllm", specifier = ">=0.1.0.dev6", index = "http://8.130.156.165:3141/btsk/test/+simple" },
+    { name = "bridgic-llms-vllm", specifier = ">=0.1.0.dev7", index = "http://8.130.156.165:3141/btsk/test/+simple" },
     { name = "pytest", specifier = ">=8.4.0" },
     { name = "pytest-asyncio", specifier = ">=1.0.0" },
 ]
