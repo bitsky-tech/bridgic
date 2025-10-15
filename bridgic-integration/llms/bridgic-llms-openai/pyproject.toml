@@ -1,6 +1,6 @@
 [project]
 name = "bridgic-llms-openai"
-version = "0.1.0.dev6"
+version = "0.1.0.dev9"
 classifiers = [
     "Private :: Do Not Upload",
     "Programming Language :: Python :: 3",
@@ -12,7 +12,7 @@ authors = [
     { name = "Tielei Zhang", email = "zhangtl04@gmail.com" },
 ]
 dependencies = [
-    "bridgic-core>=0.1.0.dev14",
+    "bridgic-core>=0.1.0.dev17",
     "openai>=1.60.0",
     "httpx>=0.28.1",
     "httpx-aiohttp>=0.1.8",

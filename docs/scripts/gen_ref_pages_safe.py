@@ -13,6 +13,7 @@ from typing import List, Dict, Set, Optional, Tuple, Any
 import re
 
 import mkdocs_gen_files
+import ast
 
 # Configure logging
 logging.basicConfig(
@@ -76,6 +77,10 @@ class DocumentationConfig:
         self.show_root_heading = True
         self.show_root_toc_entry = True
         self.generate_index_pages = True
+        # New option: generate only index pages for packages (directories with __init__.py)
+        self.only_index_pages = True
+        # New option: render single-entry groups as collapsible with an Index child for visibility
+        self.single_entry_as_group = True
         self.docstring_style = "numpy"
         
         # mkdocstrings options
@@ -135,6 +140,8 @@ class DocumentationConfig:
                 self.show_root_toc_entry = gen_opts.get('show_root_toc_entry', self.show_root_toc_entry)
                 self.generate_index_pages = gen_opts.get('generate_index_pages', self.generate_index_pages)
                 self.docstring_style = gen_opts.get('docstring_style', self.docstring_style)
+                self.only_index_pages = gen_opts.get('only_index_pages', self.only_index_pages)
+                self.single_entry_as_group = gen_opts.get('single_entry_as_group', self.single_entry_as_group)
             
             # Update mkdocstrings options
             if 'mkdocstrings_options' in config_data:
@@ -276,7 +283,7 @@ class SafeMkDocsConfigUpdater:
     
     def _build_api_reference_nav(self, nav_structure: Dict[str, Any]) -> List[Any]:
         """Build navigation structure for API Reference"""
-        api_nav = [{'Index': 'reference/bridgic-core/index.md'}]
+        api_nav = []
         
         for package_name, package_structure in nav_structure.items():
             formatted_name = self._format_display_name(package_name)
@@ -292,10 +299,11 @@ class SafeMkDocsConfigUpdater:
         for key, value in sorted(structure.items()):
             if isinstance(value, dict):
                 sub_nav = self._build_nav_structure(value)
-                formatted_name = self._format_display_name(key)
+                # Keep dotted python package path as-is, otherwise format
+                formatted_name = key if ('.' in key) else self._format_display_name(key)
                 nav_items.append({formatted_name: sub_nav})
             else:
-                formatted_name = self._format_display_name(key)
+                formatted_name = key if ('.' in key) else self._format_display_name(key)
                 nav_items.append({formatted_name: value})
         
         return nav_items
@@ -350,6 +358,8 @@ class DocumentationGenerator:
         self.skipped_files = []
         self.error_files = []
         self.nav_structure = {}
+        # Collect package directories (with __init__.py) per top-level package display name
+        self.package_nodes: Dict[str, Dict[Tuple[str, ...], str]] = {}
         
     def clean_reference_directory(self) -> None:
         """Clean the reference directory before generating new documentation"""
@@ -410,6 +420,27 @@ class DocumentationGenerator:
             full_doc_path = full_doc_path.with_name("index.md")
         return parts, doc_path, full_doc_path
     
+    def _parse_init_doc_and_all(self, source_path: Path) -> Tuple[Optional[str], List[str]]:
+        """Parse __init__.py for module docstring and __all__ list using AST."""
+        try:
+            text = source_path.read_text(encoding='utf-8')
+            tree = ast.parse(text)
+            docstring = ast.get_docstring(tree)
+            exports: List[str] = []
+            for node in tree.body:
+                if isinstance(node, ast.Assign):
+                    for target in node.targets:
+                        if isinstance(target, ast.Name) and target.id == '__all__':
+                            try:
+                                value = ast.literal_eval(node.value)
+                                if isinstance(value, (list, tuple)):
+                                    exports = [str(v) for v in value]
+                            except Exception:
+                                pass
+            return docstring, exports
+        except Exception:
+            return None, []
+
     def create_documentation_file(self, full_doc_path: Path, identifier: str, source_path: Path, package_path: str = "") -> bool:
         """Create documentation file"""
         try:
@@ -417,33 +448,65 @@ class DocumentationGenerator:
                 module_title = identifier.split('.')[-1] if '.' in identifier else identifier
                 fd.write(f"# {module_title}\n\n")
                 
-                if package_path:
-                    description = self.config.get_package_description(package_path)
-                    if description:
-                        fd.write(f"> {description}\n\n")
-                
-                fd.write(f"::: {identifier}\n")
-                fd.write("    options:\n")
-                fd.write(f"      show_source: {str(self.config.show_source).lower()}\n")
-                fd.write(f"      show_root_heading: {str(self.config.show_root_heading).lower()}\n")
-                fd.write(f"      show_root_toc_entry: {str(self.config.show_root_toc_entry).lower()}\n")
-                
-                if self.config.mkdocstrings_options:
-                    for key, value in self.config.mkdocstrings_options.items():
-                        if key == "docstring_options" and isinstance(value, dict):
-                            fd.write(f"      {key}:\n")
-                            for sub_key, sub_value in value.items():
-                                fd.write(f"        {sub_key}: {str(sub_value).lower()}\n")
-                        elif key == "filters" and isinstance(value, list):
-                            fd.write(f"      {key}:\n")
-                            for filter_item in value:
-                                fd.write(f"        - \"{filter_item}\"\n")
-                        elif isinstance(value, bool):
-                            fd.write(f"      {key}: {str(value).lower()}\n")
-                        elif isinstance(value, str):
-                            fd.write(f"      {key}: \"{value}\"\n")
-                        else:
-                            fd.write(f"      {key}: {value}\n")
+                if source_path.name == '__init__.py':
+                    # Special index page content sourced from __init__.py
+                    # docstring, exports = self._parse_init_doc_and_all(source_path)
+                    # if docstring:
+                    #     fd.write(f"{docstring}\n\n")
+                    # if exports:
+                    #     fd.write("## Exports\n\n")
+                    #     for name in exports:
+                    #         fd.write(f"- `{name}`\n")
+                    #     fd.write("\n")
+                    # Also include mkdocstrings block for the package itself
+                    fd.write(f"::: {identifier}\n")
+                    fd.write("    options:\n")
+                    fd.write(f"      show_source: {str(self.config.show_source).lower()}\n")
+                    fd.write(f"      show_root_heading: {str(self.config.show_root_heading).lower()}\n")
+                    fd.write(f"      show_root_toc_entry: {str(self.config.show_root_toc_entry).lower()}\n")
+                    if self.config.mkdocstrings_options:
+                        for key, value in self.config.mkdocstrings_options.items():
+                            if key == "docstring_options" and isinstance(value, dict):
+                                fd.write(f"      {key}:\n")
+                                for sub_key, sub_value in value.items():
+                                    fd.write(f"        {sub_key}: {str(sub_value).lower()}\n")
+                            elif key == "filters" and isinstance(value, list):
+                                fd.write(f"      {key}:\n")
+                                for filter_item in value:
+                                    fd.write(f"        - \"{filter_item}\"\n")
+                            elif isinstance(value, bool):
+                                fd.write(f"      {key}: {str(value).lower()}\n")
+                            elif isinstance(value, str):
+                                fd.write(f"      {key}: \"{value}\"\n")
+                            else:
+                                fd.write(f"      {key}: {value}\n")
+                else:
+                    if package_path:
+                        description = self.config.get_package_description(package_path)
+                        if description:
+                            fd.write(f"> {description}\n\n")
+                    fd.write(f"::: {identifier}\n")
+                    fd.write("    options:\n")
+                    fd.write(f"      show_source: {str(self.config.show_source).lower()}\n")
+                    fd.write(f"      show_root_heading: {str(self.config.show_root_heading).lower()}\n")
+                    fd.write(f"      show_root_toc_entry: {str(self.config.show_root_toc_entry).lower()}\n")
+                    
+                    if self.config.mkdocstrings_options:
+                        for key, value in self.config.mkdocstrings_options.items():
+                            if key == "docstring_options" and isinstance(value, dict):
+                                fd.write(f"      {key}:\n")
+                                for sub_key, sub_value in value.items():
+                                    fd.write(f"        {sub_key}: {str(sub_value).lower()}\n")
+                            elif key == "filters" and isinstance(value, list):
+                                fd.write(f"      {key}:\n")
+                                for filter_item in value:
+                                    fd.write(f"        - \"{filter_item}\"\n")
+                            elif isinstance(value, bool):
+                                fd.write(f"      {key}: {str(value).lower()}\n")
+                            elif isinstance(value, str):
+                                fd.write(f"      {key}: \"{value}\"\n")
+                            else:
+                                fd.write(f"      {key}: {value}\n")
                 
             mkdocs_gen_files.set_edit_path(full_doc_path, source_path.relative_to(self.root))
             
@@ -480,6 +543,11 @@ class DocumentationGenerator:
             
         logger.info(f"Found {len(python_files)} Python files")
         
+        # Track package nodes (directories with __init__.py)
+        package_name = self.config.get_package_display_name(package_path)
+        if package_name not in self.package_nodes:
+            self.package_nodes[package_name] = {}
+
         for path in python_files:
             try:
                 if self.should_exclude_path(path):
@@ -495,7 +563,6 @@ class DocumentationGenerator:
                     continue
                     
                 doc_path = module_path.with_suffix(".md")
-                package_name = self.config.get_package_display_name(package_path)
                 full_doc_path = Path(self.config.docs_base_path) / package_name / doc_path
 
                 parts = list(module_path.parts)
@@ -506,37 +573,93 @@ class DocumentationGenerator:
                         continue
                 elif parts[-1] == "__main__":
                     continue
+                elif self.config.only_index_pages:
+                    # Skip non-__init__.py modules entirely when only generating index pages
+                    continue
                 
                 # Generate correct module identifier (without package prefix)
                 identifier = self.generate_module_identifier(parts)
                 
-                nav_key = [package_name] + parts
-                nav_path = f"{package_name}/{doc_path.as_posix()}"
-                self.nav[nav_key] = nav_path
+                # Only add nav entries for index pages when only_index_pages is enabled
+                if (not self.config.only_index_pages) or (self.config.only_index_pages and path.name == '__init__.py'):
+                    nav_key = [package_name] + parts
+                    nav_path = f"{package_name}/{doc_path.as_posix()}"
+                    self.nav[nav_key] = nav_path
                 
                 if self.create_documentation_file(full_doc_path, identifier, path, package_path):
                     self.generated_files.append(full_doc_path)
                     
-                    # Collect navigation structure
-                    if package_name not in self.nav_structure:
-                        self.nav_structure[package_name] = {}
-                    
-                    current_nav = self.nav_structure[package_name]
-                    for part in parts[:-1]:
-                        if part not in current_nav:
-                            current_nav[part] = {}
-                        elif isinstance(current_nav[part], str):
-                            current_nav[part] = {}
-                        current_nav = current_nav[part]
-                    
-                    file_title = parts[-1] if parts else identifier.split('.')[-1]
-                    if isinstance(current_nav, dict):
-                        current_nav[file_title] = f"{self.config.docs_base_path}/{package_name}/{doc_path.as_posix()}"
+                    # Record package node only for index pages generated from __init__.py
+                    if source_is_init := (path.name == '__init__.py'):
+                        self.package_nodes[package_name][tuple(parts)] = f"{self.config.docs_base_path}/{package_name}/{doc_path.as_posix()}"
                     
             except Exception as e:
                 logger.error(f"Failed to process file {path}: {e}")
                 self.error_files.append((path, str(e)))
                 continue
+
+        # Build navigation structure for this package based on collected package nodes
+        try:
+            if self.package_nodes.get(package_name):
+                if package_name not in self.nav_structure:
+                    self.nav_structure[package_name] = {}
+
+                nodes = self.package_nodes[package_name]
+                # Group by first three parts (e.g., bridgic.core.automa)
+                groups: Dict[Tuple[str, ...], Dict[str, Any]] = {}
+                for parts_tuple, index_path in nodes.items():
+                    if len(parts_tuple) >= 3:
+                        key = parts_tuple[:3]
+                        if key not in groups:
+                            groups[key] = { 'Index': index_path, '__children__': {} }
+                        # Track children mapping for later
+                        groups[key]['__children__'][parts_tuple] = index_path
+
+                # For each group, add immediate children (len == 4) as links; if deeper, nest under that child
+                for first3, data in groups.items():
+                    display_key = '.'.join(first3)
+                    if display_key not in self.nav_structure[package_name]:
+                        self.nav_structure[package_name][display_key] = []
+
+                    # Ensure Index first
+                    group_items: List[Any] = []
+                    group_items.append({'Index': data['Index']})
+
+                    # Build children under this group
+                    child_index_map: Dict[Tuple[str, ...], str] = {}
+                    for parts_tuple, index_path in nodes.items():
+                        if len(parts_tuple) == 4 and parts_tuple[:3] == first3:
+                            child_index_map[parts_tuple] = index_path
+
+                    # Sort children by name
+                    for child_parts in sorted(child_index_map.keys()):
+                        child_name = child_parts[-1]
+                        child_path = child_index_map[child_parts]
+
+                        # Detect if this child has deeper subpackages
+                        has_deeper = any((len(p) > 4 and list(p[:4]) == list(child_parts)) for p in nodes.keys())
+                        if not has_deeper:
+                            group_items.append({child_name: child_path})
+                        else:
+                            # Create collapsible child with its own Index and its immediate children (5th level)
+                            child_items: List[Any] = [ {'Index': child_path} ]
+                            grand_children = [p for p in nodes.keys() if (len(p) == 5 and list(p[:4]) == list(child_parts))]
+                            for gc_parts in sorted(grand_children):
+                                gc_name = gc_parts[-1]
+                                gc_path = nodes[gc_parts]
+                                child_items.append({gc_name: gc_path})
+                            group_items.append({child_name: child_items})
+
+                    # If there are no children besides Index, render as a single link instead of a collapsible group
+                    if len(group_items) == 1:
+                        if self.config.single_entry_as_group:
+                            self.nav_structure[package_name][display_key] = group_items
+                        else:
+                            self.nav_structure[package_name][display_key] = data['Index']
+                    else:
+                        self.nav_structure[package_name][display_key] = group_items
+        except Exception as e:
+            logger.error(f"Failed to build nav structure for package {package_name}: {e}")
     
     def generate_package_index(self, package_path: str) -> None:
         """Generate index page for package"""
@@ -598,9 +721,9 @@ class DocumentationGenerator:
         
         for package_path in self.config.packages:
             self.process_package(package_path)
-            self.generate_package_index(package_path)
+            # self.generate_package_index(package_path)
         
-        self.generate_summary()
+        # self.generate_summary()
         self.update_mkdocs_config()
         self.print_statistics()
         

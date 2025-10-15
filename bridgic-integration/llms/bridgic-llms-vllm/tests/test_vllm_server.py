@@ -4,10 +4,10 @@ import json
 import re
 import datetime
 
-from bridgic.core.intelligence.base_llm import *
-from bridgic.core.intelligence.protocol import *
+from bridgic.core.model.base_llm import *
+from bridgic.core.model.protocol import *
 from bridgic.core.utils.console import printer
-from bridgic.llms.vllm.vllm_server_llm import VllmServerLlm
+from bridgic.llms.vllm.vllm_server_llm import VllmServerLlm, VllmServerConfiguration
 
 _api_base = os.environ.get("VLLM_SERVER_API_BASE")
 _api_key = os.environ.get("VLLM_SERVER_API_KEY")
@@ -15,9 +15,11 @@ _model_name = os.environ.get("VLLM_SERVER_MODEL_NAME")
 
 @pytest.fixture
 def llm():
+    config = VllmServerConfiguration(model=_model_name)
     llm = VllmServerLlm(
         api_base=_api_base,
         api_key=_api_key,
+        configuration=config,
         timeout=5,
     )
     state_dict = llm.dump_to_dict()
@@ -49,6 +51,52 @@ def tools():
     ]
     return tools
 
+@pytest.fixture
+def weather_messages(date):
+    messages = [
+        Message.from_text(
+            text="You are a helpful assistant. You are good at calling the provided tools to solve problems.",
+            role=Role.SYSTEM,
+        ),
+        Message.from_text(
+            text="The weather of London.",
+            role=Role.USER
+        ),
+        Message.from_tool_call(
+            tool_calls=ToolCall(
+                id="tool_123",
+                name="get_weather",
+                arguments={"city": "London"},
+            ),
+        ),
+        Message.from_tool_result(
+            tool_id="tool_123",
+            content="London, 22°C, sunny with light clouds",
+        ),
+        Message.from_text(
+            text="The weather in London is 22°C and sunny with light clouds.",
+            role=Role.AI,
+        ),
+        Message.from_text(
+            text=f"Thanks! Tell me the weather of Tokyo and today's sports news. Remember today is {date}.",
+            role=Role.USER,
+        ),
+    ]
+    return messages
+
+def handle_response(date, response: Tuple[List[ToolCall], Optional[str]]):
+    assert len(response) == 2
+    tool_calls, content = response
+    if tool_calls:
+        for tool_call in tool_calls:
+            printer.print(json.dumps(tool_call.model_dump()), color='purple')
+            if tool_call.name == "get_weather":
+                assert tool_call.arguments["city"] == "Tokyo"
+            if tool_call.name == "get_news":
+                assert tool_call.arguments["date"] == date
+                assert len(tool_call.arguments["topic"]) > 0
+    if content:
+        printer.print(content, color='yellow')
 
 @pytest.mark.skipif(
     (_api_key is None) or (_api_base is None) or (_model_name is None),
@@ -379,59 +427,56 @@ I am in Beijing. Please tell me the time in Beijing in ISO 8601 format.
     (_api_key is None) or (_api_base is None) or (_model_name is None),
     reason="VLLM_SERVER_API_KEY or VLLM_SERVER_API_BASE or VLLM_SERVER_MODEL_NAME is not set",
 )
-def test_vllm_server_select_tool(llm, date, tools):
-    response: List[ToolCall] = llm.select_tool(
+def test_vllm_server_structured_output_choice(llm):
+    choices = ["apple", "banana", "cherry", "kiwi", "orange", "pear", "pineapple", "strawberry", "watermelon"]
+    response: str = llm.structured_output(
         model=_model_name,
-        tools=tools,
-        min_tools=1,
-        max_tools=3,
+        constraint=Choice(choices=choices),
         messages=[
             Message.from_text(
-                text="You are a helpful assistant. You are good at calling the provided tools to solve problems.",
+                text="You are a helpful assistant.",
                 role=Role.SYSTEM,
             ),
             Message.from_text(
-                text=f"Today is {date}, get the weather of Tokyo and today's sports news.",
+                text=f"Pick one fruit that is yellow from the following list: {', '.join(choices)}.",
                 role=Role.USER,
-            )
+            ),
         ],
     )
-    printer.print("Tool Calls:")
-    for tool_call in response:
-        printer.print(json.dumps(tool_call.model_dump()), color='purple')
-        if tool_call.name == "get_weather":
-            assert tool_call.arguments["city"] == "Tokyo"
-        if tool_call.name == "get_news":
-            assert tool_call.arguments["date"] == date
-            assert len(tool_call.arguments["topic"]) > 0
+    printer.print("\n" + response, color='purple')
+    assert response in choices
+
+@pytest.mark.skipif(
+    (_api_key is None) or (_api_base is None) or (_model_name is None),
+    reason="VLLM_SERVER_API_KEY or VLLM_SERVER_API_BASE or VLLM_SERVER_MODEL_NAME is not set",
+)
+def test_vllm_server_select_tool(llm, date, tools, weather_messages):
+    options = ["auto", "required", "none", {"type": "function", "function": {"name": "get_weather"}}]
+    for option in options:
+        printer.print(f"\nTool choice: [{option}]")
+        response: Tuple[List[ToolCall], Optional[str]] = llm.select_tool(
+            model=_model_name,
+            tools=tools,
+            tool_choice=option,
+            temperature=0.5,
+            messages=weather_messages,
+        )
+        handle_response(date, response)
 
 @pytest.mark.skipif(
     (_api_key is None) or (_api_base is None) or (_model_name is None),
     reason="VLLM_SERVER_API_KEY or VLLM_SERVER_API_BASE or VLLM_SERVER_MODEL_NAME is not set",
 )
 @pytest.mark.asyncio
-async def test_vllm_server_aselect_tool(llm, date, tools):
-    response: List[ToolCall] = await llm.aselect_tool(
-        model=_model_name,
-        tools=tools,
-        min_tools=0,
-        max_tools=3,
-        messages=[
-            Message.from_text(
-                text="You are a helpful assistant. You are good at calling the provided tools to solve problems.",
-                role=Role.SYSTEM,
-            ),
-            Message.from_text(
-                text=f"Today is {date}, get the weather of Tokyo and today's sports news.",
-                role=Role.USER,
-            )
-        ],
-    )
-    printer.print("Tool Calls:")
-    for tool_call in response:
-        printer.print(json.dumps(tool_call.model_dump()), color='purple')
-        if tool_call.name == "get_weather":
-            assert tool_call.arguments["city"] == "Tokyo"
-        if tool_call.name == "get_news":
-            assert tool_call.arguments["date"] == date
-            assert len(tool_call.arguments["topic"]) > 0
+async def test_vllm_server_aselect_tool(llm, date, tools, weather_messages):
+    options = ["auto", "required", "none", {"type": "function", "function": {"name": "get_weather"}}]
+    for option in options:
+        printer.print(f"\n[tool_choice: {option}]")
+        response: Tuple[List[ToolCall], Optional[str]] = llm.aselect_tool(
+            model=_model_name,
+            tools=tools,
+            tool_choice=option,
+            temperature=0.5,
+            messages=weather_messages,
+        )
+        handle_response(date, await response)

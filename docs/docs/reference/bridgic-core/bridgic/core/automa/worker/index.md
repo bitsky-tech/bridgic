@@ -1,12 +1,10 @@
 # worker
 
-> Bridgic Core
-
 ::: bridgic.core.automa.worker
     options:
       show_source: true
-      show_root_heading: true
-      show_root_toc_entry: true
+      show_root_heading: false
+      show_root_toc_entry: false
       docstring_options:
         ignore_init_summary: true
       filters:
@@ -16,3 +14,4 @@
       merge_init_into_class: false
       separate_signature: true
       signature_crossrefs: true
+      summary: false
