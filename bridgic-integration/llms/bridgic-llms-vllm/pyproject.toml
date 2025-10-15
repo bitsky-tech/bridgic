@@ -1,6 +1,6 @@
 [project]
 name = "bridgic-llms-vllm"
-version = "0.1.0.dev6"
+version = "0.1.0.dev7"
 classifiers = [
     "Private :: Do Not Upload",
     "Programming Language :: Python :: 3",
