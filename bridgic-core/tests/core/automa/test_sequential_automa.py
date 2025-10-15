@@ -1,7 +1,8 @@
 import pytest
 import re
 
-from bridgic.core.automa import SequentialAutoma, worker
+from bridgic.core.automa import worker
+from bridgic.core.agentic import SequentialAutoma
 from bridgic.core.automa.worker import Worker
 from bridgic.core.types.error import WorkerSignatureError, AutomaRuntimeError
 from bridgic.core.automa.interaction import Event

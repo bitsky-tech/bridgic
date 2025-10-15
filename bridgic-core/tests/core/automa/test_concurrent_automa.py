@@ -2,7 +2,8 @@ import pytest
 from typing import List
 import re
 
-from bridgic.core.automa import ConcurrentAutoma, GraphAutoma, worker
+from bridgic.core.automa import GraphAutoma, worker
+from bridgic.core.agentic import ConcurrentAutoma
 from bridgic.core.automa.worker import Worker
 from bridgic.core.types.error import WorkerSignatureError, AutomaRuntimeError
 

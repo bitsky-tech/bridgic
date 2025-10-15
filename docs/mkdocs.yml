@@ -24,43 +24,30 @@ nav:
     - Nested Automa: tutorials/notebooks/nested_reuse.ipynb
     # - Dynamic DAG: tutorials/dynamic_dag.ipynb
   - API Reference:
-      - Index: reference/bridgic-core/index.md
       - Bridgic-Core:
-        - Bridgic:
-          - Core:
-            - Automa:
-              - Arguments Descriptor: reference/bridgic-core/bridgic/core/automa/arguments_descriptor.md
-              - Automa: reference/bridgic-core/bridgic/core/automa/automa.md
-              - Concurrent Automa: reference/bridgic-core/bridgic/core/automa/concurrent_automa.md
-              - Graph Automa: reference/bridgic-core/bridgic/core/automa/graph_automa.md
-              - Interaction:
-                - Event Handling: reference/bridgic-core/bridgic/core/automa/interaction/event_handling.md
-                - Human Interaction: reference/bridgic-core/bridgic/core/automa/interaction/human_interaction.md
-              - Sequential Automa: reference/bridgic-core/bridgic/core/automa/sequential_automa.md
-              - Serialization: reference/bridgic-core/bridgic/core/automa/serialization.md
-              - Worker:
-                - Callable Worker: reference/bridgic-core/bridgic/core/automa/worker/callable_worker.md
-                - Worker: reference/bridgic-core/bridgic/core/automa/worker/worker.md
-              - Worker Decorator: reference/bridgic-core/bridgic/core/automa/worker_decorator.md
-            - Intelligence:
-              - Base LLM: reference/bridgic-core/bridgic/core/intelligence/base_llm.md
-              - Content: reference/bridgic-core/bridgic/core/intelligence/content.md
-              - Protocol: reference/bridgic-core/bridgic/core/intelligence/protocol.md
-            - Prompt:
-              - Base Template: reference/bridgic-core/bridgic/core/prompt/base_template.md
-              - Ejinja Template: reference/bridgic-core/bridgic/core/prompt/ejinja_template.md
-              - Fstring Template: reference/bridgic-core/bridgic/core/prompt/fstring_template.md
-            - Types:
-              - Common: reference/bridgic-core/bridgic/core/types/common.md
-              - Error: reference/bridgic-core/bridgic/core/types/error.md
-              - Serialization: reference/bridgic-core/bridgic/core/types/serialization.md
-            - Utils:
-              - Args Map: reference/bridgic-core/bridgic/core/utils/args_map.md
-              - Cache: reference/bridgic-core/bridgic/core/utils/cache.md
-              - Collection: reference/bridgic-core/bridgic/core/utils/collection.md
-              - Console: reference/bridgic-core/bridgic/core/utils/console.md
-              - Inspect Tools: reference/bridgic-core/bridgic/core/utils/inspect_tools.md
-              - Msgpackx: reference/bridgic-core/bridgic/core/utils/msgpackx.md
+        - bridgic.core.agentic:
+          - Index: reference/bridgic-core/bridgic/core/agentic/index.md
+          - tool: reference/bridgic-core/bridgic/core/agentic/tool/index.md
+        - bridgic.core.automa:
+          - Index: reference/bridgic-core/bridgic/core/automa/index.md
+          - interaction: reference/bridgic-core/bridgic/core/automa/interaction/index.md
+          - worker: reference/bridgic-core/bridgic/core/automa/worker/index.md
+        - bridgic.core.intelligence:
+          - Index: reference/bridgic-core/bridgic/core/intelligence/react/index.md
+          - react: reference/bridgic-core/bridgic/core/intelligence/react/index.md
+          - worker: reference/bridgic-core/bridgic/core/intelligence/worker/index.md
+        - bridgic.core.prompt:
+          - Index: reference/bridgic-core/bridgic/core/prompt/utils/index.md
+          - utils: reference/bridgic-core/bridgic/core/prompt/utils/index.md
+      - Bridgic-LLMs-Openai:
+        - bridgic.llms.openai:
+          - Index: reference/bridgic-llms-openai/bridgic/llms/openai/index.md
+      - Bridgic-LLMs-Openai-Like:
+        - bridgic.llms.openai_like:
+          - Index: reference/bridgic-llms-openai-like/bridgic/llms/openai_like/index.md
+      - Bridgic-LLMs-Vllm:
+        - bridgic.llms.vllm:
+          - Index: reference/bridgic-llms-vllm/bridgic/llms/vllm/index.md
 
   - About: about/index.md
 
@@ -70,9 +57,13 @@ theme:
   favicon: assets/favicon.ico
   features:
     # Navigation
+    # navigation.instant enables client-side navigation for faster page transitions.
     - navigation.instant
+    # navigation.instant.prefetch preloads likely next pages to reduce perceived latency.
     - navigation.instant.prefetch
-    - navigation.prune
+    # navigation.instant.progress shows a top progress bar on page loads (user feedback).
+    - navigation.instant.progress
+    # - navigation.prune  # Keep disabled for now; pruning reduces DOM for huge pages but may complicate anchors.
     - navigation.tabs
     - navigation.tabs.sticky
     - navigation.indexes
@@ -126,8 +117,10 @@ theme:
     view: material/eye
 plugins: 
   - search:
+      # Improved word boundary detection for camelCase and symbols in search.
       separator: '[\s\-,:!=\[\]()"`/]+|\.(?!\d)|&[lg]t;|(?!\b)(?=[A-Z][a-z])'
   - autorefs
+  # Minify keeps output small and snappy.
   - git-revision-date-localized:
       enable_creation_date: true
       type: timeago
@@ -145,6 +138,7 @@ plugins:
   - mkdocs-jupyter:
       execute: false
   - mkdocstrings:
+      custom_templates: templates
       handlers:
         python:
           options:
@@ -158,14 +152,27 @@ plugins:
               - "!^__init__"
             members_order: source
             merge_init_into_class: false
+            # Readability improvements inspired by langgraph-docs
+            summary: false
+            inherited_members: true
+            show_bases: true
+            show_signature: true
+            line_length: 60
+            docstring_section_style: table
+            heading_level: 2
             separate_signature: true
-            show_root_full_path: true
+            show_root_full_path: false
             show_root_heading: false
             show_root_toc_entry: false
             show_signature_annotations: true
             signature_crossrefs: true
+            show_symbol_type_heading: true
+            show_symbol_type_toc: true
           paths: 
             - ../bridgic-core
+            - ../bridgic-integration/llms/bridgic-llms-openai
+            - ../bridgic-integration/llms/bridgic-llms-openai-like
+            - ../bridgic-integration/llms/bridgic-llms-vllm
 
 markdown_extensions:
   # Python Markdown
@@ -175,6 +182,7 @@ markdown_extensions:
   - def_list
   - footnotes
   - md_in_html
+  # Table of contents with link icons for easy sharing
   - toc:
       permalink: true
       title: Outline
@@ -185,10 +193,18 @@ markdown_extensions:
       smart_enable: all
   - pymdownx.caret
   - pymdownx.details
+  # Auto-link plain issue/PR/user references using repo context (improves readability)
+  - pymdownx.magiclink:
+      normalize_issue_symbols: true
+      repo_url_shorthand: true
+      user: bitsky-tech
+      repo: bridgic
   - pymdownx.emoji:
       emoji_index: !!python/name:material.extensions.emoji.twemoji
       emoji_generator: !!python/name:material.extensions.emoji.to_svg
   - pymdownx.highlight:
+      # Show line numbers by default; can be overridden per block with {linenums="0"}
+      linenums: true
       anchor_linenums: true
       line_spans: __span
       pygments_lang_class: true
@@ -222,8 +238,18 @@ extra:
     #   link: https://discord.gg/bridgic
   generator: false
 
+# Developer-facing validation messages: catch broken links/anchors early without breaking builds
+validation:
+  absolute_links: warn
+  unrecognized_links: warn
+  anchors: warn
+  not_found: info
+
 extra_css:
+  # Core site theming and components
   - stylesheets/extra.css
+  # Sticky left navigation for expanded sections (from langgraph-docs)
+  - stylesheets/sticky_navigation.css
 
 extra_javascript:
   - javascripts/mathjax.js

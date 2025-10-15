@@ -2,7 +2,7 @@ import pytest
 from enum import Enum
 from typing import cast
 
-from bridgic.core.intelligence import FunctionToolSpec, AutomaToolSpec, as_tool
+from bridgic.core.agentic.tool import FunctionToolSpec, AutomaToolSpec, as_tool
 from bridgic.core.automa.worker import CallableWorker
 from bridgic.core.automa import GraphAutoma, worker
 from bridgic.core.utils import msgpackx
