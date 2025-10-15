@@ -17,10 +17,11 @@ nav:
     - Index: tutorials/index.md
     - Logic Arrangement: tutorials/notebooks/getting_started.ipynb
     - Model Usage: tutorials/notebooks/model_usage.ipynb
+    - Dual-Mode Worker Execution: tutorials/notebooks/dual_mode_worker_execution.ipynb
     - Parameter Passing: tutorials/notebooks/parameter_passing.ipynb
     - Dynamic Router: tutorials/notebooks/dynamic_router.ipynb
     - Interaction Event: tutorials/notebooks/interaction_event.ipynb
-    - Nested Automa: tutorials/notebooks/nested_automa.ipynb
+    - Nested Automa: tutorials/notebooks/nested_reuse.ipynb
     # - Dynamic DAG: tutorials/dynamic_dag.ipynb
   - API Reference:
       - Index: reference/bridgic-core/index.md
