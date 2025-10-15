@@ -1,6 +1,6 @@
 import inspect
 from inspect import Parameter
-from bridgic.core.utils.inspect_tools import load_qualified_class_or_func, get_param_names_by_kind, get_param_names_all_kinds
+from bridgic.core.utils._inspect_tools import load_qualified_class_or_func, get_param_names_by_kind, get_param_names_all_kinds
 
 class A:
     def func_1(self, a: int, b: str, c=5, d=6) -> int:

@@ -5,10 +5,11 @@ Test cases for serializing and deserializing various types of workers, using msg
 import pytest
 from typing import Optional, Dict, Any
 from typing_extensions import override
-from bridgic.core.automa import GraphAutoma, worker, ArgsMappingRule
+from bridgic.core.automa import GraphAutoma, worker
+from bridgic.core.automa.args import ArgsMappingRule
 from bridgic.core.automa.worker import Worker, CallableWorker
 from bridgic.core.utils import msgpackx
-from bridgic.core.types.error import WorkerRuntimeError
+from bridgic.core.types._error import WorkerRuntimeError
 
 ################## Test cases for Customized Worker ####################
 

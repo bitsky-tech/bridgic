@@ -1,9 +1,8 @@
 import pytest
 from typing import List
 
-from bridgic.core.automa import GraphAutoma, worker, ArgsMappingRule
-from bridgic.core.automa import AutomaRuntimeError, AutomaCompilationError
-from bridgic.core.automa.arguments_descriptor import System
+from bridgic.core.automa import GraphAutoma, worker, AutomaRuntimeError, AutomaCompilationError
+from bridgic.core.automa.args import ArgsMappingRule, System
 
 class DynamicFlow_1(GraphAutoma):
     @worker(is_start=True)

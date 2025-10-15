@@ -6,13 +6,14 @@ import pytest
 import asyncio
 import time
 import threading
-from bridgic.core.automa import GraphAutoma, worker, ArgsMappingRule
 from typing import Dict, Any
 from bridgic.core.automa.worker import Worker
+from bridgic.core.automa import GraphAutoma, worker
+from bridgic.core.automa.args import ArgsMappingRule
 from concurrent.futures import ThreadPoolExecutor
 from bridgic.core.automa.interaction import Event, Feedback, FeedbackSender
 from bridgic.core.automa.interaction import InteractionFeedback, InteractionException
-from bridgic.core.automa.serialization import Snapshot
+from bridgic.core.automa import Snapshot
 
 ########################################################
 #### Test case: run() vs. arun(); def vs. async def.
