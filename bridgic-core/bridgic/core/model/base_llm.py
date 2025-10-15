@@ -2,9 +2,9 @@ from abc import ABC, abstractmethod
 from typing import List, Generator, AsyncGenerator, TYPE_CHECKING
 from enum import Enum
 
-from bridgic.core.intelligence.content import *
+from bridgic.core.model.content import *
 if TYPE_CHECKING:
-    from bridgic.core.intelligence.protocol import ToolCall, ToolCallDict
+    from bridgic.core.model.protocol import ToolCall, ToolCallDict
 from bridgic.core.types.serialization import Serializable
 
 class Role(str, Enum):

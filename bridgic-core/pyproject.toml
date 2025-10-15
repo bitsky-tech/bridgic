@@ -1,6 +1,6 @@
 [project]
 name = "bridgic-core"
-version = "0.1.0.dev16"
+version = "0.1.0.dev17"
 classifiers = [
     "Private :: Do Not Upload",
     "Programming Language :: Python :: 3",
@@ -36,7 +36,8 @@ build-backend = "hatchling.build"
 include = ["bridgic/"]
 
 [tool.uv.sources]
-bridgic-llms-openai = { index = "btsk-repo" }
+# bridgic-llms-openai = { index = "btsk-repo" }
+bridgic-llms-openai = { path = "../bridgic-integration/llms/bridgic-llms-openai" }
 
 [[tool.uv.index]]
 name = "btsk-repo"

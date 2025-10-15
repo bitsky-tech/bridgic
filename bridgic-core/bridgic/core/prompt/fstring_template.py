@@ -2,7 +2,7 @@ import re
 
 from typing import List, Union
 
-from bridgic.core.intelligence.base_llm import Message, Role
+from bridgic.core.model.base_llm import Message, Role
 from bridgic.core.types.error import PromptRenderError
 from bridgic.core.prompt.base_template import BasePromptTemplate
 from bridgic.core.utils.collection import unique_list_in_order

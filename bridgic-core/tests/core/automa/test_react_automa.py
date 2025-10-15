@@ -3,9 +3,9 @@ from enum import Enum
 import os
 
 from bridgic.core.automa import GraphAutoma, worker
-from bridgic.core.intelligence import as_tool
-from bridgic.core.intelligence.protocol import ToolSelection
-from bridgic.core.intelligence.react import ReActAutoma
+from bridgic.core.model.protocol import ToolSelection
+from bridgic.core.agentic.tool import as_tool
+from bridgic.core.agentic.react import ReActAutoma
 from bridgic.llms.openai.openai_llm import OpenAILlm, OpenAIConfiguration
 from tests.core.intelligence.mock_llm import MockLlm
 

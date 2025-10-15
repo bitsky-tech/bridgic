@@ -1,6 +1,6 @@
-# intelligence
+# agentic
 
-::: bridgic.core.intelligence
+::: bridgic.core.agentic
     options:
       show_source: true
       show_root_heading: false

@@ -1,7 +1,7 @@
 from typing import List, Protocol, Any, Dict, Type, Literal, Union, Optional, ClassVar, Tuple, TypedDict
 from pydantic import BaseModel, Field
 
-from bridgic.core.intelligence.base_llm import Message
+from bridgic.core.model.base_llm import Message
 
 ###########################################################
 # Structures and protocols for constraint generation.
