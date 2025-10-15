@@ -7,20 +7,41 @@ from bridgic.core.model.protocol import ToolSelection
 from bridgic.core.agentic.tool import as_tool
 from bridgic.core.agentic.react import ReActAutoma
 from bridgic.llms.openai.openai_llm import OpenAILlm, OpenAIConfiguration
+from bridgic.llms.vllm.vllm_server_llm import VllmServerLlm, OpenAILikeConfiguration
 from tests.core.intelligence.mock_llm import MockLlm
 
-_api_key = os.environ.get("OPENAI_API_KEY")
-_model_name = os.environ.get("OPENAI_MODEL_NAME", default="gpt-5-mini")
+_openai_api_key = os.environ.get("OPENAI_API_KEY")
+_openai_model_name = os.environ.get("OPENAI_MODEL_NAME", default="gpt-5-mini")
+
+_vllm_api_base = os.environ.get("VLLM_SERVER_API_BASE")
+_vllm_api_key = os.environ.get("VLLM_SERVER_API_KEY", default="EMPTY")
+_vllm_model_name = os.environ.get("VLLM_SERVER_MODEL_NAME", default="Qwen/Qwen3-4B-Instruct-2507")
 
 @pytest.fixture
 def llm() -> ToolSelection:
-    if _api_key:
-        print(f"\nUsing `OpenAILlm` ({_model_name}) to test ReactAutoma...")
+    # Use OpenAI LLM by setting environment variables:
+    # export OPENAI_API_KEY="xxx"
+    # export OPENAI_MODEL_NAME="xxx"
+    if _openai_api_key:
+        print(f"\nUsing `OpenAILlm` ({_openai_model_name}) to test ReactAutoma...")
         return OpenAILlm(
-            api_key=_api_key,
-            configuration=OpenAIConfiguration(model=_model_name),
+            api_key=_openai_api_key,
+            configuration=OpenAIConfiguration(model=_openai_model_name),
             timeout=10,
         )
+    # Use VLLM Server LLM by setting environment variables:
+    # export VLLM_SERVER_API_KEY="xxx"
+    # export VLLM_SERVER_API_BASE="xxx"
+    # export VLLM_SERVER_MODEL_NAME="xxx"
+    if _vllm_api_base:
+        print(f"\nUsing `VllmServerLlm` ({_vllm_model_name}) to test ReactAutoma...")
+        return VllmServerLlm(
+            api_key=_vllm_api_key,
+            api_base=_vllm_api_base,
+            configuration=OpenAILikeConfiguration(model=_vllm_model_name),
+            timeout=10,
+        )
+
     print(f"\nUsing `MockLlm` to test ReactAutoma...")
     return MockLlm()
 
