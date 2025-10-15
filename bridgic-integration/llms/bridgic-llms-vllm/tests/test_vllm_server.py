@@ -15,9 +15,11 @@ _model_name = os.environ.get("VLLM_SERVER_MODEL_NAME")
 
 @pytest.fixture
 def llm():
+    config = VllmServerConfiguration(model=_model_name)
     llm = VllmServerLlm(
         api_base=_api_base,
         api_key=_api_key,
+        configuration=config,
         timeout=5,
     )
     state_dict = llm.dump_to_dict()
@@ -478,109 +480,3 @@ async def test_vllm_server_aselect_tool(llm, date, tools, weather_messages):
             messages=weather_messages,
         )
         handle_response(date, await response)
-
-
-# Configuration tests for vLLM
-def get_configuration_llm(config: VllmServerConfiguration):
-    """
-    Helper function to create a VllmServerLlm with configuration for testing.
-    """
-    return VllmServerLlm(
-        api_base=_api_base,
-        api_key=_api_key,
-        configuration=config,
-        timeout=5,
-    )
-
-
-def test_vllm_server_parameter_validation_missing_model_error():
-    """
-    Test that missing model parameter raises appropriate error.
-    """
-    # Create LLM without default model in configuration
-    config = VllmServerConfiguration(temperature=0.7)  # No model specified
-    configured_llm = VllmServerLlm(
-        api_base="http://localhost:8000",
-        api_key="test-key",
-        configuration=config
-    )
-    
-    # Test that select_tool fails without model
-    with pytest.raises(ValueError, match="Missing required parameters: model"):
-        configured_llm.select_tool(
-            tools=[Tool(name="test_tool", description="Test tool", parameters={})],
-            messages=[Message.from_text(text="Hello, how are you?", role=Role.USER)]
-        )
-    
-    # Test that aselect_tool fails without model
-    with pytest.raises(ValueError, match="Missing required parameters: model"):
-        import asyncio
-        asyncio.run(configured_llm.aselect_tool(
-            tools=[Tool(name="test_tool", description="Test tool", parameters={})],
-            messages=[Message.from_text(text="Hello, how are you?", role=Role.USER)]
-        ))
-    
-    printer.print("✓ Missing model parameter error handling test passed")
-
-
-@pytest.mark.skipif(
-    (_api_key is None) or (_api_base is None) or (_model_name is None),
-    reason="VLLM_SERVER_API_KEY or VLLM_SERVER_API_BASE or VLLM_SERVER_MODEL_NAME is not set",
-)
-def test_vllm_server_parameter_validation_with_configuration(llm: VllmServerLlm, tools):
-    """
-    Test parameter validation when using configuration with default model.
-    """
-    # Create LLM with configuration that has default model
-    config = VllmServerConfiguration(model=_model_name, temperature=0.7)
-    configured_llm = get_configuration_llm(config)
-    
-    # Test that select_tool works without specifying model (uses config default)
-    tool_calls, content = configured_llm.select_tool(
-        tools=tools,
-        messages=[Message.from_text(text="Get weather for Tokyo", role=Role.USER)]
-    )
-    assert isinstance(tool_calls, list)
-    
-    # Test that method parameter overrides config model
-    tool_calls2, content2 = configured_llm.select_tool(
-        model=_model_name,  # Override config model
-        temperature=0.8,    # Override config temperature
-        tools=tools,
-        messages=[Message.from_text(text="Get news about technology", role=Role.USER)]
-    )
-    assert isinstance(tool_calls2, list)
-    
-    printer.print("✓ Configuration with default model test passed")
-
-
-@pytest.mark.skipif(
-    (_api_key is None) or (_api_base is None) or (_model_name is None),
-    reason="VLLM_SERVER_API_KEY or VLLM_SERVER_API_BASE or VLLM_SERVER_MODEL_NAME is not set",
-)
-@pytest.mark.asyncio
-async def test_vllm_server_parameter_validation_with_configuration_async(llm: VllmServerLlm, tools):
-    """
-    Test parameter validation for async methods when using configuration with default model.
-    """
-    # Create LLM with configuration that has default model
-    config = VllmServerConfiguration(model=_model_name, temperature=0.7)
-    configured_llm = get_configuration_llm(config)
-    
-    # Test that aselect_tool works without specifying model (uses config default)
-    tool_calls, content = await configured_llm.aselect_tool(
-        tools=tools,
-        messages=[Message.from_text(text="Get weather for Tokyo", role=Role.USER)]
-    )
-    assert isinstance(tool_calls, list)
-    
-    # Test that method parameter overrides config model
-    tool_calls2, content2 = await configured_llm.aselect_tool(
-        model=_model_name,  # Override config model
-        temperature=0.8,    # Override config temperature
-        tools=tools,
-        messages=[Message.from_text(text="Get news about technology", role=Role.USER)]
-    )
-    assert isinstance(tool_calls2, list)
-    
-    printer.print("✓ Async configuration with default model test passed")

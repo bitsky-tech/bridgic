@@ -314,7 +314,6 @@ class VllmServerLlm(OpenAILikeLlm, StructuredOutput, ToolSelection):
         """
         # Build parameters dictionary for validation
         params = filter_dict(merge_dict(self.configuration.model_dump(), {
-            "messages": messages,
             "model": model,
             "tools": tools,
             "temperature": temperature,
@@ -327,7 +326,7 @@ class VllmServerLlm(OpenAILikeLlm, StructuredOutput, ToolSelection):
         }))
         
         # Validate required parameters for tool selection
-        validate_required_params(params, ["messages", "model"])
+        validate_required_params(params, ["model"])
         
         input_messages = [self._convert_message(message=msg, strict=True) for msg in messages]
         input_tools = [
@@ -422,7 +421,6 @@ class VllmServerLlm(OpenAILikeLlm, StructuredOutput, ToolSelection):
         """
         # Build parameters dictionary for validation
         params = filter_dict(merge_dict(self.configuration.model_dump(), {
-            "messages": messages,
             "model": model,
             "tools": tools,
             "temperature": temperature,
@@ -435,7 +433,7 @@ class VllmServerLlm(OpenAILikeLlm, StructuredOutput, ToolSelection):
         }))
         
         # Validate required parameters for tool selection
-        validate_required_params(params, ["messages", "model"])
+        validate_required_params(params, ["model"])
         
         input_messages = [self._convert_message(message=msg, strict=True) for msg in messages]
         input_tools = [
