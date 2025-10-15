@@ -4,8 +4,8 @@ import json
 import re
 import datetime
 
-from bridgic.core.model.base_llm import *
-from bridgic.core.model.protocol import *
+from bridgic.core.model.types import *
+from bridgic.core.model import *
 from bridgic.core.utils.console import printer
 from bridgic.llms.vllm.vllm_server_llm import VllmServerLlm
 

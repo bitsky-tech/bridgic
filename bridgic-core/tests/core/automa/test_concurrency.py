@@ -12,7 +12,7 @@ from bridgic.core.automa.worker import Worker
 from concurrent.futures import ThreadPoolExecutor
 from bridgic.core.automa.interaction import Event, Feedback, FeedbackSender
 from bridgic.core.automa.interaction import InteractionFeedback, InteractionException
-from bridgic.core.automa.serialization import Snapshot
+from bridgic.core.automa._serialization import Snapshot
 
 ########################################################
 #### Test case: run() vs. arun(); def vs. async def.

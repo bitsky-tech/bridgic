@@ -5,14 +5,15 @@ from jinja2 import Environment, PackageLoader, Template
 import json
 
 from bridgic.core.automa import Automa, GraphAutoma, From
-from bridgic.core.model.protocol import ToolCall, Tool, ToolSelection
+from bridgic.core.model import ToolSelection
+from bridgic.core.model.types import Tool, ToolCall
 from bridgic.core.automa.interaction import InteractionFeedback
 from bridgic.core.prompt.chat_message import ChatMessage, SystemMessage, UserTextMessage, AssistantTextMessage, ToolMessage
 from bridgic.core.prompt.chat_message import FunctionToolCall, Function
 from bridgic.core.automa import worker, ArgsMappingRule
 from bridgic.core.agentic.tool import ToolSpec, FunctionToolSpec, AutomaToolSpec
 from bridgic.core.agentic.workers import ToolSelectionWorker
-from bridgic.core.automa.arguments_descriptor import System
+from bridgic.core.automa.args import System
 
 DEFAULT_MAX_ITERATIONS = 20
 DEFAULT_TEMPLATE_FILE = "tools_chat.jinja"

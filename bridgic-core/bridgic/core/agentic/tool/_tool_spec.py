@@ -1,14 +1,13 @@
+import inspect
 from typing import Optional, Union, Dict, List, Any, Type, Callable, Annotated, get_origin
 from typing_extensions import override
 from abc import abstractmethod
 from types import MethodType
 from docstring_parser import parse as parse_docstring # type: ignore
-import inspect
-from concurrent.futures import ThreadPoolExecutor
 
 from bridgic.core.types.serialization import Serializable
-from bridgic.core.model.protocol import Tool
-from bridgic.core.automa.automa import Automa
+from bridgic.core.model.types import Tool
+from bridgic.core.automa import Automa
 from bridgic.core.automa.worker import Worker, CallableWorker
 from bridgic.core.utils.json_schema import create_func_params_json_schema
 from bridgic.core.utils.inspect_tools import load_qualified_class_or_func

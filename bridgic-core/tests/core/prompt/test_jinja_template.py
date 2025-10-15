@@ -3,7 +3,7 @@ import pytest
 from typing import List
 
 from bridgic.core.prompt.ejinja_template import EjinjaPromptTemplate
-from bridgic.core.model.base_llm import Message
+from bridgic.core.model.types import Message
 
 @pytest.mark.asyncio
 async def test_jinja_format_message():

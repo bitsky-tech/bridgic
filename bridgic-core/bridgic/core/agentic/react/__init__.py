@@ -1,5 +1,6 @@
-from .react_automa import ReActAutoma
+from ._react_automa import ReActAutoma
 
 __all__ = [
     "ReActAutoma",
 ]
+

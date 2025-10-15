@@ -23,7 +23,7 @@ from bridgic.core.utils.inspect_tools import get_param_names_all_kinds
 from bridgic.core.utils.args_map import safely_map_args
 
 if TYPE_CHECKING:
-    from bridgic.core.automa.automa import Automa
+    from bridgic.core.automa._automa import Automa
 
 class Worker(Serializable):
     __parent: "Automa"

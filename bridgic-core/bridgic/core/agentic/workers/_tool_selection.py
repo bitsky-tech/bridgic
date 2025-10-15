@@ -1,8 +1,8 @@
 from typing import List, Tuple, Optional
 
 from bridgic.core.automa.worker import Worker
-from bridgic.core.model.base_llm import Message
-from bridgic.core.model.protocol import Tool, ToolSelection, ToolCall
+from bridgic.core.model.types import Message, Tool, ToolCall
+from bridgic.core.model import ToolSelection
 from bridgic.core.prompt.chat_message import ChatMessage
 from bridgic.core.prompt.utils import transform_chat_message_to_llm_message
 

@@ -1,13 +1,12 @@
 import pytest
-from enum import Enum
 import os
 
 from bridgic.core.automa import GraphAutoma, worker
-from bridgic.core.model.protocol import ToolSelection
+from bridgic.core.model import ToolSelection
 from bridgic.core.agentic.tool import as_tool
-from bridgic.core.agentic.react import ReActAutoma
+from bridgic.core.agentic import ReActAutoma
 from bridgic.llms.openai.openai_llm import OpenAILlm, OpenAIConfiguration
-from tests.core.intelligence.mock_llm import MockLlm
+from tests.core.model.mock_llm import MockLlm
 
 _api_key = os.environ.get("OPENAI_API_KEY")
 _model_name = os.environ.get("OPENAI_MODEL_NAME", default="gpt-5-mini")

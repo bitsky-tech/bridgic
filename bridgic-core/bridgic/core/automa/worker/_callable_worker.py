@@ -11,7 +11,7 @@ from bridgic.core.utils.inspect_tools import load_qualified_class_or_func
 from bridgic.core.utils.inspect_tools import get_param_names_all_kinds
 
 if TYPE_CHECKING:
-    from bridgic.core.automa.automa import Automa
+    from bridgic.core.automa._automa import Automa
 
 class CallableWorker(Worker):
     _is_async: bool

@@ -2,7 +2,7 @@ import pytest
 import os
 import httpx_aiohttp
 
-from bridgic.core.model.base_llm import *
+from bridgic.core.model.types import *
 from bridgic.core.utils.console import printer
 from bridgic.llms.openai_like.openai_like_llm import OpenAILikeLlm
 

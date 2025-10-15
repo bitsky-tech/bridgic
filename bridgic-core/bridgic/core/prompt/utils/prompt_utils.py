@@ -1,6 +1,6 @@
-from bridgic.core.model.base_llm import Message, Role
+from bridgic.core.model.types import Message, Role
 from bridgic.core.prompt.chat_message import ChatMessage
-from bridgic.core.model.content import ToolCallBlock
+from bridgic.core.model.types import ToolCallBlock
 
 def transform_chat_message_to_llm_message(message: ChatMessage) -> Message:
     """

@@ -11,8 +11,8 @@ from concurrent.futures import ThreadPoolExecutor
 
 from bridgic.core.automa.worker import Worker
 from bridgic.core.automa.interaction import Event, FeedbackSender, EventHandlerType, InteractionFeedback, Feedback, Interaction, InteractionException
-from bridgic.core.automa.serialization import Snapshot
-from bridgic.core.automa.arguments_descriptor import RuntimeContext
+from bridgic.core.automa._serialization import Snapshot
+from bridgic.core.automa.args import RuntimeContext
 from bridgic.core.utils import msgpackx
 from bridgic.core.utils.inspect_tools import get_param_names_by_kind
 from bridgic.core.types.error import AutomaRuntimeError

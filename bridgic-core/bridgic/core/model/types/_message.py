@@ -1,11 +1,11 @@
-from abc import ABC, abstractmethod
-from typing import List, Generator, AsyncGenerator, TYPE_CHECKING
+from typing import List, Dict, Any, Optional, Union, TYPE_CHECKING
+from pydantic import BaseModel, Field
 from enum import Enum
 
-from bridgic.core.model.content import *
+from bridgic.core.model.types._content_block import ContentBlock, TextBlock, ToolCallBlock, ToolResultBlock
+
 if TYPE_CHECKING:
-    from bridgic.core.model.protocol import ToolCall, ToolCallDict
-from bridgic.core.types.serialization import Serializable
+    from bridgic.core.model.types._tool_use import ToolCall, ToolCallDict
 
 class Role(str, Enum):
     """
@@ -55,7 +55,7 @@ class Message(BaseModel):
         Create a message with tool call blocks and optional text content.
         
         Parameters
-        ----
+        ----------
         tool_calls : Union[ToolCallDict, List[ToolCallDict], ToolCall, List[ToolCall]]
             Tool call data in various formats:
             - Single tool call dict: {"id": "call_123", "name": "get_weather", "arguments": {...}}
@@ -64,48 +64,48 @@ class Message(BaseModel):
             - List of ToolCall instances
         text : Optional[str], optional
             Optional text content to include in the message
+
         extras : Optional[Dict[str, Any]], optional
             Additional metadata for the message
             
         Returns
-        ----
+        -------
         Message
             A message containing the tool call blocks and optional text
             
         Examples
-        -----
-        # Single tool call dict
-        >>> message = Message.from_tool_call(
+        --------
+        >>> # Build from single tool call dict.
+        ... message = Message.from_tool_call(
         ...     tool_calls={
-        ...         "id": "call_123",
+        ...         "id": "call_id_123",
         ...         "name": "get_weather",
         ...         "arguments": {"city": "Tokyo", "unit": "celsius"}
         ...     },
         ...     text="I will check the weather for you."
         ... )
         
-        # Multiple tool call dicts
-        >>> message = Message.from_tool_call(
+        >>> # Build from multiple tool call dicts.
+        ... message = Message.from_tool_call(
         ...     tool_calls=[
-        ...         {"id": "call_123", "name": "get_weather", "arguments": {"city": "Tokyo"}},
-        ...         {"id": "call_124", "name": "get_news", "arguments": {"topic": "weather"}}
+        ...         {"id": "call_id_123", "name": "get_weather", "arguments": {"city": "Tokyo"}},
+        ...         {"id": "call_id_456", "name": "get_news", "arguments": {"topic": "weather"}},
         ...     ],
         ...     text="I will get weather and news for you."
         ... )
         
-        # Single ToolCall
-        >>> tool_call = ToolCall(id="call_123", name="get_weather", arguments={"city": "Tokyo"})
-        >>> message = Message.from_tool_call(tool_calls=tool_call, text="I will check the weather.")
+        >>> # Build from single ToolCall object.
+        ... tool_call = ToolCall(id="call_123", name="get_weather", arguments={"city": "Tokyo"})
+        ... message = Message.from_tool_call(tool_calls=tool_call, text="I will check the weather.")
         
-        # Multiple ToolCall
-        >>> tool_calls = [
-        ...     ToolCall(id="call_123", name="get_weather", arguments={"city": "Tokyo"}),
-        ...     ToolCall(id="call_124", name="get_news", arguments={"topic": "weather"})
+        >>> # Build from multiple ToolCall objects.
+        ... tool_calls = [
+        ...     ToolCall(id="call_id_123", name="get_weather", arguments={"city": "Tokyo"}),
+        ...     ToolCall(id="call_id_456", name="get_news", arguments={"topic": "weather"}),
         ... ]
-        >>> message = Message.from_tool_call(tool_calls=tool_calls, text="I will get weather and news.")
+        ... message = Message.from_tool_call(tool_calls=tool_calls, text="I will get weather and news.")
         """
         role = Role(Role.AI)
-        
         blocks = []
         
         # Add text content if provided
@@ -156,7 +156,7 @@ class Message(BaseModel):
         Create a message with a tool result block.
         
         Parameters
-        ----
+        ----------
         tool_id : str
             The ID of the tool call that this result corresponds to
         content : str
@@ -165,14 +165,14 @@ class Message(BaseModel):
             Additional metadata for the message
             
         Returns
-        ----
+        -------
         Message
             A message containing the tool result block
             
         Examples
-        -----
+        --------
         >>> message = Message.from_tool_result(
-        ...     tool_id="call_123",
+        ...     tool_id="call_id_123",
         ...     content="The weather in Tokyo is 22°C and sunny."
         ... )
         """
@@ -199,40 +199,9 @@ class Message(BaseModel):
                 "easily set by the property \"Message.content\". Use \"Message.blocks\" instead."
             )
 
-class Response(BaseModel):
-    """
-    LLM response.
-    """
-    message: Optional[Message] = None
-    raw: Optional[Any] = None
-
 class MessageChunk(BaseModel):
     """
     Stream chunk.
     """
     delta: Optional[str] = None
     raw: Optional[Any] = None
-
-StreamResponse = Generator[MessageChunk, None, None]
-AsyncStreamResponse = AsyncGenerator[MessageChunk, None]
-
-class BaseLlm(ABC, Serializable):
-    """
-    Base class for Large Language Model implementations.
-    """
-
-    @abstractmethod
-    def chat(self, messages: List[Message], **kwargs) -> Response:
-        ...
-
-    @abstractmethod
-    def stream(self, messages: List[Message], **kwargs) -> StreamResponse:
-        ...
-
-    @abstractmethod
-    async def achat(self, messages: List[Message], **kwargs) -> Response:
-        ...
-
-    @abstractmethod
-    async def astream(self, messages: List[Message], **kwargs) -> AsyncStreamResponse:
-        ...

@@ -5,26 +5,27 @@ from dataclasses import dataclass
 from typing import List, Tuple, Optional, Any, Dict, TYPE_CHECKING
 
 from bridgic.core.automa.worker import Worker
-from bridgic.core.types.error import AutomaDataInjectionError
+from bridgic.core.types.error import WorkerArgsInjectionError
 from bridgic.core.utils.args_map import safely_map_args
 
 if TYPE_CHECKING:
-    from bridgic.core.automa.graph_automa import GraphAutoma
+    from bridgic.core.automa._graph_automa import GraphAutoma
 
 
 class InjectorNone: 
     """
     Marker object for Injector.inject() when the default value is None.
     """
+    ...
 
-class ArgumentsDescriptor:
+class ArgsDescriptor:
     """
     A descriptor for arguments that can be injected.
     """
     ...
 
 @dataclass
-class From(ArgumentsDescriptor):
+class From(ArgsDescriptor):
     """
     worker dependency data from other workers.
     """
@@ -34,14 +35,14 @@ class From(ArgumentsDescriptor):
 def resolve_from(dep: From, worker_output: Dict[str, Any]) -> Any:
     inject_res = worker_output.get(dep.key, dep.default)
     if isinstance(inject_res, InjectorNone):
-        raise AutomaDataInjectionError(
+        raise WorkerArgsInjectionError(
             f"the worker: `{dep.key}` is not found in the worker dictionary. "
             "You may need to set the default value of the parameter to a `From` instance with the key of the worker."
         )
     return inject_res
 
 @dataclass
-class System(ArgumentsDescriptor):
+class System(ArgsDescriptor):
     """
     worker dependency data from the automa with pattern matching support.
     """
@@ -55,7 +56,7 @@ class System(ArgumentsDescriptor):
         ]
         
         if not any(re.match(pattern, self.key) for pattern in allowed_patterns):
-            raise AutomaDataInjectionError(
+            raise WorkerArgsInjectionError(
                 f"Key '{self.key}' is not supported. Supported keys: "
                 f"`runtime_context`: a context for data persistence of the current worker."
                 f"`automa:.*`: a sub-automa in current automa."
@@ -69,12 +70,12 @@ def resolve_system(dep: System, current_worker_key: str, worker_dict: Dict[str, 
 
         inject_res = worker_dict.get(worker_key, InjectorNone())
         if isinstance(inject_res, InjectorNone):
-            raise AutomaDataInjectionError(
+            raise WorkerArgsInjectionError(
                 f"the sub-atoma: `{dep.key}` is not found in current automa. "
             )
 
         if not inject_res.is_automa():
-            raise AutomaDataInjectionError(
+            raise WorkerArgsInjectionError(
                 f"the `{dep.key}` instance is not an Automa. "
             )
         
@@ -158,7 +159,7 @@ class WorkerInjector:
                 system_inject_kwargs[name] = value
 
         if len(param_list) <= len(next_args) and (len(from_inject_kwargs) or len(system_inject_kwargs)):
-            raise AutomaDataInjectionError(
+            raise WorkerArgsInjectionError(
                 f"The number of parameters is less than or equal to the number of positional arguments, "
                 f"but got {len(param_list)} parameters and {len(next_args)} positional arguments"
             )

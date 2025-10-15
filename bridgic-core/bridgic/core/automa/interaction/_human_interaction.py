@@ -29,8 +29,8 @@ After that, the Automa will resume execution from the worker that was previously
 
 from typing import List
 from datetime import datetime
-from bridgic.core.automa.serialization import Snapshot
-from bridgic.core.automa.interaction.event_handling import Feedback, Event
+from bridgic.core.automa._serialization import Snapshot
+from bridgic.core.automa.interaction._event_handling import Feedback, Event
 from pydantic import BaseModel
 
 class Interaction(BaseModel):

@@ -2,25 +2,23 @@
 This module contains the core automa classes and functions.
 """
 
-from bridgic.core.automa.automa import Automa, _InteractionAndFeedback, _InteractionEventException
-from bridgic.core.automa.graph_automa import GraphAutoma
-from bridgic.core.automa.arguments_descriptor import From, RuntimeContext, System
-from bridgic.core.automa.worker_decorator import worker
-from bridgic.core.types.common import ArgsMappingRule
+from bridgic.core.automa._automa import Automa
+from bridgic.core.automa._graph_automa import GraphAutoma
+from bridgic.core.automa.args import From, RuntimeContext, System, ArgsMappingRule
+from bridgic.core.automa.worker._worker_decorator import worker
 from bridgic.core.types.error import *
 
 __all__ = [
     "Automa",
-    "_InteractionAndFeedback",
-    "_InteractionEventException",
     "GraphAutoma",
     "worker",
-    "AutomaCompilationError",
-    "AutomaDeclarationError",
     "WorkerSignatureError",
     "WorkerArgsMappingError",
+    "WorkerArgsInjectionError",
+    "WorkerRuntimeError",
+    "AutomaCompilationError",
+    "AutomaDeclarationError",
     "AutomaRuntimeError",
-    "AutomaDataInjectionError",
     "ArgsMappingRule",
     "From",
     "RuntimeContext",

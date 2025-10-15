@@ -1,7 +1,7 @@
-from typing import List, Protocol, Any, Dict, Type, Literal, Union, Optional, ClassVar, Tuple, TypedDict
+from typing import List, Protocol, Any, Dict, Type, Literal, Union, Optional, ClassVar, Tuple
 from pydantic import BaseModel, Field
 
-from bridgic.core.model.base_llm import Message
+from bridgic.core.model.types import Message, Tool, ToolCall
 
 ###########################################################
 # Structures and protocols for constraint generation.
@@ -69,24 +69,6 @@ class StructuredOutput(Protocol):
 ###########################################################
 # Structures and protocols for tool use.
 ###########################################################
-
-class ToolCallDict(TypedDict):
-    """
-    TypedDict for tool call dictionary structure.
-    """
-    id: str
-    name: str
-    arguments: Dict[str, Any]
-
-class Tool(BaseModel):
-    name: str = Field(..., description="Name of the tool.")
-    description: str = Field(..., description="Description of the tool.")
-    parameters: Dict[str, Any] = Field(..., description="JSON schema object that describes the parameters of the tool.")
-
-class ToolCall(BaseModel):
-    id: Optional[str] = Field(..., description="ID of the tool call.")
-    name: str = Field(..., description="Name of the tool.")
-    arguments: Dict[str, Any] = Field(..., default_factory=dict, description="Real arguments that are used to call the tool.")
 
 class ToolSelection(Protocol):
     """

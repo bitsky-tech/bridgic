@@ -2,9 +2,9 @@ from typing import List, Tuple, Optional
 from typing_extensions import override
 import json
 
-from bridgic.core.model.base_llm import *
-from bridgic.core.model.protocol import ToolSelection, ToolCall, Tool
-from bridgic.core.model.base_llm import Message
+from bridgic.core.model.types import *
+from bridgic.core.model import ToolSelection, ToolCall, Tool
+from bridgic.core.model.types import Message
 
 
 class MockLlm(BaseLlm, ToolSelection):

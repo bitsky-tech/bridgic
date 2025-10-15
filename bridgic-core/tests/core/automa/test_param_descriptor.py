@@ -5,8 +5,8 @@ import pytest
 from bridgic.core.automa import GraphAutoma, From, worker, ArgsMappingRule, System, AutomaRuntimeError
 from bridgic.core.automa.interaction import Event, InteractionFeedback, InteractionException
 from bridgic.core.automa.worker import Worker
-from bridgic.core.automa.serialization import Snapshot
-from bridgic.core.types.error import AutomaDataInjectionError
+from bridgic.core.automa._serialization import Snapshot
+from bridgic.core.types.error import WorkerArgsInjectionError
 
 ########################################################
 #### Test case: All kinds of workers with From
@@ -488,7 +488,7 @@ async def test_automa_with_args_mapping_position_less_than_params_error(
     automa_with_args_mapping_position_less_than_params_error: AutomaArgsMappingPositionLessThanParamsError,
 ):
     with pytest.raises(
-        AutomaDataInjectionError, 
+        WorkerArgsInjectionError, 
         match="The number of parameters is less than or equal to the number of positional arguments, but got 1 parameters and 1 positional arguments"
     ):
         await automa_with_args_mapping_position_less_than_params_error.arun(user_input=1)
@@ -573,7 +573,7 @@ def automa_with_from_with_default_value_error():
 @pytest.mark.asyncio
 async def test_automa_with_from_with_default_value_error(automa_with_from_with_default_value_error: AutomaFromWithDefaultValueError):
     with pytest.raises(
-        AutomaDataInjectionError, 
+        WorkerArgsInjectionError, 
         match=f"the worker: `no_exist_worker` is not found in the worker dictionary. "
         "You may need to set the default value of the parameter to a `From` instance with the key of the worker."
     ):

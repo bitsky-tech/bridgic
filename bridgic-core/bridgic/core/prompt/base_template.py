@@ -1,7 +1,7 @@
 from typing import List, Union
 from pydantic import BaseModel, Field
 
-from bridgic.core.model.base_llm import Message, Role
+from bridgic.core.model.types import Message, Role
 
 class BasePromptTemplate(BaseModel):
     """
