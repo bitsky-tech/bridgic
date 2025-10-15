@@ -6,7 +6,8 @@ This file only covers test cases for custom workers, while test cases for decora
 import pytest
 import re
 
-from bridgic.core.automa import GraphAutoma, WorkerArgsMappingError, ArgsMappingRule
+from bridgic.core.automa import GraphAutoma, WorkerArgsMappingError
+from bridgic.core.automa.args import ArgsMappingRule
 from bridgic.core.automa.worker import Worker
 from typing import List
 

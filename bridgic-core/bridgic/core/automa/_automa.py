@@ -11,7 +11,6 @@ from concurrent.futures import ThreadPoolExecutor
 
 from bridgic.core.automa.worker import Worker
 from bridgic.core.automa.interaction import Event, FeedbackSender, EventHandlerType, InteractionFeedback, Feedback, Interaction, InteractionException
-from bridgic.core.types._serialization import Snapshot
 from bridgic.core.automa.args import RuntimeContext
 from bridgic.core.utils import msgpackx
 from bridgic.core.utils._inspect_tools import get_param_names_by_kind
@@ -30,6 +29,13 @@ class _InteractionEventException(Exception):
     For internal use only.
     `Interaction` obects are stored in `self.args` of the exception.
     """
+
+class Snapshot(BaseModel):
+    """
+    Snapshot is a class that represents the current state of an Automa.
+    """
+    serialized_bytes: bytes
+    serialization_version: str
 
 class Automa(Worker):
     _running_options: RunningOptions

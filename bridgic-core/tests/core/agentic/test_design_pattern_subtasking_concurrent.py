@@ -1,7 +1,8 @@
 from typing import List
 import pytest
 
-from bridgic.core.automa import GraphAutoma, worker, ArgsMappingRule
+from bridgic.core.automa import GraphAutoma, worker
+from bridgic.core.automa.args import ArgsMappingRule
 from pydantic import BaseModel
 
 class SeachSubtask(BaseModel):

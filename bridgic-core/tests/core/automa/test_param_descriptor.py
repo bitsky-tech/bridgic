@@ -2,10 +2,10 @@ from typing import Tuple
 
 import pytest
 
-from bridgic.core.automa import GraphAutoma, From, worker, ArgsMappingRule, System, AutomaRuntimeError
+from bridgic.core.automa import GraphAutoma, Snapshot, worker, AutomaRuntimeError
+from bridgic.core.automa.args import From, ArgsMappingRule, System
 from bridgic.core.automa.interaction import Event, InteractionFeedback, InteractionException
 from bridgic.core.automa.worker import Worker
-from bridgic.core.types._serialization import Snapshot
 from bridgic.core.types._error import WorkerArgsInjectionError
 
 ########################################################

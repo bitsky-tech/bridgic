@@ -18,12 +18,11 @@ from bridgic.core.automa.worker import Worker
 from bridgic.core.types._error import *
 from bridgic.core.types._common import AutomaType, ArgsMappingRule
 from bridgic.core.utils._args_map import safely_map_args
-from bridgic.core.automa import Automa
+from bridgic.core.automa import Automa, Snapshot
 from bridgic.core.automa.worker import CallableWorker
 from bridgic.core.automa.interaction import Interaction, InteractionFeedback, InteractionException
 from bridgic.core.automa._automa import _InteractionAndFeedback, _InteractionEventException
 from bridgic.core.automa._graph_meta import GraphMeta
-from bridgic.core.types._serialization import Snapshot
 from bridgic.core.automa.args._args_descriptor import injector
 
 class _GraphAdaptedWorker(Worker):

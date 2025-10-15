@@ -27,11 +27,13 @@ After that, the Automa will resume execution from the worker that was previously
 
 """
 
-from typing import List
+from typing import List, TYPE_CHECKING
 from datetime import datetime
-from bridgic.core.types._serialization import Snapshot
-from bridgic.core.automa.interaction._event_handling import Feedback, Event
 from pydantic import BaseModel
+from bridgic.core.automa.interaction._event_handling import Feedback, Event
+
+if TYPE_CHECKING:
+    from bridgic.core.automa._automa import Snapshot
 
 class Interaction(BaseModel):
     """
@@ -53,9 +55,9 @@ class InteractionException(Exception):
     Exception raised when the `interact_with_human` method is called and a human interaction is triggered.
     """
     _interactions: List[Interaction]
-    _snapshot: Snapshot
+    _snapshot: "Snapshot"
 
-    def __init__(self, interactions: List[Interaction], snapshot: Snapshot):
+    def __init__(self, interactions: List[Interaction], snapshot: "Snapshot"):
         self._interactions = interactions
         self._snapshot = snapshot
 
@@ -69,7 +71,7 @@ class InteractionException(Exception):
         return self._interactions
 
     @property
-    def snapshot(self) -> Snapshot:
+    def snapshot(self) -> "Snapshot":
         """
         Returns a `Snapshot` of the Automa's current state.
         The serialization is automatically triggered by the `interact_with_human` method.

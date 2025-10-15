@@ -1,19 +1,19 @@
+import json
+
 from typing import Optional, Dict, Any, List, Union, Callable, cast, Tuple
 from typing_extensions import override
 from concurrent.futures import ThreadPoolExecutor
 from jinja2 import Environment, PackageLoader, Template
-import json
 
-from bridgic.core.automa import Automa, GraphAutoma, From
+from bridgic.core.automa import Automa, GraphAutoma, worker
+from bridgic.core.automa.args import From, ArgsMappingRule, System
 from bridgic.core.model.protocols import ToolSelection
 from bridgic.core.model.types import Tool, ToolCall
 from bridgic.core.automa.interaction import InteractionFeedback
 from bridgic.core.agentic.types._chat_message import ChatMessage, SystemMessage, UserTextMessage, AssistantTextMessage, ToolMessage
 from bridgic.core.agentic.types._chat_message import FunctionToolCall, Function
-from bridgic.core.automa import worker, ArgsMappingRule
-from bridgic.core.agentic.tool import ToolSpec, FunctionToolSpec, AutomaToolSpec
+from bridgic.core.agentic.tool_specs import ToolSpec, FunctionToolSpec, AutomaToolSpec
 from bridgic.core.agentic.workers import ToolSelectionWorker
-from bridgic.core.automa.args import System
 
 DEFAULT_MAX_ITERATIONS = 20
 DEFAULT_TEMPLATE_FILE = "tools_chat.jinja"
