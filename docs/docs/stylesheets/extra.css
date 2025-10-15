@@ -2,28 +2,6 @@
 /* Custom CSS styles for Bridgic documentation site */
 /* Provides clean, professional styling with brand consistency */
 
-:root > * {
-  /* Primary theme colors */
-  --md-primary-fg-color: #4f46e5;
-  --md-primary-fg-color--light: #6366f1;
-  --md-primary-fg-color--dark: #3730a3;
-  --md-accent-fg-color: #8b5cf6;
-  --md-accent-fg-color--transparent: #8b5cf61a;
-  
-  /* Background colors */
-  --md-default-bg-color: #ffffff;
-  --md-default-bg-color--light: #f8fafc;
-  --md-default-bg-color--lighter: #f1f5f9;
-  --md-default-bg-color--lightest: #e2e8f0;
-  
-  /* Custom brand colors - simple and clean */
-  --bridgic-purple: #8b5cf6;
-  --bridgic-blue: #4f46e5;
-  --bridgic-primary: #4f46e5;
-  --bridgic-primary-light: #e0e7ff;
-  --bridgic-border: #e5e7eb;
-}
-
 /* ========================================== */
 /* HEADER AND BRANDING STYLES */
 /* ========================================== */
@@ -53,9 +31,10 @@
 .md-typeset .hero {
   padding: 3rem 2rem;
   text-align: center;
-  background: var(--bridgic-primary);
-  color: white;
+  background: var(--md-default-bg-color);
+  color: inherit;
   margin: -1rem -1rem 2rem -1rem;
+  border: 1px solid var(--md-default-bg-color--lightest);
   border-radius: 0.5rem;
   position: relative;
   overflow: hidden;
@@ -69,14 +48,14 @@
   left: 0;
   right: 0;
   bottom: 0;
-  background: linear-gradient(135deg, transparent 25%, rgba(255,255,255,0.05) 25%, rgba(255,255,255,0.05) 50%, transparent 50%, transparent 75%, rgba(255,255,255,0.05) 75%);
-  background-size: 20px 20px;
+  background: linear-gradient(135deg, transparent 25%, rgba(0,0,0,0.02) 25%, rgba(0,0,0,0.02) 50%, transparent 50%, transparent 75%, rgba(0,0,0,0.02) 75%);
+  background-size: 24px 24px;
   pointer-events: none;
 }
 
 /* Hero title styling */
 .md-typeset .hero h1 {
-  color: white;
+  color: inherit;
   font-size: 2.5rem;
   font-weight: 700;
   margin-bottom: 1rem;
@@ -86,7 +65,7 @@
 
 /* Hero subtitle styling */
 .md-typeset .hero p {
-  color: rgba(255, 255, 255, 0.9);
+  color: #4d4d4d;
   font-size: 1.2rem;
   margin-bottom: 0;
   position: relative;
@@ -96,7 +75,6 @@
 /* ========================================== */
 /* CODE BLOCK STYLES: use Material defaults  */
 /* ========================================== */
-/* We intentionally avoid overriding code block layout to match langgraph-docs. */
 
 /* ========================================== */
 /* ADMONITION STYLES */
@@ -130,14 +108,14 @@
 
 /* Active navigation link styling */
 .md-nav__item--active > .md-nav__link {
-  color: var(--bridgic-purple);
+  color: inherit;
   font-weight: 600;
 }
 
 /* Enhanced focus states for navigation */
 .md-nav__link:focus,
 .md-nav__link:hover {
-  color: var(--bridgic-purple);
+  color: var(--md-accent-fg-color);
 }
 
 /* ========================================== */
@@ -146,9 +124,9 @@
 
 /* Primary button styling - clean and professional */
 .md-button {
-  background: var(--bridgic-primary);
-  border: none;
-  color: white;
+  background: transparent;
+  border: 1px solid var(--md-default-bg-color--lightest);
+  color: var(--md-default-fg-color);
   font-weight: 600;
   transition: all 0.2s ease;
   border-radius: 0.375rem;
@@ -156,15 +134,15 @@
 
 /* Button hover effects - subtle and clean */
 .md-button:hover {
-  background: var(--md-primary-fg-color--dark);
+  background: var(--md-default-bg-color--lighter);
   transform: translateY(-1px);
-  box-shadow: 0 2px 8px rgba(79, 70, 229, 0.3);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
 }
 
 /* Primary button variant */
 .md-button--primary {
-  background: var(--bridgic-primary);
-  color: white;
+  background: var(--md-accent-fg-color);
+  color: #ffffff;
 }
 
 /* ========================================== */
@@ -180,8 +158,8 @@
 
 /* Table header styling - clean and professional */
 .md-typeset table:not([class]) th {
-  background: var(--bridgic-primary);
-  color: white;
+  background: var(--md-default-bg-color--light);
+  color: var(--md-default-fg-color);
   font-weight: 600;
 }
 
@@ -191,7 +169,6 @@
 
 /* Special heading styling for documentation sections */
 .doc-heading {
-  /* Lighter, more neutral look similar to langgraph */
   padding: 0;
   background: transparent;
   border-left: 0;
@@ -227,13 +204,27 @@
 
 /* Custom footer styling */
 .md-footer {
-  background: var(--bridgic-primary);
+  background: #F5F5F5;
+  color: #666666;
 }
 
 /* Footer metadata section */
 .md-footer-meta {
-  background: rgba(0, 0, 0, 0.2);
+  background: #4d4d4d;
+  color: #ffffff;
 }
+
+/* Ensure footer links are legible on light background */
+.md-footer a,
+.md-footer-meta a {
+  color: #1E88E5;
+}
+
+.md-footer a:hover,
+.md-footer-meta a:hover {
+  color: #1565C0;
+}
+
 
 /* ========================================== */
 /* MOBILE RESPONSIVE STYLES */
@@ -263,14 +254,35 @@
 
 /* Dark mode color adjustments */
 [data-md-color-scheme="slate"] {
-  --md-primary-fg-color: #6366f1;
-  --md-accent-fg-color: #a78bfa;
+  --md-primary-fg-color: #333333;
+  --md-accent-fg-color: #64B5F6;
   
-  /* Dark mode background colors */
-  --md-default-bg-color: #1e1e1e;
+  --md-default-bg-color: #1E1E1E;
   --md-default-bg-color--light: #2a2a2a;
   --md-default-bg-color--lighter: #3a3a3a;
   --md-default-bg-color--lightest: #4a4a4a;
+  --md-default-fg-color: #FFFFFF;
+}
+
+/* Dark mode footer colors and links */
+[data-md-color-scheme="slate"] .md-footer {
+  background: #1E1E1E;
+  color: #BDBDBD;
+}
+
+[data-md-color-scheme="slate"] .md-footer-meta {
+  background: #4d4d4d;
+  color: #ffffff;
+}
+
+[data-md-color-scheme="slate"] .md-footer a,
+[data-md-color-scheme="slate"] .md-footer-meta a {
+  color: #64B5F6;
+}
+
+[data-md-color-scheme="slate"] .md-footer a:hover,
+[data-md-color-scheme="slate"] .md-footer-meta a:hover {
+  color: #90CAF9;
 }
 
 /* Soften quote borders (regular blockquote + details.quote) */
@@ -297,7 +309,13 @@
 
 /* Dark mode hero section */
 [data-md-color-scheme="slate"] .md-typeset .hero {
-  background: #4338ca;
+  background: var(--md-default-bg-color);
+  border-color: var(--md-default-bg-color--lighter);
+}
+
+/* Improve hero subtitle contrast in dark mode */
+[data-md-color-scheme="slate"] .md-typeset .hero p {
+  color: #d1d5db;
 }
 
 /* Dark mode documentation headings */
@@ -328,19 +346,19 @@
 }
 
 ::-webkit-scrollbar-thumb {
-  background: var(--bridgic-purple);
+  background: #c5cbd5;
   border-radius: 4px;
   transition: background-color 0.2s ease;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--md-accent-fg-color);
-  opacity: 0.8;
+  background: #aeb6c2;
+  opacity: 0.9;
 }
 
 * {
   scrollbar-width: thin;
-  scrollbar-color: var(--bridgic-purple) var(--md-default-bg-color--lighter);
+  scrollbar-color: #c5cbd5 var(--md-default-bg-color--lighter);
 }
 
 /* ========================================== */
@@ -370,8 +388,9 @@
   font-size: 0.75rem;
   font-weight: 600;
   line-height: 1;
-  color: white;
-  background: var(--bridgic-primary);
+  color: var(--md-default-fg-color);
+  background: var(--md-default-bg-color--light);
+  border: 1px solid var(--md-default-bg-color--lightest);
   border-radius: 0.25rem;
   text-transform: uppercase;
   letter-spacing: 0.5px;
@@ -392,12 +411,11 @@
 
 /* ========================================== */
 /* API REFERENCE SYMBOL BADGES (func / meth)  */
-/* Mirrors the behavior used in langgraph-docs */
 /* ========================================== */
 
 /* Base style for symbol badges injected by custom mkdocstrings template */
 .doc-symbol {
-  display: inline-block;
+  /* display: inline-block; */
   vertical-align: middle;
   border-radius: 0.375rem; /* slightly rounder, more premium */
   background: var(--bridgic-primary);
@@ -445,7 +463,7 @@
 
 /* Dark mode adjustments for contrast */
 [data-md-color-scheme="slate"] .doc-symbol {
-  background: #4f46e5; /* Keep strong contrast in dark mode */
+  background: #374151;
   color: #fff;
 }
 
@@ -500,3 +518,109 @@
 [data-md-color-scheme="slate"] .md-typeset .doc h2.doc-heading { font-size: 1.35rem; }
 [data-md-color-scheme="slate"] .md-typeset .doc h3.doc-heading { font-size: 1.2rem; }
 [data-md-color-scheme="slate"] .md-typeset .doc h4.doc-heading { font-size: 1.05rem; }
+
+/* ========================================== */
+/* JUPYTER NOTEBOOK STYLES (mkdocs-jupyter)   */
+/* Match Material UI rounding, spacing, and colors */
+/* ========================================== */
+
+/* Cell container spacing */
+.jupyter-cell, .jupyter-code-cell, .jupyter-raw-cell, .jupyter-markdown-cell {
+  margin: 0.5rem 0 0.5rem 0;
+}
+
+/* Code cell block */
+.jupyter-code-cell .highlight pre {
+  background: var(--md-code-bg-color) !important;
+  color: var(--md-code-fg-color) !important;
+  border-radius: 0.4rem; /* Material rounding */
+  padding: 0.9em 1.1em;
+  font-family: var(--md-code-font-family), Roboto Mono, ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  font-size: .85em;
+  line-height: 1.5;
+  box-shadow: none;
+  border: 1px solid var(--md-default-bg-color--lightest);
+}
+
+/* Line numbers gutter */
+.jupyter-code-cell .highlight .linenos {
+  background: transparent;
+  color: var(--md-code-hl-number-color);
+  margin-right: 1em;
+  opacity: .9;
+}
+
+/* Output blocks */
+.jupyter-output, .jupyter-stdout, .jupyter-stderr, .jupyter-error, .jupyter-execute-result {
+  background: var(--md-default-bg-color--light);
+  color: var(--md-default-fg-color);
+  border: 1px solid var(--md-default-bg-color--lightest);
+  border-radius: 0.4rem;
+  padding: .75rem 1rem;
+  margin-top: .5rem;
+}
+
+/* Error output emphasis */
+.jupyter-error {
+  background: rgba(239, 68, 68, 0.06);
+  border-color: rgba(239, 68, 68, 0.35);
+}
+
+/* Stdout and Stderr with gentle contrast */
+.jupyter-stdout {
+  background: rgba(0, 0, 0, 0.02);
+  border-color: var(--md-default-bg-color--lightest);
+}
+
+.jupyter-stderr {
+  background: rgba(245, 158, 11, 0.08); /* amber tint */
+  border-color: rgba(245, 158, 11, 0.35);
+}
+
+/* Images and tables inside outputs */
+.jupyter-output img, .jupyter-execute-result img {
+  border-radius: .375rem;
+}
+.jupyter-output table, .jupyter-execute-result table {
+  border-radius: .375rem;
+  overflow: hidden;
+}
+
+/* Dark mode refinements for code & outputs */
+[data-md-color-scheme="slate"] .jupyter-code-cell .highlight pre {
+  filter: contrast(.98);
+  border-color: rgba(255,255,255,.08);
+}
+[data-md-color-scheme="slate"] .jupyter-output,
+[data-md-color-scheme="slate"] .jupyter-stdout,
+[data-md-color-scheme="slate"] .jupyter-stderr,
+[data-md-color-scheme="slate"] .jupyter-error,
+[data-md-color-scheme="slate"] .jupyter-execute-result {
+  background: #1f1f1f;
+  border-color: rgba(255,255,255,.10);
+}
+[data-md-color-scheme="slate"] .jupyter-error {
+  background: rgba(239, 68, 68, 0.12);
+  border-color: rgba(239, 68, 68, 0.45);
+}
+[data-md-color-scheme="slate"] .jupyter-stderr {
+  background: rgba(245, 158, 11, 0.14);
+  border-color: rgba(245, 158, 11, 0.45);
+}
+
+.jupyter-wrapper .jp-InputArea-editor, .jp-OutputArea-output {
+  border: 1px solid var(--md-default-bg-color--lightest) !important;
+  border-radius: 0.4rem !important;
+  margin: 0.5rem 0 0.5rem 0;
+  background: var(--jp-cell-editor-background);
+  color: var(--jp-mirror-editor-variable-color);
+}
+.jupyter-wrapper .jp-InputPrompt, .jupyter-wrapper .jp-OutputPrompt {
+  display: none !important;
+}
+.jupyter-code-cell  {
+  padding: 0.5rem !important;
+}
+.jupyter-wrapper .zeroclipboard-container .clipboard-copy-icon, .notice {
+  color: var(--md-grey-500) !important;
+}

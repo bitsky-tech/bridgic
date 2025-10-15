@@ -623,7 +623,9 @@ class DocumentationGenerator:
 
                     # Ensure Index first
                     group_items: List[Any] = []
-                    group_items.append({'Index': data['Index']})
+                    # Use the module name (last segment) as the label instead of a generic "Index"
+                    group_label = first3[-1]
+                    group_items.append({group_label: data['Index']})
 
                     # Build children under this group
                     child_index_map: Dict[Tuple[str, ...], str] = {}
@@ -642,7 +644,8 @@ class DocumentationGenerator:
                             group_items.append({child_name: child_path})
                         else:
                             # Create collapsible child with its own Index and its immediate children (5th level)
-                            child_items: List[Any] = [ {'Index': child_path} ]
+                            # Label the child's index with the child module name instead of "Index"
+                            child_items: List[Any] = [ {child_name: child_path} ]
                             grand_children = [p for p in nodes.keys() if (len(p) == 5 and list(p[:4]) == list(child_parts))]
                             for gc_parts in sorted(grand_children):
                                 gc_name = gc_parts[-1]
