@@ -1,6 +1,6 @@
 import pytest
 
-from bridgic.core.utils.console import printer
+from bridgic.core.utils._console import printer
 
 @pytest.mark.asyncio
 async def test_printer():

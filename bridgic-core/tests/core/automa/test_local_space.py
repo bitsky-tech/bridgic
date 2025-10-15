@@ -1,9 +1,10 @@
 from typing import Any, Dict
 import pytest
-from bridgic.core.automa import GraphAutoma, ArgsMappingRule, AutomaRuntimeError, GraphAutoma, worker, System
+from bridgic.core.automa import GraphAutoma, AutomaRuntimeError, GraphAutoma, worker
+from bridgic.core.automa.args import ArgsMappingRule, System
 from bridgic.core.automa.interaction import Event
 from bridgic.core.automa.interaction import InteractionFeedback, InteractionException
-from bridgic.core.automa.serialization import Snapshot
+from bridgic.core.automa import Snapshot
 
 #### Test case: get_local_space runtime_context must contain worker_key
 

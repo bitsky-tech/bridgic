@@ -1,4 +1,4 @@
-from .tool_selection import ToolSelectionWorker
+from ._tool_selection import ToolSelectionWorker
 
 __all__ = [
     "ToolSelectionWorker"

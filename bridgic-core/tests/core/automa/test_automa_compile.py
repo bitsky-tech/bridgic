@@ -7,7 +7,7 @@ from bridgic.core.automa import (
     WorkerSignatureError,
 )
 from bridgic.core.automa.worker import Worker
-from bridgic.core.utils.console import printer
+from bridgic.core.utils._console import printer
 
 # TODO: This file need to be refactored later...
 def test_automa_declaration_dag_check():

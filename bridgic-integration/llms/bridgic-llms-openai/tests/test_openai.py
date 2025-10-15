@@ -4,9 +4,13 @@ import json
 import re
 import datetime
 
-from bridgic.core.model.base_llm import *
-from bridgic.core.model.protocol import *
-from bridgic.core.utils.console import printer
+from pydantic import BaseModel, Field
+from typing import List, Dict, Any, Literal, Any, Union, Optional
+
+from bridgic.core.model import BaseLlm
+from bridgic.core.model.types import *
+from bridgic.core.model.protocols import *
+from bridgic.core.utils._console import printer
 from bridgic.llms.openai.openai_llm import OpenAIConfiguration, OpenAILlm
 
 
@@ -15,14 +19,10 @@ _model_name = os.environ.get("OPENAI_MODEL_NAME")
 
 @pytest.fixture
 def llm():
+    configuration = OpenAIConfiguration(model=_model_name)
     return OpenAILlm(
         api_key=_api_key,
-    )
-
-def get_configuration_llm(configuration: OpenAIConfiguration):
-    return OpenAILlm(
-        api_key=_api_key,
-        configuration=configuration
+        configuration=configuration,
     )
 
 @pytest.fixture
@@ -43,12 +43,11 @@ def tools():
     ]
     return tools
 
-
 @pytest.mark.skipif(
     (_api_key is None) or (_model_name is None),
     reason="OPENAI_API_KEY or OPENAI_MODEL_NAME is not set",
 )
-def test_openai_server_chat(llm):
+def test_openai_chat(llm):
     response = llm.chat(
         model=_model_name,
         messages=[Message.from_text(text="Hello, how are you?", role=Role.USER)],
@@ -61,7 +60,7 @@ def test_openai_server_chat(llm):
     (_api_key is None) or (_model_name is None),
     reason="OPENAI_API_KEY or OPENAI_MODEL_NAME is not set",
 )
-def test_openai_server_stream(llm):
+def test_openai_stream(llm):
     response = llm.stream(
         model=_model_name,
         messages=[Message.from_text(text="Hello, how are you?", role=Role.USER)],
@@ -78,7 +77,7 @@ def test_openai_server_stream(llm):
     reason="OPENAI_API_KEY or OPENAI_MODEL_NAME is not set",
 )
 @pytest.mark.asyncio
-async def test_openai_server_achat(llm):
+async def test_openai_achat(llm):
     response = await llm.achat(
         model=_model_name,
         messages=[Message.from_text(text="Hello, how are you?", role=Role.USER)],
@@ -92,7 +91,7 @@ async def test_openai_server_achat(llm):
     reason="OPENAI_API_KEY or OPENAI_MODEL_NAME is not set",
 )
 @pytest.mark.asyncio
-async def test_openai_server_astream(llm):
+async def test_openai_astream(llm):
     response = llm.astream(
         model=_model_name,
         messages=[Message.from_text(text="Hello, how are you?", role=Role.USER)],
@@ -108,7 +107,7 @@ async def test_openai_server_astream(llm):
     (_api_key is None) or (_model_name is None),
     reason="OPENAI_API_KEY or OPENAI_MODEL_NAME is not set",
 )
-def test_openai_server_structured_output_pydantic_model(llm):
+def test_openai_structured_output_pydantic_model(llm):
     class ThinkAndAnswer(BaseModel):
         thought: str = Field(description="The thought about the problem.", max_length=200)
         answer: str = Field(description="The answer to the question.", min_length=10)
@@ -140,7 +139,7 @@ Don't think for long time. Don't answer in many words.
     reason="OPENAI_API_KEY or OPENAI_MODEL_NAME is not set",
 )
 @pytest.mark.asyncio
-async def test_openai_server_astructured_output_pydantic_model(llm):
+async def test_openai_astructured_output_pydantic_model(llm):
     class ThinkAndAnswer(BaseModel):
         thought: str = Field(description="The thought about the problem.", max_length=200)
         answer: str = Field(description="The answer to the question.", min_length=10)
@@ -171,7 +170,7 @@ Don't think for long time. Don't answer in many words.
     (_api_key is None) or (_model_name is None),
     reason="OPENAI_API_KEY or OPENAI_MODEL_NAME is not set",
 )
-def test_openai_server_structured_output_json_schema(llm):
+def test_openai_structured_output_json_schema(llm):
     schema = {
         "type": "object",
         "properties": {
@@ -204,7 +203,7 @@ def test_openai_server_structured_output_json_schema(llm):
     reason="OPENAI_API_KEY or OPENAI_MODEL_NAME is not set",
 )
 @pytest.mark.asyncio
-async def test_openai_server_astructured_output_json_schema(llm):
+async def test_openai_astructured_output_json_schema(llm):
     schema = {
         "type": "object",
         "properties": {
@@ -237,7 +236,7 @@ async def test_openai_server_astructured_output_json_schema(llm):
     reason="OPENAI_API_KEY or OPENAI_MODEL_NAME is not set",
 )
 @pytest.mark.asyncio
-async def test_openai_server_astructured_output_json_schema(llm):
+async def test_openai_astructured_output_json_schema(llm):
     schema = {
         "type": "object",
         "properties": {
@@ -269,231 +268,7 @@ async def test_openai_server_astructured_output_json_schema(llm):
     (_api_key is None) or (_model_name is None),
     reason="OPENAI_API_KEY or OPENAI_MODEL_NAME is not set",
 )
-def test_openai_server_structured_output_regex_not_supported(llm: OpenAILlm):
-    """Test that Regex constraints are not supported and raise ValueError."""
-    pattern = r"^(?P<month>January|February|March|April|May|June|July|August|September|October|November|December)\s+(?P<day>\d{1,2})(?:st|nd|rd|th)?\s+(?P<year>\d{4})\s+at\s+(?P<hour>0?[1-9]|1[0-2])(?P<ampm>AM|PM)$"
-    
-    with pytest.raises(ValueError, match=r"Unsupported constraint type.*More info about OpenAI structured output"):
-        llm.structured_output(
-            model=_model_name,
-            constraint=Regex(name="timestamp", pattern=pattern, description="Saves a timestamp in date + time in 24-hr format."),
-            messages=[
-                Message.from_text(
-                    text="Use the timestamp tool to save a timestamp for August 7th 2025 at 10AM.",
-                    role=Role.USER,
-                ),
-            ],
-        )
-
-@pytest.mark.skipif(
-    (_api_key is None) or (_model_name is None),
-    reason="OPENAI_API_KEY or OPENAI_MODEL_NAME is not set",
-)
-@pytest.mark.asyncio
-async def test_openai_server_astructured_output_regex_not_supported(llm: OpenAILlm):
-    """Test that Regex constraints are not supported in async version and raise ValueError."""
-    pattern = "^(?P<month>January|February|March|April|May|June|July|August|September|October|November|December)\s+(?P<day>\d{1,2})(?:st|nd|rd|th)?\s+(?P<year>\d{4})\s+at\s+(?P<hour>0?[1-9]|1[0-2])(?P<ampm>AM|PM)$"
-    
-    with pytest.raises(ValueError, match=r"Unsupported constraint type.*More info about OpenAI structured output"):
-        await llm.astructured_output(
-            model=_model_name,
-            constraint=Regex(name="timestamp", pattern=pattern, description="Saves a timestamp in date + time in 24-hr format."),
-            messages=[
-                Message.from_text(
-                    text="Use the timestamp tool to save a timestamp for August 7th 2025 at 10AM.",
-                    role=Role.USER,
-                ),
-            ],
-        )
-
-@pytest.mark.skipif(
-    (_api_key is None) or (_model_name is None),
-    reason="OPENAI_API_KEY or OPENAI_MODEL_NAME is not set",
-)
-def test_openai_server_structured_output_ebnf_grammar(llm):
-    ebnf_syntax = """
-root ::= select_statement
-select_statement ::= "select " columns " from " table " where " conditions
-columns ::= (column (", " column)*) | "*"
-column ::= "year" | "sales"
-table ::= "sales_table"
-conditions ::= condition (" and " condition)*
-condition ::= column "=" number
-number ::= "2020" | "2021" | "2022" | "2023" | "2024"
-"""
-    with pytest.raises(ValueError, match=r"Unsupported constraint type.*More info about OpenAI structured output"):
-        llm.structured_output(
-            model=_model_name,
-            constraint=EbnfGrammar(syntax=ebnf_syntax, description="A grammar for selecting sales data."),
-            messages=[
-                Message.from_text(
-                    text="You are a helpful assistant. You are good at writting SQL statements.",
-                    role=Role.SYSTEM,
-                ),
-                Message.from_text(
-                    text="""
-    Here is a table (table name: sales_table) about the sales data:
-    | id | year | sales |
-    | -- | ---- | ----- |
-    | 1  | 2021 | 20000 |
-    | 2  | 2022 | 20000 |
-    | 3  | 2023 | 30000 |
-    | 4  | 2024 | 40000 |
-    Write a SQL to select the sales of year of 2023 from the table.
-    """,
-                    role=Role.USER,
-                ),
-            ],
-        )
-
-@pytest.mark.skipif(
-    (_api_key is None) or (_model_name is None),
-    reason="OPENAI_API_KEY or OPENAI_MODEL_NAME is not set",
-)
-@pytest.mark.asyncio
-async def test_openai_server_astructured_output_ebnf_grammar(llm):
-    ebnf_syntax = """
-root ::= select_statement
-select_statement ::= "select " columns " from " table " where " conditions
-columns ::= (column (", " column)*) | "*"
-column ::= "year" | "sales"
-table ::= "sales_table"
-conditions ::= condition (" and " condition)*
-condition ::= column "=" number
-number ::= "2020" | "2021" | "2022" | "2023" | "2024"
-"""
-    with pytest.raises(ValueError, match=r"Unsupported constraint type.*More info about OpenAI structured output"):
-        await llm.astructured_output(
-            model=_model_name,
-            constraint=EbnfGrammar(syntax=ebnf_syntax, description="A grammar for selecting sales data."),
-            messages=[
-                Message.from_text(
-                    text="You are a helpful assistant. You are good at writting SQL statements.",
-                    role=Role.SYSTEM,
-                ),
-                Message.from_text(
-                    text="""
-    Here is a table (table name: sales_table) about the sales data:
-    | id | year | sales |
-    | -- | ---- | ----- |
-    | 1  | 2021 | 20000 |
-    | 2  | 2022 | 20000 |
-    | 3  | 2023 | 30000 |
-    | 4  | 2024 | 40000 |
-    Write a SQL to select the sales of year of 2023 from the table.
-    """,
-                    role=Role.USER,
-                ),
-            ],
-        )
-
-@pytest.mark.skipif(
-    (_api_key is None) or (_model_name is None),
-    reason="OPENAI_API_KEY or OPENAI_MODEL_NAME is not set",
-)
-def test_openai_server_structured_output_lark_grammar_not_supported(llm):
-    """Test that LarkGrammar constraints are not supported and raise ValueError."""
-    lark_syntax = """start: expr
-expr: term (SP ADD SP term)* -> add
-| term
-term: factor (SP MUL SP factor)* -> mul
-| factor
-factor: INT
-SP: " "
-ADD: "+"
-MUL: "*"
-%import common.INT"""
-
-    with pytest.raises(ValueError, match=r"Unsupported constraint type.*More info about OpenAI structured output"):
-        llm.structured_output(
-            model=_model_name,
-            temperature=0,
-            constraint=LarkGrammar(name="math_exp", syntax=lark_syntax, description="Creates valid mathematical expressions"),
-            messages=[
-                Message.from_text(
-                    text="Use the math_exp tool to add four plus four.",
-                    role=Role.USER,
-                ),
-            ],
-        )
-
-
-@pytest.mark.skipif(
-    (_api_key is None) or (_model_name is None),
-    reason="OPENAI_API_KEY or OPENAI_MODEL_NAME is not set",
-)
-@pytest.mark.asyncio
-async def test_openai_server_astructured_output_lark_grammar_not_supported(llm):
-    """Test that LarkGrammar constraints are not supported in async version and raise ValueError."""
-    lark_syntax = """start: expr
-expr: term (SP ADD SP term)* -> add
-| term
-term: factor (SP MUL SP factor)* -> mul
-| factor
-factor: INT
-SP: " "
-ADD: "+"
-MUL: "*"
-%import common.INT"""
-
-    with pytest.raises(ValueError, match=r"Unsupported constraint type.*More info about OpenAI structured output"):
-        await llm.astructured_output(
-            model=_model_name,
-            temperature=0,
-            constraint=LarkGrammar(name="math_exp", syntax=lark_syntax, description="Creates valid mathematical expressions"),
-            messages=[
-                Message.from_text(
-                    text="Use the math_exp tool to add four plus four.",
-                    role=Role.USER,
-                ),
-            ],
-        )
-
-
-@pytest.mark.skipif(
-    (_api_key is None) or (_model_name is None),
-    reason="OPENAI_API_KEY or OPENAI_MODEL_NAME is not set",
-)
-def test_openai_server_structured_output_choice_not_supported(llm):
-    """Test that Choice constraints are not supported and raise ValueError."""
-    with pytest.raises(ValueError, match=r"Unsupported constraint type.*More info about OpenAI structured output"):
-        llm.structured_output(
-            model=_model_name,
-            constraint=Choice(choices=["option1", "option2", "option3"]),
-            messages=[
-                Message.from_text(
-                    text="Choose one of the options.",
-                    role=Role.USER,
-                ),
-            ],
-        )
-
-
-@pytest.mark.skipif(
-    (_api_key is None) or (_model_name is None),
-    reason="OPENAI_API_KEY or OPENAI_MODEL_NAME is not set",
-)
-@pytest.mark.asyncio
-async def test_openai_server_astructured_output_choice_not_supported(llm):
-    """Test that Choice constraints are not supported in async version and raise ValueError."""
-    with pytest.raises(ValueError, match=r"Unsupported constraint type.*More info about OpenAI structured output"):
-        await llm.astructured_output(
-            model=_model_name,
-            constraint=Choice(choices=["option1", "option2", "option3"]),
-            messages=[
-                Message.from_text(
-                    text="Choose one of the options.",
-                    role=Role.USER,
-                ),
-            ],
-        )
-
-
-@pytest.mark.skipif(
-    (_api_key is None) or (_model_name is None),
-    reason="OPENAI_API_KEY or OPENAI_MODEL_NAME is not set",
-)
-def test_openai_server_select_tool(llm, date, tools):
+def test_openai_select_tool_normal(llm, date, tools):
     response, _ = llm.select_tool(
         model=_model_name,
         tools=tools,
@@ -517,13 +292,11 @@ def test_openai_server_select_tool(llm, date, tools):
             assert tool_call.arguments["date"] == date
             assert len(tool_call.arguments["topic"]) > 0
 
-
-
 @pytest.mark.skipif(
     (_api_key is None) or (_model_name is None),
     reason="OPENAI_API_KEY or OPENAI_MODEL_NAME is not set",
 )
-def test_openai_server_select_tool_response(llm, tools):
+def test_openai_select_tool_response(llm, tools):
     tool_calls, response = llm.select_tool(
         model=_model_name,
         tools=tools,
@@ -542,36 +315,12 @@ def test_openai_server_select_tool_response(llm, tools):
     assert len(tool_calls) == 0
     assert len(response) > 0
 
-
-@pytest.mark.skipif(
-    (_api_key is None) or (_model_name is None),
-    reason="OPENAI_API_KEY or OPENAI_MODEL_NAME is not set",
-)
-def test_openai_server_empty_tool(llm):
-    tool_calls, response = llm.select_tool(
-        model=_model_name,
-        tools=[],
-        messages=[
-            Message.from_text(
-                text="You are a helpful assistant. You are skilled at using the provided tools to solve problems. If the tool does not match the question, you can directly answer the answer",
-                role=Role.SYSTEM,
-            ),
-            Message.from_text(
-                text="What is 4 * 4 equal to when calculating",
-                role=Role.USER,
-            )
-        ],
-    )
-    assert len(tool_calls) == 0
-    assert len(response) > 0
-
-
 @pytest.mark.skipif(
     (_api_key is None) or (_model_name is None),
     reason="OPENAI_API_KEY or OPENAI_MODEL_NAME is not set",
 )
 @pytest.mark.asyncio
-async def test_openai_server_aselect_tool(llm, date, tools):
+async def test_openai_aselect_tool(llm, date, tools):
     response, _ = await llm.aselect_tool(
         model=_model_name,
         tools=tools,
@@ -595,65 +344,8 @@ async def test_openai_server_aselect_tool(llm, date, tools):
             assert tool_call.arguments["date"] == date
             assert len(tool_call.arguments["topic"]) > 0
 
-
-@pytest.mark.skipif(
-    (_api_key is None) or (_model_name is None),
-    reason="OPENAI_API_KEY or OPENAI_MODEL_NAME is not set",
-)
-def test_openai_server_extras_name_user(llm: OpenAILlm):
-    response = llm.chat(
-        model=_model_name,
-        messages=[
-            Message.from_text(
-                text="You are a helpful assistant.A friendly answer requires including the other party's name.",
-                role=Role.SYSTEM,
-            ),
-            Message.from_text(
-                text="Hey! What's your favorite food?",
-                role=Role.USER,
-                extras={"name": "Bob"},
-            )
-        ],
-    )
-    assert 'Bob' in response.message.content
-
-
 @pytest.mark.skipif((_api_key is None) or (_model_name is None), reason="env not set")
-def test_openai_server_extras_name_system(llm: OpenAILlm):
-    response = llm.chat(
-        model=_model_name,
-        messages=[
-            Message.from_text(
-                text="Next, we will engage in role-playing. I will provide you with a name field, and you will need to reply with your name when I ask who you are?",
-                role=Role.SYSTEM,
-                extras={"name": "BtskBot"},
-            ),
-            Message.from_text(text="What is your name?", role=Role.USER),
-        ],
-    )
-    assert "BtskBot" in response.message.content
-
-
-@pytest.mark.skipif((_api_key is None) or (_model_name is None), reason="env not set")
-def test_openai_server_extras_name_assistant(llm: OpenAILlm):
-    response = llm.chat(
-        model=_model_name,
-        messages=[
-            Message.from_text(text="Next, we will engage in role-playing. I will provide you with a name field, and you will need to reply with your name when I ask who you are?", role=Role.SYSTEM),
-            Message.from_text(text="Hello!", role=Role.USER),
-            Message.from_text(
-                text="Hi there, I'm a helpful LLM!",
-                role=Role.AI,
-                extras={"name": "BtskBot"},
-            ),
-            Message.from_text(text="What's your name again?", role=Role.USER),
-        ],
-    )
-    assert "BtskBot" in response.message.content
-
-
-@pytest.mark.skipif((_api_key is None) or (_model_name is None), reason="env not set")
-def test_openai_server_multiple_users(llm: OpenAILlm):
+def test_openai_multiple_users(llm: OpenAILlm):
     response = llm.chat(
         model=_model_name,
         messages=[
@@ -665,37 +357,11 @@ def test_openai_server_multiple_users(llm: OpenAILlm):
     )
     assert any(name in response.message.content for name in ["Alice", "Bob"])
 
-
-@pytest.mark.skipif((_api_key is None) or (_model_name is None), reason="env not set")
-def test_openai_server_no_name_extras(llm: OpenAILlm):
-    response = llm.chat(
-        model=_model_name,
-        messages=[
-            Message.from_text("You are a polite bot.", role=Role.SYSTEM),
-            Message.from_text("How are you?", role=Role.USER, extras={}),
-        ],
-    )
-    assert isinstance(response.message.content, str)
-    assert len(response.message.content) > 0
-
-
-@pytest.mark.skipif((_api_key is None) or (_model_name is None), reason="env not set")
-def test_openai_server_invalid_name_type(llm: OpenAILlm):
-    response = llm.chat(
-        model=_model_name,
-        messages=[
-            Message.from_text("You are a robust bot.", role=Role.SYSTEM),
-            Message.from_text("What do you think?", role=Role.USER, extras={"name": None}),
-        ],
-    )
-    assert len(response.message.content)
-
-
 @pytest.mark.skipif(
     (_api_key is None) or (_model_name is None),
     reason="OPENAI_API_KEY or OPENAI_MODEL_NAME is not set",
 )
-def test_openai_server_function_call_with_blocks(llm: OpenAILlm):
+def test_openai_function_call_with_blocks(llm: OpenAILlm):
     """
     Test function calling using ToolCallBlock and ToolResultBlock.
     This test demonstrates how to simulate a complete function call workflow.
@@ -765,12 +431,11 @@ def test_openai_server_function_call_with_blocks(llm: OpenAILlm):
     printer.print(f"Tool call: {tool_call.model_dump()}")
     printer.print(f"Tool result: {tool_result.model_dump()}")
 
-
 @pytest.mark.skipif(
     (_api_key is None) or (_model_name is None),
     reason="OPENAI_API_KEY or OPENAI_MODEL_NAME is not set",
 )
-def test_openai_server_multiple_function_calls_with_blocks(llm: OpenAILlm):
+def test_openai_multiple_function_calls_with_blocks(llm: OpenAILlm):
     """
     Test multiple function calls using ToolCallBlock and ToolResultBlock.
     This test demonstrates handling multiple parallel function calls.
@@ -842,66 +507,37 @@ def test_openai_server_multiple_function_calls_with_blocks(llm: OpenAILlm):
     printer.print(f"Weather result: {weather_result_block.model_dump()}")
     printer.print(f"News result: {news_result_block.model_dump()}")
 
-
 @pytest.mark.skipif(
     (_api_key is None) or (_model_name is None),
     reason="OPENAI_API_KEY or OPENAI_MODEL_NAME is not set",
 )
-def test_openai_server_function_call_error_handling(llm: OpenAILlm):
-    """
-    Test function call error handling using ToolResultBlock.
-    This test demonstrates how to handle function call errors.
-    """
-    # Create conversation with error handling
-    messages = [
-        Message.from_text(
-            text="You are a helpful assistant. If a function call fails, explain the error to the user.",
-            role=Role.SYSTEM
-        ),
-        Message.from_text(
-            text="Get the weather for InvalidCity.",
-            role=Role.USER
-        ),
-        # AI response with tool call
-        Message(
-            role=Role.AI,
-            blocks=[
-                TextBlock(text="I'll check the weather for that city."),
-                ToolCallBlock(id="call_error_789", name="get_weather", arguments={"city": "InvalidCity", "unit": "celsius"})
-            ]
-        ),
-        # Tool error result using the new from_tool_result method
-        Message.from_tool_result(
-            tool_id="call_error_789",
-            content="Error: City 'InvalidCity' not found. Please provide a valid city name."
-        )
-    ]
-    
-    # Verify error handling structure
-    assert len(messages) == 4
-    
-    # Check the error result
-    error_message = messages[3]
-    assert error_message.role == Role.TOOL
-    error_block = error_message.blocks[0]
-    assert isinstance(error_block, ToolResultBlock)
-    assert error_block.id == "call_error_789"
-    assert "Error:" in error_block.content
-    assert "not found" in error_block.content
-    
-    printer.print("Function call error handling test passed!")
-    printer.print(f"Error result: {error_block.model_dump()}")
-
-@pytest.mark.skipif(
-    (_api_key is None) or (_model_name is None),
-    reason="OPENAI_API_KEY or OPENAI_MODEL_NAME is not set",
-)
-def test_openai_server_message_conversion(llm: OpenAILlm):
+def test_openai_message_conversion(llm: OpenAILlm):
     """
     Test the message conversion functionality for tool calls and tool results.
     This test verifies that Bridgic messages are correctly converted to OpenAI format.
     """
-    # Test conversion of tool call message
+    # Test 1: Tool message without ToolResultBlock
+    invalid_tool_message = Message(
+        role=Role.TOOL,
+        blocks=[TextBlock(text="This should have a ToolResultBlock")]
+    )
+    
+    with pytest.raises(ValueError):
+        llm._convert_chat_completions_message(invalid_tool_message)
+    
+    # Test 2: Tool message with multiple ToolResultBlocks (will adopt the first one)
+    multi_result_message = Message(
+        role=Role.TOOL,
+        blocks=[
+            ToolResultBlock(id="call_1", content="First result"),
+            ToolResultBlock(id="call_2", content="Second result")
+        ]
+    )
+    
+    converted = llm._convert_chat_completions_message(multi_result_message)
+    assert converted["tool_call_id"] == "call_1"  # Should use the first one
+    
+    # Test 3: AI message with tool call.
     tool_call_message = Message(
         role=Role.AI,
         blocks=[
@@ -909,23 +545,20 @@ def test_openai_server_message_conversion(llm: OpenAILlm):
             ToolCallBlock(id="call_weather_123", name="get_weather", arguments={"city": "Tokyo", "unit": "celsius"})
         ]
     )
-    
-    # Test conversion of tool result message
     tool_result_message = Message.from_tool_result(
         tool_id="call_weather_123",
-        content="The weather in Tokyo is 22°C and sunny."
+        content="The weather in Tokyo is 22°C and sunny.",
     )
-    
-    # Test conversion of regular text message
-    text_message = Message.from_text("Hello, how are you?", role=Role.USER)
-    
-    # Convert messages to OpenAI format
+    user_message = Message.from_text(
+        text="Hello, how are you?",
+        role=Role.USER
+    )
+
     try:
         converted_tool_call = llm._convert_chat_completions_message(tool_call_message)
         converted_tool_result = llm._convert_chat_completions_message(tool_result_message)
-        converted_text = llm._convert_chat_completions_message(text_message)
+        converted_text = llm._convert_chat_completions_message(user_message)
         
-        # Verify conversions
         assert converted_tool_call["role"] == "assistant"
         assert "tool_calls" in converted_tool_call
         assert len(converted_tool_call["tool_calls"]) == 1
@@ -942,17 +575,15 @@ def test_openai_server_message_conversion(llm: OpenAILlm):
         printer.print(f"Tool call conversion: {converted_tool_call}")
         printer.print(f"Tool result conversion: {converted_tool_result}")
         printer.print(f"Text message conversion: {converted_text}")
-        
     except Exception as e:
         printer.print(f"Conversion error: {e}")
         raise
-
 
 @pytest.mark.skipif(
     (_api_key is None) or (_model_name is None),
     reason="OPENAI_API_KEY or OPENAI_MODEL_NAME is not set",
 )
-def test_openai_server_tool_call_edge_cases(llm: OpenAILlm):
+def test_openai_tool_call_edge_cases(llm: OpenAILlm):
     """
     Test edge cases for tool call functionality.
     This test covers various edge cases and error scenarios.
@@ -1013,105 +644,11 @@ def test_openai_server_tool_call_edge_cases(llm: OpenAILlm):
     printer.print(f"Empty result: {converted_empty_result}")
     printer.print(f"Special content: {converted_special}")
 
-
 @pytest.mark.skipif(
     (_api_key is None) or (_model_name is None),
     reason="OPENAI_API_KEY or OPENAI_MODEL_NAME is not set",
 )
-def test_openai_server_multiple_tool_calls_conversion(llm: OpenAILlm):
-    """
-    Test conversion of messages with multiple tool calls.
-    This test verifies handling of parallel tool calls.
-    """
-    # Create a message with multiple tool calls
-    multi_tool_message = Message(
-        role=Role.AI,
-        blocks=[
-            TextBlock(text="I'll get both weather and news for you."),
-            ToolCallBlock(id="call_weather_1", name="get_weather", arguments={"city": "Tokyo"}),
-            ToolCallBlock(id="call_news_2", name="get_news", arguments={"topic": "technology"}),
-            ToolCallBlock(id="call_time_3", name="get_time", arguments={"timezone": "UTC"})
-        ]
-    )
-    
-    # Convert the message
-    converted = llm._convert_chat_completions_message(multi_tool_message)
-    
-    # Verify the conversion
-    assert converted["role"] == "assistant"
-    assert "I'll get both weather and news for you." in converted["content"]
-    assert len(converted["tool_calls"]) == 3
-    
-    # Verify each tool call
-    tool_names = [tc["function"]["name"] for tc in converted["tool_calls"]]
-    assert "get_weather" in tool_names
-    assert "get_news" in tool_names
-    assert "get_time" in tool_names
-    
-    # Verify tool call IDs
-    tool_ids = [tc["id"] for tc in converted["tool_calls"]]
-    assert "call_weather_1" in tool_ids
-    assert "call_news_2" in tool_ids
-    assert "call_time_3" in tool_ids
-    
-    printer.print("Multiple tool calls conversion test passed!")
-    printer.print(f"Converted message: {converted}")
-
-
-@pytest.mark.skipif(
-    (_api_key is None) or (_model_name is None),
-    reason="OPENAI_API_KEY or OPENAI_MODEL_NAME is not set",
-)
-def test_openai_server_tool_call_error_handling(llm: OpenAILlm):
-    """
-    Test error handling for tool call conversions.
-    This test verifies proper error handling for invalid inputs.
-    """
-    # Test 1: Tool message without ToolResultBlock
-    invalid_tool_message = Message(
-        role=Role.TOOL,
-        blocks=[TextBlock(text="This should have a ToolResultBlock")]
-    )
-    
-    with pytest.raises(ValueError, match="Tool message must contain a ToolResultBlock with an ID"):
-        llm._convert_chat_completions_message(invalid_tool_message)
-    
-    # Test 2: Tool message with multiple ToolResultBlocks (should use the first one)
-    multi_result_message = Message(
-        role=Role.TOOL,
-        blocks=[
-            ToolResultBlock(id="call_1", content="First result"),
-            ToolResultBlock(id="call_2", content="Second result")
-        ]
-    )
-    
-    converted = llm._convert_chat_completions_message(multi_result_message)
-    assert converted["tool_call_id"] == "call_1"  # Should use the first one
-    
-    # Test 3: Invalid JSON in tool call arguments (should be handled gracefully)
-    try:
-        # This should not raise an exception during conversion
-        # The JSON error would be caught when OpenAI tries to parse it
-        invalid_json_message = Message(
-            role=Role.AI,
-            blocks=[
-                ToolCallBlock(id="call_invalid", name="test", arguments={"invalid": "json"})
-            ]
-        )
-        converted_invalid = llm._convert_chat_completions_message(invalid_json_message)
-        assert converted_invalid["tool_calls"][0]["function"]["name"] == "test"
-    except Exception as e:
-        # If it does raise an exception, it should be a JSON-related one
-        assert "json" in str(e).lower() or "serialize" in str(e).lower()
-    
-    printer.print("Tool call error handling test passed!")
-
-
-@pytest.mark.skipif(
-    (_api_key is None) or (_model_name is None),
-    reason="OPENAI_API_KEY or OPENAI_MODEL_NAME is not set",
-)
-def test_openai_server_tool_call_with_extras(llm: OpenAILlm):
+def test_openai_tool_call_with_extras(llm: OpenAILlm):
     """
     Test tool call messages with extras metadata.
     This test verifies that extras are properly passed through.
@@ -1154,287 +691,11 @@ def test_openai_server_tool_call_with_extras(llm: OpenAILlm):
     printer.print(f"Tool call with extras: {converted}")
     printer.print(f"Tool result with extras: {converted_result}")
 
-
-
 @pytest.mark.skipif(
     (_api_key is None) or (_model_name is None),
     reason="OPENAI_API_KEY or OPENAI_MODEL_NAME is not set",
 )
-def test_openai_server_select_tool_tool_call_roundtrip_conversion(llm: OpenAILlm, tools):
-    """
-    Test roundtrip conversion of tool call messages.
-    This test simulates a complete conversation with tool calls.
-    """
-    def get_weather(city: str):
-        return f"{city} weather: 22°C, sunny with light clouds."
-    def get_news(topic: str, date: str):
-        return f"Latest tech news: {topic} on {date}."
-    # Simulate a complete conversation
-    conversation = [
-        # System message
-        Message.from_text("You are a helpful assistant.", role=Role.SYSTEM),
-        
-        # User message
-        Message.from_text("Get me the weather in Tokyo and news about technology at 2024-01-15.", role=Role.USER),
-    ]
-    
-    response,msg = llm.select_tool(conversation, model=_model_name, tools=tools)
-    print(response)
-    assert len(response) == 2
-    assert response[0].name == "get_weather"
-    assert response[1].name == "get_news"
-    assert response[0].arguments["city"] == "Tokyo"
-    assert response[1].arguments["topic"] == "technology"
-    assert response[1].arguments["date"] == "2024-01-15"
-    # add ai message with select_tool result to conversation
-    conversation.append(Message.from_tool_call(tool_calls=response, text=msg))
-    # add tool result to conversation
-    for tool_call in response:
-        if tool_call.name == "get_weather":
-            result = get_weather(tool_call.arguments["city"])
-            tool_result = Message.from_tool_result(
-                tool_id=tool_call.id,
-                content=result
-            )
-            conversation.append(tool_result)
-        if tool_call.name == "get_news":
-            result = get_news(tool_call.arguments["topic"], tool_call.arguments["date"])
-            tool_result = Message.from_tool_result(
-                tool_id=tool_call.id,
-                content=result
-            )
-            conversation.append(tool_result)
-    conversation.append(Message.from_text("Thanks! What about the weather in Paris?", role=Role.USER))
-    response,_ = llm.select_tool(conversation, model=_model_name, tools=tools)
-    print(response)
-    assert len(response) == 1
-    assert response[0].name == "get_weather"
-    assert response[0].arguments["city"] == "Paris"
-
-
-@pytest.mark.skipif(
-    (_api_key is None) or (_model_name is None),
-    reason="OPENAI_API_KEY or OPENAI_MODEL_NAME is not set",
-)
-@pytest.mark.asyncio
-async def test_openai_server_aselect_tool_tool_call_roundtrip_conversion(llm: OpenAILlm, tools):
-    """
-    Test roundtrip conversion of tool call messages.
-    This test simulates a complete conversation with tool calls.
-    """
-    def get_weather(city: str):
-        return f"{city} weather: 22°C, sunny with light clouds."
-    def get_news(topic: str, date: str):
-        return f"Latest tech news: {topic} on {date}."
-    # Simulate a complete conversation
-    conversation = [
-        # System message
-        Message.from_text("You are a helpful assistant.", role=Role.SYSTEM),
-        
-        # User message
-        Message.from_text("Get me the weather in Tokyo and news about technology at 2024-01-15.", role=Role.USER),
-    ]
-    
-    response,msg = await llm.aselect_tool(conversation, model=_model_name, tools=tools)
-    print(response)
-    assert len(response) == 2
-    assert response[0].name == "get_weather"
-    assert response[1].name == "get_news"
-    assert response[0].arguments["city"] == "Tokyo"
-    assert response[1].arguments["topic"] == "technology"
-    assert response[1].arguments["date"] == "2024-01-15"
-    # add ai message with select_tool result to conversation
-    conversation.append(Message.from_tool_call(tool_calls=response, text=msg))
-    # add tool result to conversation
-    for tool_call in response:
-        if tool_call.name == "get_weather":
-            result = get_weather(tool_call.arguments["city"])
-            tool_result = Message.from_tool_result(
-                tool_id=tool_call.id,
-                content=result
-            )
-            conversation.append(tool_result)
-        if tool_call.name == "get_news":
-            result = get_news(tool_call.arguments["topic"], tool_call.arguments["date"])
-            tool_result = Message.from_tool_result(
-                tool_id=tool_call.id,
-                content=result
-            )
-            conversation.append(tool_result)
-    conversation.append(Message.from_text("Thanks! What about the weather in Paris?", role=Role.USER))
-    response,_ = await llm.aselect_tool(conversation, model=_model_name, tools=tools)
-    print(response)
-    assert len(response) == 1
-    assert response[0].name == "get_weather"
-    assert response[0].arguments["city"] == "Paris"
-
-
-@pytest.mark.skipif(
-    (_api_key is None) or (_model_name is None),
-    reason="OPENAI_API_KEY or OPENAI_MODEL_NAME is not set",
-)
-def test_openai_server_tool_call_roundtrip_conversion(llm: OpenAILlm):
-    """
-    Test roundtrip conversion of tool call messages.
-    This test simulates a complete conversation with tool calls.
-    """
-    # Simulate a complete conversation
-    conversation = [
-        # System message
-        Message.from_text("You are a helpful assistant.", role=Role.SYSTEM),
-        
-        # User message
-        Message.from_text("Get me the weather in Tokyo and today's news.", role=Role.USER),
-        
-        # AI response with multiple tool calls
-        Message(
-            role=Role.AI,
-            blocks=[
-                TextBlock(text="I'll get both pieces of information for you."),
-                ToolCallBlock(id="call_weather_001", name="get_weather", arguments={"city": "Tokyo", "unit": "celsius"}),
-                ToolCallBlock(id="call_news_002", name="get_news", arguments={"topic": "technology", "date": "2024-01-15"})
-            ]
-        ),
-        
-        # Tool results
-        Message.from_tool_result(
-            tool_id="call_weather_001",
-            content="Tokyo weather: 22°C, sunny with light clouds."
-        ),
-        Message.from_tool_result(
-            tool_id="call_news_002",
-            content="Latest tech news: AI breakthrough in quantum computing announced."
-        ),
-        
-        # Follow-up user message
-        Message.from_text("Thanks! What about the weather in Paris?", role=Role.USER),
-        
-        # Another AI response with tool call
-        Message(
-            role=Role.AI,
-            blocks=[
-                TextBlock(text="I'll check the weather in Paris for you."),
-                ToolCallBlock(id="call_weather_003", name="get_weather", arguments={"city": "Paris", "unit": "celsius"})
-            ]
-        ),
-        
-        # Final tool result
-        Message.from_tool_result(
-            tool_id="call_weather_003",
-            content="Paris weather: 15°C, partly cloudy."
-        )
-    ]
-    
-    # Convert all messages
-    converted_messages = []
-    for i, message in enumerate(conversation):
-        try:
-            converted = llm._convert_chat_completions_message(message)
-            converted_messages.append(converted)
-            
-            # Verify basic structure
-            assert "role" in converted
-            assert converted["role"] in ["system", "user", "assistant", "tool"]
-            
-            # Verify role-specific content
-            if message.role == Role.AI:
-                if any(isinstance(block, ToolCallBlock) for block in message.blocks):
-                    assert "tool_calls" in converted
-                    assert len(converted["tool_calls"]) > 0
-                else:
-                    assert "content" in converted
-            elif message.role == Role.TOOL:
-                assert "tool_call_id" in converted
-                assert "content" in converted
-            elif message.role in [Role.SYSTEM, Role.USER]:
-                assert "content" in converted
-                
-        except Exception as e:
-            printer.print(f"Error converting message {i}: {e}")
-            raise
-    
-    # Verify we converted all messages
-    assert len(converted_messages) == len(conversation)
-    
-    # Verify specific conversions
-    assert converted_messages[0]["role"] == "system"
-    assert converted_messages[1]["role"] == "user"
-    assert converted_messages[2]["role"] == "assistant"
-    assert len(converted_messages[2]["tool_calls"]) == 2
-    assert converted_messages[3]["role"] == "tool"
-    assert converted_messages[3]["tool_call_id"] == "call_weather_001"
-    assert converted_messages[4]["role"] == "tool"
-    assert converted_messages[4]["tool_call_id"] == "call_news_002"
-    
-    printer.print("Roundtrip conversion test passed!")
-    printer.print(f"Converted {len(converted_messages)} messages successfully")
-    
-    # Print summary
-    for i, (original, converted) in enumerate(zip(conversation, converted_messages)):
-        printer.print(f"Message {i}: {original.role.value} -> {converted['role']}")
-        if original.role == Role.AI and any(isinstance(block, ToolCallBlock) for block in original.blocks):
-            printer.print(f"  - Tool calls: {len(converted.get('tool_calls', []))}")
-        elif original.role == Role.TOOL:
-            printer.print(f"  - Tool call ID: {converted.get('tool_call_id', 'None')}")
-
-
-@pytest.mark.skipif(
-    (_api_key is None) or (_model_name is None),
-    reason="OPENAI_API_KEY or OPENAI_MODEL_NAME is not set",
-)
-def test_openai_server_tool_call_performance(llm: OpenAILlm):
-    """
-    Test performance of tool call conversions with large numbers of messages.
-    This test verifies that the conversion process is efficient.
-    """
-    import time
-    
-    # Create a large number of tool call messages
-    messages = []
-    for i in range(100):
-        message = Message(
-            role=Role.AI,
-            blocks=[
-                TextBlock(text=f"Calling function {i}"),
-                ToolCallBlock(
-                    id=f"call_{i}",
-                    name="test_function",
-                    arguments={"index": i, "data": f"test_data_{i}"}
-                )
-            ]
-        )
-        messages.append(message)
-    
-    # Measure conversion time
-    start_time = time.time()
-    converted_messages = []
-    
-    for message in messages:
-        converted = llm._convert_chat_completions_message(message)
-        converted_messages.append(converted)
-    
-    end_time = time.time()
-    conversion_time = end_time - start_time
-    
-    # Verify all messages were converted
-    assert len(converted_messages) == 100
-    
-    # Verify conversion quality
-    for i, converted in enumerate(converted_messages):
-        assert converted["role"] == "assistant"
-        assert len(converted["tool_calls"]) == 1
-        assert converted["tool_calls"][0]["id"] == f"call_{i}"
-        assert converted["tool_calls"][0]["function"]["name"] == "test_function"
-    
-    printer.print(f"Performance test passed! Converted 100 messages in {conversion_time:.3f} seconds")
-    printer.print(f"Average time per message: {conversion_time/100*1000:.2f} ms")
-
-
-@pytest.mark.skipif(
-    (_api_key is None) or (_model_name is None),
-    reason="OPENAI_API_KEY or OPENAI_MODEL_NAME is not set",
-)
-def test_openai_server_tool_call_content_types(llm: OpenAILlm):
+def test_openai_tool_call_content_types(llm: OpenAILlm):
     """
     Test tool call messages with different content types and structures.
     This test verifies handling of various data types in tool arguments.
@@ -1507,79 +768,11 @@ def test_openai_server_tool_call_content_types(llm: OpenAILlm):
     
     printer.print("All content type tests passed!")
 
-
 @pytest.mark.skipif(
     (_api_key is None) or (_model_name is None),
     reason="OPENAI_API_KEY or OPENAI_MODEL_NAME is not set",
 )
-def test_openai_server_tool_call_validation(llm: OpenAILlm):
-    """
-    Test validation of tool call message structure.
-    This test verifies that invalid message structures are handled properly.
-    """
-    # Test 1: Message with only tool calls (no text)
-    tool_only_message = Message(
-        role=Role.AI,
-        blocks=[
-            ToolCallBlock(id="call_only", name="test_function", arguments={"param": "value"})
-        ]
-    )
-    
-    converted = llm._convert_chat_completions_message(tool_only_message)
-    assert converted["role"] == "assistant"
-    assert converted["content"] == ""  # Should be empty string when no text content
-    assert len(converted["tool_calls"]) == 1
-    
-    # Test 2: Message with only text (no tool calls)
-    text_only_message = Message(
-        role=Role.AI,
-        blocks=[TextBlock(text="Just text, no tool calls")]
-    )
-    
-    converted_text = llm._convert_chat_completions_message(text_only_message)
-    assert converted_text["role"] == "assistant"
-    assert converted_text["content"] == "Just text, no tool calls"
-    assert "tool_calls" not in converted_text
-    
-    # Test 3: Message with mixed content
-    mixed_message = Message(
-        role=Role.AI,
-        blocks=[
-            TextBlock(text="I'll help you with that."),
-            ToolCallBlock(id="call_mixed", name="helper_function", arguments={"task": "help"}),
-            TextBlock(text="Let me call the function now.")
-        ]
-    )
-    
-    converted_mixed = llm._convert_chat_completions_message(mixed_message)
-    assert converted_mixed["role"] == "assistant"
-    assert "I'll help you with that." in converted_mixed["content"]
-    assert "Let me call the function now." in converted_mixed["content"]
-    assert len(converted_mixed["tool_calls"]) == 1
-    
-    # Test 4: Tool result with empty ID
-    empty_id_result = Message(
-        role=Role.TOOL,
-        blocks=[ToolResultBlock(id="", content="Empty ID result")]
-    )
-    
-    converted_empty_id = llm._convert_chat_completions_message(empty_id_result)
-    assert converted_empty_id["role"] == "tool"
-    assert converted_empty_id["tool_call_id"] == ""
-    assert converted_empty_id["content"] == "Empty ID result"
-    
-    printer.print("Tool call validation test passed!")
-    printer.print(f"Tool only: {converted}")
-    printer.print(f"Text only: {converted_text}")
-    printer.print(f"Mixed content: {converted_mixed}")
-    printer.print(f"Empty ID result: {converted_empty_id}")
-
-
-@pytest.mark.skipif(
-    (_api_key is None) or (_model_name is None),
-    reason="OPENAI_API_KEY or OPENAI_MODEL_NAME is not set",
-)
-def test_openai_server_tool_call_integration_scenario(llm: OpenAILlm):
+def test_openai_tool_call_integration_scenario(llm: OpenAILlm):
     """
     Test a complete integration scenario with tool calls.
     This test simulates a real-world usage scenario.
@@ -1744,7 +937,7 @@ def test_openai_server_tool_call_integration_scenario(llm: OpenAILlm):
     (_api_key is None) or (_model_name is None),
     reason="OPENAI_API_KEY or OPENAI_MODEL_NAME is not set",
 )
-def test_openai_server_enhanced_from_tool_call_method(llm: OpenAILlm):
+def test_openai_enhanced_from_tool_call_method(llm: OpenAILlm):
     """
     Test the enhanced from_tool_call method that supports multiple tool calls with optional text.
     """
@@ -1955,7 +1148,7 @@ def test_openai_server_enhanced_from_tool_call_method(llm: OpenAILlm):
     (_api_key is None) or (_model_name is None),
     reason="OPENAI_API_KEY or OPENAI_MODEL_NAME is not set",
 )
-def test_openai_server_flexible_from_tool_call_parameters(llm: OpenAILlm):
+def test_openai_flexible_from_tool_call_parameters(llm: OpenAILlm):
     """
     Test the flexible from_tool_call method that supports various parameter types.
     """
@@ -2155,285 +1348,3 @@ def test_openai_server_flexible_from_tool_call_parameters(llm: OpenAILlm):
     assert serialized_args["city"] == "Tokyo"
     assert serialized_args["guests"] == 2
     assert serialized_args["preferences"]["amenities"] == ["wifi", "pool", "gym"]
-
-# Tests for parameter validation functionality
-
-@pytest.mark.skipif(
-    (_api_key is None) or (_model_name is None),
-    reason="OPENAI_API_KEY or OPENAI_MODEL_NAME is not set",
-)
-def test_openai_parameter_validation_with_configuration(llm: OpenAILlm):
-    """
-    Test parameter validation when using configuration with default model.
-    """
-    
-    # Create LLM with configuration that has default model
-    config = OpenAIConfiguration(model=_model_name, temperature=0.7)
-    configured_llm = get_configuration_llm(config)
-    
-    # Test that chat works without specifying model (uses config default)
-    response = configured_llm.chat(
-        messages=[Message.from_text(text="Hello, how are you?", role=Role.USER)]
-    )
-    assert response.message.role == Role.AI
-    assert response.message.content is not None
-    
-    # Test that stream works without specifying model
-    stream_response = configured_llm.stream(
-        messages=[Message.from_text(text="Hello, how are you?", role=Role.USER)]
-    )
-    result = ""
-    for chunk in stream_response:
-        result += chunk.delta
-    assert len(result) > 0
-    
-
-def test_openai_parameter_validation_missing_model_error():
-    """
-    Test that missing model parameter raises appropriate error.
-    """
-    from bridgic.llms.openai.openai_llm import OpenAIConfiguration
-    
-    # Create LLM without default model in configuration
-    config = OpenAIConfiguration(temperature=0.7)  # No model specified
-    configured_llm = OpenAILlm(api_key="mock-api-key", configuration=config)
-    
-    # Test that chat fails without model
-    with pytest.raises(ValueError, match="Missing required parameters: model"):
-        configured_llm.chat(
-            messages=[Message.from_text(text="Hello, how are you?", role=Role.USER)]
-        )
-    
-    # Test that stream fails without model (when iterating)
-    with pytest.raises(ValueError, match="Missing required parameters: model"):
-        stream_result = configured_llm.stream(
-            messages=[Message.from_text(text="Hello, how are you?", role=Role.USER)]
-        )
-        # Stream is a generator, need to iterate to trigger validation
-        next(stream_result)
-    
-    # Test that achat fails without model
-    with pytest.raises(ValueError, match="Missing required parameters: model"):
-        import asyncio
-        asyncio.run(configured_llm.achat(
-            messages=[Message.from_text(text="Hello, how are you?", role=Role.USER)]
-        ))
-    
-    # Test that astream fails without model (when iterating)
-    with pytest.raises(ValueError, match="Missing required parameters: model"):
-        import asyncio
-        async def test_astream():
-            stream_result = configured_llm.astream(
-                messages=[Message.from_text(text="Hello, how are you?", role=Role.USER)]
-            )
-            # Astream is an async generator, need to iterate to trigger validation
-            await stream_result.__anext__()
-        asyncio.run(test_astream())
-    
-    printer.print("✓ Missing model parameter error handling test passed")
-
-
-@pytest.mark.skipif(
-    (_api_key is None) or (_model_name is None),
-    reason="OPENAI_API_KEY or OPENAI_MODEL_NAME is not set",
-)
-def test_openai_parameter_validation_method_override_config(llm: OpenAILlm):
-    """
-    Test that method parameters override configuration parameters.
-    """
-    
-    # Create LLM with configuration that has default model
-    config = OpenAIConfiguration(model="gpt-3.5-turbo", temperature=0.5)
-    configured_llm = get_configuration_llm(config)
-    
-    # Test that method parameter overrides config model
-    response = configured_llm.chat(
-        model=_model_name,  # Override config model
-        temperature=0.8,   # Override config temperature
-        messages=[Message.from_text(text="Hello, how are you?", role=Role.USER)]
-    )
-    assert response.message.role == Role.AI
-    assert response.message.content is not None
-    
-    # Test that None model parameter still uses config default
-    response2 = configured_llm.chat(
-        model=None,  # Should use config default
-        messages=[Message.from_text(text="Hello, how are you?", role=Role.USER)]
-    )
-    assert response2.message.role == Role.AI
-    assert response2.message.content is not None
-    
-    printer.print("✓ Method parameter override test passed")
-
-
-@pytest.mark.skipif(
-    (_api_key is None) or (_model_name is None),
-    reason="OPENAI_API_KEY or OPENAI_MODEL_NAME is not set",
-)
-def test_openai_parameter_validation_structured_output(llm: OpenAILlm):
-    """
-    Test parameter validation for structured output methods.
-    """
-    
-    class SimpleResponse(BaseModel):
-        answer: str = Field(description="The answer to the question")
-    
-    # Create LLM with configuration
-    config = OpenAIConfiguration(model=_model_name, temperature=0.7)
-    configured_llm = get_configuration_llm(config)
-    
-    # Test structured_output with config model
-    response = configured_llm.structured_output(
-        constraint=PydanticModel(model=SimpleResponse),
-        messages=[Message.from_text(text="What is 2+2?", role=Role.USER)]
-    )
-    assert isinstance(response, SimpleResponse)
-    assert response.answer is not None
-    
-    # Test structured_output with method override
-    response2 = configured_llm.structured_output(
-        model=_model_name,  # Explicit model
-        constraint=PydanticModel(model=SimpleResponse),
-        messages=[Message.from_text(text="What is 3+3?", role=Role.USER)]
-    )
-    assert isinstance(response2, SimpleResponse)
-    assert response2.answer is not None
-    
-    # Test that missing model raises error
-    config_no_model = OpenAIConfiguration(temperature=0.7)  # No model
-    llm_no_model = get_configuration_llm(config_no_model)
-    
-    with pytest.raises(ValueError, match="Missing required parameters: model"):
-        llm_no_model.structured_output(
-            constraint=PydanticModel(model=SimpleResponse),
-            messages=[Message.from_text(text="What is 4+4?", role=Role.USER)]
-        )
-
-
-@pytest.mark.skipif(
-    (_api_key is None) or (_model_name is None),
-    reason="OPENAI_API_KEY or OPENAI_MODEL_NAME is not set",
-)
-def test_openai_parameter_validation_tool_selection(llm: OpenAILlm, tools):
-    """
-    Test parameter validation for tool selection methods.
-    """
-    
-    # Create LLM with configuration
-    config = OpenAIConfiguration(model=_model_name, temperature=0.7)
-    configured_llm = get_configuration_llm(config)
-    
-    # Test select_tool with config model
-    tool_calls, content = configured_llm.select_tool(
-        tools=tools,
-        messages=[Message.from_text(text="Get weather for Tokyo", role=Role.USER)]
-    )
-    assert isinstance(tool_calls, list)
-    assert len(tool_calls)
-    
-    # Test select_tool with method override
-    tool_calls2, content2 = configured_llm.select_tool(
-        model=_model_name,  # Explicit model
-        tools=tools,
-        messages=[Message.from_text(text="Get news about technology", role=Role.USER)]
-    )
-    assert isinstance(tool_calls2, list)
-    assert len(tool_calls2) > 0
-    
-    # Test that missing model raises error
-    config_no_model = OpenAIConfiguration(temperature=0.7)  # No model
-    llm_no_model = get_configuration_llm(config_no_model)
-    
-    with pytest.raises(ValueError, match="Missing required parameters: model"):
-        llm_no_model.select_tool(
-            tools=tools,
-            messages=[Message.from_text(text="Get weather for Tokyo", role=Role.USER)]
-        )
-
-@pytest.mark.skipif(
-    (_api_key is None) or (_model_name is None),
-    reason="OPENAI_API_KEY or OPENAI_MODEL_NAME is not set",
-)
-def test_openai_parameter_validation_edge_cases():
-    """
-    Test edge cases for parameter validation.
-    """
-    
-    # Test with empty configuration
-    empty_config = OpenAIConfiguration()
-    empty_llm = get_configuration_llm(empty_config)
-    
-    # Should fail because no model is provided
-    with pytest.raises(ValueError, match="Missing required parameters: model"):
-        empty_llm.chat(
-            messages=[Message.from_text(text="Hello", role=Role.USER)]
-        )
-    
-    # Test with model=None explicitly
-    with pytest.raises(ValueError, match="Missing required parameters: model"):
-        empty_llm.chat(
-            model=None,
-            messages=[Message.from_text(text="Hello", role=Role.USER)]
-        )
-    
-    # Test with empty messages (should still validate model)
-    with pytest.raises(ValueError, match="Missing required parameters: model"):
-        empty_llm.chat(
-            messages=[]
-        )
-@pytest.mark.skipif(
-    (_api_key is None) or (_model_name is None),
-    reason="OPENAI_API_KEY or OPENAI_MODEL_NAME is not set",
-)
-@pytest.mark.asyncio
-async def test_openai_parameter_validation_edge_cases_async():
-    """
-    Test edge cases for parameter validation.
-    """
-    
-    # Test with empty configuration
-    empty_config = OpenAIConfiguration()
-    empty_llm = get_configuration_llm(empty_config)
-    
-    # Should fail because no model is provided
-    with pytest.raises(ValueError, match="Missing required parameters: model"):
-        result = await empty_llm.achat(
-            messages=[Message.from_text(text="Hello", role=Role.USER)]
-        )
-    
-    # Test with model=None explicitly
-    with pytest.raises(ValueError, match="Missing required parameters: model"):
-        result = await empty_llm.achat(
-            model=None,
-            messages=[Message.from_text(text="Hello", role=Role.USER)]
-        )
-    
-    # Test with empty messages (should still validate model)
-    with pytest.raises(ValueError, match="Missing required parameters: model"):
-        result = await empty_llm.achat(
-            messages=[]
-        )
-
-@pytest.mark.skipif(
-    (_api_key is None) or (_model_name is None),
-    reason="OPENAI_API_KEY or OPENAI_MODEL_NAME is not set",
-)
-def test_openai_parameter_validation_error_messages():
-    """
-    Test that error messages are clear and informative.
-    """
-    
-    # Test single missing parameter
-    config = OpenAIConfiguration(temperature=0.7)
-    configured_llm = get_configuration_llm(config)
-    
-    try:
-        configured_llm.chat(
-            messages=[Message.from_text(text="Hello", role=Role.USER)]
-        )
-        assert False, "Should have raised ValueError"
-    except ValueError as e:
-        error_msg = str(e)
-        assert "Missing required parameters:" in error_msg
-        assert "model" in error_msg
-        assert "," not in error_msg  # Single parameter, no comma
