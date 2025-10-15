@@ -7,7 +7,7 @@ import datetime
 from bridgic.core.model.base_llm import *
 from bridgic.core.model.protocol import *
 from bridgic.core.utils.console import printer
-from bridgic.llms.vllm.vllm_server_llm import VllmServerLlm
+from bridgic.llms.vllm.vllm_server_llm import VllmServerLlm, VllmServerConfiguration
 
 _api_base = os.environ.get("VLLM_SERVER_API_BASE")
 _api_key = os.environ.get("VLLM_SERVER_API_KEY")
@@ -15,9 +15,11 @@ _model_name = os.environ.get("VLLM_SERVER_MODEL_NAME")
 
 @pytest.fixture
 def llm():
+    config = VllmServerConfiguration(model=_model_name)
     llm = VllmServerLlm(
         api_base=_api_base,
         api_key=_api_key,
+        configuration=config,
         timeout=5,
     )
     state_dict = llm.dump_to_dict()
@@ -456,6 +458,7 @@ def test_vllm_server_select_tool(llm, date, tools, weather_messages):
             model=_model_name,
             tools=tools,
             tool_choice=option,
+            temperature=0.5,
             messages=weather_messages,
         )
         handle_response(date, response)
@@ -473,6 +476,7 @@ async def test_vllm_server_aselect_tool(llm, date, tools, weather_messages):
             model=_model_name,
             tools=tools,
             tool_choice=option,
+            temperature=0.5,
             messages=weather_messages,
         )
         handle_response(date, await response)

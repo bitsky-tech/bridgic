@@ -1,5 +1,5 @@
 version = 1
-revision = 2
+revision = 3
 requires-python = ">=3.9"
 
 [[package]]
@@ -231,7 +231,7 @@ dev = [
 
 [[package]]
 name = "bridgic-llms-vllm"
-version = "0.1.0.dev6"
+version = "0.1.0.dev7"
 source = { editable = "." }
 dependencies = [
     { name = "bridgic-core" },
