@@ -6,7 +6,7 @@ PORT ?= 8000
 
 MKDOCS = uv run mkdocs
 
-# Generate API reference documentation
+# Generate mkdocs.yml file from API reference documentation
 gen-mkdocs-yml:
 	@uv run python scripts/gen_mkdocs_yml.py
 
@@ -19,7 +19,9 @@ build-doc:
 # Start development server
 serve-doc:
 	@uv sync
-	@make gen-mkdocs-yml
+	@if [ ! -f mkdocs.yml ]; then \
+		make gen-mkdocs-yml; \
+	fi
 	$(MKDOCS) serve -a $(HOST):$(PORT)
 
 # Clean build artifacts
