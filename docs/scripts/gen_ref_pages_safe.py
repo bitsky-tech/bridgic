@@ -30,13 +30,13 @@ class DocumentationConfig:
         self._set_defaults()
         
         # Load configuration file if provided
-        if config_file:
-            self.load_from_file(config_file)
+        config_file = Path(config_file) if config_file else Path(__file__).parent / "doc_config.yaml"
+
+        if config_file.exists():
+            self.load_from_file(str(config_file))
         else:
-            # Try to load default configuration file
-            default_config = Path(__file__).parent / "doc_config.yaml"
-            if default_config.exists():
-                self.load_from_file(str(default_config))
+            logger.error(f"Configuration file does not exist: {config_file}")
+            raise FileNotFoundError(f"Configuration file does not exist: {config_file}")
     
     def _set_defaults(self):
         """Set default configuration values"""
@@ -96,12 +96,7 @@ class DocumentationConfig:
     def load_from_file(self, config_file: str):
         """Load configuration from YAML configuration file"""
         try:
-            config_path = Path(config_file)
-            if not config_path.exists():
-                logger.warning(f"Configuration file does not exist: {config_file}")
-                return
-                
-            with open(config_path, 'r', encoding='utf-8') as f:
+            with open(config_file, 'r', encoding='utf-8') as f:
                 config_data = yaml.safe_load(f)
             
             # Update exclusion patterns
@@ -412,13 +407,25 @@ class DocumentationGenerator:
         """Generate module identifier"""
         return ".".join(parts)
     
-    def process_init_module(self, parts: List[str], doc_path: Path, full_doc_path: Path) -> Tuple[List[str], Path, Path]:
-        """Process __init__.py module"""
+    def process_init_module(self, parts: List[str], doc_path: Path, full_doc_path: Path, source_path: Path) -> Tuple[List[str], Path, Path, bool]:
+        """Process __init__.py module and check if it has __all__ defined"""
+        has_all = False
+        
+        # Check if __init__.py has __all__ defined
+        try:
+            _, exports = self._parse_init_doc_and_all(source_path)
+            has_all = len(exports) > 0
+            if self.config.verbose and has_all:
+                logger.debug(f"Found __all__ in {source_path}: {exports}")
+        except Exception as e:
+            if self.config.verbose:
+                logger.debug(f"Failed to parse __all__ from {source_path}: {e}")
+        
         if len(parts) > 1:
             parts = parts[:-1]
             doc_path = doc_path.with_name("index.md")
             full_doc_path = full_doc_path.with_name("index.md")
-        return parts, doc_path, full_doc_path
+        return parts, doc_path, full_doc_path, has_all
     
     def _parse_init_doc_and_all(self, source_path: Path) -> Tuple[Optional[str], List[str]]:
         """Parse __init__.py for module docstring and __all__ list using AST."""
@@ -568,8 +575,13 @@ class DocumentationGenerator:
                 parts = list(module_path.parts)
 
                 if parts[-1] == "__init__":
-                    parts, doc_path, full_doc_path = self.process_init_module(parts, doc_path, full_doc_path)
+                    parts, doc_path, full_doc_path, has_all = self.process_init_module(parts, doc_path, full_doc_path, path)
                     if not parts:
+                        continue
+                    # Only process __init__.py files that have __all__ defined
+                    if not has_all:
+                        if self.config.verbose:
+                            logger.debug(f"Skipping {path} - no __all__ defined")
                         continue
                 elif parts[-1] == "__main__":
                     continue
@@ -589,8 +601,8 @@ class DocumentationGenerator:
                 if self.create_documentation_file(full_doc_path, identifier, path, package_path):
                     self.generated_files.append(full_doc_path)
                     
-                    # Record package node only for index pages generated from __init__.py
-                    if source_is_init := (path.name == '__init__.py'):
+                    # Record package node only for index pages generated from __init__.py with __all__
+                    if source_is_init := (path.name == '__init__.py' and has_all):
                         self.package_nodes[package_name][tuple(parts)] = f"{self.config.docs_base_path}/{package_name}/{doc_path.as_posix()}"
                     
             except Exception as e:
