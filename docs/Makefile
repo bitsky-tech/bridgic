@@ -19,9 +19,7 @@ build-doc:
 # Start development server
 serve-doc:
 	@uv sync
-	@if [ ! -f mkdocs.yml ]; then \
-		make gen-mkdocs-yml; \
-	fi
+	@make gen-mkdocs-yml
 	$(MKDOCS) serve -a $(HOST):$(PORT)
 
 # Clean build artifacts
