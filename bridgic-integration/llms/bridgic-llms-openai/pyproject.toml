@@ -1,6 +1,6 @@
 [project]
 name = "bridgic-llms-openai"
-version = "0.1.0.dev11"
+version = "0.1.0.dev12"
 license = {text = "MIT"}
 classifiers = [
     "Private :: Do Not Upload",
@@ -13,7 +13,7 @@ authors = [
     { name = "Tielei Zhang", email = "zhangtl04@gmail.com" },
 ]
 dependencies = [
-    "bridgic-core>=0.1.0.dev21",
+    "bridgic-core>=0.1.0.dev22",
     "openai>=1.60.0",
     "httpx>=0.28.1",
     "httpx-aiohttp>=0.1.8",

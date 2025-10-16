@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from pydantic import BaseModel, Field, ConfigDict
 
 from bridgic.core.utils._console import printer
-from bridgic.core.utils import msgpackx
+from bridgic.core.utils._msgpackx import dump_bytes
 from bridgic.core.automa.worker import Worker
 from bridgic.core.types._error import *
 from bridgic.core.types._common import AutomaType, ArgsMappingRule
@@ -1235,7 +1235,7 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
                 all_interactions: List[Interaction] = [interaction for e in interaction_exceptions for interaction in e.args]
                 if self.parent is None:
                     # This is the top-level Automa. Serialize the Automa and raise InteractionException to the application layer.
-                    serialized_automa = msgpackx.dump_bytes(self)
+                    serialized_automa = dump_bytes(self)
                     snapshot = Snapshot(
                         serialized_bytes=serialized_automa,
                         serialization_version=GraphAutoma.SERIALIZATION_VERSION,
