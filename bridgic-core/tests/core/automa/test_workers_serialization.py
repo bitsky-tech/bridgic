@@ -8,7 +8,7 @@ from typing_extensions import override
 from bridgic.core.automa import GraphAutoma, worker
 from bridgic.core.automa.args import ArgsMappingRule
 from bridgic.core.automa.worker import Worker, CallableWorker
-from bridgic.core.utils import msgpackx
+from bridgic.core.utils._msgpackx import dump_bytes, load_bytes
 from bridgic.core.types._error import WorkerRuntimeError
 
 ################## Test cases for Customized Worker ####################
@@ -34,9 +34,9 @@ def worker_6(top_automa: TopAutoma):
 
 @pytest.fixture
 def worker_6_partially_deserialized(worker_6: CallableWorker, top_automa: TopAutoma):
-    data = msgpackx.dump_bytes(worker_6)
+    data = dump_bytes(worker_6)
     assert type(data) is bytes
-    obj = msgpackx.load_bytes(data)
+    obj = load_bytes(data)
     assert type(obj) is CallableWorker
     # Test partially deserialized data in the CallableWorker.
     assert obj._expected_bound_parent is True
@@ -85,9 +85,9 @@ def adder_automa():
 
 @pytest.fixture
 def deserialized_adder_automa(adder_automa: AdderAutoma):
-    data = msgpackx.dump_bytes(adder_automa)
+    data = dump_bytes(adder_automa)
     assert type(data) is bytes
-    obj = msgpackx.load_bytes(data)
+    obj = load_bytes(data)
     assert type(obj) is AdderAutoma
     return obj
 
