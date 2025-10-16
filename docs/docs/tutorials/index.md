@@ -1,10 +1,10 @@
-# Tutorial
+# Tutorials
 
 Welcome to the Bridgic tutorial! Here, we offer a complete learning the usage of "bridgic", helping you quickly master the core concepts and best practices of the framework.
 
 Each feature will be accompanied by a simplified small process that might be encountered in the actual development process to help understand and recognize it.
 
-In this tutorial, we’ll assume that Bridgic is already installed on your system. If that’s not the case, see Installation guide: [Bridgic Install](../home/installation.md#installation).
+In this tutorial, we’ll assume that Bridgic is already installed on your system. If that’s not the case, see Installation guide: [Bridgic Install](install.md).
 
 This tutorial will walk you through these tasks:
 
