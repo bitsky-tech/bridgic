@@ -18,7 +18,7 @@ class ToolSelection(Protocol):
     aselect_tool
         Asynchronous method for tool selection based on conversation context.
 
-    Note
+    Notes
     ----
     1. Both synchronous and asynchronous methods must be implemented
     2. Tool selection should be based on conversation context and available tools

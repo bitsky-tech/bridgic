@@ -56,7 +56,7 @@ class StructuredOutput(Protocol):
     astructured_output
         Asynchronous method for generating structured output based on constraints.
 
-    Note
+    Notes
     ----
     1. Both synchronous and asynchronous methods must be implemented
     2. Supported constraint types depend on the specific LLM provider implementation
