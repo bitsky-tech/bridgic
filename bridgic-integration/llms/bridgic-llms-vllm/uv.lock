@@ -180,7 +180,7 @@ wheels = [
 
 [[package]]
 name = "bridgic-core"
-version = "0.1.0.dev6"
+version = "0.1.0.dev21"
 source = { directory = "../../../bridgic-core" }
 dependencies = [
     { name = "docstring-parser" },
@@ -194,18 +194,21 @@ requires-dist = [
     { name = "docstring-parser", specifier = ">=0.16.0" },
     { name = "jinja2", specifier = ">=3.1.0" },
     { name = "msgpack", specifier = ">=1.1.1" },
-    { name = "pydantic", specifier = ">=2.8.0" },
+    { name = "pydantic", specifier = ">=2.11.0,<2.12.0" },
 ]
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "bridgic-llms-openai", directory = "../bridgic-llms-openai" },
+    { name = "bridgic-llms-openai-like", directory = "../bridgic-llms-openai-like" },
+    { name = "bridgic-llms-vllm", directory = "." },
     { name = "pytest", specifier = ">=8.4.0" },
     { name = "pytest-asyncio", specifier = ">=1.0.0" },
 ]
 
 [[package]]
 name = "bridgic-llms-openai-like"
-version = "0.1.0.dev2"
+version = "0.1.0.dev11"
 source = { directory = "../bridgic-llms-openai-like" }
 dependencies = [
     { name = "bridgic-core" },
@@ -216,7 +219,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "bridgic-core", specifier = ">=0.1.0.dev3", index = "http://8.130.156.165:3141/btsk/test/+simple" },
+    { name = "bridgic-core", directory = "../../../bridgic-core" },
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "httpx-aiohttp", specifier = ">=0.1.8" },
     { name = "openai", specifier = ">=1.60.0" },
@@ -230,7 +233,7 @@ dev = [
 
 [[package]]
 name = "bridgic-llms-vllm"
-version = "0.1.0.dev1"
+version = "0.1.0.dev9"
 source = { editable = "." }
 dependencies = [
     { name = "bridgic-core" },

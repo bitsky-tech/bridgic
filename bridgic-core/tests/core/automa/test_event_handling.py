@@ -4,7 +4,7 @@ import asyncio
 from bridgic.core.automa import GraphAutoma
 from bridgic.core.automa import worker
 from bridgic.core.automa.worker import Worker
-from bridgic.core.automa.interaction.event_handling import ProgressEvent, Event, Feedback, FeedbackSender
+from bridgic.core.automa.interaction._event_handling import ProgressEvent, Event, Feedback, FeedbackSender
 
 class TopGraph(GraphAutoma):
     @worker(is_start=True)
@@ -13,7 +13,7 @@ class TopGraph(GraphAutoma):
 
     # The 'middle' worker is an Automa, which will be added by add_worker() method.
 
-    @worker(dependencies=["middle"])
+    @worker(dependencies=["middle"], is_output=True)
     async def end(self, x: int):
         return x + 2
 
@@ -28,7 +28,7 @@ class SecondLayerGraph(GraphAutoma):
 
     # The 'func_2' worker is an Automa, which will be added by add_worker() method.
 
-    @worker(dependencies=["func_1", "func_2"])
+    @worker(dependencies=["func_1", "func_2"], is_output=True)
     async def end(self, x1: int, x2: int):
         return x1 + x2
 
@@ -51,18 +51,18 @@ class Graph_1_TestProgressEvent(GraphAutoma):
     async def func_2(self, x: int):
         return x + 300
 
-    @worker(dependencies=["func_1", "func_2"])
+    @worker(dependencies=["func_1", "func_2"], is_output=True)
     async def end(self, x1: int, x2: int):
         return x1 + x2
 
 @pytest.fixture
 def graph_1_third_layer():
-    graph = Graph_1_TestProgressEvent(output_worker_key="end")
+    graph = Graph_1_TestProgressEvent()
     return graph
 
 @pytest.fixture
 def graph_1_second_layer(graph_1_third_layer):
-    graph = SecondLayerGraph(output_worker_key="end")
+    graph = SecondLayerGraph()
     graph.add_worker(
         "func_2", 
         graph_1_third_layer,
@@ -72,7 +72,7 @@ def graph_1_second_layer(graph_1_third_layer):
 
 @pytest.fixture
 def graph_1(graph_1_second_layer):
-    graph = TopGraph(output_worker_key="end")
+    graph = TopGraph()
     graph.add_worker(
         "middle", 
         graph_1_second_layer,
@@ -121,18 +121,18 @@ class Graph_2_TestFeedback(GraphAutoma):
         self.post_event(progress_event)
         return x + 300
 
-    @worker(dependencies=["func_1", "func_2"])
+    @worker(dependencies=["func_1", "func_2"], is_output=True)
     async def end(self, x1: int, x2: int):
         return x1 + x2
 
 @pytest.fixture
 def graph_2_third_layer():
-    graph = Graph_2_TestFeedback(output_worker_key="end")
+    graph = Graph_2_TestFeedback()
     return graph
 
 @pytest.fixture
 def graph_2_second_layer(graph_2_third_layer):
-    graph = SecondLayerGraph(output_worker_key="end")
+    graph = SecondLayerGraph()
     graph.add_worker(
         "func_2", 
         graph_2_third_layer,
@@ -142,7 +142,7 @@ def graph_2_second_layer(graph_2_third_layer):
 
 @pytest.fixture
 def graph_2(graph_2_second_layer):
-    graph = TopGraph(output_worker_key="end")
+    graph = TopGraph()
     graph.add_worker(
         "middle", 
         graph_2_second_layer,
@@ -269,18 +269,18 @@ class Graph_3_TestTwoSimultaneousFeedback(GraphAutoma):
         feedback = await self.request_feedback_async(event)
         return x + feedback.data
 
-    @worker(dependencies=["func_1", "func_2"])
+    @worker(dependencies=["func_1", "func_2"], is_output=True)
     async def end(self, x1: int, x2: int):
         return x1 + x2
 
 @pytest.fixture
 def graph_3_third_layer():
-    graph = Graph_3_TestTwoSimultaneousFeedback(output_worker_key="end")
+    graph = Graph_3_TestTwoSimultaneousFeedback()
     return graph
 
 @pytest.fixture
 def graph_3_second_layer(graph_3_third_layer):
-    graph = SecondLayerGraph(output_worker_key="end")
+    graph = SecondLayerGraph()
     graph.add_worker(
         "func_2", 
         graph_3_third_layer,
@@ -290,7 +290,7 @@ def graph_3_second_layer(graph_3_third_layer):
 
 @pytest.fixture
 def graph_3(graph_3_second_layer):
-    graph = TopGraph(output_worker_key="end")
+    graph = TopGraph()
     graph.add_worker(
         "middle", 
         graph_3_second_layer,
@@ -361,13 +361,13 @@ class Graph_4_TestFeedback_CustomWorkers(GraphAutoma):
     async def start(self, x: int):
         return x + 100
 
-    @worker(dependencies=["worker_1", "worker_2"])
+    @worker(dependencies=["worker_1", "worker_2"], is_output=True)
     async def end(self, x1: int, x2: int):
         return x1 + x2
 
 @pytest.fixture
 def graph_4_third_layer():
-    graph = Graph_4_TestFeedback_CustomWorkers(output_worker_key="end")
+    graph = Graph_4_TestFeedback_CustomWorkers()
     worker1 = MyWorker1()
     worker2 = MyWorker2()
     graph.add_worker("worker_1", worker1, dependencies=["start"])
@@ -376,7 +376,7 @@ def graph_4_third_layer():
 
 @pytest.fixture
 def graph_4_second_layer(graph_4_third_layer):
-    graph = SecondLayerGraph(output_worker_key="end")
+    graph = SecondLayerGraph()
     graph.add_worker(
         "func_2", 
         graph_4_third_layer,
@@ -386,7 +386,7 @@ def graph_4_second_layer(graph_4_third_layer):
 
 @pytest.fixture
 def graph_4(graph_4_second_layer):
-    graph = TopGraph(output_worker_key="end")
+    graph = TopGraph()
     graph.add_worker(
         "middle", 
         graph_4_second_layer,
@@ -466,13 +466,13 @@ class Graph_5_TestFeedback_Timeout(GraphAutoma):
     async def start(self, x: int):
         return x + 100
 
-    @worker(dependencies=["worker_1", "worker_2"])
+    @worker(dependencies=["worker_1", "worker_2"], is_output=True)
     async def end(self, x1: int, x2: int):
         return x1 + x2
 
 @pytest.fixture
 def graph_5_third_layer():
-    graph = Graph_5_TestFeedback_Timeout(output_worker_key="end")
+    graph = Graph_5_TestFeedback_Timeout()
     worker1 = MyWorker1MaybeTimeout()
     worker2 = MyWorker2MaybeTimeout()
     graph.add_worker("worker_1", worker1, dependencies=["start"])
@@ -481,7 +481,7 @@ def graph_5_third_layer():
 
 @pytest.fixture
 def graph_5_second_layer(graph_5_third_layer):
-    graph = SecondLayerGraph(output_worker_key="end")
+    graph = SecondLayerGraph()
     graph.add_worker(
         "func_2", 
         graph_5_third_layer,
@@ -491,7 +491,7 @@ def graph_5_second_layer(graph_5_third_layer):
 
 @pytest.fixture
 def graph_5(graph_5_second_layer):
-    graph = TopGraph(output_worker_key="end")
+    graph = TopGraph()
     graph.add_worker(
         "middle", 
         graph_5_second_layer,

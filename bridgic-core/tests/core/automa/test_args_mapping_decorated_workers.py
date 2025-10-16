@@ -6,7 +6,8 @@ This file only covers test cases for workers decorated by @worker, while test ca
 import pytest
 import re
 
-from bridgic.core.automa import GraphAutoma, worker, WorkerArgsMappingError, ArgsMappingRule
+from bridgic.core.automa import GraphAutoma, worker, WorkerArgsMappingError
+from bridgic.core.automa.args import ArgsMappingRule
 from typing import List, Tuple
 
 class Coordinate:
@@ -85,14 +86,14 @@ class Flow_1_Test_AS_IS(GraphAutoma):
         assert args[0] is None
         # return None again
 
-    @worker(dependencies=["func_10"])
+    @worker(dependencies=["func_10"], is_output=True)
     async def func_11(self):
         # Test the special case of returning None and no arguments are expected.
         assert self._worker_output["func_10"] is None
 
 @pytest.fixture
 def flow_1():
-    flow = Flow_1_Test_AS_IS(output_worker_key="func_11")
+    flow = Flow_1_Test_AS_IS()
     return flow
 
 @pytest.mark.asyncio
@@ -131,7 +132,7 @@ class Flow_2_Test_AS_IS(GraphAutoma):
         return coord.x * coord.y
 
     #Note: The order of dependencies is important for args mapping!!!
-    @worker(dependencies=["func_2", "func_1", "func_3"])
+    @worker(dependencies=["func_2", "func_1", "func_3"], is_output=True)
     async def end(self, a, b, c):
         # !!! The values of a,b,c are consistent with the order of dependencies.
         assert a is None
@@ -141,7 +142,7 @@ class Flow_2_Test_AS_IS(GraphAutoma):
 
 @pytest.fixture
 def flow_2():
-    flow = Flow_2_Test_AS_IS(output_worker_key="end")
+    flow = Flow_2_Test_AS_IS()
     return flow
 
 @pytest.mark.asyncio
@@ -175,11 +176,11 @@ class Flow_3_Test_AS_IS(GraphAutoma):
         self.add_func_as_worker(
             key="merge",
             func=self.merge,
+            is_output=True,
             dependencies=[f"func_coord_{coord.x}_{coord.y}" for coord in coordinates],
             #args_mapping_rule is the default value, which is ArgsMappingRule.AS_IS,
         )
         # Dynamically set the output worker to the 'merge' worker which is dynamically added.
-        self.output_worker_key = "merge"
     
     async def func_1(self, coord: Coordinate):
         assert coord.x in [2, 3, 1]
@@ -224,14 +225,14 @@ class Flow_4_ErrorTest_AS_IS(GraphAutoma):
     async def func_1(self, x: int, y):
         return {"x": x, "y": y}
 
-    @worker(dependencies=["func_1"])
+    @worker(dependencies=["func_1"], is_output=True)
     async def func_2(self, x2: int, y2: int):
         # This will raise an error due to too much non-default parameters.
         return [x2, y2]
 
 @pytest.fixture
 def flow_4():
-    flow = Flow_4_ErrorTest_AS_IS(output_worker_key="func_2")
+    flow = Flow_4_ErrorTest_AS_IS()
     return flow
 
 @pytest.mark.asyncio
@@ -258,14 +259,14 @@ class Flow_5_ErrorTest_AS_IS(GraphAutoma):
         assert map == {"x": 2, "y": 3}
         return map["y"]
 
-    @worker(dependencies=["func_1", "func_2"])
+    @worker(dependencies=["func_1", "func_2"], is_output=True)
     async def end(self):
         # This will raise an error due to no positional parameters are provided.
         return None
 
 @pytest.fixture
 def flow_5():
-    flow = Flow_5_ErrorTest_AS_IS(output_worker_key="end")
+    flow = Flow_5_ErrorTest_AS_IS()
     return flow
 
 @pytest.mark.asyncio
@@ -332,7 +333,7 @@ class Flow_A_Test_UNPACK(GraphAutoma):
         # Return a list again.
         return [w+1 for w in args]
 
-    @worker(dependencies=["func_7"], args_mapping_rule=ArgsMappingRule.UNPACK)
+    @worker(dependencies=["func_7"], args_mapping_rule=ArgsMappingRule.UNPACK, is_output=True)
     async def func_8(self, x=0, *args):
         # Use positional parameters + *args to receive a list.
         assert len(args) == 2
@@ -346,7 +347,7 @@ class Flow_A_Test_UNPACK(GraphAutoma):
 
 @pytest.fixture
 def flow_A():
-    flow = Flow_A_Test_UNPACK(output_worker_key="func_8")
+    flow = Flow_A_Test_UNPACK()
     return flow
 
 @pytest.mark.asyncio
@@ -367,14 +368,14 @@ class Flow_B_ErrorTest_UNPACK(GraphAutoma):
     async def func_2(self, x: int, y: int):
         return {"x": x+1, "y": y+1}
 
-    @worker(dependencies=["func_1", "func_2"], args_mapping_rule=ArgsMappingRule.UNPACK)
+    @worker(dependencies=["func_1", "func_2"], args_mapping_rule=ArgsMappingRule.UNPACK, is_output=True)
     async def end(self, x: int, y: int):
         # This will raise an error due to muiltiple dependencies.
         return {"x": x+1, "y": y+1}
 
 @pytest.fixture
 def flow_B():
-    flow = Flow_B_ErrorTest_UNPACK(output_worker_key="end")
+    flow = Flow_B_ErrorTest_UNPACK()
     return flow
 
 @pytest.mark.asyncio
@@ -392,14 +393,14 @@ class Flow_C_ErrorTest_UNPACK(GraphAutoma):
         # Return a value that is not unpack-able.
         return x
 
-    @worker(dependencies=["func_1"], args_mapping_rule=ArgsMappingRule.UNPACK)
+    @worker(dependencies=["func_1"], args_mapping_rule=ArgsMappingRule.UNPACK, is_output=True)
     async def func_2(self, x: int):
         # This will raise an error because the return value is not unpack-able.
         return x
 
 @pytest.fixture
 def flow_C():
-    flow = Flow_C_ErrorTest_UNPACK(output_worker_key="func_2")
+    flow = Flow_C_ErrorTest_UNPACK()
     return flow
 
 @pytest.mark.asyncio
@@ -454,7 +455,7 @@ class Flow_I_Test_MERGE(GraphAutoma):
         assert coordinates[2].y == 6
         return coordinates
 
-    @worker(dependencies=["func_1", "func_2", "func_3"], args_mapping_rule=ArgsMappingRule.MERGE)
+    @worker(dependencies=["func_1", "func_2", "func_3"], args_mapping_rule=ArgsMappingRule.MERGE, is_output=True)
     async def end2(self, *args):
         # Test case for *args to receive a list when args_mapping_rule=ArgsMappingRule.MERGE.
         assert len(args) == 1
@@ -463,7 +464,7 @@ class Flow_I_Test_MERGE(GraphAutoma):
 
 @pytest.fixture
 def flow_I():
-    flow = Flow_I_Test_MERGE(output_worker_key="end2")
+    flow = Flow_I_Test_MERGE()
     return flow
 
 @pytest.mark.asyncio
@@ -507,11 +508,11 @@ class Flow_II_Test_MERGE(GraphAutoma):
         self.add_func_as_worker(
             key="merge",
             func=self.merge,
+            is_output=True,
             dependencies=[f"func_coord_{coord.x}_{coord.y}" for coord in coordinates],
             args_mapping_rule=ArgsMappingRule.MERGE,
         )
         # Dynamically set the output worker to the 'merge' worker which is dynamically added.
-        self.output_worker_key = "merge"
     
     async def func_1(self, coord: Coordinate):
         assert coord.x in [2, 3, 1]
@@ -557,7 +558,7 @@ class Flow_III_Test_MERGE(GraphAutoma):
     async def start(self, x: int, y):
         return [x, y]
 
-    @worker(dependencies=["start"], args_mapping_rule=ArgsMappingRule.MERGE)
+    @worker(dependencies=["start"], args_mapping_rule=ArgsMappingRule.MERGE, is_output=True)
     async def end(self, my_list: Tuple[int, int]):
         assert len(my_list) == 1
         coord = my_list[0]
@@ -565,7 +566,7 @@ class Flow_III_Test_MERGE(GraphAutoma):
 
 @pytest.fixture
 def flow_III():
-    flow = Flow_III_Test_MERGE(output_worker_key="end")
+    flow = Flow_III_Test_MERGE()
     return flow
 
 @pytest.mark.asyncio
@@ -588,14 +589,14 @@ class Flow_IV_ErrorTest_MERGE(GraphAutoma):
     async def start2(self, x: int, y):
         return [x, y]
 
-    @worker(dependencies=["start1", "start2"], args_mapping_rule=ArgsMappingRule.MERGE)
+    @worker(dependencies=["start1", "start2"], args_mapping_rule=ArgsMappingRule.MERGE, is_output=True)
     async def end(self, x2: int, y2: int):
         # This will raise an error due to too many parameters (x, y).
         return Coordinate(x2, y2)
 
 @pytest.fixture
 def flow_IV():
-    flow = Flow_IV_ErrorTest_MERGE(output_worker_key="end")
+    flow = Flow_IV_ErrorTest_MERGE()
     return flow
 
 @pytest.mark.asyncio
@@ -616,14 +617,14 @@ class Flow_101_Test_SUPPRESSED(GraphAutoma):
     async def start(self, x: int, y):
         return [x, y]
 
-    @worker(dependencies=["start"], args_mapping_rule=ArgsMappingRule.SUPPRESSED)
+    @worker(dependencies=["start"], args_mapping_rule=ArgsMappingRule.SUPPRESSED, is_output=True)
     async def end(self):
         x, y = self._worker_output["start"]
         return x, y
 
 @pytest.fixture
 def flow_101():
-    flow = Flow_101_Test_SUPPRESSED(output_worker_key="end")
+    flow = Flow_101_Test_SUPPRESSED()
     return flow
 
 @pytest.mark.asyncio

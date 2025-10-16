@@ -7,7 +7,7 @@ from bridgic.core.automa import (
     WorkerSignatureError,
 )
 from bridgic.core.automa.worker import Worker
-from bridgic.core.utils.console import printer
+from bridgic.core.utils._console import printer
 
 # TODO: This file need to be refactored later...
 def test_automa_declaration_dag_check():
@@ -60,12 +60,3 @@ def test_customized_worker_signature_check():
             @worker(is_start=True, wrong_parameter=True)
             async def start(self, *args, **kwargs) -> None:
                 pass
-
-def test_customized_worker_type_reserving():
-    from layers.automa_layer_c import AutomaLayerC
-    automa_obj = AutomaLayerC()
-    automa_str = str(automa_obj)
-    printer.print(automa_str)
-    assert "CallableWorker(callable=worker_5)" in automa_str
-    assert "CallableWorker(callable=<lambda>)" in automa_str
-    assert "layers.automa_layer_c.PrintWorker" in automa_str

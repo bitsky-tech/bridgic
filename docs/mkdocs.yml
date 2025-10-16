@@ -6,18 +6,55 @@ repo_name: bitsky-tech/bridgic
 edit_uri: edit/main/docs/docs/
 
 nav:
-  - Home:
-    - index: home/index.md
+
+  - Home: index.md
+  - Getting Started:
     - Concepts: home/concepts.md
     - Installation: home/installation.md
     - Quick Start: home/quick_start.md
     - Examples: home/examples.md
+  - Tutorials:
+    - Tutorials: tutorials/index.md
+    - Getting Started: tutorials/notebooks/getting_started.ipynb
+    - Model Usage: tutorials/notebooks/model_usage.ipynb
+    - Dual-Mode Worker Execution: tutorials/notebooks/dual_mode_worker_execution.ipynb
+    - Parameter Passing: tutorials/notebooks/parameter_passing.ipynb
+    - Dynamic Router: tutorials/notebooks/dynamic_router.ipynb
+    - Interaction Event: tutorials/notebooks/interaction_event.ipynb
+    - Nested Automa: tutorials/notebooks/nested_reuse.ipynb
+    # - Dynamic DAG: tutorials/dynamic_dag.ipynb
   - API Reference:
-    - index: api/index.md
-    - Automa:
-      - GraphAutoma: api/bridgic-core/bridgic/core/automa/graph_automa.md
-      - EventHandling: api/bridgic-core/bridgic/core/automa/interaction/event_handling.md
-      - BaseLlm: api/bridgic-core/bridgic/core/intelligence/base_llm.md
+      - Bridgic-Core:
+        - bridgic.core.agentic:
+          - Index: reference/bridgic-core/bridgic/core/agentic/index.md
+          - react: reference/bridgic-core/bridgic/core/agentic/react/index.md
+          - tool_specs: reference/bridgic-core/bridgic/core/agentic/tool_specs/index.md
+          - types: reference/bridgic-core/bridgic/core/agentic/types/index.md
+          - workers: reference/bridgic-core/bridgic/core/agentic/workers/index.md
+        - bridgic.core.automa:
+          - Index: reference/bridgic-core/bridgic/core/automa/index.md
+          - args: reference/bridgic-core/bridgic/core/automa/args/index.md
+          - interaction: reference/bridgic-core/bridgic/core/automa/interaction/index.md
+          - worker: reference/bridgic-core/bridgic/core/automa/worker/index.md
+        - bridgic.core.model:
+          - Index: reference/bridgic-core/bridgic/core/model/index.md
+          - protocols: reference/bridgic-core/bridgic/core/model/protocols/index.md
+          - types: reference/bridgic-core/bridgic/core/model/types/index.md
+        - bridgic.core.prompt:
+          - Index: reference/bridgic-core/bridgic/core/prompt/index.md
+          - utils: reference/bridgic-core/bridgic/core/prompt/utils/index.md
+        - bridgic.core.utils:
+          - Index: reference/bridgic-core/bridgic/core/utils/index.md
+      - Bridgic-LLMs-Openai:
+        - bridgic.llms.openai:
+          - Index: reference/bridgic-llms-openai/bridgic/llms/openai/index.md
+      - Bridgic-LLMs-Openai-Like:
+        - bridgic.llms.openai_like:
+          - Index: reference/bridgic-llms-openai-like/bridgic/llms/openai_like/index.md
+      - Bridgic-LLMs-Vllm:
+        - bridgic.llms.vllm:
+          - Index: reference/bridgic-llms-vllm/bridgic/llms/vllm/index.md
+
   - About: about/index.md
 
 theme: 
@@ -26,9 +63,13 @@ theme:
   favicon: assets/favicon.ico
   features:
     # Navigation
+    # navigation.instant enables client-side navigation for faster page transitions.
     - navigation.instant
+    # navigation.instant.prefetch preloads likely next pages to reduce perceived latency.
     - navigation.instant.prefetch
-    - navigation.prune
+    # navigation.instant.progress shows a top progress bar on page loads (user feedback).
+    - navigation.instant.progress
+    # - navigation.prune  # Keep disabled for now; pruning reduces DOM for huge pages but may complicate anchors.
     - navigation.tabs
     - navigation.tabs.sticky
     - navigation.indexes
@@ -38,7 +79,6 @@ theme:
     - navigation.tracking
     # Table of contents
     - toc.follow
-    - toc.integrate
     # Search
     - search.suggest
     - search.highlight
@@ -83,8 +123,10 @@ theme:
     view: material/eye
 plugins: 
   - search:
+      # Improved word boundary detection for camelCase and symbols in search.
       separator: '[\s\-,:!=\[\]()"`/]+|\.(?!\d)|&[lg]t;|(?!\b)(?=[A-Z][a-z])'
   - autorefs
+  # Minify keeps output small and snappy.
   - git-revision-date-localized:
       enable_creation_date: true
       type: timeago
@@ -99,7 +141,10 @@ plugins:
       minify_css: true
       htmlmin_opts:
         remove_comments: true
+  - mkdocs-jupyter:
+      execute: false
   - mkdocstrings:
+      custom_templates: templates
       handlers:
         python:
           options:
@@ -113,14 +158,27 @@ plugins:
               - "!^__init__"
             members_order: source
             merge_init_into_class: false
+            # Readability improvements inspired by langgraph-docs
+            summary: false
+            inherited_members: true
+            show_bases: true
+            show_signature: true
+            line_length: 60
+            docstring_section_style: table
+            heading_level: 2
             separate_signature: true
-            show_root_full_path: true
+            show_root_full_path: false
             show_root_heading: false
             show_root_toc_entry: false
             show_signature_annotations: true
             signature_crossrefs: true
+            show_symbol_type_heading: true
+            show_symbol_type_toc: true
           paths: 
             - ../bridgic-core
+            - ../bridgic-integration/llms/bridgic-llms-openai
+            - ../bridgic-integration/llms/bridgic-llms-openai-like
+            - ../bridgic-integration/llms/bridgic-llms-vllm
 
 markdown_extensions:
   # Python Markdown
@@ -130,9 +188,10 @@ markdown_extensions:
   - def_list
   - footnotes
   - md_in_html
+  # Table of contents with link icons for easy sharing
   - toc:
       permalink: true
-      title: On this page
+      title: Outline
   # Python Markdown Extensions
   - pymdownx.arithmatex:
       generic: true
@@ -140,10 +199,18 @@ markdown_extensions:
       smart_enable: all
   - pymdownx.caret
   - pymdownx.details
+  # Auto-link plain issue/PR/user references using repo context (improves readability)
+  - pymdownx.magiclink:
+      normalize_issue_symbols: true
+      repo_url_shorthand: true
+      user: bitsky-tech
+      repo: bridgic
   - pymdownx.emoji:
       emoji_index: !!python/name:material.extensions.emoji.twemoji
       emoji_generator: !!python/name:material.extensions.emoji.to_svg
   - pymdownx.highlight:
+      # Show line numbers by default; can be overridden per block with {linenums="0"}
+      linenums: true
       anchor_linenums: true
       line_spans: __span
       pygments_lang_class: true
@@ -165,20 +232,30 @@ markdown_extensions:
   - pymdownx.tilde
 
 extra:
-  analytics:
-    provider: google
-    property: !ENV GOOGLE_ANALYTICS_KEY
-  social:
-    - icon: fontawesome/brands/github
-      link: https://github.com/bitsky-tech/bridgic
+  # analytics:
+  #   provider: google
+  #   property: !ENV GOOGLE_ANALYTICS_KEY
+  # social:
+  #   - icon: fontawesome/brands/github
+  #     link: https://github.com/bitsky-tech/bridgic
     # - icon: fontawesome/brands/python
     #   link: https://pypi.org/project/bridgic/
     # - icon: fontawesome/brands/discord
     #   link: https://discord.gg/bridgic
   generator: false
 
+# Developer-facing validation messages: catch broken links/anchors early without breaking builds
+validation:
+  absolute_links: warn
+  unrecognized_links: warn
+  anchors: warn
+  not_found: info
+
 extra_css:
+  # Core site theming and components
   - stylesheets/extra.css
+  # Sticky left navigation for expanded sections (from langgraph-docs)
+  - stylesheets/sticky_navigation.css
 
 extra_javascript:
   - javascripts/mathjax.js

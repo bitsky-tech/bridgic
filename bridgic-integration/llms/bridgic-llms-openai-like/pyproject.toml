@@ -1,6 +1,7 @@
 [project]
 name = "bridgic-llms-openai-like"
-version = "0.1.0.dev2"
+version = "0.1.0.dev11"
+license = {text = "MIT"}
 classifiers = [
     "Private :: Do Not Upload",
     "Programming Language :: Python :: 3",
@@ -12,7 +13,7 @@ authors = [
     { name = "Tielei Zhang", email = "zhangtl04@gmail.com" },
 ]
 dependencies = [
-    "bridgic-core>=0.1.0.dev3",
+    "bridgic-core>=0.1.0.dev21",
     "openai>=1.60.0",
     "httpx>=0.28.1",
     "httpx-aiohttp>=0.1.8",
@@ -35,7 +36,7 @@ build-backend = "hatchling.build"
 include = ["bridgic/"]
 
 [tool.uv.sources]
-bridgic-core = { index = "btsk-repo" }
+bridgic-core = { path = "../../../bridgic-core" }
 
 [[tool.uv.index]]
 name = "btsk-repo"

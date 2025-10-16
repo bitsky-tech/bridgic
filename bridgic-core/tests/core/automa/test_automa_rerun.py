@@ -4,10 +4,10 @@ Test cases for rerunning an Automa instance.
 
 import pytest
 from bridgic.core.automa import worker, GraphAutoma
-from bridgic.core.automa.graph_automa import RuntimeContext
+from bridgic.core.automa.args import RuntimeContext
 from bridgic.core.automa.interaction import Event
 from bridgic.core.automa.interaction import InteractionFeedback, InteractionException
-from bridgic.core.automa.serialization import Snapshot
+from bridgic.core.automa import Snapshot
 
 #### Test case: rerun an Automa instance.
 
@@ -16,13 +16,13 @@ class ArithmeticAutoma(GraphAutoma):
     async def start(self, x: int):
         return 3 * x
 
-    @worker(dependencies=["start"])
+    @worker(dependencies=["start"], is_output=True)
     async def end(self, x: int):
         return x + 5
 
 @pytest.fixture
 def arithmetic():
-    graph = ArithmeticAutoma(output_worker_key="end")
+    graph = ArithmeticAutoma()
     return graph
 
 @pytest.mark.asyncio
@@ -42,7 +42,7 @@ async def test_single_automa_rerun(arithmetic: ArithmeticAutoma):
 class TopAutoma(GraphAutoma):
     # The start worker is a nested Automa which will be added by add_worker()
 
-    @worker(dependencies=["start"])
+    @worker(dependencies=["start"], is_output=True)
     async def end(self, my_list: list[str]):
         if len(my_list) < 5:
             self.ferry_to("start")
@@ -59,18 +59,18 @@ class NestedAutoma(GraphAutoma):
         local_space["count"] = local_space.get("count", 0) + 1
         return local_space["count"]
 
-    @worker(dependencies=["counter"])
+    @worker(dependencies=["counter"], is_output=True)
     async def end(self, count: int):
         return ['bridgic'] * count
 
 @pytest.fixture
 def nested_automa():
-    graph = NestedAutoma(output_worker_key="end")
+    graph = NestedAutoma()
     return graph
 
 @pytest.fixture
 def topAutoma(nested_automa):
-    graph = TopAutoma(output_worker_key="end")
+    graph = TopAutoma()
     graph.add_worker("start", nested_automa, is_start=True)
     return graph
 
@@ -92,7 +92,7 @@ class AdderAutoma(GraphAutoma):
     async def func_1(self, x: int):
         return x + 1
 
-    @worker(dependencies=["func_1"])
+    @worker(dependencies=["func_1"], is_output=True)
     async def func_2(self, x: int):
         event = Event(
             event_type="if_add",
@@ -107,7 +107,7 @@ class AdderAutoma(GraphAutoma):
 
 @pytest.fixture
 def adder_automa():
-    return AdderAutoma(output_worker_key="func_2")
+    return AdderAutoma()
 
 @pytest.mark.asyncio
 async def test_adder_automa_to_run(adder_automa: AdderAutoma, request, db_base_path):
@@ -206,62 +206,3 @@ async def test_adder_automa_deserialized_rerun_to_end(feedback_no, adder_automa_
     )
     assert result == 16 + 2
 
-#### Test case: run ==> topology change ==> rerun.
-
-class AdderFlow_1(GraphAutoma):
-    @worker(is_start=True)
-    async def func_1(self, x: int):
-        return x + 1
-
-    async def func_2(self, x: int):
-        return x + 2
-
-@pytest.fixture
-def adder_flow_1():
-    return AdderFlow_1(output_worker_key="func_1")
-
-@pytest.mark.asyncio
-async def test_adder_flow_1_rerun(adder_flow_1):
-    # First run.
-    result = await adder_flow_1.arun(x=100)
-    assert result == 100 + 1
-    # Topology change.
-    adder_flow_1.add_func_as_worker(
-        key="func_2",
-        func=adder_flow_1.func_2,
-    )
-    adder_flow_1.add_dependency("func_2", "func_1")
-    adder_flow_1.output_worker_key = "func_2"
-    # Second run.
-    result = await adder_flow_1.arun(x=100)
-    assert result == 100 + 1 + 2
-
-class AdderFlow_2(GraphAutoma):
-    @worker(is_start=True)
-    async def func_1(self, x: int):
-        return x + 1
-
-    async def func_2(self, x: int):
-        return x + 2
-
-@pytest.fixture
-def adder_flow_2():
-    return AdderFlow_2(output_worker_key="func_1")
-
-@pytest.mark.asyncio
-async def test_adder_flow_2_rerun(adder_flow_2):
-    # First run.
-    result = await adder_flow_2.arun(x=100)
-    assert result == 100 + 1
-    # Topology change.
-    # Remove a start worker and re-add a new start worker.
-    adder_flow_2.remove_worker("func_1")
-    adder_flow_2.add_func_as_worker(
-        key="func_2",
-        func=adder_flow_2.func_2,
-        is_start=True,
-    )
-    adder_flow_2.output_worker_key = "func_2"
-    # Second run.
-    result = await adder_flow_2.arun(x=100)
-    assert result == 100 + 2

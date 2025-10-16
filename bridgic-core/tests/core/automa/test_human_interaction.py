@@ -5,7 +5,7 @@ from bridgic.core.automa import GraphAutoma
 from bridgic.core.automa import worker
 from bridgic.core.automa.interaction import Event
 from bridgic.core.automa.interaction import InteractionFeedback, InteractionException
-from bridgic.core.automa.serialization import Snapshot
+from bridgic.core.automa import Snapshot
 
 # Shared fixtures for all test cases.
 @pytest.fixture(scope="session")
@@ -19,7 +19,7 @@ class AdderAutoma1(GraphAutoma):
     async def func_1(self, x: int):
         return x + 1
 
-    @worker(dependencies=["func_1"])
+    @worker(dependencies=["func_1"], is_output=True)
     async def func_2(self, x: int):
         event = Event(
             event_type="if_add",
@@ -34,7 +34,7 @@ class AdderAutoma1(GraphAutoma):
 
 @pytest.fixture
 def adder_automa1():
-    return AdderAutoma1(output_worker_key="func_2")
+    return AdderAutoma1()
 
 @pytest.mark.asyncio
 async def test_adder_automa_1_interact_serialized(adder_automa1: AdderAutoma1, request, db_base_path):
@@ -119,13 +119,13 @@ class AdderAutoma2(GraphAutoma):
             x += 200
         return x + 1
 
-    @worker(dependencies=["func_1"])
+    @worker(dependencies=["func_1"], is_output=True)
     async def func_2(self, x: int):
         return x + 2
 
 @pytest.fixture
 def adder_automa2():
-    return AdderAutoma2(output_worker_key="func_2")
+    return AdderAutoma2()
 
 @pytest.mark.asyncio
 async def test_adder_automa_2_interact_serialized(adder_automa2: AdderAutoma2, request, db_base_path):
@@ -186,7 +186,7 @@ class TopGraph(GraphAutoma):
 
     # The 'middle' worker is an Automa, which will be added by add_worker() method.
 
-    @worker(dependencies=["middle"])
+    @worker(dependencies=["middle"], is_output=True)
     async def end(self, x: int):
         return x + 2
 
@@ -201,7 +201,7 @@ class SecondLayerGraph(GraphAutoma):
 
     # The 'func_2' worker is an Automa, which will be added by add_worker() method.
 
-    @worker(dependencies=["func_1", "func_2"])
+    @worker(dependencies=["func_1", "func_2"], is_output=True)
     async def end(self, x1: int, x2: int):
         return x1 + x2
 
@@ -240,33 +240,33 @@ class ThirdLayerGraph_1_ParallelBranches(GraphAutoma):
             x += 400
         return x
 
-    @worker(dependencies=["func_1", "func_2", "func_3"])
+    @worker(dependencies=["func_1", "func_2", "func_3"], is_output=True)
     async def end(self, x1: int, x2: int, x3: int):
         return x1 + x2 + x3
 
 # Utility function to deserialize a TopGraph from a bytes file and a version file.
 def deserialize_top_graph(bytes_file, version_file):
-        serialized_bytes = bytes_file.read_bytes()
-        serialization_version = version_file.read_text()
-        snapshot = Snapshot(
-            serialized_bytes=serialized_bytes, 
-            serialization_version=serialization_version
-        )
-        # Snapshot is restored.
-        assert snapshot.serialization_version == GraphAutoma.SERIALIZATION_VERSION
-        deserialized_graph = TopGraph.load_from_snapshot(snapshot)
-        assert type(deserialized_graph) is TopGraph
-        return deserialized_graph
-    
+    serialized_bytes = bytes_file.read_bytes()
+    serialization_version = version_file.read_text()
+    snapshot = Snapshot(
+        serialized_bytes=serialized_bytes, 
+        serialization_version=serialization_version
+    )
+    # Snapshot is restored.
+    assert snapshot.serialization_version == GraphAutoma.SERIALIZATION_VERSION
+    deserialized_graph = TopGraph.load_from_snapshot(snapshot)
+    assert type(deserialized_graph) is TopGraph
+    return deserialized_graph
+
 
 @pytest.fixture
 def graph_1_third_layer():
-    graph = ThirdLayerGraph_1_ParallelBranches(output_worker_key="end")
+    graph = ThirdLayerGraph_1_ParallelBranches()
     return graph
 
 @pytest.fixture
 def graph_1_second_layer(graph_1_third_layer):
-    graph = SecondLayerGraph(output_worker_key="end")
+    graph = SecondLayerGraph()
     graph.add_worker(
         "func_2", 
         graph_1_third_layer,
@@ -276,7 +276,7 @@ def graph_1_second_layer(graph_1_third_layer):
 
 @pytest.fixture
 def graph_1(graph_1_second_layer):
-    graph = TopGraph(output_worker_key="end")
+    graph = TopGraph()
     graph.add_worker(
         "middle", 
         graph_1_second_layer,
@@ -354,7 +354,7 @@ class SecondLayerGraph_2_Parallel_Interaction(GraphAutoma):
 
     # The 'func_2' worker is an Automa, which will be added by add_worker() method.
 
-    @worker(dependencies=["func_1", "func_2"])
+    @worker(dependencies=["func_1", "func_2"], is_output=True)
     async def end(self, x1: int, x2: int):
         return x1 + x2
 
@@ -377,18 +377,18 @@ class ThirdLayerGraph_2(GraphAutoma):
     async def func_3(self, x: int):
         return x + 400
 
-    @worker(dependencies=["func_1", "func_2", "func_3"])
+    @worker(dependencies=["func_1", "func_2", "func_3"], is_output=True)
     async def end(self, x1: int, x2: int, x3: int):
         return x1 + x2 + x3
 
 @pytest.fixture
 def graph_2_third_layer():
-    graph = ThirdLayerGraph_2(output_worker_key="end")
+    graph = ThirdLayerGraph_2()
     return graph
 
 @pytest.fixture
 def graph_2_second_layer(graph_2_third_layer):
-    graph = SecondLayerGraph_2_Parallel_Interaction(output_worker_key="end")
+    graph = SecondLayerGraph_2_Parallel_Interaction()
     graph.add_worker(
         "func_2", 
         graph_2_third_layer,
@@ -398,7 +398,7 @@ def graph_2_second_layer(graph_2_third_layer):
 
 @pytest.fixture
 def graph_2(graph_2_second_layer):
-    graph = TopGraph(output_worker_key="end")
+    graph = TopGraph()
     graph.add_worker(
         "middle", 
         graph_2_second_layer,
@@ -540,14 +540,14 @@ class SecondLayerGraph_3_Multiple_Interactions(GraphAutoma):
 
     # The 'func_2' worker is an Automa, which will be added by add_worker() method.
 
-    @worker(dependencies=["func_1", "func_2"])
+    @worker(dependencies=["func_1", "func_2"], is_output=True)
     async def end(self, x1: int, x2: int):
         return x1 + x2
 
 @pytest.fixture
 def graph_3_second_layer(graph_2_third_layer):
     # Reuse graph_2_third_layer in this test case.
-    graph = SecondLayerGraph_3_Multiple_Interactions(output_worker_key="end")
+    graph = SecondLayerGraph_3_Multiple_Interactions()
     graph.add_worker(
         "func_2", 
         graph_2_third_layer,
@@ -557,7 +557,7 @@ def graph_3_second_layer(graph_2_third_layer):
 
 @pytest.fixture
 def graph_3(graph_3_second_layer):
-    graph = TopGraph(output_worker_key="end")
+    graph = TopGraph()
     graph.add_worker(
         "middle", 
         graph_3_second_layer,
@@ -750,7 +750,7 @@ class SecondLayerGraph_4(GraphAutoma):
 
     # The 'func_2' worker is an Automa, which will be added by add_worker() method.
 
-    @worker(dependencies=["func_1", "func_2"])
+    @worker(dependencies=["func_1", "func_2"], is_output=True)
     async def end(self, x1: int, x2: int):
         return x1 + x2
 
@@ -781,18 +781,18 @@ class ThirdLayerGraph_4(GraphAutoma):
     async def func_3(self, x: int):
         return x + 400
 
-    @worker(dependencies=["func_1", "func_2", "func_3"])
+    @worker(dependencies=["func_1", "func_2", "func_3"], is_output=True)
     async def end(self, x1: int, x2: int, x3: int):
         return x1 + x2 + x3
 
 @pytest.fixture
 def graph_4_third_layer():
-    graph = ThirdLayerGraph_4(output_worker_key="end")
+    graph = ThirdLayerGraph_4()
     return graph
 
 @pytest.fixture
 def graph_4_second_layer(graph_4_third_layer):
-    graph = SecondLayerGraph_4(output_worker_key="end")
+    graph = SecondLayerGraph_4()
     graph.add_worker(
         "func_2", 
         graph_4_third_layer,
@@ -802,7 +802,7 @@ def graph_4_second_layer(graph_4_third_layer):
 
 @pytest.fixture
 def graph_4(graph_4_second_layer):
-    graph = TopGraph(output_worker_key="end")
+    graph = TopGraph()
     graph.add_worker(
         "middle", 
         graph_4_second_layer,
@@ -868,7 +868,7 @@ class TopGraph_5(GraphAutoma):
 
     # The 'middle' worker is an Automa, which will be added by add_worker() method.
 
-    @worker(dependencies=["middle"])
+    @worker(dependencies=["middle"], is_output=True)
     async def end(self, x: int):
         event = Event(
             event_type="if_add_in_top_layer",
@@ -908,18 +908,18 @@ class ThirdLayerGraph_5(GraphAutoma):
     async def func_3(self, x: int):
         return x + 400
 
-    @worker(dependencies=["func_1", "func_2", "func_3"])
+    @worker(dependencies=["func_1", "func_2", "func_3"], is_output=True)
     async def end(self, x1: int, x2: int, x3: int):
         return x1 + x2 + x3
 
 @pytest.fixture
 def graph_5_third_layer():
-    graph = ThirdLayerGraph_5(output_worker_key="end")
+    graph = ThirdLayerGraph_5()
     return graph
 
 @pytest.fixture
 def graph_5_second_layer(graph_5_third_layer):
-    graph = SecondLayerGraph(output_worker_key="end")
+    graph = SecondLayerGraph()
     graph.add_worker(
         "func_2", 
         graph_5_third_layer,
@@ -929,7 +929,7 @@ def graph_5_second_layer(graph_5_third_layer):
 
 @pytest.fixture
 def graph_5(graph_5_second_layer):
-    graph = TopGraph_5(output_worker_key="end")
+    graph = TopGraph_5()
     graph.add_worker(
         "middle", 
         graph_5_second_layer,

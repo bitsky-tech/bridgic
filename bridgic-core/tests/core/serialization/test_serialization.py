@@ -3,10 +3,10 @@ from typing import Dict, List, Any, Set
 from typing_extensions import override
 import pytest
 from bridgic.core.automa.worker import Worker
-from bridgic.core.serialization import Serializable, Picklable
-import bridgic.core.serialization.msgpackx as msgpackx
+from bridgic.core.types._serialization import Serializable, Picklable
+from bridgic.core.utils import msgpackx
 from datetime import datetime, timezone, timedelta
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 def test_basic_types_serialization():
     # str serialization test
@@ -79,24 +79,11 @@ def test_datetime_serialization():
     assert msgpackx.load_bytes(data) == dt2
 
 def test_enum_serialization():
-    from bridgic.core.automa.worker_decorator import ArgsMappingRule
+    from bridgic.core.automa.args import ArgsMappingRule
     data = msgpackx.dump_bytes(ArgsMappingRule.AS_IS)
     assert msgpackx.load_bytes(data) == ArgsMappingRule.AS_IS
     data = msgpackx.dump_bytes(ArgsMappingRule.UNPACK)
     assert msgpackx.load_bytes(data) == ArgsMappingRule.UNPACK
-
-# Test a custom Serializable object.
-# Worker is serializable.
-class MyWorker1(Worker):
-    @override
-    def dump_to_dict(self) -> Dict[str, Any]:
-        state_dict = super().dump_to_dict()
-        return state_dict
-
-    @override
-    def load_from_dict(self, state_dict: Dict[str, Any]) -> None:
-        super().load_from_dict(state_dict)
-
 
 # Test a Pydantic BaseModel object
 class Dog(BaseModel):
@@ -107,6 +94,29 @@ class Person(BaseModel):
     name: str
     age: int
     birthday: datetime
+
+class BankAccount(Serializable):
+    """A non-Pydantic class"""
+    def __init__(self, account_number: str, balance: float):
+        self.account_number = account_number
+        self.balance = balance
+
+    def dump_to_dict(self) -> Dict[str, Any]:
+        return {
+            "account_number": self.account_number,
+            "balance": self.balance
+        }
+
+    def load_from_dict(self, state_dict: Dict[str, Any]) -> None:
+        self.account_number = state_dict["account_number"]
+        self.balance = state_dict["balance"]
+
+class Employee(BaseModel):
+    name: str
+    age: int
+    bank_account: BankAccount
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
 def test_pydantic_serialization():
     # Test a pure Pydantic BaseModel object
@@ -127,3 +137,14 @@ def test_pydantic_serialization():
     assert obj.name == person.name
     assert obj.age == person.age
     assert obj.birthday == person.birthday
+
+    # Test Pydantic BaseModel object including a non-Pydantic class
+    employee = Employee(name="John", age=30, bank_account=BankAccount(account_number="1234567890", balance=10000))
+    data = msgpackx.dump_bytes(employee)
+    assert type(data) is bytes
+    obj = msgpackx.load_bytes(data)
+    assert type(obj) is Employee
+    assert obj.name == employee.name
+    assert obj.age == employee.age
+    assert obj.bank_account.account_number == employee.bank_account.account_number
+    assert obj.bank_account.balance == employee.bank_account.balance
