@@ -43,9 +43,25 @@ Constraint = Union[PydanticModel, JsonSchema, EbnfGrammar, LarkGrammar, Regex, C
 
 class StructuredOutput(Protocol):
     """
-    StructuredOutput is a protocol that defines the interface for LLM providers that can output 
-    in specified format. The actual formats supported for structured output depend on the real 
-    capabilities of the model provider.
+    Protocol for LLM providers that support structured output generation.
+
+    StructuredOutput defines the interface for language models that can generate 
+    responses in specific formats according to given constraints. This protocol 
+    enables controlled output generation for various data structures and formats.
+
+    Methods
+    -------
+    structured_output
+        Synchronous method for generating structured output based on constraints.
+    astructured_output
+        Asynchronous method for generating structured output based on constraints.
+
+    Note
+    ----
+    1. Both synchronous and asynchronous methods must be implemented
+    2. Supported constraint types depend on the specific LLM provider implementation
+    3. Output format is determined by the constraint type provided
+    4. Common constraint types include PydanticModel, JsonSchema, Regex, Choice, etc.
     """
 
     def structured_output(
@@ -53,11 +69,59 @@ class StructuredOutput(Protocol):
         messages: List[Message],
         constraint: Constraint,
         **kwargs,
-    ) -> Any: ...
+    ) -> Any:
+        """
+        Generate structured output based on conversation context and constraints.
+
+        Parameters
+        ----------
+        messages : List[Message]
+            The conversation history and current context.
+        constraint : Constraint
+            The output format constraint. Supported types:
+            - PydanticModel: Output as Pydantic model instance
+            - JsonSchema: Output as JSON matching the schema
+            - Regex: Output matching the regex pattern
+            - Choice: Output from predefined choices
+            - EbnfGrammar: Output following EBNF grammar rules
+            - LarkGrammar: Output following Lark grammar rules
+        **kwargs
+            Additional keyword arguments for output generation configuration.
+
+        Returns
+        -------
+        Any
+            The structured output matching the specified constraint format.
+        """
+        ...
 
     async def astructured_output(
         self,
         messages: List[Message],
         constraint: Constraint,
         **kwargs,
-    ) -> Any: ...
+    ) -> Any:
+        """
+        Asynchronously generate structured output based on conversation context and constraints.
+
+        Parameters
+        ----------
+        messages : List[Message]
+            The conversation history and current context.
+        constraint : Constraint
+            The output format constraint. Supported types:
+            - PydanticModel: Output as Pydantic model instance
+            - JsonSchema: Output as JSON matching the schema
+            - Regex: Output matching the regex pattern
+            - Choice: Output from predefined choices
+            - EbnfGrammar: Output following EBNF grammar rules
+            - LarkGrammar: Output following Lark grammar rules
+        **kwargs
+            Additional keyword arguments for output generation configuration.
+
+        Returns
+        -------
+        Any
+            The structured output matching the specified constraint format.
+        """
+        ...
