@@ -1,6 +1,6 @@
-# tool
+# protocols
 
-::: bridgic.core.agentic.tool
+::: bridgic.core.model.protocols
     options:
       show_source: true
       show_root_heading: false

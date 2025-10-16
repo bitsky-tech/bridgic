@@ -360,6 +360,20 @@
 } */
 
 /* ========================================== */
+/* JUPYTER NOTEBOOK STYLES */
+/* ========================================== */
+
+/* remove Jupyter code cell's In[idx] identifier */
+.jp-InputPrompt {
+  display: none !important;
+}
+
+/* remove Jupyter code cell's Out[idx] identifier */
+.jp-OutputPrompt {
+  display: none !important;
+}
+
+/* ========================================== */
 /* BADGE STYLES */
 /* ========================================== */
 

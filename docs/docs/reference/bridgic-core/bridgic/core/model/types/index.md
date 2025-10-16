@@ -1,6 +1,6 @@
-# react
+# types
 
-::: bridgic.core.intelligence.react
+::: bridgic.core.model.types
     options:
       show_source: true
       show_root_heading: false
