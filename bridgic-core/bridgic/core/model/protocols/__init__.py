@@ -1,23 +1,12 @@
 """
-Protocol definitions for LLM provider capabilities.
+The Model Protocols module defines high-level interface protocols for model interaction.
 
-This module defines protocols that encapsulate different model calling capabilities,
-enabling better utilization of model abilities through standardized interfaces.
-These protocols provide a unified abstraction layer for working with various language
-model providers while maintaining type safety and clear capability contracts.
-
-The protocols abstract key model capabilities:
-
-- **Tool Selection**: Models that can intelligently select and parameterize tools
-- **Structured Output**: Models that can generate outputs in specific formats
-
-By implementing these protocols, LLM providers can expose their advanced capabilities
-in a consistent manner, allowing applications to leverage model-specific features
-without being tightly coupled to particular implementations. This enables the creation
-of flexible, provider-agnostic systems that can automatically adapt to the capabilities
-of different model backends.
+This module contains several important interface protocol definitions to provide 
+capabilities needed in real-world application development, such as tool selection and 
+structured output. These interfaces have clear input and output definitions and are 
+"model-agnostic", aiming to reduce the details developers need to consider when 
+implementing features, thereby improving development efficiency.
 """
-
 
 from bridgic.core.model.protocols._tool_selection import ToolSelection
 from bridgic.core.model.protocols._structured_output import (

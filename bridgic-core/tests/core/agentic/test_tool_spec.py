@@ -5,7 +5,7 @@ from typing import cast
 from bridgic.core.agentic.tool_specs import FunctionToolSpec, AutomaToolSpec, as_tool
 from bridgic.core.automa.worker import CallableWorker
 from bridgic.core.automa import GraphAutoma, worker
-from bridgic.core.utils import msgpackx
+from bridgic.core.utils._msgpackx import dump_bytes, load_bytes
 
 # Test FunctionToolSpec
 
@@ -51,9 +51,9 @@ def test_function_tool_spec(function_tool_spec):
     assert isinstance(my_worker, CallableWorker)
 
 def test_function_tool_spec_deserialization(function_tool_spec):
-    data = msgpackx.dump_bytes(function_tool_spec)
+    data = dump_bytes(function_tool_spec)
     assert type(data) is bytes
-    obj = msgpackx.load_bytes(data)
+    obj = load_bytes(data)
     assert type(obj) is FunctionToolSpec
 
     test_function_tool_spec(obj)
@@ -98,9 +98,9 @@ async def test_automa_tool_spec(automa_tool_spec):
 
 @pytest.mark.asyncio
 async def test_automa_tool_spec_deserialization(automa_tool_spec):
-    data = msgpackx.dump_bytes(automa_tool_spec)
+    data = dump_bytes(automa_tool_spec)
     assert type(data) is bytes
-    obj = msgpackx.load_bytes(data)
+    obj = load_bytes(data)
     assert type(obj) is AutomaToolSpec
     await test_automa_tool_spec(obj)
 
@@ -148,8 +148,8 @@ async def test_decorated_automa_tool_spec(decorated_automa_tool_spec):
 
 @pytest.mark.asyncio
 async def test_decorated_automa_tool_spec_deserialization(decorated_automa_tool_spec):
-    data = msgpackx.dump_bytes(decorated_automa_tool_spec)
+    data = dump_bytes(decorated_automa_tool_spec)
     assert type(data) is bytes
-    obj = msgpackx.load_bytes(data)
+    obj = load_bytes(data)
     assert type(obj) is AutomaToolSpec
     await test_decorated_automa_tool_spec(obj)
