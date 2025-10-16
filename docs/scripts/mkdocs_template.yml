@@ -8,52 +8,24 @@ edit_uri: edit/main/docs/docs/
 nav:
 
   - Home: index.md
-  - Getting Started:
+  - Introduction:
     - Concepts: home/concepts.md
-    - Installation: home/installation.md
     - Quick Start: home/quick_start.md
     - Examples: home/examples.md
-  - Tutorials:
-    - Tutorials: tutorials/index.md
-    - Getting Started: tutorials/notebooks/getting_started.ipynb
-    - Model Usage: tutorials/notebooks/model_usage.ipynb
-    - Dual-Mode Worker Execution: tutorials/notebooks/dual_mode_worker_execution.ipynb
-    - Parameter Passing: tutorials/notebooks/parameter_passing.ipynb
-    - Dynamic Router: tutorials/notebooks/dynamic_router.ipynb
-    - Interaction Event: tutorials/notebooks/interaction_event.ipynb
-    - Nested Automa: tutorials/notebooks/nested_reuse.ipynb
+  - Getting Started:
+    - Install: tutorials/install.md
+    - Tutorials: 
+      - Tutorials: tutorials/index.md
+      - Quick Start: tutorials/notebooks/getting_started.ipynb
+      - Model Usage: tutorials/notebooks/model_usage.ipynb
+      - Dual-Mode Worker Execution: tutorials/notebooks/dual_mode_worker_execution.ipynb
+      - Parameter Passing: tutorials/notebooks/parameter_passing.ipynb
+      - Dynamic Router: tutorials/notebooks/dynamic_router.ipynb
+      - Interaction Event: tutorials/notebooks/interaction_event.ipynb
+      - Nested Automa: tutorials/notebooks/nested_reuse.ipynb
     # - Dynamic DAG: tutorials/dynamic_dag.ipynb
   - API Reference:
-      - Bridgic-Core:
-        - bridgic.core.agentic:
-          - Index: reference/bridgic-core/bridgic/core/agentic/index.md
-          - react: reference/bridgic-core/bridgic/core/agentic/react/index.md
-          - tool_specs: reference/bridgic-core/bridgic/core/agentic/tool_specs/index.md
-          - types: reference/bridgic-core/bridgic/core/agentic/types/index.md
-          - workers: reference/bridgic-core/bridgic/core/agentic/workers/index.md
-        - bridgic.core.automa:
-          - Index: reference/bridgic-core/bridgic/core/automa/index.md
-          - args: reference/bridgic-core/bridgic/core/automa/args/index.md
-          - interaction: reference/bridgic-core/bridgic/core/automa/interaction/index.md
-          - worker: reference/bridgic-core/bridgic/core/automa/worker/index.md
-        - bridgic.core.model:
-          - Index: reference/bridgic-core/bridgic/core/model/index.md
-          - protocols: reference/bridgic-core/bridgic/core/model/protocols/index.md
-          - types: reference/bridgic-core/bridgic/core/model/types/index.md
-        - bridgic.core.prompt:
-          - Index: reference/bridgic-core/bridgic/core/prompt/index.md
-          - utils: reference/bridgic-core/bridgic/core/prompt/utils/index.md
-        - bridgic.core.utils:
-          - Index: reference/bridgic-core/bridgic/core/utils/index.md
-      - Bridgic-LLMs-Openai:
-        - bridgic.llms.openai:
-          - Index: reference/bridgic-llms-openai/bridgic/llms/openai/index.md
-      - Bridgic-LLMs-Openai-Like:
-        - bridgic.llms.openai_like:
-          - Index: reference/bridgic-llms-openai-like/bridgic/llms/openai_like/index.md
-      - Bridgic-LLMs-Vllm:
-        - bridgic.llms.vllm:
-          - Index: reference/bridgic-llms-vllm/bridgic/llms/vllm/index.md
+{{API_REFERENCE_CONTENT}}
 
   - About: about/index.md
 
@@ -71,7 +43,7 @@ theme:
     - navigation.instant.progress
     # - navigation.prune  # Keep disabled for now; pruning reduces DOM for huge pages but may complicate anchors.
     - navigation.tabs
-    - navigation.tabs.sticky
+    # - navigation.tabs.sticky
     - navigation.indexes
     - navigation.top
     - navigation.footer
@@ -100,16 +72,16 @@ theme:
     # Light mode
     - media: "(prefers-color-scheme: light)"
       scheme: default
-      primary: indigo
-      accent: purple
+      primary: white
+      accent: gray
       toggle:
         icon: material/brightness-7
         name: Switch to dark mode
     # Dark mode
     - media: "(prefers-color-scheme: dark)"
       scheme: slate
-      primary: black
-      accent: purple
+      primary: grey
+      accent: white
       toggle:
         icon: material/brightness-4
         name: Switch to system preference
@@ -143,6 +115,8 @@ plugins:
         remove_comments: true
   - mkdocs-jupyter:
       execute: false
+      include_source: true
+      highlight_extra_classes: jupyter-code-cell
   - mkdocstrings:
       custom_templates: templates
       handlers:
@@ -158,7 +132,6 @@ plugins:
               - "!^__init__"
             members_order: source
             merge_init_into_class: false
-            # Readability improvements inspired by langgraph-docs
             summary: false
             inherited_members: true
             show_bases: true
@@ -252,10 +225,11 @@ validation:
   not_found: info
 
 extra_css:
-  # Core site theming and components
   - stylesheets/extra.css
-  # Sticky left navigation for expanded sections (from langgraph-docs)
   - stylesheets/sticky_navigation.css
+
+copyright: >
+  Copyright &copy; 2025 ByteSky, Inc | Built with <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">Material for MkDocs</a>.
 
 extra_javascript:
   - javascripts/mathjax.js
