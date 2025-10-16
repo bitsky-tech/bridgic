@@ -1,4 +1,4 @@
-# Installation
+# Install
 
 Bridgic is a powerful Python package that supports multiple installation methods. This tutorial will show you how to install bridgic using pip and uv.
 
