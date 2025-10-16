@@ -24,40 +24,7 @@ nav:
     - Nested Automa: tutorials/notebooks/nested_reuse.ipynb
     # - Dynamic DAG: tutorials/dynamic_dag.ipynb
   - API Reference:
-      - Bridgic-Core:
-        - bridgic.core.agentic:
-          - Index: reference/bridgic-core/bridgic/core/agentic/index.md
-          - react: reference/bridgic-core/bridgic/core/agentic/react/index.md
-          - tool_specs: reference/bridgic-core/bridgic/core/agentic/tool_specs/index.md
-          - types: reference/bridgic-core/bridgic/core/agentic/types/index.md
-          - workers: reference/bridgic-core/bridgic/core/agentic/workers/index.md
-          - agentic: reference/bridgic-core/bridgic/core/agentic/index.md
-          - react: reference/bridgic-core/bridgic/core/agentic/react/index.md
-          - tool: reference/bridgic-core/bridgic/core/agentic/tool/index.md
-          - workers: reference/bridgic-core/bridgic/core/agentic/workers/index.md
-        - bridgic.core.automa:
-          - Index: reference/bridgic-core/bridgic/core/automa/index.md
-          - args: reference/bridgic-core/bridgic/core/automa/args/index.md
-          - interaction: reference/bridgic-core/bridgic/core/automa/interaction/index.md
-          - worker: reference/bridgic-core/bridgic/core/automa/worker/index.md
-        - bridgic.core.model:
-          - Index: reference/bridgic-core/bridgic/core/model/index.md
-          - protocols: reference/bridgic-core/bridgic/core/model/protocols/index.md
-          - types: reference/bridgic-core/bridgic/core/model/types/index.md
-        - bridgic.core.prompt:
-          - Index: reference/bridgic-core/bridgic/core/prompt/index.md
-          - utils: reference/bridgic-core/bridgic/core/prompt/utils/index.md
-        - bridgic.core.utils:
-          - Index: reference/bridgic-core/bridgic/core/utils/index.md
-      - Bridgic-LLMs-Openai:
-        - bridgic.llms.openai:
-          - openai: reference/bridgic-llms-openai/bridgic/llms/openai/index.md
-      - Bridgic-LLMs-Openai-Like:
-        - bridgic.llms.openai_like:
-          - openai_like: reference/bridgic-llms-openai-like/bridgic/llms/openai_like/index.md
-      - Bridgic-LLMs-Vllm:
-        - bridgic.llms.vllm:
-          - vllm: reference/bridgic-llms-vllm/bridgic/llms/vllm/index.md
+{{API_REFERENCE_CONTENT}}
 
   - About: about/index.md
 
