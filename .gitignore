@@ -3,6 +3,7 @@ __pycache__/
 logs/
 dist/
 .DS_Store
-docs/site
+docs/site/
 docs/debug.log
 .cursor
+.env
