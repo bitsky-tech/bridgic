@@ -518,6 +518,10 @@
   margin-bottom: 0.75rem;
 }
 
+.md-typeset .tabbed-content {
+  margin-top: 0.25rem;
+}
+
 /* Parameter/attribute tables usually inherit Material styles; add subtle spacing */
 .md-typeset .doc table:not([class]) {
   margin: 0.75rem 0 1rem 0;
@@ -623,12 +627,18 @@
 }
 
 .jupyter-wrapper .jp-InputArea-editor, .jp-OutputArea-output {
-  border: 1px solid var(--md-default-bg-color--lightest) !important;
+  border: 1px solid var(--md-default-fg-color--lightest) !important;
   border-radius: 0.4rem !important;
   margin: 0.5rem 0 0.5rem 0;
   background: var(--jp-cell-editor-background);
   color: var(--jp-mirror-editor-variable-color);
 }
+
+[data-md-color-scheme="slate"] .jupyter-wrapper .jp-InputArea-editor,
+[data-md-color-scheme="slate"] .jp-OutputArea-output {
+  border: 1px solid var(--md-default-bg-color--lightest) !important;
+}
+
 .jupyter-wrapper .jp-InputPrompt, .jupyter-wrapper .jp-OutputPrompt {
   display: none !important;
 }
@@ -637,4 +647,14 @@
 }
 .jupyter-wrapper .zeroclipboard-container .clipboard-copy-icon, .notice {
   color: var(--md-grey-500) !important;
+}
+
+.md-typeset .md-code__content {
+  border: 1px solid var(--md-default-fg-color--lightest);
+  border-radius: .2rem;
+}
+
+[data-md-color-scheme="slate"] .md-typeset .md-code__content {
+  border: 1px solid var(--md-default-bg-color--lightest);
+  border-radius: .2rem;
 }
