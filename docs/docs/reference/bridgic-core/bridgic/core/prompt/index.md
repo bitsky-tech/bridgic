@@ -1,6 +1,6 @@
-# worker
+# prompt
 
-::: bridgic.core.intelligence.worker
+::: bridgic.core.prompt
     options:
       show_source: true
       show_root_heading: false

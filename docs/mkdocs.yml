@@ -13,20 +13,42 @@ nav:
     - Installation: home/installation.md
     - Quick Start: home/quick_start.md
     - Examples: home/examples.md
+  - Tutorials:
+    - Tutorials: tutorials/index.md
+    - Getting Started: tutorials/notebooks/getting_started.ipynb
+    - Model Usage: tutorials/notebooks/model_usage.ipynb
+    - Dual-Mode Worker Execution: tutorials/notebooks/dual_mode_worker_execution.ipynb
+    - Parameter Passing: tutorials/notebooks/parameter_passing.ipynb
+    - Dynamic Router: tutorials/notebooks/dynamic_router.ipynb
+    - Interaction Event: tutorials/notebooks/interaction_event.ipynb
+    - Nested Automa: tutorials/notebooks/nested_reuse.ipynb
+    # - Dynamic DAG: tutorials/dynamic_dag.ipynb
   - API Reference:
       - Bridgic-Core:
         - bridgic.core.agentic:
+          - Index: reference/bridgic-core/bridgic/core/agentic/index.md
+          - react: reference/bridgic-core/bridgic/core/agentic/react/index.md
+          - tool_specs: reference/bridgic-core/bridgic/core/agentic/tool_specs/index.md
+          - types: reference/bridgic-core/bridgic/core/agentic/types/index.md
+          - workers: reference/bridgic-core/bridgic/core/agentic/workers/index.md
           - agentic: reference/bridgic-core/bridgic/core/agentic/index.md
           - react: reference/bridgic-core/bridgic/core/agentic/react/index.md
           - tool: reference/bridgic-core/bridgic/core/agentic/tool/index.md
           - workers: reference/bridgic-core/bridgic/core/agentic/workers/index.md
         - bridgic.core.automa:
-          - automa: reference/bridgic-core/bridgic/core/automa/index.md
+          - Index: reference/bridgic-core/bridgic/core/automa/index.md
+          - args: reference/bridgic-core/bridgic/core/automa/args/index.md
           - interaction: reference/bridgic-core/bridgic/core/automa/interaction/index.md
           - worker: reference/bridgic-core/bridgic/core/automa/worker/index.md
+        - bridgic.core.model:
+          - Index: reference/bridgic-core/bridgic/core/model/index.md
+          - protocols: reference/bridgic-core/bridgic/core/model/protocols/index.md
+          - types: reference/bridgic-core/bridgic/core/model/types/index.md
         - bridgic.core.prompt:
-          - prompt: reference/bridgic-core/bridgic/core/prompt/utils/index.md
+          - Index: reference/bridgic-core/bridgic/core/prompt/index.md
           - utils: reference/bridgic-core/bridgic/core/prompt/utils/index.md
+        - bridgic.core.utils:
+          - Index: reference/bridgic-core/bridgic/core/utils/index.md
       - Bridgic-LLMs-Openai:
         - bridgic.llms.openai:
           - openai: reference/bridgic-llms-openai/bridgic/llms/openai/index.md
@@ -174,7 +196,7 @@ markdown_extensions:
   # Table of contents with link icons for easy sharing
   - toc:
       permalink: true
-      title: On this page
+      title: Outline
   # Python Markdown Extensions
   - pymdownx.arithmatex:
       generic: true
