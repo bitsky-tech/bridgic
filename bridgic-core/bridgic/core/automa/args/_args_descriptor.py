@@ -27,7 +27,52 @@ class ArgsDescriptor:
 @dataclass
 class From(ArgsDescriptor):
     """
-    worker dependency data from other workers.
+    Implementing dependency injection for worker parameters with default value.
+
+    When a worker needs the output of another worker but does not directly depend on 
+    it in execution, you can use From to declare a dependency injection parameter in 
+    its arguments.
+
+    Attributes
+    ----------
+    key : str
+        The key of the worker to inject data from.
+    default : Optional[Any]
+        The default value of the parameter.
+
+    Examples
+    --------
+    ```python
+    class MyAutoma(GraphAutoma):
+        @worker(is_start=True)
+        def worker_0(self, user_input: int) -> int:
+            return user_input + 1
+        
+        @worker(dependencies=["worker_0"])
+        def worker_1(self, worker_0_output: int) -> int:
+            return worker_0_output + 1
+        
+        @worker(dependencies=["worker_1"], is_output=True)
+        def worker_2(self, worker_1_output: int, worker_0_output: int = From("worker_0", 1)) -> int:
+            # needs the output of worker_0 but does not directly depend on it in execution
+            print(f'worker_0_output: {worker_0_output}')
+            return worker_1_output + 1
+    ```
+
+    Returns
+    -------
+    Any
+        The output of the worker specified by the key.
+
+    Raises
+    ------
+    WorkerArgsInjectionError
+        If the worker specified by the key does not exist and no default value is set.
+
+    Note:
+    ------
+    1. Can set a default value for a From declaration, which will be returned when the specified worker does not exist.
+    2. Will raise `WorkerArgsInjectionError` if the worker specified by the key does not exist and no default value is set.
     """
     key: str
     default: Optional[Any] = InjectorNone()
@@ -44,7 +89,84 @@ def resolve_from(dep: From, worker_output: Dict[str, Any]) -> Any:
 @dataclass
 class System(ArgsDescriptor):
     """
-    worker dependency data from the automa with pattern matching support.
+    Implementing system-level dependency injection for worker parameters.
+
+    System provides access to automa-level resources and context through dependency 
+    injection. It supports pattern matching for different types of system resources.
+
+    Attributes
+    ----------
+    key : str
+        The system resource key to inject. Supported keys:
+        - "runtime_context": Runtime context for data persistence across worker executions.
+        - "automa": Current automa instance.
+        - "automa:worker_key": Sub-automa instance in current automa.
+
+    Examples
+    --------
+    ```python
+    def worker_1(x: int, current_automa = System("automa")) -> int:
+        # Access current automa instance
+        current_automa.add_worker(
+            key="sub_automa",
+            worker=SubAutoma(),
+            dependencies=["worker_1"]
+        )
+        return x + 1
+
+    class SubAutoma(GraphAutoma):
+        @worker(is_start=True)
+        def worker_0(self, user_input: int) -> int:
+            return user_input + 1
+
+    class MyAutoma(GraphAutoma):
+        @worker(is_start=True)
+        def worker_0(self, user_input: int, rtx = System("runtime_context")) -> int:
+            # Access runtime context for data persistence
+            local_space = self.get_local_space(rtx)
+            count = local_space.get("count", 0)
+            local_space["count"] = count + 1
+
+            self.add_func_as_worker(
+                key="worker_1",
+                func=worker_1,
+                dependencies=["worker_0"]
+            )
+
+            return user_input + count
+            
+        @worker(dependencies=["worker_1"])
+        def worker_2(self, worker_1_output: int, sub_automa = System("automa:sub_automa")) -> int:
+            # Access sub-automa from worker_1
+            sub_automa.add_worker(
+                key="worker_3",
+                worker=SubAutoma(),
+                dependencies=["worker_2"],
+                is_output=True,
+            )
+            return worker_1_output + 1
+    ```
+
+    Returns
+    -------
+    Any
+        The system resource specified by the key:
+        - RuntimeContext: For "runtime_context"
+        - AutomaInstance: For current automa instance or a sub-automa instance from the current automa.
+
+    Raises
+    ------
+    WorkerArgsInjectionError
+        - If the key pattern is not supported.
+        - If the specified resource does not exist.
+        - If the specified resource is not an Automa.
+
+    Note
+    ----
+    1. "runtime_context" provides a RuntimeContext instance for data persistence
+    2. "automa" provides access to the current automa instance
+    3. "automa:worker_key" provides access to a sub-automa from the specified worker
+    4. All keys are validated against allowed patterns during initialization
     """
     key: str
     

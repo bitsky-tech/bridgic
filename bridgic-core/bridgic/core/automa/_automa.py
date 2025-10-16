@@ -12,7 +12,7 @@ from concurrent.futures import ThreadPoolExecutor
 from bridgic.core.automa.worker import Worker
 from bridgic.core.automa.interaction import Event, FeedbackSender, EventHandlerType, InteractionFeedback, Feedback, Interaction, InteractionException
 from bridgic.core.automa.args import RuntimeContext
-from bridgic.core.utils import msgpackx
+from bridgic.core.utils._msgpackx import load_bytes
 from bridgic.core.utils._inspect_tools import get_param_names_by_kind
 from bridgic.core.types._error import AutomaRuntimeError
 
@@ -103,7 +103,7 @@ class Automa(Worker):
         thread_pool: Optional[ThreadPoolExecutor] = None,
     ) -> "Automa":
         # Here you can compare snapshot.serialization_version with SERIALIZATION_VERSION, and handle any necessary version compatibility issues if needed.
-        automa = msgpackx.load_bytes(snapshot.serialized_bytes)
+        automa = load_bytes(snapshot.serialized_bytes)
         if thread_pool:
             automa.thread_pool = thread_pool
         return automa

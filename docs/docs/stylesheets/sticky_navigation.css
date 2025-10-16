@@ -1,5 +1,3 @@
-/* Keep expanded section headers in the left navigation sticky for better context.
-   Ported from langgraph-docs. */
 @media screen and (min-width: 76.25em) {
   .md-nav__toggle ~ .md-nav > .md-nav__list {
     overflow: clip;
