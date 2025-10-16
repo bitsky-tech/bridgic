@@ -30,13 +30,13 @@ class DocumentationConfig:
         self._set_defaults()
         
         # Load configuration file if provided
-        if config_file:
-            self.load_from_file(config_file)
+        config_file = Path(config_file) if config_file else Path(__file__).parent / "doc_config.yaml"
+
+        if config_file.exists():
+            self.load_from_file(str(config_file))
         else:
-            # Try to load default configuration file
-            default_config = Path(__file__).parent / "doc_config.yaml"
-            if default_config.exists():
-                self.load_from_file(str(default_config))
+            logger.error(f"Configuration file does not exist: {config_file}")
+            raise FileNotFoundError(f"Configuration file does not exist: {config_file}")
     
     def _set_defaults(self):
         """Set default configuration values"""
@@ -96,12 +96,7 @@ class DocumentationConfig:
     def load_from_file(self, config_file: str):
         """Load configuration from YAML configuration file"""
         try:
-            config_path = Path(config_file)
-            if not config_path.exists():
-                logger.warning(f"Configuration file does not exist: {config_file}")
-                return
-                
-            with open(config_path, 'r', encoding='utf-8') as f:
+            with open(config_file, 'r', encoding='utf-8') as f:
                 config_data = yaml.safe_load(f)
             
             # Update exclusion patterns
@@ -172,17 +167,52 @@ class SafeMkDocsConfigUpdater:
         self.mkdocs_path = mkdocs_path
     
     def update_mkdocs_config(self, nav_structure: Dict[str, Any]) -> bool:
-        """Safely update the API Reference section of mkdocs.yml, protecting other configurations"""
+        """Generate mkdocs.yml from template with API Reference content"""
         try:
-            if not self.mkdocs_path.exists():
-                logger.error(f"MkDocs configuration file does not exist: {self.mkdocs_path}")
+            template_path = self.mkdocs_path.parent / "scripts" / "mkdocs_template.yml"
+            
+            if not template_path.exists():
+                logger.error(f"Template file does not exist: {template_path}")
                 return False
             
+            # Read template file content
+            with open(template_path, 'r', encoding='utf-8') as f:
+                template_content = f.read()
+            
+            logger.debug("Starting template-based MkDocs configuration generation...")
+            
+            # Check if template placeholder exists
+            if "{{API_REFERENCE_CONTENT}}" not in template_content:
+                logger.error("Template placeholder {{API_REFERENCE_CONTENT}} not found in template")
+                return False
+            
+            # Generate API Reference content
+            api_reference_content = self._generate_api_reference_content(nav_structure)
+            
+            # Replace template placeholder with generated content
+            final_content = template_content.replace("{{API_REFERENCE_CONTENT}}", api_reference_content)
+            
+            # Write to mkdocs.yml
+            with open(self.mkdocs_path, 'w', encoding='utf-8') as f:
+                f.write(final_content)
+            
+            logger.info("Successfully generated MkDocs configuration file from template")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to generate MkDocs configuration file from template: {e}")
+            import traceback
+            logger.debug(f"Detailed error information: {traceback.format_exc()}")
+            return False
+    
+    def _update_mkdocs_config_legacy(self, nav_structure: Dict[str, Any]) -> bool:
+        """Legacy method for updating MkDocs configuration (fallback)"""
+        try:
             # Read original file content
             with open(self.mkdocs_path, 'r', encoding='utf-8') as f:
                 original_content = f.read()
             
-            logger.debug("Starting safe MkDocs configuration update...")
+            logger.debug("Starting legacy MkDocs configuration update...")
             
             # 1. Staging: Use regex to separate nav section from other configurations
             # Find the position of nav:
@@ -225,11 +255,11 @@ class SafeMkDocsConfigUpdater:
             with open(self.mkdocs_path, 'w', encoding='utf-8') as f:
                 f.write(final_content)
             
-            logger.info("Successfully updated MkDocs configuration file, preserving all other configurations")
+            logger.info("Successfully updated MkDocs configuration file using legacy method")
             return True
             
         except Exception as e:
-            logger.error(f"Failed to update MkDocs configuration file: {e}")
+            logger.error(f"Failed to update MkDocs configuration file using legacy method: {e}")
             import traceback
             logger.debug(f"Detailed error information: {traceback.format_exc()}")
             return False
@@ -333,16 +363,56 @@ class SafeMkDocsConfigUpdater:
             if isinstance(item, dict):
                 for key, value in item.items():
                     if isinstance(value, list):
-                        lines.append(f"{base_indent}    - {key}:")
+                        lines.append(f"{base_indent}- {key}:")
                         sub_yaml = self._nav_to_yaml_string(value, indent + 2)
                         if sub_yaml:
-                            lines.append(sub_yaml)
+                            # Split sub_yaml into lines and add them
+                            sub_lines = sub_yaml.split('\n')
+                            for sub_line in sub_lines:
+                                if sub_line.strip():  # Skip empty lines
+                                    lines.append(sub_line)
                     else:
-                        lines.append(f"{base_indent}    - {key}: {value}")
+                        lines.append(f"{base_indent}- {key}: {value}")
             else:
-                lines.append(f"{base_indent}    - {item}")
+                lines.append(f"{base_indent}- {item}")
         
         return "\n".join(lines)
+    
+    def _generate_api_reference_content(self, nav_structure: Dict[str, Any]) -> str:
+        """Generate API Reference content from navigation structure"""
+        try:
+            api_nav = self._build_api_reference_nav(nav_structure)
+            # Manually build YAML string with correct indentation (6 spaces to match template)
+            lines = []
+            for item in api_nav:
+                if isinstance(item, dict):
+                    for key, value in item.items():
+                        lines.append(f"      - {key}:")
+                        if isinstance(value, list):
+                            for sub_item in value:
+                                if isinstance(sub_item, dict):
+                                    for sub_key, sub_value in sub_item.items():
+                                        lines.append(f"        - {sub_key}:")
+                                        if isinstance(sub_value, list):
+                                            for sub_sub_item in sub_value:
+                                                if isinstance(sub_sub_item, dict):
+                                                    for sub_sub_key, sub_sub_value in sub_sub_item.items():
+                                                        lines.append(f"          - {sub_sub_key}: {sub_sub_value}")
+                                                else:
+                                                    lines.append(f"          - {sub_sub_item}")
+                                        else:
+                                            lines.append(f"          - {sub_key}: {sub_value}")
+                                else:
+                                    lines.append(f"        - {sub_item}")
+                        else:
+                            lines.append(f"        - {key}: {value}")
+                else:
+                    lines.append(f"      - {item}")
+            return '\n'.join(lines)
+            
+        except Exception as e:
+            logger.error(f"Failed to generate API Reference content: {e}")
+            return ""
 
 class DocumentationGenerator:
     """Main documentation generator class"""
@@ -412,13 +482,25 @@ class DocumentationGenerator:
         """Generate module identifier"""
         return ".".join(parts)
     
-    def process_init_module(self, parts: List[str], doc_path: Path, full_doc_path: Path) -> Tuple[List[str], Path, Path]:
-        """Process __init__.py module"""
+    def process_init_module(self, parts: List[str], doc_path: Path, full_doc_path: Path, source_path: Path) -> Tuple[List[str], Path, Path, bool]:
+        """Process __init__.py module and check if it has __all__ defined"""
+        has_all = False
+        
+        # Check if __init__.py has __all__ defined
+        try:
+            _, exports = self._parse_init_doc_and_all(source_path)
+            has_all = len(exports) > 0
+            if self.config.verbose and has_all:
+                logger.debug(f"Found __all__ in {source_path}: {exports}")
+        except Exception as e:
+            if self.config.verbose:
+                logger.debug(f"Failed to parse __all__ from {source_path}: {e}")
+        
         if len(parts) > 1:
             parts = parts[:-1]
             doc_path = doc_path.with_name("index.md")
             full_doc_path = full_doc_path.with_name("index.md")
-        return parts, doc_path, full_doc_path
+        return parts, doc_path, full_doc_path, has_all
     
     def _parse_init_doc_and_all(self, source_path: Path) -> Tuple[Optional[str], List[str]]:
         """Parse __init__.py for module docstring and __all__ list using AST."""
@@ -568,8 +650,13 @@ class DocumentationGenerator:
                 parts = list(module_path.parts)
 
                 if parts[-1] == "__init__":
-                    parts, doc_path, full_doc_path = self.process_init_module(parts, doc_path, full_doc_path)
+                    parts, doc_path, full_doc_path, has_all = self.process_init_module(parts, doc_path, full_doc_path, path)
                     if not parts:
+                        continue
+                    # Only process __init__.py files that have __all__ defined
+                    if not has_all:
+                        if self.config.verbose:
+                            logger.debug(f"Skipping {path} - no __all__ defined")
                         continue
                 elif parts[-1] == "__main__":
                     continue
@@ -589,8 +676,8 @@ class DocumentationGenerator:
                 if self.create_documentation_file(full_doc_path, identifier, path, package_path):
                     self.generated_files.append(full_doc_path)
                     
-                    # Record package node only for index pages generated from __init__.py
-                    if source_is_init := (path.name == '__init__.py'):
+                    # Record package node only for index pages generated from __init__.py with __all__
+                    if source_is_init := (path.name == '__init__.py' and has_all):
                         self.package_nodes[package_name][tuple(parts)] = f"{self.config.docs_base_path}/{package_name}/{doc_path.as_posix()}"
                     
             except Exception as e:
@@ -623,7 +710,9 @@ class DocumentationGenerator:
 
                     # Ensure Index first
                     group_items: List[Any] = []
-                    group_items.append({'Index': data['Index']})
+                    # Use the module name (last segment) as the label instead of a generic "Index"
+                    group_label = first3[-1]
+                    group_items.append({group_label: data['Index']})
 
                     # Build children under this group
                     child_index_map: Dict[Tuple[str, ...], str] = {}
@@ -642,7 +731,145 @@ class DocumentationGenerator:
                             group_items.append({child_name: child_path})
                         else:
                             # Create collapsible child with its own Index and its immediate children (5th level)
-                            child_items: List[Any] = [ {'Index': child_path} ]
+                            # Label the child's index with the child module name instead of "Index"
+                            child_items: List[Any] = [ {child_name: child_path} ]
+                            grand_children = [p for p in nodes.keys() if (len(p) == 5 and list(p[:4]) == list(child_parts))]
+                            for gc_parts in sorted(grand_children):
+                                gc_name = gc_parts[-1]
+                                gc_path = nodes[gc_parts]
+                                child_items.append({gc_name: gc_path})
+                            group_items.append({child_name: child_items})
+
+                    # If there are no children besides Index, render as a single link instead of a collapsible group
+                    if len(group_items) == 1:
+                        if self.config.single_entry_as_group:
+                            self.nav_structure[package_name][display_key] = group_items
+                        else:
+                            self.nav_structure[package_name][display_key] = data['Index']
+                    else:
+                        self.nav_structure[package_name][display_key] = group_items
+        except Exception as e:
+            logger.error(f"Failed to build nav structure for package {package_name}: {e}")
+    
+    def _build_nav_structure_only(self, package_path: str) -> None:
+        """Build navigation structure without generating documentation files"""
+        code_src = self.root / package_path
+        
+        if not code_src.exists():
+            logger.warning(f"Package path does not exist: {code_src}")
+            return
+            
+        if not code_src.is_dir():
+            logger.warning(f"Package path is not a directory: {code_src}")
+            return
+            
+        logger.info(f"Building navigation structure for package: {code_src}")
+        
+        python_files = []
+        try:
+            python_files = sorted([p for p in code_src.rglob("*.py") if self.is_valid_python_module(p)])
+        except Exception as e:
+            logger.error(f"Failed to scan package files {code_src}: {e}")
+            return
+            
+        logger.info(f"Found {len(python_files)} Python files")
+        
+        # Track package nodes (directories with __init__.py)
+        package_name = self.config.get_package_display_name(package_path)
+        if package_name not in self.package_nodes:
+            self.package_nodes[package_name] = {}
+
+        for path in python_files:
+            try:
+                if self.should_exclude_path(path):
+                    self.skipped_files.append(path)
+                    if self.config.verbose:
+                        logger.debug(f"Skipped file: {path}")
+                    continue
+                
+                try:
+                    module_path = path.relative_to(code_src).with_suffix("")
+                except ValueError as e:
+                    logger.error(f"Failed to calculate relative path {path}: {e}")
+                    continue
+                    
+                doc_path = module_path.with_suffix(".md")
+                full_doc_path = Path(self.config.docs_base_path) / package_name / doc_path
+
+                parts = list(module_path.parts)
+
+                if parts[-1] == "__init__":
+                    parts, doc_path, full_doc_path, has_all = self.process_init_module(parts, doc_path, full_doc_path, path)
+                    if not parts:
+                        continue
+                    # Only process __init__.py files that have __all__ defined
+                    if not has_all:
+                        if self.config.verbose:
+                            logger.debug(f"Skipping {path} - no __all__ defined")
+                        continue
+                elif parts[-1] == "__main__":
+                    continue
+                elif self.config.only_index_pages:
+                    # Skip non-__init__.py modules entirely when only generating index pages
+                    continue
+                
+                # Record package node only for index pages generated from __init__.py with __all__
+                if source_is_init := (path.name == '__init__.py' and has_all):
+                    self.package_nodes[package_name][tuple(parts)] = f"{self.config.docs_base_path}/{package_name}/{doc_path.as_posix()}"
+                    
+            except Exception as e:
+                logger.error(f"Failed to process file {path}: {e}")
+                self.error_files.append((path, str(e)))
+                continue
+
+        # Build navigation structure for this package based on collected package nodes
+        try:
+            if self.package_nodes.get(package_name):
+                if package_name not in self.nav_structure:
+                    self.nav_structure[package_name] = {}
+
+                nodes = self.package_nodes[package_name]
+                # Group by first three parts (e.g., bridgic.core.automa)
+                groups: Dict[Tuple[str, ...], Dict[str, Any]] = {}
+                for parts_tuple, index_path in nodes.items():
+                    if len(parts_tuple) >= 3:
+                        key = parts_tuple[:3]
+                        if key not in groups:
+                            groups[key] = { 'Index': index_path, '__children__': {} }
+                        # Track children mapping for later
+                        groups[key]['__children__'][parts_tuple] = index_path
+
+                # For each group, add immediate children (len == 4) as links; if deeper, nest under that child
+                for first3, data in groups.items():
+                    display_key = '.'.join(first3)
+                    if display_key not in self.nav_structure[package_name]:
+                        self.nav_structure[package_name][display_key] = []
+
+                    # Ensure Index first
+                    group_items: List[Any] = []
+                    # Use the module name (last segment) as the label instead of a generic "Index"
+                    group_label = first3[-1]
+                    group_items.append({group_label: data['Index']})
+
+                    # Build children under this group
+                    child_index_map: Dict[Tuple[str, ...], str] = {}
+                    for parts_tuple, index_path in nodes.items():
+                        if len(parts_tuple) == 4 and parts_tuple[:3] == first3:
+                            child_index_map[parts_tuple] = index_path
+
+                    # Sort children by name
+                    for child_parts in sorted(child_index_map.keys()):
+                        child_name = child_parts[-1]
+                        child_path = child_index_map[child_parts]
+
+                        # Detect if this child has deeper subpackages
+                        has_deeper = any((len(p) > 4 and list(p[:4]) == list(child_parts)) for p in nodes.keys())
+                        if not has_deeper:
+                            group_items.append({child_name: child_path})
+                        else:
+                            # Create collapsible child with its own Index and its immediate children (5th level)
+                            # Label the child's index with the child module name instead of "Index"
+                            child_items: List[Any] = [ {child_name: child_path} ]
                             grand_children = [p for p in nodes.keys() if (len(p) == 5 and list(p[:4]) == list(child_parts))]
                             for gc_parts in sorted(grand_children):
                                 gc_name = gc_parts[-1]
@@ -719,12 +946,20 @@ class DocumentationGenerator:
         # Clean reference directory before generating new documentation
         self.clean_reference_directory()
         
+        # First pass: build navigation structure without generating files
+        for package_path in self.config.packages:
+            self._build_nav_structure_only(package_path)
+        
+        # Generate the final mkdocs.yml from template
+        if self.nav_structure:
+            self.update_mkdocs_config()
+        
+        # Second pass: generate documentation files
         for package_path in self.config.packages:
             self.process_package(package_path)
             # self.generate_package_index(package_path)
         
         # self.generate_summary()
-        self.update_mkdocs_config()
         self.print_statistics()
         
         logger.info("Documentation generation completed!")
