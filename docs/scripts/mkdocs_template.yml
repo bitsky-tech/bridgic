@@ -13,7 +13,7 @@ nav:
     - Quick Start: home/quick_start.md
     - Examples: home/examples.md
   - Getting Started:
-    - Install: home/installation.md
+    - Install: tutorials/install.md
     - Tutorials: 
       - Tutorials: tutorials/index.md
       - Quick Start: tutorials/notebooks/getting_started.ipynb
