@@ -658,3 +658,24 @@
   border: 1px solid var(--md-default-bg-color--lightest);
   border-radius: .2rem;
 }
+
+.md-typeset .highlighttable>tbody>tr>.code>div>pre>code {
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+}
+
+.highlighttable .linenodiv {
+  box-shadow: none;
+}
+
+.js .md-typeset .tabbed-labels:before {
+  border-radius: .2rem;
+}
+
+.md-typeset .tabbed-block>.highlight:first-child>.highlighttable>tbody>tr>.filename span.filename, .md-typeset .tabbed-block>.highlight:first-child>.highlighttable>tbody>tr>.linenos {
+  border-top-left-radius: .2rem;
+}
+
+.highlighttable .linenos {
+  border-bottom-left-radius: .2rem;
+}

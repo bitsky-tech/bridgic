@@ -6,7 +6,6 @@ repo_name: bitsky-tech/bridgic
 edit_uri: edit/main/docs/docs/
 
 nav:
-
   - Home: index.md
   - Introduction:
     - Concepts: home/concepts.md
@@ -61,8 +60,8 @@ theme:
     - content.code.annotate
     - content.tabs.link
     - content.tooltips
-    - content.action.edit
-    - content.action.view
+    # - content.action.edit
+    # - content.action.view
   palette:
     # Automatic mode
     - media: "(prefers-color-scheme)"
@@ -99,14 +98,14 @@ plugins:
       separator: '[\s\-,:!=\[\]()"`/]+|\.(?!\d)|&[lg]t;|(?!\b)(?=[A-Z][a-z])'
   - autorefs
   # Minify keeps output small and snappy.
-  - git-revision-date-localized:
-      enable_creation_date: true
-      type: timeago
-      fallback_to_build_date: true
-  - git-committers:
-      repository: bitsky-tech/bridgic
-      branch: main
-      enabled: !ENV [ENABLE_GIT_COMMITTERS, false]
+  # - git-revision-date-localized:
+  #     enable_creation_date: true
+  #     type: timeago
+  #     fallback_to_build_date: true
+  # - git-committers:
+  #     repository: bitsky-tech/bridgic
+  #     branch: main
+  #     enabled: !ENV [ENABLE_GIT_COMMITTERS, false]
   - minify:
       minify_html: true
       minify_js: true

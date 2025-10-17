@@ -22,6 +22,8 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+LLM_OVERVIEW_PATH = "extras/llms/index.md"
+
 class DocumentationConfig:
     """Documentation generation configuration class"""
     
@@ -381,33 +383,59 @@ class SafeMkDocsConfigUpdater:
     def _generate_api_reference_content(self, nav_structure: Dict[str, Any]) -> str:
         """Generate API Reference content from navigation structure"""
         try:
-            api_nav = self._build_api_reference_nav(nav_structure)
-            # Manually build YAML string with correct indentation (6 spaces to match template)
-            lines = []
-            for item in api_nav:
-                if isinstance(item, dict):
+            # Build custom layout:
+            # - Bridgic-Core: keep existing structure
+            # - Bridgic-Integration:
+            #     - llms:
+            #         - bridgic.llms.openai: <path>
+            #         - bridgic.llms.openai_like: <path>
+            #         - bridgic.llms.vllm: <path>
+
+            lines: List[str] = []
+
+            # 1) Bridgic-Core (keep as-is if present)
+            core_key_candidates = [k for k in nav_structure.keys() if k.lower() == 'bridgic-core']
+            if core_key_candidates:
+                core_key = core_key_candidates[0]
+                core_nav = self._build_api_reference_nav({core_key: nav_structure[core_key]})
+                for item in core_nav:
                     for key, value in item.items():
-                        lines.append(f"      - {key}:")
+                        # 4 spaces under "- API Reference:"
+                        lines.append(f"    - {self._format_display_name(key)}:")
                         if isinstance(value, list):
-                            for sub_item in value:
-                                if isinstance(sub_item, dict):
-                                    for sub_key, sub_value in sub_item.items():
-                                        lines.append(f"        - {sub_key}:")
-                                        if isinstance(sub_value, list):
-                                            for sub_sub_item in sub_value:
-                                                if isinstance(sub_sub_item, dict):
-                                                    for sub_sub_key, sub_sub_value in sub_sub_item.items():
-                                                        lines.append(f"          - {sub_sub_key}: {sub_sub_value}")
-                                                else:
-                                                    lines.append(f"          - {sub_sub_item}")
-                                        else:
-                                            lines.append(f"          - {sub_key}: {sub_value}")
-                                else:
-                                    lines.append(f"        - {sub_item}")
-                        else:
-                            lines.append(f"        - {key}: {value}")
-                else:
-                    lines.append(f"      - {item}")
+                            # Children start at 6 spaces
+                            sub_yaml = self._nav_to_yaml_string(value, indent=6)
+                            if sub_yaml:
+                                for sub_line in sub_yaml.split('\n'):
+                                    if sub_line.strip():
+                                        lines.append(sub_line)
+
+            # 2) Bridgic-Integration > llms
+            # Derive entries from known integration packages present in nav_structure
+            integration_entries: List[Tuple[str, str]] = []
+            # Map of package name prefix to dotted module suffix
+            # We look for packages that start with 'bridgic-llms-'
+            for pkg_name in nav_structure.keys():
+                if pkg_name.startswith('bridgic-llms-'):
+                    # suffix like 'openai', 'openai-like', 'vllm' -> dotted module uses underscore
+                    suffix = pkg_name.replace('bridgic-llms-', '')
+                    dotted_suffix = suffix.replace('-', '_')
+                    dotted = f"bridgic.llms.{dotted_suffix}"
+                    # Build expected index path
+                    index_path = f"reference/{pkg_name}/bridgic/llms/{dotted_suffix}/index.md"
+                    integration_entries.append((dotted, index_path))
+
+            if integration_entries:
+                # 4 spaces for first level under API Reference
+                lines.append("    - Bridgic-Integration:")
+                # 6 spaces for second level
+                lines.append("      - llms:")
+                # Insert overview as first entry to avoid promotion of first LLM package
+                lines.append(f"        - llms: {LLM_OVERVIEW_PATH}")
+                # 8 spaces for entries
+                for dotted, path in integration_entries:
+                    lines.append(f"        - {dotted}: {path}")
+
             return '\n'.join(lines)
             
         except Exception as e:
@@ -953,6 +981,18 @@ class DocumentationGenerator:
         # Generate the final mkdocs.yml from template
         if self.nav_structure:
             self.update_mkdocs_config()
+        
+        # # Ensure llms overview exists for nav index separation
+        # try:
+        #     overview_rel = Path(LLM_OVERVIEW_PATH)
+        #     overview_abs = self.docs_dir / overview_rel
+        #     if not overview_abs.exists():
+        #         overview_abs.parent.mkdir(parents=True, exist_ok=True)
+        #         with open(overview_abs, 'w', encoding='utf-8') as f:
+        #             f.write("# LLM Integrations\n\nThis section provides an overview of available LLM backends.\n\n- bridgic.llms.openai\n- bridgic.llms.openai_like\n- bridgic.llms.vllm\n")
+        #         logger.info(f"Created llms overview page: {overview_abs}")
+        # except Exception as e:
+        #     logger.warning(f"Failed to create llms overview page: {e}")
         
         # Second pass: generate documentation files
         for package_path in self.config.packages:
