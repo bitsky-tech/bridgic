@@ -75,6 +75,7 @@ class DocumentationConfig:
         # Generation options
         self.verbose = True
         self.skip_empty_modules = True
+        # mkdocstrings rendering options should be governed by mkdocs_template.yml only
         self.show_source = True
         self.show_root_heading = True
         self.show_root_toc_entry = True
@@ -85,15 +86,8 @@ class DocumentationConfig:
         self.single_entry_as_group = True
         self.docstring_style = "numpy"
         
-        # mkdocstrings options
-        self.mkdocstrings_options = {
-            "docstring_options": {"ignore_init_summary": True},
-            "filters": ["!^_", "!^__init__"],
-            "members_order": "source",
-            "merge_init_into_class": False,
-            "separate_signature": True,
-            "signature_crossrefs": True
-        }
+        # mkdocstrings options centralized in mkdocs_template.yml; keep minimal defaults here if needed
+        self.mkdocstrings_options = {}
     
     def load_from_file(self, config_file: str):
         """Load configuration from YAML configuration file"""
@@ -140,9 +134,7 @@ class DocumentationConfig:
                 self.only_index_pages = gen_opts.get('only_index_pages', self.only_index_pages)
                 self.single_entry_as_group = gen_opts.get('single_entry_as_group', self.single_entry_as_group)
             
-            # Update mkdocstrings options
-            if 'mkdocstrings_options' in config_data:
-                self.mkdocstrings_options.update(config_data['mkdocstrings_options'])
+            # mkdocstrings_options now governed by mkdocs_template.yml; ignore here
                     
             logger.info(f"Loaded settings from configuration file: {config_file}")
                     
@@ -570,53 +562,12 @@ class DocumentationGenerator:
                     #     fd.write("\n")
                     # Also include mkdocstrings block for the package itself
                     fd.write(f"::: {identifier}\n")
-                    fd.write("    options:\n")
-                    fd.write(f"      show_source: {str(self.config.show_source).lower()}\n")
-                    fd.write(f"      show_root_heading: {str(self.config.show_root_heading).lower()}\n")
-                    fd.write(f"      show_root_toc_entry: {str(self.config.show_root_toc_entry).lower()}\n")
-                    if self.config.mkdocstrings_options:
-                        for key, value in self.config.mkdocstrings_options.items():
-                            if key == "docstring_options" and isinstance(value, dict):
-                                fd.write(f"      {key}:\n")
-                                for sub_key, sub_value in value.items():
-                                    fd.write(f"        {sub_key}: {str(sub_value).lower()}\n")
-                            elif key == "filters" and isinstance(value, list):
-                                fd.write(f"      {key}:\n")
-                                for filter_item in value:
-                                    fd.write(f"        - \"{filter_item}\"\n")
-                            elif isinstance(value, bool):
-                                fd.write(f"      {key}: {str(value).lower()}\n")
-                            elif isinstance(value, str):
-                                fd.write(f"      {key}: \"{value}\"\n")
-                            else:
-                                fd.write(f"      {key}: {value}\n")
                 else:
                     if package_path:
                         description = self.config.get_package_description(package_path)
                         if description:
                             fd.write(f"> {description}\n\n")
                     fd.write(f"::: {identifier}\n")
-                    fd.write("    options:\n")
-                    fd.write(f"      show_source: {str(self.config.show_source).lower()}\n")
-                    fd.write(f"      show_root_heading: {str(self.config.show_root_heading).lower()}\n")
-                    fd.write(f"      show_root_toc_entry: {str(self.config.show_root_toc_entry).lower()}\n")
-                    
-                    if self.config.mkdocstrings_options:
-                        for key, value in self.config.mkdocstrings_options.items():
-                            if key == "docstring_options" and isinstance(value, dict):
-                                fd.write(f"      {key}:\n")
-                                for sub_key, sub_value in value.items():
-                                    fd.write(f"        {sub_key}: {str(sub_value).lower()}\n")
-                            elif key == "filters" and isinstance(value, list):
-                                fd.write(f"      {key}:\n")
-                                for filter_item in value:
-                                    fd.write(f"        - \"{filter_item}\"\n")
-                            elif isinstance(value, bool):
-                                fd.write(f"      {key}: {str(value).lower()}\n")
-                            elif isinstance(value, str):
-                                fd.write(f"      {key}: \"{value}\"\n")
-                            else:
-                                fd.write(f"      {key}: {value}\n")
                 
             mkdocs_gen_files.set_edit_path(full_doc_path, source_path.relative_to(self.root))
             
