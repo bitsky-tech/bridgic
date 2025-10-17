@@ -878,7 +878,7 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
         # Find all connected components of the whole automa graph.
         self._find_connected_components()
 
-    def ferry_to(self, worker_key: str, /, *args, **kwargs):
+    def ferry_to(self, key: str, /, *args, **kwargs):
         """
         Defer the invocation to the specified worker, passing any provided arguments. This creates a 
         delayed call, ensuring the worker will be scheduled to run asynchronously in the next event loop, 
@@ -891,7 +891,7 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
 
         Parameters
         ----------
-        worker_key : str
+        key : str
             The key of the worker to run.
         args : optional
             Positional arguments to be passed.
@@ -929,7 +929,7 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
         # if debug is enabled, trace back the kickoff worker key from stacktrace.
         kickoff_worker_key: str = self._trace_back_kickoff_worker_key_from_stack() if running_options.debug else None
         deferred_task = _FerryDeferredTask(
-            ferry_to_worker_key=worker_key,
+            ferry_to_worker_key=key,
             kickoff_worker_key=kickoff_worker_key,
             args=args,
             kwargs=kwargs,

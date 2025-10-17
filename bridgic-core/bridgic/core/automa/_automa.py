@@ -32,12 +32,23 @@ class _InteractionEventException(Exception):
 
 class Snapshot(BaseModel):
     """
-    Snapshot is a class that represents the current state of an Automa.
+    A snapshot that represents the current state of an Automa. It is used when an Automa resumes after a human interaction.
     """
     serialized_bytes: bytes
+    """
+    The serialized bytes that represents the snapshot of the Automa.
+    """
     serialization_version: str
+    """
+    The serialization version.
+    """
 
 class Automa(Worker):
+    """
+    Base class for an Automa.
+
+    In Bridgic, an Automa is a entity that contains and orchestrates a set of workers. An Automa is a Worker itself, to support nesting between Automa instances.
+    """
     _running_options: RunningOptions
 
     # For event handling.
@@ -160,10 +171,9 @@ class Automa(Worker):
 
     def set_running_options(self, debug: bool = None):
         """
-        Set running options for this Automa instance, and ensure these options propagate through (penetrate) all nested 
-        Automa instances. For each option, if its value is None, the original value will be retained and not overwritten.
+        Set running options for this Automa instance, and ensure these options propagate through all nested Automa instances.
 
-        When an option is set multiple times across different nested Automa instances, the setting from the outermost 
+        When different options are set on different nested Automa instances, the setting from the outermost 
         (top-level) Automa will override the settings of all inner (nested) Automa instances.
 
         For example, if the top-level Automa instance sets `debug = True` and the nested instances sets `debug = False`, 
@@ -189,7 +199,7 @@ class Automa(Worker):
 
     def register_event_handler(self, event_type: Optional[str], event_handler: EventHandlerType) -> None:
         """
-        Register an event handler for the specified event type.
+        Register an event handler for the specified event type. If `event_type` is set to None, the event handler will be registered as the default handler that will handle all event types.
 
         Note: Only event handlers registered on the top-level Automa will be invoked to handle events.
 

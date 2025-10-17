@@ -145,14 +145,14 @@ class Worker(Serializable):
         self.__cached_param_names_of_arun = None
         self.__cached_param_names_of_run = None
         
-    def ferry_to(self, worker_key: str, /, *args, **kwargs):
+    def ferry_to(self, key: str, /, *args, **kwargs):
         """
         Handoff control flow to the specified worker, passing along any arguments as needed.
         The specified worker will always start to run asynchronously in the next event loop, regardless of its dependencies.
 
         Parameters
         ----------
-        worker_key : str
+        key : str
             The key of the worker to run.
         args : optional
             Positional arguments to be passed.
@@ -161,7 +161,7 @@ class Worker(Serializable):
         """
         if self.parent is None:
             raise WorkerRuntimeError(f"`ferry_to` method can only be called by a worker inside an Automa")
-        self.parent.ferry_to(worker_key, *args, **kwargs)
+        self.parent.ferry_to(key, *args, **kwargs)
 
     def post_event(self, event: Event) -> None:
         """

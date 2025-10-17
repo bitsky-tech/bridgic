@@ -1,5 +1,5 @@
 """
-This module contains the core automa classes and functions.
+This module contains the core Automa classes and functions.
 """
 
 from bridgic.core.automa._automa import Automa, Snapshot
