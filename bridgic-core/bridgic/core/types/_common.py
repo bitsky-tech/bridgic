@@ -1,7 +1,5 @@
 from typing_extensions import TypeAlias
 from enum import Enum
-from pathlib import Path
-from typing import Union
 
 ZeroToOne: TypeAlias = float
 
@@ -13,7 +11,7 @@ class AutomaType(Enum):
 
 class ArgsMappingRule(Enum):
     """
-    Enumeration of argument mapping rules for worker parameter passing.
+    Enumeration of Arguments Mapping rules for worker parameter passing.
 
     ArgsMappingRule defines how the return values from predecessor workers are mapped 
     to the parameters of the current worker. This controls the data flow between workers 
@@ -21,17 +19,17 @@ class ArgsMappingRule(Enum):
 
     Attributes
     ----------
-    AS_IS
+    AS_IS: Enum
         Preserves the exact order and types of return values from predecessor workers.
         No unpacking or merging is performed.
-    UNPACK
+    UNPACK: Enum
         Unpacks the return value from the predecessor worker and passes as individual 
         arguments. Only valid when the current worker has exactly one dependency and 
         the return value is a list/tuple or dict.
-    MERGE
+    MERGE: Enum
         Merges all return values from predecessor workers into a single tuple as the 
         only argument of the current worker.
-    SUPPRESSED
+    SUPPRESSED: Enum
         Suppresses all return values from predecessor workers. No arguments are passed 
         to the current worker from its dependencies.
 
