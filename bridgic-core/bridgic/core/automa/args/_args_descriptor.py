@@ -27,18 +27,18 @@ class ArgsDescriptor:
 @dataclass
 class From(ArgsDescriptor):
     """
-    Implementing dependency injection for worker parameters with default value.
+    Implementing arguments injection for worker parameters with default value.
 
     When a worker needs the output of another worker but does not directly depend on 
-    it in execution, you can use From to declare a dependency injection parameter in 
-    its arguments.
+    it in execution, you can use `From` to declare an arguments injection in 
+    its parameters.
 
     Attributes
     ----------
     key : str
-        The key of the worker to inject data from.
+        The key of the worker to inject arguments from.
     default : Optional[Any]
-        The default value of the parameter.
+        The default value of the arguments.
 
     Examples
     --------
@@ -71,7 +71,7 @@ class From(ArgsDescriptor):
 
     Note:
     ------
-    1. Can set a default value for a From declaration, which will be returned when the specified worker does not exist.
+    1. Can set a default value for a `From` declaration, which will be returned when the specified worker does not exist.
     2. Will raise `WorkerArgsInjectionError` if the worker specified by the key does not exist and no default value is set.
     """
     key: str
@@ -89,9 +89,9 @@ def resolve_from(dep: From, worker_output: Dict[str, Any]) -> Any:
 @dataclass
 class System(ArgsDescriptor):
     """
-    Implementing system-level dependency injection for worker parameters.
-
-    System provides access to automa-level resources and context through dependency 
+    Implementing system-level arguments injection for worker parameters.
+        
+    System provides access to automa-level resources and context through arguments 
     injection. It supports pattern matching for different types of system resources.
 
     Attributes
@@ -163,10 +163,9 @@ class System(ArgsDescriptor):
 
     Note
     ----
-    1. "runtime_context" provides a RuntimeContext instance for data persistence
+    1. "runtime_context" provides a `RuntimeContext` instance for data persistence
     2. "automa" provides access to the current automa instance
-    3. "automa:worker_key" provides access to a sub-automa from the specified worker
-    4. All keys are validated against allowed patterns during initialization
+    3. "automa:worker_key" provides access to a sub-automa from the specified worker key
     """
     key: str
     
