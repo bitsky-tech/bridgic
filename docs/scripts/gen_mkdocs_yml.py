@@ -561,6 +561,9 @@ class DocumentationGenerator:
                     #         fd.write(f"- `{name}`\n")
                     #     fd.write("\n")
                     # Also include mkdocstrings block for the package itself
+                    # For bridgic.core.automa specifically, include worker decorator before the package block
+                    if identifier == 'bridgic.core.automa':
+                        fd.write("::: bridgic.core.automa.worker._worker_decorator\n")
                     fd.write(f"::: {identifier}\n")
                 else:
                     if package_path:
