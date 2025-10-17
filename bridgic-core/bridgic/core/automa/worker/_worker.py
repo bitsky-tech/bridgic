@@ -1,15 +1,3 @@
-"""
-A worker is the basic building block of an Automa, responsible for executing tasks.
-
-[The Concurrency Model of Worker]
-
-A worker has two types of methods for running tasks:
-
-1. `arun()`: This method is used for running tasks asynchronously. It is driven by the event loop of the main thread.
-2. `run()`: This method is used for running tasks that are I/O-bound or CPU-bound. It is driven by the thread pool or the process pool (TODO:) of the Automa. More specifically, I/O-bound tasks are handled by the thread pool, while CPU-bound tasks are handled by the process pool.
-
-"""
-
 import copy
 import asyncio
 from typing import Any, Dict, List, TYPE_CHECKING, Optional, Tuple
@@ -26,6 +14,39 @@ if TYPE_CHECKING:
     from bridgic.core.automa._automa import Automa
 
 class Worker(Serializable):
+    """
+    This class is the base class for all workers.
+
+    `Worker` has two methods that may be overridden by the subclass:
+
+    1. `arun()`: This asynchronous method should be implemented when your worker 
+    does not require almost immediately scheduling after all its task dependencies 
+    are fulfilled, and when overall workflow is not sensitive to the fair sharing 
+    of CPU resources between workers. If workers can afford to retain and occupy 
+    execution resources for their entire execution duration, and there is no 
+    explicit need for fair CPU time-sharing or timely scheduling, you should 
+    implement `arun()` and allow workers to run to completion as cooperative tasks 
+    within the event loop.
+
+    2. `run()`: This synchronous method should be implemented when either of the 
+    following holds:
+    - a. The automa includes other workers that require timely access to CPU 
+    resources (for example, workers that must respond quickly or are sensitive 
+    to scheduling latency);
+    - b. The current worker itself should be scheduled as soon as all its task 
+    dependencies are met, to maintain overall workflow responsiveness. In these 
+    cases, `run()` enables the framework to offload your worker to a thread pool, 
+    ensuring that CPU time is shared fairly among all such workers and the event 
+    loop remains responsive.
+
+    In summary, if you are unsure whether your task require quickly scheduling or not, 
+    it is recommended to implement the `arun()` method. Otherwise, implement the 
+    `run()` **ONLY** if you are certain that you agree to share CPU time slices 
+    with other workers.
+    """
+
+    # TODO : Maybe process pool of the Automa is needed.
+
     __parent: "Automa"
     __local_space: Dict[str, Any]
     
@@ -34,12 +55,6 @@ class Worker(Serializable):
     __cached_param_names_of_run: Dict[_ParameterKind, List[Tuple[str, Any]]]
 
     def __init__(self):
-        """
-        Parameters
-        ----------
-        state_dict : Optional[Dict[str, Any]] (default = None)
-            A dictionary for initializing the worker's runtime state. This parameter is intended for internal framework use only, specifically for deserialization, and should not be used by developers.
-        """
         self.__parent = None
         self.__local_space = {}
 
@@ -145,14 +160,14 @@ class Worker(Serializable):
         self.__cached_param_names_of_arun = None
         self.__cached_param_names_of_run = None
         
-    def ferry_to(self, worker_key: str, /, *args, **kwargs):
+    def ferry_to(self, key: str, /, *args, **kwargs):
         """
         Handoff control flow to the specified worker, passing along any arguments as needed.
         The specified worker will always start to run asynchronously in the next event loop, regardless of its dependencies.
 
         Parameters
         ----------
-        worker_key : str
+        key : str
             The key of the worker to run.
         args : optional
             Positional arguments to be passed.
@@ -161,7 +176,7 @@ class Worker(Serializable):
         """
         if self.parent is None:
             raise WorkerRuntimeError(f"`ferry_to` method can only be called by a worker inside an Automa")
-        self.parent.ferry_to(worker_key, *args, **kwargs)
+        self.parent.ferry_to(key, *args, **kwargs)
 
     def post_event(self, event: Event) -> None:
         """

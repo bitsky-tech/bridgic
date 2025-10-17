@@ -4,7 +4,7 @@ Bridgic is a powerful Python package that supports multiple installation methods
 
 ## Basic Installation
 
-Requires Python 3.8 or higher
+Requires Python 3.9 or higher
 
 === "pip"
 

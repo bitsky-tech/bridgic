@@ -11,16 +11,21 @@ from bridgic.core.automa.interaction import InteractionFeedback
 
 class ConcurrentAutoma(GraphAutoma):
     """
-    A concurrent automa is a subclass of graph automa that execute multiple workers concurrently.
+    This class is to provide concurrent execution of multiple workers.
 
-    According to the `Concurrency Model of Worker`, each worker in the concurrent automa may choose to run in one of the two concurrency modes:
+    In accordance with the defined "Concurrency Model of Worker", each worker within 
+    a ConcurrentAutoma can be configured to operate in one of two concurrency modes:
 
-    1. `Async Mode`: Different workers run asynchronously and concurrently, driven by the event loop of the main thread.
-    2. `Parallelism Mode`: Different workers run synchronously in separate threads, driven by the thread pool of the concurrent automa.
+    1. **Async Mode**: Workers execute concurrently in an asynchronous fashion, driven 
+    by the event loop of the main thread. This execution mode corresponds to the `arun()` 
+    method of the Worker.
+    2. **Parallel Mode**: Workers execute synchronously, each running in a dedicated 
+    thread within a thread pool managed by the ConcurrentAutoma. This execution mode 
+    corresponds to the `run()` method of the Worker.
 
-    These two modes correspond to the `arun()` and `run()` methods of Worker, respectively.
-
-    When all the workers have finished running, the concurrent automa will merge their output results into a list and return it to the caller.    
+    Upon completion of all worker tasks, the concurrent automa instance aggregates 
+    the result outputs from each worker into a single list, which is then returned 
+    to the caller.
     """
 
     # Automa type.
