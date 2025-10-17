@@ -68,19 +68,6 @@ generation_options:
   # Docstring style (numpy, google, sphinx)
   docstring_style: "numpy"
 
-# mkdocstrings configuration options
-mkdocstrings_options:
-  docstring_options:
-    ignore_init_summary: true
-  filters:
-    - "!^_"        # Exclude private members
-    - "!^__init__" # Exclude __init__ methods
-  members_order: "source"
-  merge_init_into_class: false
-  separate_signature: true
-  signature_crossrefs: true
-  summary: false
-
 # Logging configuration
 logging:
   level: "INFO"  # DEBUG, INFO, WARNING, ERROR

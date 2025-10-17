@@ -132,7 +132,7 @@ plugins:
             members_order: source
             merge_init_into_class: false
             summary: false
-            inherited_members: true
+            inherited_members: false
             show_bases: true
             show_signature: true
             line_length: 60
