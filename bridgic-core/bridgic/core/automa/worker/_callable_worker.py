@@ -13,6 +13,15 @@ if TYPE_CHECKING:
     from bridgic.core.automa._automa import Automa
 
 class CallableWorker(Worker):
+    """
+    This class is a worker that wraps a callable object, such as functions or methods.
+
+    Parameters
+    ----------
+    func_or_method : Optional[Callable]
+        The callable to be wrapped by the worker. If `func_or_method` is None, 
+        `state_dict` must be provided.
+    """
     _is_async: bool
     _callable: Callable
     # Used to deserialization.
@@ -28,10 +37,9 @@ class CallableWorker(Worker):
         """
         Parameters
         ----------
-        func_or_method : Optional[Callable] (default = None)
-            The callable to be wrapped by the worker. If `func_or_method` is None, `state_dict` must be provided.
-        state_dict : Optional[Dict[str, Any]] (default = None)
-            A dictionary for initializing the worker's runtime state. This parameter is intended for internal framework use only, specifically for deserialization, and should not be used by developers.
+        func_or_method : Optional[Callable]
+            The callable to be wrapped by the worker. If `func_or_method` is None, 
+            `state_dict` must be provided.
         """
         super().__init__()
         self._is_async = inspect.iscoroutinefunction(func_or_method)
@@ -66,6 +74,7 @@ class CallableWorker(Worker):
         Dict[_ParameterKind, List[str]]
             A dictionary of input parameter names by the kind of the parameter.
             The key is the kind of the parameter, which is one of five possible values:
+
             - inspect.Parameter.POSITIONAL_ONLY
             - inspect.Parameter.POSITIONAL_OR_KEYWORD
             - inspect.Parameter.VAR_POSITIONAL

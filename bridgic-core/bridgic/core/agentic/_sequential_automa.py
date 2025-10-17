@@ -9,9 +9,17 @@ from bridgic.core.types._common import AutomaType, ArgsMappingRule
 
 class SequentialAutoma(GraphAutoma):
     """
-    A sequential automa is a subclass of graph automa that execute multiple workers sequentially. Workers in a sequential automa are executed one by one, in the order of their position index in the automa.
+    This class is to provide an easy way to orchestrate workers in a strictly 
+    sequential manner.
 
-    When all the workers have finished running, the sequential automa will return the output results of the last worker to the caller.
+    Each worker within the SequentialAutoma is invoked in the precise order determined 
+    by their positional index, ensuring a linear workflow where the output of one worker 
+    can serve as the input to the next.
+
+    Upon the completion of all registered workers, the SequentialAutoma returns the output 
+    produced by the final worker in the sequence as the overall result to the caller. This 
+    design enforces ordered, step-wise processing, making the SequentialAutoma particularly 
+    suitable for use cases that require strict procedural dependencies among constituent tasks.
     """
 
     # Automa type.
