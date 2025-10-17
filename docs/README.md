@@ -1,54 +1,38 @@
 # Bridgic Documentation 📚
 
-A modern, collaborative documentation system powered by MkDocs Material with automated API reference generation. Built for developer teams who need reliable, conflict-free documentation workflows.
+A modern, collaborative documentation workflow powered by MkDocs with automated API reference generation.
 
-## 🚀 Quick Start
-
-### Prerequisites
+## Prerequisites 🚀
 
 - Python 3.9+
 - [uv](https://github.com/astral-sh/uv) package manager
 
 
-## 🛠️ Development Workflow
+## Development Workflow 🛠
 
-### For Content Writers
+### For general document writer
 
-```bash
-# 1. Start development server
-make serve-doc
+1. Start development server by execute `make serve-doc`.
+2. Edit markdown files in docs/ and view the real-time changes at http://127.0.0.1:8000. 
 
-# 2. Edit markdown files in docs/
-# 3. View changes at http://127.0.0.1:8000
-```
+### For API developer
 
-### For Developers Adding API Documentation
+1. Add docstrings to your Python code.
+2. Run the generation script `make gen-mkdocs-yml`.
+3. Start development server to preview by execute `make serve-doc`.
 
-```bash
-# 1. Add docstrings to your Python code
-# 2. Run the generation script
-make gen-mkdocs-yml
+### For online deployer
 
-# 3. Start development server to preview
-make serve-doc
-```
+1. Build production-ready site static files by execute `make build-doc`.
+2. Start development server to preview by execute `make serve-doc`.
 
-### Build Static Site
-
-```bash
-# Build production-ready static site
-make build-doc
-```
-
-Output will be in the `site/` directory, ready for deployment.
-
-## 📁 Project Structure
+## Project Structure 📁
 
 ```
 docs/
-├── docs/                    # Content directory
+├── docs/                   # Content directory
 │   ├── reference/          # Auto-generated API docs (don't edit manually)
-    ...
+│   └── ...
 ├── scripts/                # Documentation tools
 │   ├── mkdocs_template.yml # Template for mkdocs.yml (edit this for config changes)
 │   ├── gen_mkdocs_yml.py   # API documentation generator
@@ -56,10 +40,10 @@ docs/
 ├── mkdocs.yml              # Generated MkDocs config (auto-generated)
 ├── site/                   # Built static site (generated)
 ├── pyproject.toml          # Python dependencies
-└── Makefile               # Development commands
+└── Makefile                # Development commands
 ```
 
-## ⚙️ Configuration
+## Configuration ⚙
 
 ### Template System
 
@@ -72,11 +56,11 @@ The documentation uses a template-based system to avoid merge conflicts:
 ### API Documentation
 
 The system automatically generates API documentation from:
-- Python docstrings (NumPy style recommended)
+- Numpy style Python docstrings
 - `__all__` exports in `__init__.py` files
 - Module structure and imports
 
-## 🚀 Deployment
+## Deployment 🚀
 
 ### Static Site Hosting
 
@@ -88,28 +72,8 @@ make build-doc
 # Examples: GitHub Pages, Netlify, Vercel, etc.
 ```
 
-## 🤝 Contributing
-
-### For Documentation Writers
-
-1. Edit markdown files in `docs/`
-2. Test with `make serve-doc`
-3. Submit pull request
-
-### For Developers
-
-1. Add docstrings to Python code
-2. Run `make gen-mkdocs-yml` to update API docs
-3. Test with `make serve-doc`
-4. Submit pull request
-
 ### Avoiding Conflicts
 
 - **Don't edit** `mkdocs.yml` directly
 - **Do edit** `scripts/mkdocs_template.yml` for configuration changes
 - **Always run** `make gen-mkdocs-yml` after template changes
-
-## 📄 License
-
-This documentation is distributed under the same license as the repository. See the root `LICENSE` file.
-
