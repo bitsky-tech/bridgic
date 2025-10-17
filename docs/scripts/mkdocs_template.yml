@@ -17,13 +17,14 @@ nav:
     - Tutorials: 
       - Tutorials: tutorials/index.md
       - Quick Start: tutorials/notebooks/quick_start.ipynb
-      - Model Usage: tutorials/notebooks/model_usage.ipynb
-      - Dual-Mode Worker Execution: tutorials/notebooks/dual_mode_worker_execution.ipynb
-      - Parameter Passing: tutorials/notebooks/parameter_passing.ipynb
-      - Dynamic Router: tutorials/notebooks/dynamic_router.ipynb
-      - Interaction Event: tutorials/notebooks/interaction_event.ipynb
-      - Nested Automa: tutorials/notebooks/nested_reuse.ipynb
-    # - Dynamic DAG: tutorials/dynamic_dag.ipynb
+      - Core Mechanism: 
+        - Dual-Mode Worker Execution: tutorials/notebooks/dual_mode_worker_execution.ipynb
+        - Parameter Passing: tutorials/notebooks/parameter_passing.ipynb
+        - Dynamic Router: tutorials/notebooks/dynamic_router.ipynb
+        - Interaction Event: tutorials/notebooks/interaction_event.ipynb
+        - Nested Automa: tutorials/notebooks/nested_reuse.ipynb
+      - LLM Integration:
+        - Model Usage: tutorials/notebooks/model_usage.ipynb
   - API Reference:
 {{API_REFERENCE_CONTENT}}
 
