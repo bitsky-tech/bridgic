@@ -4,14 +4,13 @@
 
 class WorkerSignatureError(Exception):
     """
-    Raised when the signature of a worker is not valid.
+    Raised when invalid signature is detected in the case of defining a worker.
     """
     pass
 
 class WorkerArgsMappingError(Exception):
     """
-    Raised when the parameter declaration format does not meet the requirements of the
-    setting of the arguments mapping rule.
+    Raised when the parameters declaration of a worker does not meet the requirements of the arguments mapping rule.
     """
     pass
 
@@ -33,13 +32,13 @@ class WorkerRuntimeError(RuntimeError):
 
 class AutomaDeclarationError(Exception):
     """
-    Raised when the orchestration of workers within an Automa is not valid.
+    Raised when the declaration of workers within an Automa is not valid.
     """
     pass
 
 class AutomaCompilationError(Exception):
     """
-    Raised when the compilation of an Automa does not pass.
+    Raised when the compilation or validation of an Automa fails.
     """
     pass
 
