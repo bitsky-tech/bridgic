@@ -28,12 +28,12 @@ packages:
   - name: "bridgic-core"
     path: "bridgic-core"
     description: "Bridgic Core"
-  - name: "bridgic-llms-openai"
-    path: "bridgic-integration/llms/bridgic-llms-openai"
-    description: "OpenAI LLM Integration"
   - name: "bridgic-llms-openai-like"
     path: "bridgic-integration/llms/bridgic-llms-openai-like"
     description: "OpenAI-compatible LLM Integration"
+  - name: "bridgic-llms-openai"
+    path: "bridgic-integration/llms/bridgic-llms-openai"
+    description: "OpenAI LLM Integration"
   - name: "bridgic-llms-vllm"
     path: "bridgic-integration/llms/bridgic-llms-vllm"
     description: "vLLM Integration"
@@ -67,19 +67,6 @@ generation_options:
   
   # Docstring style (numpy, google, sphinx)
   docstring_style: "numpy"
-
-# mkdocstrings configuration options
-mkdocstrings_options:
-  docstring_options:
-    ignore_init_summary: true
-  filters:
-    - "!^_"        # Exclude private members
-    - "!^__init__" # Exclude __init__ methods
-  members_order: "source"
-  merge_init_into_class: false
-  separate_signature: true
-  signature_crossrefs: true
-  summary: false
 
 # Logging configuration
 logging:
