@@ -4,14 +4,32 @@ from pydantic import BaseModel, Field
 
 class TextBlock(BaseModel):
     """
-    A representation of text data that pass to/from the LLM.
+    Encapsulates plain text data that is passed to or received from language models.
+
+    Attributes
+    ----------
+    block_type : Literal["text"]
+        The type identifier for this content block.
+    text : str
+        The actual text content.
     """
     block_type: Literal["text"] = Field(default="text")
     text: str
 
 class ToolCallBlock(BaseModel):
     """
-    A representation of tool call data that pass to/from the LLM.
+    Encapsulates tool invocation data that is received from language models.
+
+    Attributes
+    ----------
+    block_type : Literal["tool_call"]
+        The type identifier for this content block.
+    id : str
+        Unique identifier for the tool call instance.
+    name : str
+        Name of the tool to be called.
+    arguments : Dict[str, Any]
+        Parameters to be passed to the tool function.
     """
     block_type: Literal["tool_call"] = Field(default="tool_call")
     id: str = Field(..., description="The ID of the tool call.")
@@ -20,7 +38,16 @@ class ToolCallBlock(BaseModel):
 
 class ToolResultBlock(BaseModel):
     """
-    A representation of tool result data that pass to/from the LLM.
+    Encapsulates the results returned from tool executions.
+
+    Attributes
+    ----------
+    block_type : Literal["tool_result"]
+        The type identifier for this content block.
+    id : str
+        Unique identifier matching the corresponding tool call.
+    content : str
+        The result content returned from the tool execution.
     """
     block_type: Literal["tool_result"] = Field(default="tool_result")
     id: str = Field(..., description="The ID of the tool call.")

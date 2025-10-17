@@ -9,6 +9,12 @@ Note that this integration does not adapt to specific model providers, but
 provides general-purpose interfaces. Therefore, it is not fully comprehensive 
 in functionality and only supports basic chat/stream operations and their 
 corresponding async interfaces.
+
+You can install the OpenAI-Like integration package for Bridgic by running:
+
+```shell
+pip install bridgic-llms-openai-like
+```
 """
 
 from .openai_like_llm import OpenAILikeConfiguration, OpenAILikeLlm
