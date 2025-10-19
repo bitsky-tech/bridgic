@@ -47,7 +47,7 @@ class Automa(Worker):
     """
     Base class for an Automa.
 
-    In Bridgic, an Automa is a entity that contains and orchestrates a set of workers. An Automa is a Worker itself, to support nesting between Automa instances.
+    In Bridgic, an Automa is an entity that manages and orchestrates a group of workers. An Automa itself is also a Worker, which enables the nesting of Automa instances within each other.
     """
     _running_options: RunningOptions
 

@@ -7,10 +7,6 @@ edit_uri: edit/main/docs/docs/
 
 nav:
   - Home: index.md
-  - Introduction:
-    - Concepts: home/concepts.md
-    - Quick Start: home/quick_start.md
-    - Examples: home/examples.md
   - Getting Started:
     - Install: tutorials/install.md
     - Tutorials: 
@@ -24,6 +20,9 @@ nav:
         - Modularization: tutorials/notebooks/modularization.ipynb
       - LLM Integration:
         - Model Usage: tutorials/notebooks/model_usage.ipynb
+  - Understanding:
+    - Introduction: home/introduction.md
+    - Concepts: home/concepts.md
   - API Reference:
 {{API_REFERENCE_CONTENT}}
 
@@ -229,7 +228,7 @@ extra_css:
   - stylesheets/sticky_navigation.css
 
 copyright: >
-  Copyright &copy; 2025 ByteSky, Inc | Built with <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">Material for MkDocs</a>.
+  Copyright &copy; 2025 BitSky. | Built with <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">Material for MkDocs</a>.
 
 extra_javascript:
   - javascripts/mathjax.js
