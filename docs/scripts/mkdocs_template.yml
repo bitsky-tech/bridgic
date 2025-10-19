@@ -228,7 +228,7 @@ extra_css:
   - stylesheets/sticky_navigation.css
 
 copyright: >
-  Copyright &copy; 2025 BitSky. | Built with <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">Material for MkDocs</a>.
+  Copyright &copy; 2025 BitSky Inc. | Built with <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">Material for MkDocs</a>.
 
 extra_javascript:
   - javascripts/mathjax.js
