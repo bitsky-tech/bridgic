@@ -18,12 +18,12 @@ nav:
       - Quick Start: tutorials/notebooks/quick_start.ipynb
       - Core Mechanism: 
         - Concurrency Mode: tutorials/notebooks/concurrency_mode.ipynb
-        - Parameter Binding Mechanism: tutorials/notebooks/parameter_binding_mechanism.ipynb
-        - Routing: tutorials/notebooks/routing.ipynb
+        - Parameter Binding: tutorials/notebooks/parameter_binding_mechanism.ipynb
+        - Dynamic Routing: tutorials/notebooks/routing.ipynb
         - Human in the loop: tutorials/notebooks/human_in_the_loop.ipynb
         - Modularization: tutorials/notebooks/modularization.ipynb
-      - LLM Integration:
-        - Model Usage: tutorials/notebooks/model_usage.ipynb
+      - Model Integration:
+        - LLM Integration: tutorials/notebooks/llm_integration.ipynb
   - API Reference:
 {{API_REFERENCE_CONTENT}}
 
