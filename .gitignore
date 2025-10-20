@@ -9,3 +9,4 @@ docs/docs/reference
 docs/mkdocs.yml
 .cursor
 .env
+uv.toml
