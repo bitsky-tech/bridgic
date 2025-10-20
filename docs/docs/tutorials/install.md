@@ -1,10 +1,10 @@
 # Install
 
-Bridgic is a powerful Python package that supports multiple installation methods. This tutorial will show you how to install bridgic using pip and uv.
+Bridgic is released as a Python package. This tutorial will show you how to install Bridgic using either pip or uv.
 
 ## Basic Installation
 
-Requires Python 3.9 or higher
+Python version 3.9 or higher is required.
 
 === "pip"
 
