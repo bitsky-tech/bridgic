@@ -33,5 +33,5 @@ print(bridgic.__version__)
 After installation, you can:
 
 - Check out the [Tutorials](index.md) to learn basic usage
-- Browse the [Concepts](concepts.md) to understand bridgic's core concepts
-- View [Examples](examples.md) for practical use cases
+- Browse the [Concepts](../home/concepts.md) to understand bridgic's core concepts
+<!-- - View [Examples](examples.md) for practical use cases -->
