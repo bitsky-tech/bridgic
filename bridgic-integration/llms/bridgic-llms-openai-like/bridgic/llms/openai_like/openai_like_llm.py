@@ -22,8 +22,8 @@ class OpenAILikeConfiguration(BaseModel):
     """
     Default configuration for OpenAI-compatible chat completions.
 
-    Parameters
-    ----
+    Attributes
+    ----------
     model : str, optional
         Default model to use when a call-time `model` is not provided.
     temperature : float, optional
@@ -55,7 +55,7 @@ class OpenAILikeLlm(BaseLlm):
     this wrapper only supports text-modal usage.
 
     Parameters
-    ----
+    ----------
     api_base: str
         The base URL of the LLM provider.
     api_key: str
@@ -112,7 +112,7 @@ class OpenAILikeLlm(BaseLlm):
         Send a synchronous chat completion request to an OpenAI-compatible provider.
 
         Parameters
-        ----
+        ----------
         messages : list[Message]
             Conversation messages.
         model : str, optional
@@ -135,12 +135,12 @@ class OpenAILikeLlm(BaseLlm):
             Additional provider-specific arguments.
 
         Returns
-        ----
+        -------
         Response
             Bridgic response containing the generated message and raw API response.
 
         Notes
-        ----
+        -----
         - Required parameter validation ensures `messages` and final `model` are present
           (from either the call or `configuration`).
         """
@@ -186,7 +186,7 @@ class OpenAILikeLlm(BaseLlm):
         Stream a chat completion response incrementally.
 
         Parameters
-        ----
+        ----------
         messages : list[Message]
             Conversation messages.
         model : str, optional
@@ -197,12 +197,12 @@ class OpenAILikeLlm(BaseLlm):
             Additional provider-specific arguments.
 
         Yields
-        ----
+        ------
         MessageChunk
             Delta chunks as they arrive from the provider.
 
         Notes
-        ----
+        -----
         - Validates `messages`, final `model`, and `stream=True`.
         """
         params = self._build_parameters(
@@ -242,7 +242,7 @@ class OpenAILikeLlm(BaseLlm):
         Asynchronously send a chat completion request to an OpenAI-compatible provider.
 
         Parameters
-        ----
+        ----------
         messages : list[Message]
             Conversation messages.
         model : str, optional
@@ -253,7 +253,7 @@ class OpenAILikeLlm(BaseLlm):
             Additional provider-specific arguments.
 
         Returns
-        ----
+        -------
         Response
             Bridgic response containing the generated message and raw API response.
         """
@@ -299,7 +299,7 @@ class OpenAILikeLlm(BaseLlm):
         Asynchronously stream a chat completion response incrementally.
 
         Parameters
-        ----
+        ----------
         messages : list[Message]
             Conversation messages.
         model : str, optional
@@ -310,12 +310,12 @@ class OpenAILikeLlm(BaseLlm):
             Additional provider-specific arguments.
 
         Yields
-        ----
+        ------
         MessageChunk
             Delta chunks as they arrive from the provider.
 
         Notes
-        ----
+        -----
         - Validates `messages`, final `model`, and `stream=True`.
         """
         params = self._build_parameters(
@@ -356,7 +356,7 @@ class OpenAILikeLlm(BaseLlm):
         Merge configuration defaults with per-call parameters and remove None values.
 
         Parameters
-        ----
+        ----------
         messages : list[Message]
             Conversation messages to send.
         model : str, optional
@@ -367,7 +367,7 @@ class OpenAILikeLlm(BaseLlm):
             Additional provider-specific parameters.
 
         Returns
-        ----
+        -------
         dict
             Final parameter dictionary for the OpenAI-compatible API.
         """

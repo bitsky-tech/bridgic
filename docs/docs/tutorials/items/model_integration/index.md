@@ -7,7 +7,7 @@
 
 Bridgic is designed as a **model-neutral framework** that treats all LLM providers - whether they are commercial vendors (OpenAI, etc.) or inference engines (vLLM, etc.) - as equals. This architectural decision will reduce the extra effort developers need to put in when switching models.
 
-![LLM Integration](./notebooks/imgs/LLM-Integrations.svg)
+![LLM Integration](../../imgs/LLM-Integrations.svg)
 
 ### Model Neutrality
 
@@ -27,6 +27,8 @@ At the heart of Bridgic's model integration lies the **Protocol Pattern**, which
 3. **Flexibility**: Providers can implement only the protocols they support, avoiding forced compatibility with unsupported features
 4. **Type Safety**: Protocols provide compile-time type checking and IDE support, improving developer experience
 
-![LLM Protocol](./notebooks/imgs/LLM-Protocol.svg "LLM Protocol")
+<p align="center">
+  <img src="../../imgs/LLM-Protocol.svg" alt="LLM Protocol">
+</p>
 
 This architecture means that when you work with a model provider in Bridgic, you explicitly know what capabilities it offers, and the framework enforces these contracts at both development and runtime.

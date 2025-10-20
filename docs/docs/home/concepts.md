@@ -1,21 +1,23 @@
-# Concepts
+Bridgic has two core concepts:
 
-## Automa and Worker
+* **Worker**: the basic execution unit in Bridgic.
+* **Automa**: an entity that manages and orchestrates a group of workers. An Automa itself is also a Worker, which enables the nesting of Automa instances within each other.
 
-### Worker
+
+## Worker
 
 A worker is the basic execution unit in the Bridgic framework, representing a specific task node.
 
-Each worker typically corresponds to a function (which can be synchronous or asynchronous) that performs an independent business logic or processing step. Workers are automatically linked through `dependencies` to form a complete workflow. The design of Workers makes task decomposition, reuse, and composition simple and flexible, serving as the core foundation for implementing automated processes and complex business orchestration.
+A worker typically corresponds to a function (which can be synchronous or asynchronous) that performs an independent business logic or processing step. Workers are automatically linked through `dependencies` to form a complete workflow. The design of Workers makes task decomposition, reuse, and composition simple and flexible, serving as the core foundation for implementing automated processing and complex business orchestration.
 
 There are two ways to define worker:
 
 1. Use the `@worker` decorator to decorate member methods (regular or asynchronous) of a `GraphAutoma` class, thereby registering them as Workers.
 2. Inherit from the `Worker` base class and implement its `run` or `arun` method.
 
-### GraphAutoma
+## GraphAutoma
 
-`GraphAutoma` is the core class in the Bridgic framework for constructing and executing **Directed Dependency Graphs** (abbreviated as *DDG*). It is not just a simple task scheduler, but a highly abstracted workflow engine that helps developers organize, manage, and run complex asynchronous or synchronous task flows in a declarative manner. Compared to traditional flow control or manual orchestration, `GraphAutoma` offers the following significant advantages:
+`GraphAutoma` is an implementation of `Automa` based on **Dynamic Directed Graph** (abbreviated as *DDG*). It is the core class in Bridgic. It is not just a simple task scheduler, but a highly abstracted workflow engine that helps developers organize, manage, and run complex asynchronous or synchronous task flows in a declarative manner. Compared to traditional flow control or manual orchestration, `GraphAutoma` offers the following significant advantages:
 
 1. **Declarative Dependency Modeling**  
    With the `@worker` decorator, developers can define each node (worker) and its dependencies as if building blocks, without writing tedious scheduling logic. Each worker can be a synchronous or asynchronous function, and GraphAutoma will automatically recognize dependencies and construct the complete task graph.
