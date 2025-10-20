@@ -30,14 +30,16 @@ class Worker(Serializable):
 
     2. `run()`: This synchronous method should be implemented when either of the 
     following holds:
-    - a. The automa includes other workers that require timely access to CPU 
-    resources (for example, workers that must respond quickly or are sensitive 
-    to scheduling latency);
-    - b. The current worker itself should be scheduled as soon as all its task 
-    dependencies are met, to maintain overall workflow responsiveness. In these 
-    cases, `run()` enables the framework to offload your worker to a thread pool, 
-    ensuring that CPU time is shared fairly among all such workers and the event 
-    loop remains responsive.
+
+        - a. The automa includes other workers that require timely access to CPU 
+        resources (for example, workers that must respond quickly or are sensitive 
+        to scheduling latency).
+
+        - b. The current worker itself should be scheduled as soon as all its task 
+        dependencies are met, to maintain overall workflow responsiveness. In these 
+        cases, `run()` enables the framework to offload your worker to a thread pool, 
+        ensuring that CPU time is shared fairly among all such workers and the event 
+        loop remains responsive.
 
     In summary, if you are unsure whether your task require quickly scheduling or not, 
     it is recommended to implement the `arun()` method. Otherwise, implement the 
@@ -103,6 +105,7 @@ class Worker(Serializable):
         Dict[_ParameterKind, List[str]]
             A dictionary of input parameter names by the kind of the parameter.
             The key is the kind of the parameter, which is one of five possible values:
+
             - inspect.Parameter.POSITIONAL_ONLY
             - inspect.Parameter.POSITIONAL_OR_KEYWORD
             - inspect.Parameter.VAR_POSITIONAL

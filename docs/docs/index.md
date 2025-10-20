@@ -13,4 +13,4 @@ Refer to the different sections of documentation for details:
 
 * [Install](tutorials/install.md).
 * [Understanding](home/introduction.md).
-* [API Reference](/reference/bridgic-core/bridgic/core/agentic/).
+* [API Reference](reference/bridgic-core/bridgic/core/agentic/index.md).

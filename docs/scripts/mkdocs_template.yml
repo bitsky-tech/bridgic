@@ -9,17 +9,19 @@ nav:
   - Home: index.md
   - Getting Started:
     - Install: tutorials/install.md
-    - Tutorials: 
+    - Tutorials:
       - Tutorials: tutorials/index.md
-      - Quick Start: tutorials/notebooks/quick_start.ipynb
+      - Quick Start: tutorials/items/quick_start/quick_start.ipynb
       - Core Mechanism: 
-        - Concurrency Mode: tutorials/notebooks/concurrency_mode.ipynb
-        - Parameter Binding Mechanism: tutorials/notebooks/parameter_binding_mechanism.ipynb
-        - Routing: tutorials/notebooks/routing.ipynb
-        - Human in the loop: tutorials/notebooks/human_in_the_loop.ipynb
-        - Modularization: tutorials/notebooks/modularization.ipynb
-      - LLM Integration:
-        - Model Usage: tutorials/notebooks/model_usage.ipynb
+        - Core Mechanism: tutorials/items/core_mechanism/index.md
+        - Concurrency Mode: tutorials/items/core_mechanism/concurrency_mode.ipynb
+        - Parameter Binding: tutorials/items/core_mechanism/parameter_binding.ipynb
+        - Dynamic Routing: tutorials/items/core_mechanism/dynamic_routing.ipynb
+        - Human in the loop: tutorials/items/core_mechanism/human_in_the_loop.ipynb
+        - Modularity: tutorials/items/core_mechanism/modularity.ipynb
+      - Model Integration:
+        - Model Integration: tutorials/items/model_integration/index.md
+        - LLM Integration: tutorials/items/model_integration/llm_integration.ipynb
   - Understanding:
     - Introduction: home/introduction.md
     - Concepts: home/concepts.md

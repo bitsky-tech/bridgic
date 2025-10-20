@@ -4,7 +4,7 @@ Bridgic is an innovative programming framework designed to create agentic system
 
 * **Orchestration**: Bridgic helps to manage the control flow of your AI applications asynchronously.
 * **Dynamic Control Flow**: Bridgic supports dynamic routing based on input data, and even allows workers to be added or removed at runtime.
-* **Modularization**: In Bridgic, a complex agentic system can be composed by reusing components through hierarchical nesting.
+* **Modularity**: In Bridgic, a complex agentic system can be composed by reusing components through hierarchical nesting.
 * **Human-in-the-Loop**: A workflow or an agent built with Bridgic can request feedback from humans whenever needed.
 * **Serialization**: Bridgic includes serialization, deserialization, and resuming capabilities to support human-in-the-loop.
 * **Parameter Binding**: There are three ways to pass data among workers, including Arguments Mapping, Arguments Injection, and Inputs Propagation.
