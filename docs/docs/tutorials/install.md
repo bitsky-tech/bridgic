@@ -23,9 +23,8 @@ Requires Python 3.9 or higher
 
 After installation, you can verify that the installation was successful by running:
 
-```python
-import bridgic
-print(bridgic.__version__)
+```bash
+python -c "import bridgic; print(bridgic.__version__)"
 ```
 
 ## Next Steps
