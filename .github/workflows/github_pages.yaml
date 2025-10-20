@@ -1,0 +1,95 @@
+# GitHub Pages Auto-Deployment Workflow
+# This workflow uses uv for Python dependency management and automatically builds and deploys MkDocs documentation to GitHub Pages
+# Reference documentation:
+# - GitHub Actions: https://docs.github.com/en/actions
+# - uv package manager: https://docs.astral.sh/uv/
+# - MkDocs: https://www.mkdocs.org/
+# - GitHub Pages: https://docs.github.com/en/pages
+
+name: GitHub Pages
+
+# Trigger conditions: runs when pushing to main branch or creating Pull Request
+on:
+  push:
+    branches:
+      - main  # Only triggers deployment when pushing to main branch
+  pull_request:  # Only builds on PR, does not deploy
+
+jobs:
+  deploy:
+    # Use Ubuntu 22.04 as the runtime environment
+    runs-on: ubuntu-22.04
+    
+    # Set permissions: need write permissions to deploy to GitHub Pages
+    permissions:
+      contents: write  # Allow writing to repository content
+      pages: write     # Allow writing to Pages
+      id-token: write  # Allow writing ID token (for authentication)
+    
+    # Concurrency control: ensures multiple workflows on the same branch do not run simultaneously
+    concurrency:
+      group: ${{ github.workflow }}-${{ github.ref }}
+      cancel-in-progress: true  # Cancel running identical workflows
+    
+    steps:
+      # Step 1: Checkout code
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Fetch complete history, some tools may require this
+
+      # Step 2: Setup Python environment
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.9'  # Keep consistent with requirements in pyproject.toml
+
+      # Step 3: Install uv package manager
+      # uv is an extremely fast Python package manager written in Rust
+      # Compared to pip, uv has significant advantages in dependency resolution and installation speed
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: "latest"  # Use the latest version of uv
+          enable-cache: true  # Enable caching to speed up subsequent builds
+
+      # Step 4: Cache uv dependencies
+      # Caching can significantly reduce build time, especially for large projects
+      - name: Cache uv dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/uv
+            .venv
+          key: ${{ runner.os }}-uv-${{ hashFiles('**/uv.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-uv-
+
+      # Step 5: Install project dependencies
+      # Use uv to install dependencies defined in pyproject.toml
+      # uv automatically handles dependency resolution and virtual environment management
+      - name: Install dependencies with uv
+        run: |
+          cd docs  # Enter docs directory, as pyproject.toml and uv.lock are in this directory
+          uv sync  # Sync dependencies, equivalent to pip install + virtual environment management
+
+      # Step 6: Build MkDocs documentation
+      # Use uv to run mkdocs command to build static website
+      - name: Build MkDocs site
+        run: |
+          cd docs
+          make build-doc  # Use Makefile to build MkDocs documentation
+          # Verify build artifacts
+          ls -la site/
+          du -sh site/
+
+      # Step 7: Deploy to GitHub Pages
+      # Use peaceiris/actions-gh-pages for deployment, this is a more stable choice
+      # Only deploy when pushing to main branch
+      - name: Deploy to GitHub Pages
+        if: github.ref == 'refs/heads/main'  # Only deploy on main branch
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}  # Use GitHub token
+          publish_dir: ./docs/site  # MkDocs build output directory
+          cname: docs.bridgic.ai # If you have a custom domain, set it here
