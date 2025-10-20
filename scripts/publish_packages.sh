@@ -33,7 +33,6 @@ while IFS= read -r -d '' dir; do
         echo "==> Found Bridgic subpackage: $sub_package"
 
         version=$(python -c "import tomllib; print(tomllib.load(open('$dir/pyproject.toml', 'rb'))['project']['version'])")
-        echo "==> Checking version $version for repository $repo..."
 
         if python scripts/version_check.py --version "$version" --repo "$repo" --package "$sub_package"; then
             echo "==> Publishing subpackage [$sub_package]..."
@@ -52,12 +51,18 @@ while IFS= read -r -d '' dir; do
 done < <(find . -maxdepth 4 -type d -name "bridgic-*" -print0)
 echo ""
 
-echo "==> Publishing package [$main_package]..."
-if ! make publish repo="$repo"; then
-    echo "$main_package" >> "$failures_file"
-    echo "Failed to publish: $main_package"
+version=$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])")
+if python scripts/version_check.py --version "$version" --repo "$repo" --package "$main_package"; then
+    echo "==> Publishing package [$main_package]..."
+    if ! make publish repo="$repo"; then
+        echo "$main_package" >> "$failures_file"
+        echo "Failed to publish: $main_package"
+    else
+        echo "Successfully published: $main_package"
+    fi
 else
-    echo "Successfully published: $main_package"
+    echo "==> Skipping $main_package (version $version incompatible with $repo)"
+    echo "$main_package" >> "$failures_file"
 fi
 echo ""
 

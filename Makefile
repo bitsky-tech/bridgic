@@ -49,9 +49,9 @@ build-all:
 	${MAKE} build
 
 publish:
-    @version=$$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])") && \
+	@version=$$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])") && \
     python $(VERSION_CHECK) --version "$$version" --repo "$(repo)" --package "$(package_name)" && \
-    $(MAKE) _publish_$(repo)
+	$(MAKE) _publish_$(repo)
 
 _publish_btsk:
 	@uv publish --index btsk-repo --config-file $(ROOT_DIR)/uv.toml
