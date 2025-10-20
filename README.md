@@ -13,7 +13,7 @@ Bridgic is an innovative programming framework designed to create agentic system
 
 ## Install Bridgic
 
-Requires Python 3.9 or higher.
+Python version 3.9 or higher is required.
 
 ```bash
 pip install bridgic
@@ -74,11 +74,11 @@ res = await word_learning_assistant.arun(word="happy")
 print(res)
 ```
 
-For more information and examples, see the [Tutorials](http://127.0.0.1:8000/tutorials/).
+For more information and examples, see the [Tutorials](https://docs.bridgic.ai/tutorials/).
 
 ## Understanding
 
-See [Understanding Bridgic](http://127.0.0.1:8000/home/introduction/).
+See [Understanding Bridgic](https://docs.bridgic.ai/home/introduction/).
 
 ## License
 
