@@ -11,9 +11,8 @@ name: GitHub Pages
 # Trigger conditions: runs when pushing to main branch or creating Pull Request
 on:
   push:
-    branches:
-      - main  # Only triggers deployment when pushing to main branch
-  pull_request:  # Only builds on PR, does not deploy
+    tags:
+      - v*  # Only triggers deployment when pushing to main branch
 
 jobs:
   deploy:
@@ -73,23 +72,32 @@ jobs:
           cd docs  # Enter docs directory, as pyproject.toml and uv.lock are in this directory
           uv sync  # Sync dependencies, equivalent to pip install + virtual environment management
 
-      # Step 6: Build MkDocs documentation
-      # Use uv to run mkdocs command to build static website
-      - name: Build MkDocs site
+      # Step 6: Configure Git for mike to push to gh-pages
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      # Step 7: Build docs and deploy version with mike
+      - name: Build and deploy docs with mike
         run: |
           cd docs
-          make build-doc  # Use Makefile to build MkDocs documentation
-          # Verify build artifacts
-          ls -la site/
-          du -sh site/
-
-      # Step 7: Deploy to GitHub Pages
-      # Use peaceiris/actions-gh-pages for deployment, this is a more stable choice
-      # Only deploy when pushing to main branch
-      - name: Deploy to GitHub Pages
-        if: github.ref == 'refs/heads/main'  # Only deploy on main branch
-        uses: peaceiris/actions-gh-pages@v4
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}  # Use GitHub token
-          publish_dir: ./docs/site  # MkDocs build output directory
-          cname: docs.bridgic.ai # If you have a custom domain, set it here
+          # Generate mkdocs.yml, then let mike handle building & deployment
+          make gen-mkdocs-yml
+          make build-doc-version VERSION=${{ github.ref_name }}
+      
+      # Step 8: Ensure CNAME exists on gh-pages branch
+      - name: Ensure CNAME on gh-pages
+        run: |
+          set -e
+          DOMAIN=$(cat docs/CNAME 2>/dev/null)
+          git fetch origin gh-pages || true
+          git switch gh-pages
+          echo "$DOMAIN" > CNAME
+          git add CNAME
+          if git diff --cached --quiet; then
+            echo "CNAME unchanged"
+          else
+            git commit -m "chore: ensure CNAME for GitHub Pages"
+            git push origin gh-pages
+          fi
