@@ -11,7 +11,7 @@ The name **Bridgic** is inspired by the idea of â€œ**bridging logic and magic**â
 
 Refer to the relevant sections of the documentation for details:
 
-* [Install](tutorials/install.md).
+* [Installation](tutorials/installation.md).
 * [Tutorials](tutorials/index.md).
 * [Understanding](home/introduction.md).
 * [API Reference](reference/bridgic-core/bridgic/core/agentic/index.md).

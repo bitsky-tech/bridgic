@@ -7,8 +7,8 @@ edit_uri: edit/main/docs/docs/
 
 nav:
   - Home: index.md
-  - Getting Started:
-    - Install: tutorials/install.md
+  - Get Started:
+    - Installation: tutorials/installation.md
     - Tutorials:
       - Tutorials: tutorials/index.md
       - Quick Start: tutorials/items/quick_start/quick_start.ipynb
