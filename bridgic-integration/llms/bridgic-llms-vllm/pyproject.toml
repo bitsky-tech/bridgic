@@ -1,9 +1,9 @@
 [project]
 name = "bridgic-llms-vllm"
-version = "0.1.0.dev11"
+version = "0.1.0rc1"
 license = {text = "MIT"}
 classifiers = [
-    "Private :: Do Not Upload",
+    # "Private :: Do Not Upload",
     "Programming Language :: Python :: 3",
 ]
 description = "VLLM adapters for Bridgic, enabling connectivity with self-hosted LLM providers."
@@ -13,8 +13,8 @@ authors = [
     { name = "Tielei Zhang", email = "zhangtl04@gmail.com" },
 ]
 dependencies = [
-    "bridgic-core>=0.1.0.dev23",
-    "bridgic-llms-openai-like>=0.1.0.dev13",
+    "bridgic-core>=0.1.0rc1",
+    "bridgic-llms-openai-like>=0.1.0rc1",
 ]
 
 [dependency-groups]
@@ -34,19 +34,5 @@ build-backend = "hatchling.build"
 include = ["bridgic/"]
 
 [tool.uv.sources]
-# bridgic-core = { index = "btsk-repo" }
-# bridgic-llms-openai-like = { index = "btsk-repo" }
 bridgic-core = { path = "../../../bridgic-core" }
 bridgic-llms-openai-like = { path = "../bridgic-llms-openai-like" }
-
-[[tool.uv.index]]
-name = "btsk-repo"
-url = "http://8.130.156.165:3141/btsk/test/+simple"
-publish-url = "http://8.130.156.165:3141/btsk/test/"
-explicit = true
-
-# [[tool.uv.index]]
-# name = "test-pypi"
-# url = "https://test.pypi.org/project/+simple"
-# publish-url = "https://test.pypi.org/project/"
-# explicit = true

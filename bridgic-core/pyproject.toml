@@ -1,9 +1,9 @@
 [project]
 name = "bridgic-core"
-version = "0.1.0.dev23"
+version = "0.1.0rc1"
 license = {text = "MIT"}
 classifiers = [
-    "Private :: Do Not Upload",
+    # "Private :: Do Not Upload",
     "Programming Language :: Python :: 3",
 ]
 description = "Core classes and abstractions of Bridgic, as well as basic implementations for the orchestration framework."
@@ -23,9 +23,9 @@ dependencies = [
 dev = [
     "pytest>=8.4.0",
     "pytest-asyncio>=1.0.0",
-    "bridgic-llms-openai>=0.1.0.dev13",
-    "bridgic-llms-openai-like>=0.1.0.dev13",
-    "bridgic-llms-vllm>=0.1.0.dev11",
+    "bridgic-llms-openai>=0.1.0rc1",
+    "bridgic-llms-openai-like>=0.1.0rc1",
+    "bridgic-llms-vllm>=0.1.0rc1",
 ]
 
 [tool.pytest.ini_options]
@@ -39,18 +39,6 @@ build-backend = "hatchling.build"
 include = ["bridgic/"]
 
 [tool.uv.sources]
-bridgic-llms-openai = { path = "../bridgic-integration/llms/bridgic-llms-openai" }
 bridgic-llms-openai-like = { path = "../bridgic-integration/llms/bridgic-llms-openai-like" }
+bridgic-llms-openai = { path = "../bridgic-integration/llms/bridgic-llms-openai" }
 bridgic-llms-vllm = { path = "../bridgic-integration/llms/bridgic-llms-vllm" }
-
-[[tool.uv.index]]
-name = "btsk-repo"
-url = "http://8.130.156.165:3141/btsk/test/+simple"
-publish-url = "http://8.130.156.165:3141/btsk/test/"
-explicit = true
-
-# [[tool.uv.index]]
-# name = "test-pypi"
-# url = "https://test.pypi.org/project/+simple"
-# publish-url = "https://test.pypi.org/project/"
-# explicit = true

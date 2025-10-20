@@ -31,12 +31,21 @@ while IFS= read -r -d '' dir; do
     if [ -f "$dir/Makefile" ] && [ -f "$dir/pyproject.toml" ]; then
         sub_package=$(basename "$dir")
         echo "==> Found Bridgic subpackage: $sub_package"
-        echo "==> Publishing subpackage [$sub_package]..."
-        if ! make -C "$dir" publish repo="$repo"; then
-            echo "$dir" >> "$failures_file"
-            echo "Failed to publish: $dir"
+
+        version=$(python -c "import tomllib; print(tomllib.load(open('$dir/pyproject.toml', 'rb'))['project']['version'])")
+        echo "==> Checking version $version for repository $repo..."
+
+        if python scripts/version_check.py --version "$version" --repo "$repo" --package "$sub_package"; then
+            echo "==> Publishing subpackage [$sub_package]..."
+            if ! make -C "$dir" publish repo="$repo"; then
+                echo "$dir" >> "$failures_file"
+                echo "Failed to publish: $dir"
+            else
+                echo "Successfully published: $dir"
+            fi
         else
-            echo "Successfully published: $dir"
+            echo "==> Skipping $sub_package (version $version incompatible with $repo)"
+            echo "$dir" >> "$failures_file"
         fi
         echo ""
     fi
