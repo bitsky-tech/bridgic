@@ -28,8 +28,6 @@ nav:
   - API Reference:
 {{API_REFERENCE_CONTENT}}
 
-  - About: about/index.md
-
 theme: 
   name: material
   logo: assets/logo.png
