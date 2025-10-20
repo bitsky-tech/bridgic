@@ -6,10 +6,11 @@ Bridgic introduces clear abstractions for structuring flows, passing data betwee
 
 Key features include:
 
-- **Concurrency Management**: Effortlessly manage parallel and sequential execution of logic blocks.
-- **Parameter Binding and Data Flow**: Flexible mechanisms for passing information and mapping arguments between components.
-- **Dynamic Routing**: Intuitive support for dynamic, context-sensitive execution paths and decision-making.
-- **Modularity**: Reuse and compose workflow components for maintainable and extendable solutions.
-- **Human-in-the-Loop**: Native support for seamlessly incorporating human feedback and decision-making into your workflows, allowing humans to interact, intervene, or collaborate with autonomous agents at key points in the execution flow.
+1. [Concurrency Mode](../core_mechanism/concurrency_mode): Organize your concurrent execution units systematically and conveniently.
+2. [Parameter Binding](../core_mechanism/parameter_binding): Explore three ways for passing data between execution units, including Arguments Mapping, Arguments Injection, and Inputs Propagation.
+3. [Dynamic Routing](../core_mechanism/dynamic_routing): Decide which execution unit to be executed in the short future dynamically.
+4. [Modularity](../core_mechanism/modularity): Reuse and compose Automata by embedding one inside another for scalable workflows.
+5. [Model Integration](../model_integration/llm_integration): Incorporate model to building a program with more autonomous capabilities.
+6. [Human-in-the-loop](../core_mechanism/human_in_the_loop): Enable human interaction or external input during workflow execution.
 
 This architectural foundation makes Bridgic a powerful platform for building agentic systems that are robust, adaptive, and easy to reason about, enabling you to bridge logic with the creative potential of AI.
