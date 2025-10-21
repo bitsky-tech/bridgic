@@ -19,4 +19,5 @@ dependencies = [
     "mkdocs-literate-nav>=0.6.2",
     "mkdocs-section-index>=0.3.10",
     "pyyaml>=6.0.2",
+    "mike>=2.1.3",
 ]
