@@ -1,17 +1,17 @@
-**Bridgic** is an innovative programming framework designed to create agentic systems. From simple workflows to complex autonomous agents, Bridgic provides a new paradigm to design your agentic system with ease.
+**Bridgic** is an innovative programming framework designed to create agentic systems, ranging from deterministic workflows to autonomous agents. It introduces a new paradigm that simplifies the development of agentic systems.
 
 > ✨ The name "**Bridgic**" is inspired by the idea of *"Bridging Logic and Magic"*. It means seamlessly uniting the precision of *logic* (deterministic execution flows) with the creativity of *magic* (highly autonomous AI).
 
 
 ## Features
 
-* **Orchestration**: Bridgic helps you express your program logic in the form of Worker-Automa choreography, making asynchronous programming easy and flexible.
-* **Parameter Binding**: There are three ways to pass data among workers, including Arguments Mapping, Arguments Injection, and Inputs Propagation, avoiding the complexity of unmanageable global state.
-* **Dynamic Routing**: Bridgic supports you to dynamically route to different workers based on runtime conditions using the `ferry_to()` method, enabling intelligent branching and conditional execution flows that adapt to real-time data and context.
-* **Dynamic Topology**: Bridgic allows you to modify the topology at runtime, enabling your workflows to evolve and adapt without restarting the entire system.
+* **Orchestration**: Bridgic helps manage the execution flow of your AI applications by leveraging both predefined dependencies and dynamic routing.
+* **Parameter Binding**: There are three ways to pass data among workers—Arguments Mapping, Arguments Injection, and Inputs Propagation—thereby eliminating the complexity of global state management.
+* **Dynamic Routing**: Bridgic enables conditional branching and intelligent decision-making through an easy-to-use `ferry_to()` API that adapts to runtime dynamics.
+* **Dynamic Topology**: The topology can be changed at runtime in Bridgic to support highly autonomous AI applications.
 * **Modularity**: In Bridgic, a complex agentic system can be composed by reusing components through hierarchical nesting.
-* **Human-in-the-Loop**: An Bridgic style agentic system can request feedback from human whenever needed to affect its own execution.
-* **Serialization**: Bridgic use a complete set of serialization and deserialization solutions to achieve state persistence and recovery to support a larger human-in-the-loop system.
+* **Human-in-the-Loop**: A Bridgic-style agentic system can request feedback from human whenever needed to dynamically adjust its execution logic.
+* **Serialization**: Bridgic employs a scalable serialization and deserialization mechanism to achieve state persistence and recovery, enabling human-in-the-loop in long-running AI systems.
 * **Systematic Integration**: A wide range of tools and LLMs can be seamlessly integrated into the Bridgic world, in a systematic way.
 * **Customization**: What Bridgic provides is not a "black box" approach. You have full control over every aspect of your AI applications, such as prompts, context windows, the control flow, and more.
 
