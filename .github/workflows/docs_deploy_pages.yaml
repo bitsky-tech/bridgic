@@ -1,4 +1,4 @@
-# GitHub Pages Auto-Deployment Workflow
+# Docs Deploy Pages Workflow
 # This workflow uses uv for Python dependency management and automatically builds and deploys MkDocs documentation to GitHub Pages
 # Reference documentation:
 # - GitHub Actions: https://docs.github.com/en/actions
@@ -6,13 +6,15 @@
 # - MkDocs: https://www.mkdocs.org/
 # - GitHub Pages: https://docs.github.com/en/pages
 
-name: GitHub Pages
+name: Docs Deploy Pages
 
-# Trigger conditions: runs when pushing to main branch or creating Pull Request
+# Trigger conditions: runs when pushing to a tag
 on:
   push:
     tags:
-      - v*  # Only triggers deployment when pushing to main branch
+      # This pattern matches release version numbers according to PEP 440 (e.g., v1.2.3, 1.2.3), excluding pre/post/dev versions
+      # Note: This is used to trigger this workflow only for release version tags
+      - 'v[0-9]*.[0-9]*.[0-9]*'
 
 jobs:
   deploy:
@@ -50,7 +52,7 @@ jobs:
         uses: astral-sh/setup-uv@v4
         with:
           version: "latest"  # Use the latest version of uv
-          enable-cache: true  # Enable caching to speed up subsequent builds
+          enable-cache: false  # Disable built-in cache to avoid conflicts with multiple uv.lock files
 
       # Step 4: Cache uv dependencies
       # Caching can significantly reduce build time, especially for large projects
@@ -59,34 +61,27 @@ jobs:
         with:
           path: |
             ~/.cache/uv
-            .venv
-          key: ${{ runner.os }}-uv-${{ hashFiles('**/uv.lock') }}
+            docs/.venv
+          key: ${{ runner.os }}-docs-uv-${{ hashFiles('docs/uv.lock') }}-${{ hashFiles('docs/pyproject.toml') }}
           restore-keys: |
+            ${{ runner.os }}-docs-uv-
             ${{ runner.os }}-uv-
 
-      # Step 5: Install project dependencies
-      # Use uv to install dependencies defined in pyproject.toml
-      # uv automatically handles dependency resolution and virtual environment management
-      - name: Install dependencies with uv
+      # Step 5: Install dependencies and configure Git
+      - name: Install dependencies and configure Git
         run: |
-          cd docs  # Enter docs directory, as pyproject.toml and uv.lock are in this directory
-          uv sync  # Sync dependencies, equivalent to pip install + virtual environment management
-
-      # Step 6: Configure Git for mike to push to gh-pages
-      - name: Configure Git
-        run: |
+          cd docs
+          uv sync
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-      # Step 7: Build docs and deploy version with mike
+      # Step 6: Build and deploy docs with mike
       - name: Build and deploy docs with mike
         run: |
           cd docs
-          # Generate mkdocs.yml, then let mike handle building & deployment
-          make gen-mkdocs-yml
-          make build-doc-version VERSION=${{ github.ref_name }}
+          make build-doc-version version=${{ github.ref_name }}
       
-      # Step 8: Ensure CNAME exists on gh-pages branch
+      # Step 7: Ensure CNAME exists on gh-pages branch
       - name: Ensure CNAME on gh-pages
         run: |
           set -e
