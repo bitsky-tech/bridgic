@@ -1,0 +1,96 @@
+# Docs Delete Version Workflow
+# This workflow automatically deletes documentation versions when tags are deleted
+# Reference documentation:
+# - GitHub Actions: https://docs.github.com/en/actions
+# - uv package manager: https://docs.astral.sh/uv/
+# - MkDocs: https://www.mkdocs.org/
+# - Mike: https://github.com/jimporter/mike
+
+name: Docs Delete Version
+
+# Trigger conditions: runs when tags are deleted
+on:
+  delete:
+    # We will guard in the job to only run for tag deletions
+
+jobs:
+  delete_version:
+    name: Delete docs version on tag removal
+    # Only run when a tag is deleted (not branch deletion)
+    if: github.event.ref_type == 'tag'
+    # Use Ubuntu 22.04 as the runtime environment
+    runs-on: ubuntu-22.04
+    
+    # Set permissions: need write permissions to update documentation
+    permissions:
+      contents: write  # Allow writing to repository content
+    
+    # Concurrency control: ensures multiple workflows on the same tag do not run simultaneously
+    concurrency:
+      group: ${{ github.workflow }}-${{ github.event.ref }}-delete
+      cancel-in-progress: true  # Cancel running identical workflows
+    
+    steps:
+      # Step 1: Checkout code
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Fetch complete history, some tools may require this
+
+      # Step 2: Setup Python environment
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.9'  # Keep consistent with requirements in pyproject.toml
+
+      # Step 3: Install uv package manager
+      # uv is an extremely fast Python package manager written in Rust
+      # Compared to pip, uv has significant advantages in dependency resolution and installation speed
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: "latest"  # Use the latest version of uv
+          enable-cache: false  # Disable built-in cache to avoid conflicts with multiple uv.lock files
+
+      # Step 4: Cache uv dependencies
+      # Caching can significantly reduce build time, especially for large projects
+      - name: Cache uv dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/uv
+            docs/.venv
+          key: ${{ runner.os }}-docs-uv-${{ hashFiles('docs/uv.lock') }}-${{ hashFiles('docs/pyproject.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-docs-uv-
+            ${{ runner.os }}-uv-
+
+      # Step 5: Install dependencies and configure Git
+      - name: Install dependencies and configure Git
+        run: |
+          cd docs
+          uv sync
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      # Step 6: Delete docs version with mike
+      - name: Delete docs version with mike
+        run: |
+          cd docs
+          make delete-doc-version version=${{ github.event.ref }}
+
+      # Step 7: Re-point latest alias to highest remaining tag (if any)
+      - name: Re-point latest alias to highest remaining tag (if any)
+        run: |
+          set -e
+          # Find highest remaining v* tag after deletion
+          REMAINING_TAG=$(uv run mike list | sort -V | tail -n 1)
+          if [ -z "$REMAINING_TAG" ]; then
+            echo "No remaining version tags; skipping latest alias update"
+            exit 0
+          fi
+          echo "Re-pointing latest to ${REMAINING_TAG}"
+          cd docs
+          uv run mike alias --push --update "$REMAINING_TAG" latest
+          uv run mike set-default --push latest
+

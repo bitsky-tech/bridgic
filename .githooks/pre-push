@@ -18,19 +18,30 @@ while read local_ref local_sha remote_ref remote_sha; do
             exit 1
         fi
 
-        # Check branch name format: only letters, numbers and hyphens allowed.
-        if ! [[ $branch_name =~ ^[a-zA-Z0-9/-]+$ ]]; then
-            echo "❌ Error: Branch name '$branch_name' contains invalid characters!"
-            echo "💡 Branch name can only contain letters (a-zA-Z), numbers (0-9) and hyphens (-)."
-            echo "   No spaces, underscores or other special characters allowed."
-            exit 1
-        fi
-
-        # Check hyphen usage rules.
+        # Ensure the branch does not start/end with a hyphen or contain consecutive hyphens.
         if [[ $branch_name =~ ^-|-$ ]] || [[ $branch_name =~ -- ]]; then
             echo "❌ Error: Branch name '$branch_name' has incorrect hyphen usage!"
             echo "💡 Branch name cannot start/end with hyphen or contain consecutive hyphens (--)."
             exit 1
+        fi
+
+        # Only 'release' branches are allowed to have dots (.) for versioning; other branches are not.
+        if [[ $branch_name =~ ^release/ ]]; then
+            # For release branches, allow only letters, numbers, slashes, hyphens, and dots.
+            if ! [[ $branch_name =~ ^[a-zA-Z0-9/.-]+$ ]]; then
+                echo "❌ Error: Release branch name '$branch_name' contains invalid characters!"
+                echo "💡 Release branch name can only contain letters (a-zA-Z), numbers (0-9), hyphens (-), dots (.), and slashes (/)."
+                echo "   No spaces, underscores or other special characters allowed."
+                exit 1
+            fi
+        else
+            # In non-release branches, dots are not allowed.
+            if ! [[ $branch_name =~ ^[a-zA-Z0-9/-]+$ ]]; then
+                echo "❌ Error: Branch name '$branch_name' contains invalid characters!"
+                echo "💡 Branch name can only contain letters (a-zA-Z), numbers (0-9) and hyphens (-)."
+                echo "   No spaces, underscores, dots, or other special characters allowed."
+                exit 1
+            fi
         fi
     fi
 done

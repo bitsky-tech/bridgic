@@ -7,8 +7,8 @@ edit_uri: edit/main/docs/docs/
 
 nav:
   - Home: index.md
-  - Getting Started:
-    - Install: tutorials/install.md
+  - Get Started:
+    - Installation: tutorials/installation.md
     - Tutorials:
       - Tutorials: tutorials/index.md
       - Quick Start: tutorials/items/quick_start/quick_start.ipynb
@@ -33,6 +33,7 @@ theme:
   name: material
   logo: assets/logo.png
   favicon: assets/favicon.ico
+  custom_dir: overrides
   features:
     # Navigation
     # navigation.instant enables client-side navigation for faster page transitions.
@@ -152,6 +153,7 @@ plugins:
             - ../bridgic-integration/llms/bridgic-llms-openai
             - ../bridgic-integration/llms/bridgic-llms-openai-like
             - ../bridgic-integration/llms/bridgic-llms-vllm
+  - mike
 
 markdown_extensions:
   # Python Markdown
@@ -216,6 +218,8 @@ extra:
     # - icon: fontawesome/brands/discord
     #   link: https://discord.gg/bridgic
   generator: false
+  version:
+    provider: mike
 
 # Developer-facing validation messages: catch broken links/anchors early without breaking builds
 validation:
