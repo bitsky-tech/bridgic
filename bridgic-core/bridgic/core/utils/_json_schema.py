@@ -2,6 +2,7 @@ import inspect
 from typing import Callable, Dict, Any, List, Optional, cast, get_origin, Annotated
 from pydantic import create_model, WithJsonSchema, Field, ConfigDict
 from pydantic.fields import FieldInfo
+from bridgic.core.automa.args import JSON_SCHEMA_IGNORE_ARG_TYPES
 from docstring_parser import parse as parse_docstring # type: ignore
 
 def create_func_params_json_schema(
@@ -47,6 +48,8 @@ def create_func_params_json_schema(
 
         # Second: Resolve the default of the parameter
         param_default = param.default
+        if isinstance(param_default, JSON_SCHEMA_IGNORE_ARG_TYPES):
+            continue
         # param_default may be inspect.Parameter.empty in the case of no default.
     
         # Third: Resolve the description of the parameter
