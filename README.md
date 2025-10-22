@@ -33,7 +33,7 @@ Here are simple examples demonstrating each key feature:
 
 ### 1. Static Declaration
 
-The `@worker` decorator defines workers with dependencies at the same time as the definition of the subclass of `GraphAutoma`. This declarative approach allows you to express complex workflows as a graph of interconnected tasks, where each worker represents a specific processing step and dependencies define the execution order automatically.
+The `@worker` decorator can define workers and their dependencies simultaneously within a `GraphAutoma` subclass. This declarative approach allows you to express complex workflows as a graph of interconnected tasks, where each worker represents a specific processing step and the execution order is automatically determined by dependencies.
 
 ```python
 from bridgic.core.automa import GraphAutoma, worker
@@ -73,7 +73,7 @@ In this example, the text processing workflow demonstrates how static dependenci
 
 ### 2. Dynamic Routing
 
-Use `ferry_to()` for conditional routing based on runtime conditions. This enables intelligent decision-making where the system can adapt its behavior based on the content or context of incoming requests, creating truly autonomous agents that can choose different processing paths.
+Use `ferry_to()` for dynamic routing based on runtime conditions. This enables intelligent decision-making by allowing the system to adapt its behavior according to the content or context of incoming requests, thereby creating highly autonomous agents that can select among different processing paths.
 
 ```python
 from bridgic.core.automa import GraphAutoma, worker
@@ -137,7 +137,7 @@ The smart router example showcases how `ferry_to()` enables conditional executio
 
 ### 3. Parameter Binding
 
-Control how data flows between workers using different mapping rules. This flexible parameter binding mechanism allows you to precisely control how data is passed between workers, supporting various data transformation patterns and enabling complex data processing pipelines.
+Use parameter binding to control how data flows between workers with different mapping rules. This flexible parameter binding mechanism allows you to precisely control how data is passed between workers, supporting various data transformation patterns and enabling complex data processing pipelines.
 
 ```python
 from bridgic.core.automa import GraphAutoma, worker
@@ -172,18 +172,18 @@ if __name__ == "__main__":
 Final result: The bound is 5. The length of data is 5 and their sum is 15.
 ```
 
-This parameter binding example demonstrates the power of flexible data flow control. The `AS_IS` rule passes data as-is, while `UNPACK` spreads list elements as individual arguments, and `From()` allows accessing data from any worker without direct dependencies. This enables sophisticated data processing patterns where workers can access information from multiple sources.
+This parameter binding example demonstrates the power of flexible data flow control. The `AS_IS` rule passes data as-is, while `UNPACK` spreads elements of a dict (or list) as individual arguments, and `From()` allows access to data from any worker without direct dependencies. This enables sophisticated data processing patterns in which workers can access information from multiple sources.
 
 
 ## 🤖 Building Complex Agentic System
 
 By combining these features, you can build a Bridgic-style agentic system that can:
 
-- **Execute clear workflows** through declarative dependencies
-- **Adapt intelligently** to different situations according to runtime conditions
-- **Process complex data** across multiple steps, supporting transformations and aggregations
+- **Execute well-defined workflows** through declarative dependencies;
+- **Adapt intelligently** to different situations according to runtime conditions;
+- **Process complex data** across multiple steps, supporting transformations and aggregations.
 
-Whether you're building simple automation scripts or complex autonomous agents, Bridgic provides the tools to express your logic clearly while maintaining the flexibility needed for intelligent, adaptive behavior.
+Whether you're building simple automation scripts or complex autonomous agents, Bridgic provides the tools to define your logic clearly while retaining the flexibility required for intelligent, adaptive behavior.
 
 More examples will be added in the near future. :)
 
