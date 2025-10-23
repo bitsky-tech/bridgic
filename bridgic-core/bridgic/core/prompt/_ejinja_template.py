@@ -104,18 +104,98 @@ env.add_extension(MsgExtension)
 
 class EjinjaPromptTemplate(BasePromptTemplate):
     """
-    A prompt template that uses extended Jinja syntax to render the prompt.
+    Extended Jinja2-based prompt template with custom message blocks.
+    
+    This template implementation extends the standard Jinja2 syntax with custom
+    `{% msg %}` blocks to create structured Message objects. It supports both
+    single message and multiple message rendering with variable substitution
+    and content block parsing.
+    
+    Attributes
+    ----------
+    _env_template : Template
+        The compiled Jinja2 template object.
+    _render_cache : MemoryCache
+        Cache for rendered template results to improve performance.
+    
+    Methods
+    -------
+    format_message(role, **kwargs)
+        Format a single message from the template.
+    format_messages(**kwargs)
+        Format multiple messages from the template.
+    
+    Notes
+    -----
+    This template supports two rendering modes:
+    
+    1. **Single Message Mode**: Use `format_message()` to render one message.    
+    2. **Multiple Messages Mode**: Use `format_messages()` to render multiple messages.
+    
+    Examples
+    --------
+    Single message with role in template:
+    >>> template = EjinjaPromptTemplate('''
+    ... {% msg role="system" %}
+    ... You are a helpful assistant. User name: {{ name }}
+    ... {% endmsg %}
+    ... ''')
+    >>> message = template.format_message(name="Alice")
+    
+    Single message with role as parameter:
+    >>> template = EjinjaPromptTemplate("Hello {{ name }}, how are you?")
+    >>> message = template.format_message(role="user", name="Bob")
+    
+    Multiple messages:
+    >>> template = EjinjaPromptTemplate('''
+    ... {% msg role="system" %}You are helpful{% endmsg %}
+    ... {% msg role="user" %}Hello {{ name }}{% endmsg %}
+    ... ''')
+    >>> messages = template.format_messages(name="Charlie")
     """
 
     _env_template: Template
     _render_cache: MemoryCache
 
     def __init__(self, template_str: str):
+        """
+        Initialize the EjinjaPromptTemplate.
+        
+        Parameters
+        ----------
+        template_str : str
+            The Jinja2 template string with optional `{% msg %}` blocks.
+        """
         super().__init__(template_str=template_str)
         self._env_template = env.from_string(template_str)
         self._render_cache = MemoryCache()
 
     def format_message(self, role: Union[Role, str] = None, **kwargs) -> Message:
+        """
+        Format a single message from the template.
+        
+        Parameters
+        ----------
+        role : Union[Role, str], optional
+            The role of the message. If the template contains a `{% msg %}` block,
+            this parameter should be None as the role will be extracted from
+            the template. If no `{% msg %}` block exists, this parameter is required.
+        **kwargs
+            Additional keyword arguments to be substituted into the template.
+            
+        Returns
+        -------
+        Message
+            A formatted message object with the specified role and content.
+            
+        Raises
+        ------
+        PromptSyntaxError
+            If the template contains more than one `{% msg %}` block.
+        PromptRenderError
+            If role parameter conflicts with template-defined role, or if
+            no role is specified when template has no `{% msg %}` block.
+        """
         if isinstance(role, str):
             role = Role(role)
 
@@ -143,6 +223,34 @@ class EjinjaPromptTemplate(BasePromptTemplate):
         return Message.from_text(text=content, role=role)
 
     def format_messages(self, **kwargs) -> List[Message]:
+        """
+        Format multiple messages from the template.
+        
+        Parameters
+        ----------
+        **kwargs
+            Additional keyword arguments to be substituted into the template.
+            
+        Returns
+        -------
+        List[Message]
+            A list of formatted message objects. Each line of the rendered
+            template should be a valid JSON representation of a Message object.
+            If no valid messages are found but content exists, a default user
+            message is created.
+            
+        Raises
+        ------
+        PromptRenderError
+            If any line in the rendered template is not a valid JSON
+            representation of a Message object.
+            
+        Notes
+        -----
+        This method uses caching to improve performance for repeated calls
+        with the same parameters. The rendered template is cached based on
+        the provided keyword arguments.
+        """
         rendered = self._render_cache.get(kwargs)
         if not rendered:
             rendered = self._env_template.render(kwargs)

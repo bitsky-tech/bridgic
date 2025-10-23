@@ -9,7 +9,21 @@ if TYPE_CHECKING:
 
 class Role(str, Enum):
     """
-    Message role.
+    Message role enumeration for LLM conversations.
+
+    Defines the different roles that can be assigned to messages in a conversation
+    with language models, following standard chat completion formats.
+
+    Attributes
+    ----------
+    SYSTEM : str
+        System role for providing instructions or context to the model.
+    USER : str
+        User role for human input and queries.
+    AI : str
+        Assistant role for model responses and outputs.
+    TOOL : str
+        Tool role for tool execution results and responses.
     """
     SYSTEM = "system"
     USER = "user"
@@ -22,7 +36,20 @@ class Role(str, Enum):
 
 class Message(BaseModel):
     """
-    LLM message.
+    LLM message container for conversation exchanges.
+
+    Represents a single message in a conversation with language models, containing
+    role information, content blocks, and optional metadata. Supports various
+    content types including text, tool calls, and tool results.
+
+    Attributes
+    ----------
+    role : Role
+        The role of the message sender (system, user, assistant, or tool).
+    blocks : List[ContentBlock]
+        List of content blocks containing the actual message data.
+    extras : Dict[str, Any]
+        Additional metadata and custom fields for the message.
     """
     role: Role = Field(default=Role.USER)
     blocks: List[ContentBlock] = Field(default=[])
@@ -201,7 +228,17 @@ class Message(BaseModel):
 
 class MessageChunk(BaseModel):
     """
-    Stream chunk.
+    Streaming message chunk for real-time LLM responses.
+
+    Represents a partial message chunk received during streaming responses from
+    language models, allowing for real-time processing of incremental content.
+
+    Attributes
+    ----------
+    delta : Optional[str]
+        The incremental text content of this chunk.
+    raw : Optional[Any]
+        Raw response data from the LLM provider.
     """
     delta: Optional[str] = None
     raw: Optional[Any] = None

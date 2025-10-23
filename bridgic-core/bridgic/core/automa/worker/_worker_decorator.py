@@ -73,7 +73,17 @@ def worker(
 
 def worker(**kwargs) -> Callable:
     """
-    The actual implementation of the different overloaded worker decorators defined above.
+    Decorator for marking a method inside an Automa class as a worker.
+
+    To cover the need to declare workers in various Automa classes, this decorator actually 
+    accepts a variable kwargs parameter. Through overloading, it further supports specifying 
+    the parameters that need to be passed in when registering a worker under a specific Automa, 
+    such as `ConcurrentAutoma`, `SequentialAutoma` and so on.
+
+    Parameters
+    ----------
+    kwargs : Dict[str, Any]
+        The keyword arguments for the worker decorator.
     """
     def wrapper(func: Callable):
         setattr(func, "__worker_kwargs__", kwargs)

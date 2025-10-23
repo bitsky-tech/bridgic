@@ -4,7 +4,7 @@ Test cases for rerunning an Automa instance.
 
 import pytest
 from bridgic.core.automa import worker, GraphAutoma
-from bridgic.core.automa.args import RuntimeContext
+from bridgic.core.automa.args import System
 from bridgic.core.automa.interaction import Event
 from bridgic.core.automa.interaction import InteractionFeedback, InteractionException
 from bridgic.core.automa import Snapshot
@@ -54,8 +54,8 @@ class NestedAutoma(GraphAutoma):
         return False
     
     @worker(is_start=True)
-    async def counter(self):
-        local_space = self.get_local_space(runtime_context=RuntimeContext(worker_key="counter"))
+    async def counter(self, rtx = System("runtime_context")):
+        local_space = self.get_local_space(rtx)
         local_space["count"] = local_space.get("count", 0) + 1
         return local_space["count"]
 

@@ -3,6 +3,9 @@
 package_name := $(notdir $(CURDIR))
 repo ?= btsk
 
+ROOT_DIR := $(shell git rev-parse --show-toplevel)
+VERSION_CHECK := $(ROOT_DIR)/scripts/version_check.py
+
 venv-init:
 	@echo "\n==> Initializing virtual environment for [${package_name}]..."
 	@if [ -d ${CURDIR}/.venv ]; then echo ".venv already exists, removing..."; rm -rf ${CURDIR}/.venv; fi
@@ -23,10 +26,15 @@ build:
 	@uv build
 
 publish:
-ifeq ($(repo), btsk)
-	@uv publish --index btsk-repo
-else ifeq ($(repo), pypi)
-	$(error "Now we don't support publishing to pypi!"); exit 1
-else
-	$(error "Unknown repository: [${repo}]"); exit 1
-endif
+	@version=$$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])") && \
+	python $(VERSION_CHECK) --version "$$version" --repo "$(repo)" --package "$(package_name)" && \
+	$(MAKE) _publish_$(repo)
+
+_publish_btsk:
+	@uv publish --index btsk-repo --config-file $(ROOT_DIR)/uv.toml
+
+_publish_testpypi:
+	@uv publish --index test-pypi --config-file $(ROOT_DIR)/uv.toml
+
+_publish_pypi:
+	@uv publish --config-file $(ROOT_DIR)/uv.toml

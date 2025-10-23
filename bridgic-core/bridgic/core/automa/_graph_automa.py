@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from pydantic import BaseModel, Field, ConfigDict
 
 from bridgic.core.utils._console import printer
-from bridgic.core.utils import msgpackx
+from bridgic.core.utils._msgpackx import dump_bytes
 from bridgic.core.automa.worker import Worker
 from bridgic.core.types._error import *
 from bridgic.core.types._common import AutomaType, ArgsMappingRule
@@ -878,7 +878,7 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
         # Find all connected components of the whole automa graph.
         self._find_connected_components()
 
-    def ferry_to(self, worker_key: str, /, *args, **kwargs):
+    def ferry_to(self, key: str, /, *args, **kwargs):
         """
         Defer the invocation to the specified worker, passing any provided arguments. This creates a 
         delayed call, ensuring the worker will be scheduled to run asynchronously in the next event loop, 
@@ -891,7 +891,7 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
 
         Parameters
         ----------
-        worker_key : str
+        key : str
             The key of the worker to run.
         args : optional
             Positional arguments to be passed.
@@ -929,7 +929,7 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
         # if debug is enabled, trace back the kickoff worker key from stacktrace.
         kickoff_worker_key: str = self._trace_back_kickoff_worker_key_from_stack() if running_options.debug else None
         deferred_task = _FerryDeferredTask(
-            ferry_to_worker_key=worker_key,
+            ferry_to_worker_key=key,
             kickoff_worker_key=kickoff_worker_key,
             args=args,
             kwargs=kwargs,
@@ -1235,7 +1235,7 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
                 all_interactions: List[Interaction] = [interaction for e in interaction_exceptions for interaction in e.args]
                 if self.parent is None:
                     # This is the top-level Automa. Serialize the Automa and raise InteractionException to the application layer.
-                    serialized_automa = msgpackx.dump_bytes(self)
+                    serialized_automa = dump_bytes(self)
                     snapshot = Snapshot(
                         serialized_bytes=serialized_automa,
                         serialization_version=GraphAutoma.SERIALIZATION_VERSION,

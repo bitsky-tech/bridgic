@@ -1,21 +1,15 @@
-# Tutorial
+# Tutorials
 
-Welcome to the Bridgic tutorial! Here, we offer a complete learning the usage of "bridgic", helping you quickly master the core concepts and best practices of the framework.
+Welcome to the Bridgic tutorial!
 
-Each feature will be accompanied by a simplified small process that might be encountered in the actual development process to help understand and recognize it.
+Here, we offer the basic knowledge for developing agentic system in Bridgic framework, helping you quickly master necessary concepts and best practices of organizing program deterministic logic and non-deterministic model calls to build an agent.
 
-In this tutorial, we’ll assume that Bridgic is already installed on your system. If that’s not the case, see Installation guide: [Bridgic Install](../home/installation.md#installation).
+For each feature, we provide a simplified example process inspired by real-world development scenarios to help you better understand and apply the concepts.
 
 This tutorial will walk you through these tasks:
 
-1. [Getting Started](./notebooks/getting_started.ipynb): Write the first project with Bridgic.
-2. [Model Usage](./notebooks/model_usage.ipynb): Use model in Bridgic.
-3. [Parameter Passing](./notebooks/parameter_passing.ipynb): Three ways of data transmission in Bridgic, including Arguments Mapping, Arguments Injection,  Inputs Propagation.
-4. [Dynamic Router](./notebooks/dynamic_router.ipynb): Dynamically determine the next execution worker at runtime.
-5. [Interaction Event](./notebooks/interaction_event.ipynb): Interaction with the external environment during operation.
-6. [Nested Reuse](./notebooks/nested_reuse.ipynb): Reusing one Automa within another Automa.
-7. [Dual-Mode Worker Execution](./notebooks/dual_mode_worker_execution.ipynb): Support for sync and async.
-<!-- 3. [Dynamic DAG](dynamic_dag.ipynb): Dynamically add or remove worker to change the execution DAG at runtime. -->
-
+1. [Quick Start](./items/quick_start/quick_start.ipynb): Write your first Bridgic style program.
+2. [Core Mechanism](./items/core_mechanism/index.md): Learn about the core mechanism and how Bridgic organizes program into modular building blocks.
+3. [Model Integration](./items/model_integration/index.md): Discover how to incorporate AI models into your workflows for creating more autonomous and intelligent systems.
 
 **Start your Bridgic journey!** 🎉

@@ -1,10 +1,17 @@
-# Welcome to the world of Bridgic 🌉!
+# Welcome to the world of Bridgic!
 
-## What does *Bridgic* mean?
+**Bridgic** is an innovative programming framework designed to create agentic systems, ranging from deterministic workflows to autonomous agents. It introduces a new paradigm that simplifies the development of agentic systems.
 
-**Bridgic** means bridging **logic** and **magic** together.
+## What does the word "*Bridgic*" mean?
 
-- **Logic** stands for deterministic execution flows;
-- **Magic** stands for highly autonomous AI capabilities.
+The name **Bridgic** is inspired by the idea of “**bridging logic and magic**” — bringing together the precision of logic and the creativity of intelligence.
 
-Bridgic provides a programming paradigm that enables a more effective integration of the two.
+- **Logic** stands for deterministic execution flows.
+- **Magic** stands for highly autonomous AI agents.
+
+Refer to the relevant sections of the documentation for details:
+
+* [Installation](tutorials/installation.md).
+* [Tutorials](tutorials/index.md).
+* [Understanding](home/introduction.md).
+* [API Reference](reference/bridgic-core/bridgic/core/agentic/index.md).
