@@ -25,7 +25,7 @@ nav:
   - Understanding:
     - Introduction: home/introduction.md
     - Basics: home/basics.md
-    - Concepts: home/concepts.md
+    # - Concepts: home/concepts.md
   - API Reference:
 {{API_REFERENCE_CONTENT}}
 

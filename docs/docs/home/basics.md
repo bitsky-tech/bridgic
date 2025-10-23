@@ -11,7 +11,7 @@ Bridgic has two core concepts:
 
 A worker is an entity that actually performs tasks. In real-world systems, a worker can represent a precise execution logic, such as a function or an API call, or it can be something highly autonomous, like an agent. In other words, a worker can be any entity capable of carrying out actions, regardless of its level of autonomy.
 
-In Bridgic, the [`Worker`](/reference/bridgic-core/bridgic/core/automa/worker/#bridgic.core.automa.worker.Worker) class is defined in Python as follows:
+In Bridgic, the [`Worker`](../../reference/bridgic-core/bridgic/core/automa/worker/#bridgic.core.automa.worker.Worker) class is defined in Python as follows:
 
 ```python
 class Worker:
@@ -19,10 +19,10 @@ class Worker:
         ...
 ```
 
-The `arun` method of the `Worker` class is called to execute a task. You can pass any required arguments to `arun`, and it will return a value as the result of the task.
+The [`arun`](../../reference/bridgic-core/bridgic/core/automa/worker/#bridgic.core.automa.worker.Worker.arun) method of the [`Worker`](../../reference/bridgic-core/bridgic/core/automa/worker/#bridgic.core.automa.worker.Worker) class is called to execute a task. You can pass any required arguments to `arun`, and it will return a value as the result of the task.
 
 !!! hint "Tips"
-    In fact, in addition to the `arun` method, a `Worker` also has a `run` method. This relates to Bridgic's concurrency mode. Please refer to the relevant sections for more details.
+    In fact, in addition to the `arun` method, a `Worker` also has a [`run`](../../reference/bridgic-core/bridgic/core/automa/worker/#bridgic.core.automa.worker.Worker.run) method. This relates to Bridgic's concurrency mode. Please refer to the relevant sections for more details.
 
 Besides worker, "automa" is another core concept in Bridgic. An automa acts as a container for a group of workers. Instead of performing tasks by itself, an automa schedules and orchestrates the workers it contains, running them according to a predefined or dynamic execution flow in order to accomplish the overall task.
 
@@ -30,7 +30,7 @@ Besides worker, "automa" is another core concept in Bridgic. An automa acts as a
 <img src="/home/imgs/automa_workers_basic.png" alt="An automa contains several workers" width="512">
 </div>
 
-In Bridgic, the [`Automa`](/reference/bridgic-core/bridgic/core/automa/#bridgic.core.automa.Automa) class is defined in Python as follows:
+In Bridgic, the [`Automa`](../../reference/bridgic-core/bridgic/core/automa/#bridgic.core.automa.Automa) class is defined in Python as follows:
 
 ```python
 class Automa(Worker):
@@ -41,7 +41,7 @@ Note that the `Automa` class inherits from `Worker`. This means that every autom
 
 ## GraphAutoma
 
-[`GraphAutoma`](/reference/bridgic-core/bridgic/core/automa/#bridgic.core.automa.GraphAutoma) is a concrete implementation of the automa concept, where workers are organized into a directed graph (DG) with workers as nodes and their relationships as edges.
+[`GraphAutoma`](../../reference/bridgic-core/bridgic/core/automa/#bridgic.core.automa.GraphAutoma) is a concrete implementation of the automa concept, where workers are organized into a directed graph (DG) with workers as nodes and their relationships as edges.
 
 ### Predefined Dependencies
 
@@ -81,11 +81,11 @@ class MyFlow(GraphAutoma):
         ...
 ```
 
-This code uses the [`@worker` decorator](/reference/bridgic-core/bridgic/core/automa/#bridgic.core.automa.worker._worker_decorator.worker) to transform a regular Python method into a worker, and uses the `dependencies` parameter to define the partial order among these workers.
+This code uses the [`@worker` decorator](../../reference/bridgic-core/bridgic/core/automa/#bridgic.core.automa.worker._worker_decorator.worker) to transform a regular Python method into a worker, and uses the `dependencies` parameter to define the partial order among these workers.
 
 ### Dynamic Routing
 
-To support the development of autonomous agents, in addition to the predefined dependencies mentioned above, Bridgic also provides an easy-to-use [`ferry_to()`](/reference/bridgic-core/bridgic/core/automa/#bridgic.core.automa.GraphAutoma.ferry_to) API for implementing dynamic routing.
+To support the development of autonomous agents, in addition to the predefined dependencies mentioned above, Bridgic also provides an easy-to-use [`ferry_to()`](../../reference/bridgic-core/bridgic/core/automa/#bridgic.core.automa.GraphAutoma.ferry_to) API for implementing dynamic routing.
 
 <div style="text-align: center;">
 <img src="/home/imgs/automa_dg_ferry_to.png" alt="Dynamic Routing based ferry_to" width="512">
@@ -116,7 +116,7 @@ class MyFlow(GraphAutoma):
         ...
 ```
 
-With the [`ferry_to()`](/reference/bridgic-core/bridgic/core/automa/#bridgic.core.automa.GraphAutoma.ferry_to) mechanism, you can implement dynamic routing in a natural, intuitive way—just like calling a regular function.
+With the [`ferry_to()`](../../reference/bridgic-core/bridgic/core/automa/#bridgic.core.automa.GraphAutoma.ferry_to) mechanism, you can implement dynamic routing in a natural, intuitive way—just like calling a regular function.
 
 !!! hint "Tips"
     The name of the `ferry_to` API comes from the idea of "ferrying" between various "islands" in a directed graph.
@@ -162,9 +162,11 @@ It’s important to note that when `ferry_to("worker_2", x)` is called, `worker_
 
 `GraphAutoma` provides two types of APIs that are used to manage the graph topology:
 
-* **The core API**: [`add_worker`](/reference/bridgic-core/bridgic/core/automa/#bridgic.core.automa.GraphAutoma.add_worker), [`add_func_as_worker`](/reference/bridgic-core/bridgic/core/automa/#bridgic.core.automa.GraphAutoma.add_func_as_worker), [`remove_worker`](/reference/bridgic-core/bridgic/core/automa/#bridgic.core.automa.GraphAutoma.remove_worker), and [`add_dependency`](/reference/bridgic-core/bridgic/core/automa/#bridgic.core.automa.GraphAutoma.add_dependency).
+* **The core API**: [`add_worker`](../../reference/bridgic-core/bridgic/core/automa/#bridgic.core.automa.GraphAutoma.add_worker), [`add_func_as_worker`](../../reference/bridgic-core/bridgic/core/automa/#bridgic.core.automa.GraphAutoma.add_func_as_worker), [`remove_worker`](../../reference/bridgic-core/bridgic/core/automa/#bridgic.core.automa.GraphAutoma.remove_worker), and [`add_dependency`](../../reference/bridgic-core/bridgic/core/automa/#bridgic.core.automa.GraphAutoma.add_dependency).
 
-* **The declarative API**: [`@worker` decorator](/reference/bridgic-core/bridgic/core/automa/#bridgic.core.automa.worker._worker_decorator.worker).
+* **The declarative API**: [`@worker` decorator](../../reference/bridgic-core/bridgic/core/automa/#bridgic.core.automa.worker._worker_decorator.worker).
+
+For more code examples, please refer to the [Tutorials](../tutorials/items/quick_start/quick_start.ipynb) section.
 
 ## Dynamic Directed Graph
 
@@ -187,3 +189,5 @@ Taking the above diagram as an example, the entire execution is divided into thr
 ## Modulirity and Netsting
 
 In Bridgic, an automa itself is also a worker, allowing one automa to be added into another. This design enables the construction of complex agentic systems by reusing components through hierarchical nesting, introducing a new paradigm of modular and component-based programming in agent-based development.
+
+For more code examples on modularity, please refer to the "[Modularity](../../tutorials/items/core_mechanism/modularity/)" section in the Tutorials.
