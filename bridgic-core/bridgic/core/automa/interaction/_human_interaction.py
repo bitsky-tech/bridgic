@@ -66,23 +66,20 @@ class Interaction(BaseModel):
     """
     Represents a single interaction between the Automa and a human. 
     Each call to `interact_with_human` will generate an `Interaction` object.
-
-    Fields
-    ------
-    interaction_id: str
-        The unique identifier for the interaction.
-    event: Event
-        The event that triggered the interaction.
     """
     interaction_id: str
+    """ The unique identifier for the interaction."""
     event: Event
+    """The event that triggered the interaction."""
 
 class InteractionException(Exception):
     """
     Exception raised when the `interact_with_human` method is called and a human interaction is triggered.
     """
     _interactions: List[Interaction]
+    """The list of interactions that occurred during the most recent event loop."""
     _snapshot: "Snapshot"
+    """The snapshot of the Automa's current state."""
 
     def __init__(self, interactions: List[Interaction], snapshot: "Snapshot"):
         self._interactions = interactions
@@ -110,4 +107,6 @@ class InteractionFeedback(Feedback):
     A feedback object that contains both the data provided by the user and the `interaction_id`, which uniquely identifies the corresponding interaction.
     """
     interaction_id: str
+    """ The unique identifier for the interaction."""
     timestamp: datetime = datetime.now()
+    """The timestamp of the feedback."""

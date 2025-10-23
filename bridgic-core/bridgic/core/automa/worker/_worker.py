@@ -65,6 +65,9 @@ class Worker(Serializable):
         self.__cached_param_names_of_run = None
 
     async def arun(self, *args: Tuple[Any, ...], **kwargs: Dict[str, Any]) -> Any:
+        """
+        The asynchronous method to run the worker.
+        """
         loop = asyncio.get_running_loop()
         topest_automa = self._get_top_level_automa()
         if topest_automa:
@@ -81,6 +84,9 @@ class Worker(Serializable):
         raise WorkerRuntimeError(f"No thread pool is available for the worker {type(self)}")
 
     def run(self, *args: Tuple[Any, ...], **kwargs: Dict[str, Any]) -> Any:
+        """
+        The synchronous method to run the worker.
+        """
         raise NotImplementedError(f"run() is not implemented in {type(self)}")
 
     def _get_top_level_automa(self) -> Optional["Automa"]:

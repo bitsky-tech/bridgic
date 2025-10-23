@@ -35,41 +35,27 @@ from bridgic.core.types._common import ZeroToOne
 class Event(BaseModel):
     """
     An event is a message that is sent from one worker inside the Automa to the application layer outside the Automa.
-
-    Fields
-    ------
-    event_type: Optional[str]
-        The type of the event. The type of the event is used to identify the event handler registered to handle the event.
-    timestamp: datetime
-        The timestamp of the event.
-    data: Optional[Any]
-        The data attached to the event.
     """
     event_type: Optional[str] = None
+    """The type of the event. The type of the event is used to identify the event handler registered to handle the event."""
     timestamp: datetime = datetime.now()
+    """The timestamp of the event."""
     data: Optional[Any] = None
+    """The data attached to the event."""
 
 class ProgressEvent(Event):
     """
     A progress event is an event that indicates the progress of a worker task.
-
-    Fields
-    ------
-    progress: ZeroToOne
-        The progress of the task, represented as a value between 0 and 1.
     """
     progress: ZeroToOne
+    """The progress of the task, represented as a value between 0 and 1."""
 
 class Feedback(BaseModel):
     """
     A feedback is a message that is sent from the application layer outside the Automa to a worker inside the Automa.
-
-    Fields
-    ------
-    data: Any
-        The data attached to the feedback.
     """
     data: Any
+    """The data attached to the feedback."""
 
 class FeedbackSender(ABC):
     """
