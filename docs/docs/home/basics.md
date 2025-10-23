@@ -27,7 +27,7 @@ The [`arun`](../../reference/bridgic-core/bridgic/core/automa/worker/#bridgic.co
 Besides worker, "automa" is another core concept in Bridgic. An automa acts as a container for a group of workers. Instead of performing tasks by itself, an automa schedules and orchestrates the workers it contains, running them according to a predefined or dynamic execution flow in order to accomplish the overall task.
 
 <div style="text-align: center;">
-<img src="/home/imgs/automa_workers_basic.png" alt="An automa contains several workers" width="512">
+<img src="../imgs/automa_workers_basic.png" alt="An automa contains several workers" width="512">
 </div>
 
 In Bridgic, the [`Automa`](../../reference/bridgic-core/bridgic/core/automa/#bridgic.core.automa.Automa) class is defined in Python as follows:
@@ -46,7 +46,7 @@ Note that the `Automa` class inherits from `Worker`. This means that every autom
 ### Predefined Dependencies
 
 <div style="text-align: center;">
-<img src="/home/imgs/automa_dg.png" alt="An automa directed graph" width="512">
+<img src="../imgs/automa_dg.png" alt="An automa directed graph" width="512">
 </div>
 
 As shown in the diagram above, the execution order of workers primarily depends on two factors:
@@ -88,7 +88,7 @@ This code uses the [`@worker` decorator](../../reference/bridgic-core/bridgic/co
 To support the development of autonomous agents, in addition to the predefined dependencies mentioned above, Bridgic also provides an easy-to-use [`ferry_to()`](../../reference/bridgic-core/bridgic/core/automa/#bridgic.core.automa.GraphAutoma.ferry_to) API for implementing dynamic routing.
 
 <div style="text-align: center;">
-<img src="/home/imgs/automa_dg_ferry_to.png" alt="Dynamic Routing based ferry_to" width="512">
+<img src="../imgs/automa_dg_ferry_to.png" alt="Dynamic Routing based ferry_to" width="512">
 </div>
 
 As illustrated in the diagram above, the dashed arrows represent potential execution paths. After `worker_1` finishes execution, the orchestrator of `GraphAutoma` determines at runtime—based on parameters or context—whether to proceed with `worker_2`, `worker_3`, or both.
@@ -124,7 +124,7 @@ With the [`ferry_to()`](../../reference/bridgic-core/bridgic/core/automa/#bridgi
 With the help of the dynamic routing mechanism provided by `ferry_to`, you can easily implement looping logic in your workflow. The diagram below illustrates how this works:
 
 <div style="text-align: center;">
-<img src="/home/imgs/automa_dg_loop.png" alt="Looping demonstration" width="400">
+<img src="../imgs/automa_dg_loop.png" alt="Looping demonstration" width="400">
 </div>
 
 Code:
@@ -175,7 +175,7 @@ For more code examples, please refer to the [Tutorials](../tutorials/items/quick
 A DDG is a directed graph whose topology can be changed at runtime. Its scheduler divides the orchestration process into several dynamic steps (DS), each executed in a single event loop iteration. At the end of each DS, the scheduler prepares the next set of workers to run based on the predefined dependencies or the dynamic `ferry_to` calls. Any topology changes triggered by `add_worker` or `remove_worker` takes effect in the next DS.
 
 <div style="text-align: center;">
-<img src="/home/imgs/automa_dg.png" alt="An automa directed graph" width="512">
+<img src="../imgs/automa_dg.png" alt="An automa directed graph" width="512">
 </div>
 
 Taking the above diagram as an example, the entire execution is divided into three dynamic steps:
