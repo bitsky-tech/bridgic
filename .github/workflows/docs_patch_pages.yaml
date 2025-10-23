@@ -1,0 +1,101 @@
+# Docs Patch Pages Workflow
+# This workflow patches existing documentation versions by deleting and rebuilding them with mike
+# It uses uv for Python dependency management and automatically updates MkDocs documentation on GitHub Pages
+# Reference documentation:
+# - GitHub Actions: https://docs.github.com/en/actions
+# - uv package manager: https://docs.astral.sh/uv/
+# - MkDocs: https://www.mkdocs.org/
+# - GitHub Pages: https://docs.github.com/en/pages
+
+name: Docs Patch Pages
+
+# Trigger conditions: runs when pushing to a tag
+on:
+  push:
+    tags:
+      # This pattern matches patch documentation version tags (e.g., patch-doc-v1.2.3)
+      # Note: This workflow is triggered for patching existing documentation versions
+      - 'patch-doc-v[0-9]*.[0-9]*.[0-9]*'
+
+jobs:
+  deploy:
+    # Use Ubuntu 22.04 as the runtime environment
+    runs-on: ubuntu-22.04
+    
+    # Set permissions: need write permissions to deploy to GitHub Pages
+    permissions:
+      contents: write  # Allow writing to repository content
+      pages: write     # Allow writing to Pages
+      id-token: write  # Allow writing ID token (for authentication)
+    
+    # Concurrency control: ensures multiple workflows on the same branch do not run simultaneously
+    concurrency:
+      group: ${{ github.workflow }}-${{ github.ref }}
+      cancel-in-progress: true  # Cancel running identical workflows
+    
+    steps:
+      # Step 1: Checkout code
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Fetch complete history, some tools may require this
+
+      # Step 2: Setup Python environment
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.9'  # Keep consistent with requirements in pyproject.toml
+
+      # Step 3: Install uv package manager
+      # uv is an extremely fast Python package manager written in Rust
+      # Compared to pip, uv has significant advantages in dependency resolution and installation speed
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: "latest"  # Use the latest version of uv
+          enable-cache: false  # Disable built-in cache to avoid conflicts with multiple uv.lock files
+
+      # Step 4: Cache uv dependencies
+      # Caching can significantly reduce build time, especially for large projects
+      - name: Cache uv dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/uv
+            docs/.venv
+          key: ${{ runner.os }}-docs-uv-${{ hashFiles('docs/uv.lock') }}-${{ hashFiles('docs/pyproject.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-docs-uv-
+            ${{ runner.os }}-uv-
+
+      # Step 5: Install dependencies and configure Git
+      - name: Install dependencies and configure Git
+        run: |
+          cd docs
+          uv sync
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      # Step 6: Patch existing documentation version (delete and rebuild)
+      - name: Build and deploy docs with mike
+        run: |
+          cd docs
+          version=$(echo ${{ github.ref_name }} | sed 's/patch-doc-//')
+          make delete-doc-version version=${version}
+          make build-doc-version version=${version}
+      
+      # Step 7: Ensure CNAME exists on gh-pages branch
+      - name: Ensure CNAME on gh-pages
+        run: |
+          set -e
+          DOMAIN=$(cat docs/CNAME 2>/dev/null)
+          git fetch origin gh-pages || true
+          git switch gh-pages
+          echo "$DOMAIN" > CNAME
+          git add CNAME
+          if git diff --cached --quiet; then
+            echo "CNAME unchanged"
+          else
+            git commit -m "chore: ensure CNAME for GitHub Pages"
+            git push origin gh-pages
+          fi
