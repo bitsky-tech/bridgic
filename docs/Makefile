@@ -38,7 +38,7 @@ delete-doc-version: require-version
 serve-doc:
 	@uv sync
 	@make gen-mkdocs-yml
-	$(MIKE) serve -a $(HOST):$(PORT)
+	$(MKDOCS) serve -a $(HOST):$(PORT)
 
 # Clean build artifacts
 clean:
