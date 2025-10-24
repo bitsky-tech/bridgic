@@ -2,7 +2,7 @@ import inspect
 from typing import Callable, Dict, Any, List, Optional, cast, get_origin, Annotated
 from pydantic import create_model, WithJsonSchema, Field, ConfigDict
 from pydantic.fields import FieldInfo
-from bridgic.core.automa.args import JSON_SCHEMA_IGNORE_ARG_TYPES
+from bridgic.core.automa.args._args_descriptor import JSON_SCHEMA_IGNORE_ARG_TYPES
 from docstring_parser import parse as parse_docstring # type: ignore
 
 def create_func_params_json_schema(
