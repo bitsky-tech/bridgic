@@ -1,10 +1,12 @@
 # Docs Patch Pages Workflow
 # This workflow patches existing documentation versions by deleting and rebuilding them with mike
-# It uses uv for Python dependency management and automatically updates MkDocs documentation on GitHub Pages
+# It is triggered when pushing tags matching the pattern v[0-9]*.[0-9]*.[0-9]*.post[0-9]+
+# The workflow extracts the base version (e.g., v1.0.0 from v1.0.0.post1) and rebuilds that documentation version
 # Reference documentation:
 # - GitHub Actions: https://docs.github.com/en/actions
 # - uv package manager: https://docs.astral.sh/uv/
 # - MkDocs: https://www.mkdocs.org/
+# - Mike: https://github.com/jimporter/mike
 # - GitHub Pages: https://docs.github.com/en/pages
 
 name: Docs Patch Pages
@@ -13,9 +15,9 @@ name: Docs Patch Pages
 on:
   push:
     tags:
-      # This pattern matches patch documentation version tags (e.g., patch-doc-v1.2.3)
-      # Note: This workflow is triggered for patching existing documentation versions
-      - 'patch-doc-v[0-9]*.[0-9]*.[0-9]*'
+      # This pattern matches post-release version tags (e.g., v1.2.3.post1, v2.0.0.post2)
+      # These tags are used for patching existing documentation versions
+      - 'v[0-9]*\.[0-9]*\.[0-9]*\.post[0-9]+'
 
 jobs:
   deploy:
@@ -28,7 +30,7 @@ jobs:
       pages: write     # Allow writing to Pages
       id-token: write  # Allow writing ID token (for authentication)
     
-    # Concurrency control: ensures multiple workflows on the same branch do not run simultaneously
+    # Concurrency control: ensures multiple workflows on the same tag do not run simultaneously
     concurrency:
       group: ${{ github.workflow }}-${{ github.ref }}
       cancel-in-progress: true  # Cancel running identical workflows
@@ -77,10 +79,12 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
       # Step 6: Patch existing documentation version (delete and rebuild)
-      - name: Build and deploy docs with mike
+      - name: Patch documentation version with mike
         run: |
           cd docs
-          version=$(echo ${{ github.ref_name }} | sed 's/patch-doc-//')
+          # Extract base version from post-release tag (e.g., v1.0.0 from v1.0.0.post1)
+          version=$(echo ${{ github.ref_name }} | sed 's/\.post[0-9]*$//')
+          echo "Patching documentation version: ${version}"
           make delete-doc-version version=${version}
           make build-doc-version version=${version}
       
@@ -88,6 +92,7 @@ jobs:
       - name: Ensure CNAME on gh-pages
         run: |
           set -e
+          # Read CNAME from docs directory if it exists
           DOMAIN=$(cat docs/CNAME 2>/dev/null)
           git fetch origin gh-pages || true
           git switch gh-pages
