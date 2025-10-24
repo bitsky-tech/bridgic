@@ -17,7 +17,7 @@ on:
     tags:
       # This pattern matches post-release version tags (e.g., v1.2.3.post1, v2.0.0.post2)
       # These tags are used for patching existing documentation versions
-      - 'v[0-9]*\.[0-9]*\.[0-9]*\.post[0-9]+'
+      - 'v[0-9]*.[0-9]*.[0-9]*.post[0-9]+'
 
 jobs:
   deploy:
