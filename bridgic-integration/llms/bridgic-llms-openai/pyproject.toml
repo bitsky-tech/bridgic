@@ -1,6 +1,6 @@
 [project]
 name = "bridgic-llms-openai"
-version = "0.1.0"
+version = "0.1.0.post1"
 license = {text = "MIT"}
 classifiers = [
     # "Private :: Do Not Upload",
