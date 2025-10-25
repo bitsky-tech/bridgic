@@ -239,3 +239,4 @@ extra_javascript:
   - javascripts/mathjax.js
   - javascripts/polyfill.min.js
   - javascripts/tex-mml-chtml.js
+  - javascripts/clipboard.js
