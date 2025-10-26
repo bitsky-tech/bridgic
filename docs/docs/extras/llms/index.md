@@ -1,3 +1,1 @@
-## llm_index.md
-
-TODO:
+The `llms` module provides Bridgic-style abstractions and implementations for integrating with various LLM providers.
