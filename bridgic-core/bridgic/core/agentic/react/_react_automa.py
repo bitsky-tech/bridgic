@@ -78,7 +78,9 @@ class ReActAutoma(GraphAutoma):
     @override
     def dump_to_dict(self) -> Dict[str, Any]:
         state_dict = super().dump_to_dict()
-        # TODO: tools
+        state_dict["tools"] = self._tools
+        state_dict["system_prompt"] = self._system_prompt
+        state_dict["llm"] = self._llm
         state_dict["max_iterations"] = self._max_iterations
         state_dict["prompt_template"] = self._prompt_template
         return state_dict
@@ -88,6 +90,11 @@ class ReActAutoma(GraphAutoma):
         super().load_from_dict(state_dict)
         self._max_iterations = state_dict["max_iterations"]
         self._prompt_template = state_dict["prompt_template"]
+        self._tools = state_dict["tools"]
+        self._system_prompt = state_dict["system_prompt"]
+        self._llm = state_dict["llm"]
+        self._jinja_env = Environment(loader=PackageLoader("bridgic.core.agentic.react"))
+        self._jinja_template = self._jinja_env.get_template(self._prompt_template)
 
     @property
     def max_iterations(self) -> int:

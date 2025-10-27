@@ -259,6 +259,7 @@ version = "0.1.1.dev1"
 source = { directory = "../bridgic-integration/llms/bridgic-llms-openai" }
 dependencies = [
     { name = "bridgic-core" },
+    { name = "bridgic-llms-openai-like" },
     { name = "httpx" },
     { name = "httpx-aiohttp" },
     { name = "openai" },
@@ -267,6 +268,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "bridgic-core", directory = "." },
+    { name = "bridgic-llms-openai-like", directory = "../bridgic-integration/llms/bridgic-llms-openai-like" },
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "httpx-aiohttp", specifier = ">=0.1.8" },
     { name = "openai", specifier = ">=1.60.0" },

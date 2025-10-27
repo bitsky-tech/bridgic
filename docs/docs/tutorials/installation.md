@@ -1,11 +1,8 @@
 # Installation
 
-Bridgic is a next-generation Agent development framework, designed to empower developers to build, orchestrate, and manage intelligent agents with ease.
+Bridgic is a next-generation agent development framework that enables developers to build agentic systems. Here are the installation instructions.
 
-Centered on the paradigm of Agentic programming, Bridgic seamlessly integrates deterministic logic and advanced AI capabilities, enabling rapid prototyping, robust long-running agent workflows, and flexible system composability. Whether you're developing interactive assistants, autonomous workflows, or adaptive process automation, Bridgic will equip you with convenient tools and intuitive abstractions to give you support.
-
-
-The installation equires Python 3.9 or higher version.
+Python 3.9 or higher version is required.
 
 === "pip"
 
