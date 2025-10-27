@@ -18,7 +18,7 @@ pip install bridgic-llms-openai-like
 """
 
 from importlib.metadata import version
-from .openai_like_llm import OpenAILikeConfiguration, OpenAILikeLlm
+from ._openai_like_llm import OpenAILikeConfiguration, OpenAILikeLlm
 
 __version__ = version("bridgic-llms-openai-like")
 __all__ = ["OpenAILikeConfiguration", "OpenAILikeLlm", "__version__"]

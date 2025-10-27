@@ -1,6 +1,6 @@
 [project]
 name = "bridgic-llms-openai"
-version = "0.1.0"
+version = "0.1.1.dev1"
 license = {text = "MIT"}
 classifiers = [
     # "Private :: Do Not Upload",
@@ -17,7 +17,7 @@ dependencies = [
     "openai>=1.60.0",
     "httpx>=0.28.1",
     "httpx-aiohttp>=0.1.8",
-    "bridgic-llms-openai-like>=0.1.0",
+    "bridgic-llms-openai-like>=0.1.1.dev1",
 ]
 
 [dependency-groups]

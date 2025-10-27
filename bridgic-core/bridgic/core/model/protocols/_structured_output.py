@@ -18,7 +18,6 @@ class JsonSchema(BaseModel):
     """
     constraint_type: Literal["json_schema"] = "json_schema"
     """The type of the constraint, in this case `json_schema`."""
-    name: str = Field(..., description="Name of the JsonSchema constraint.")
     schema_dict: Dict[str, Any] = Field(..., description="Schema of the JsonSchema constraint.")
     """The JSON schema of the constraint."""
 
@@ -66,8 +65,6 @@ class EbnfGrammar(BaseModel):
     constraint_type: Literal["ebnf_grammar"] = "ebnf_grammar"
     """The type of the constraint, in this case `ebnf_grammar`."""
     syntax: str = Field(..., description="Syntax of the EBNF grammar constraint.")
-    """The syntax of the EBNF grammar constraint."""
-    description: str = Field(..., description="Description of the EBNF grammar constraint.")
 
 class LarkGrammar(BaseModel):
     """
