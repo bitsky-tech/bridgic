@@ -9,7 +9,7 @@ from openai.types.chat import ChatCompletionNamedToolChoiceParam, ChatCompletion
 from bridgic.core.model import BaseLlm
 from bridgic.core.model.types import *
 from bridgic.core.model.protocols import StructuredOutput, ToolSelection, PydanticModel, JsonSchema, Constraint, EbnfGrammar, Regex, Choice
-from bridgic.llms.openai_like.openai_like_llm import OpenAILikeLlm, OpenAILikeConfiguration
+from bridgic.llms.openai_like import OpenAILikeLlm, OpenAILikeConfiguration
 from bridgic.core.utils._console import printer
 from bridgic.core.utils._collection import validate_required_params, merge_dict, filter_dict
 

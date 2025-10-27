@@ -11,7 +11,7 @@ from bridgic.core.model import BaseLlm
 from bridgic.core.model.types import *
 from bridgic.core.model.protocols import *
 from bridgic.core.utils._console import printer
-from bridgic.llms.openai.openai_llm import OpenAIConfiguration, OpenAILlm
+from bridgic.llms.openai import OpenAIConfiguration, OpenAILlm
 
 
 _api_key = os.environ.get("OPENAI_API_KEY")

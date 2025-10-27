@@ -5,8 +5,8 @@ from bridgic.core.automa import GraphAutoma, worker
 from bridgic.core.model.protocols import ToolSelection
 from bridgic.core.agentic.tool_specs import as_tool
 from bridgic.core.agentic import ReActAutoma
-from bridgic.llms.openai.openai_llm import OpenAILlm, OpenAIConfiguration
-from bridgic.llms.vllm.vllm_server_llm import VllmServerLlm, OpenAILikeConfiguration
+from bridgic.llms.openai import OpenAILlm, OpenAIConfiguration
+from bridgic.llms.vllm import VllmServerLlm, VllmServerConfiguration
 from tests.core.model.mock_llm import MockLlm
 
 _openai_api_key = os.environ.get("OPENAI_API_KEY")
@@ -37,7 +37,7 @@ def llm() -> ToolSelection:
         return VllmServerLlm(
             api_key=_vllm_api_key,
             api_base=_vllm_api_base,
-            configuration=OpenAILikeConfiguration(model=_vllm_model_name),
+            configuration=VllmServerConfiguration(model=_vllm_model_name),
             timeout=10,
         )
 

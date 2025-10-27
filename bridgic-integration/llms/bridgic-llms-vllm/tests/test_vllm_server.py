@@ -11,7 +11,7 @@ from bridgic.core.model import BaseLlm
 from bridgic.core.model.types import *
 from bridgic.core.model.protocols import *
 from bridgic.core.utils._console import printer
-from bridgic.llms.vllm.vllm_server_llm import VllmServerLlm, VllmServerConfiguration
+from bridgic.llms.vllm import VllmServerLlm, VllmServerConfiguration
 
 _api_base = os.environ.get("VLLM_SERVER_API_BASE")
 _api_key = os.environ.get("VLLM_SERVER_API_KEY")
