@@ -184,7 +184,7 @@ wheels = [
 
 [[package]]
 name = "bridgic"
-version = "0.1.0"
+version = "0.1.1"
 source = { editable = "." }
 dependencies = [
     { name = "bridgic-core" },
@@ -200,8 +200,8 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "bridgic-core", specifier = ">=0.1.0,<0.2.0" },
-    { name = "bridgic-llms-openai-like", specifier = ">=0.1.0,<0.2.0" },
+    { name = "bridgic-core", specifier = ">=0.1.1,<0.2.0" },
+    { name = "bridgic-llms-openai-like", specifier = ">=0.1.1,<0.2.0" },
 ]
 
 [package.metadata.requires-dev]
@@ -213,7 +213,7 @@ dev = [
 
 [[package]]
 name = "bridgic-core"
-version = "0.1.0"
+version = "0.1.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "docstring-parser" },
@@ -221,14 +221,14 @@ dependencies = [
     { name = "msgpack" },
     { name = "pydantic" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/87/64/5991db8c2fb9b15bd12e9f746ae0bbe7f05ecbfc0096c8873f18daa1e072/bridgic_core-0.1.0.tar.gz", hash = "sha256:487ef3fd5dcf5a713d28f4010567a5a292eef19bdb5940051f2069502e50cab1", size = 59931, upload-time = "2025-10-20T12:39:31.574Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/fc/1e/edae59f7519cd0d076ad353570d9f15d74c3ee2b17af5abbbb1d525591fa/bridgic_core-0.1.1.tar.gz", hash = "sha256:548f9242ddaf08d6ba47a2aa4aff9d0aa50af475c2ff816fdeed18a3c64f5177", size = 60421, upload-time = "2025-10-27T09:44:18.14Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/d4/4a/afcc5bbb1e9d8393358bc6bfae31ab9457e4dfed5d5e4e00d6e72137568f/bridgic_core-0.1.0-py3-none-any.whl", hash = "sha256:0591c88b33a738456debfe5ea720f5c47f7e3870655d412526ae1c18fe415375", size = 84525, upload-time = "2025-10-20T12:39:29.925Z" },
+    { url = "https://files.pythonhosted.org/packages/35/72/0d92da4aa386a7dfbc043a64a718d3a225da71bdd0c02ecc3a33f72217bd/bridgic_core-0.1.1-py3-none-any.whl", hash = "sha256:2488bf18c7a958c510ca508402666f57970ccdb46291fac4bb9a33b9a78774f2", size = 85013, upload-time = "2025-10-27T09:44:16.421Z" },
 ]
 
 [[package]]
 name = "bridgic-llms-openai-like"
-version = "0.1.0"
+version = "0.1.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "bridgic-core" },
@@ -236,9 +236,9 @@ dependencies = [
     { name = "httpx-aiohttp" },
     { name = "openai" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/ad/b0/cbdcde0c951fc508eb10e0e198d110080d153f370c3db703e0ebddcc06c8/bridgic_llms_openai_like-0.1.0.tar.gz", hash = "sha256:bc4d99a474cec3028a2e93534608eccf3ad94c931a25def0a85e8b28b34ebe92", size = 5333, upload-time = "2025-10-20T12:39:27.789Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/15/2c/1e3e9ee0beed75402a62e63ec40fc85aa482c2d299e150090c68b455ae23/bridgic_llms_openai_like-0.1.1.tar.gz", hash = "sha256:a3393eeaf9fceebf58847812aeddae57487d5d6696175b21b66a419ac8e334f4", size = 5387, upload-time = "2025-10-27T09:45:54.941Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/c3/7d/001917f06dfa89b4bfd98f6e02e5de9f6967d16fe0f007599e3076c68474/bridgic_llms_openai_like-0.1.0-py3-none-any.whl", hash = "sha256:b9e7c09d4d7eb2b9f681c39aee4dba28cd962d33f3e0e9ba389cdad1ad6b6abd", size = 6290, upload-time = "2025-10-20T12:39:26.547Z" },
+    { url = "https://files.pythonhosted.org/packages/c2/b1/4d7a64edd88b11dde6a9ff6d8cc8e1703b68f409ce1a6a454c3253c5e440/bridgic_llms_openai_like-0.1.1-py3-none-any.whl", hash = "sha256:3b0e12280d796ca06a29ef6c50b42aaf8aa54158e7166eb25455a461e9540dc8", size = 6317, upload-time = "2025-10-27T09:45:53.958Z" },
 ]
 
 [[package]]
