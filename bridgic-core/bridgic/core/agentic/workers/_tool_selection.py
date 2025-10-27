@@ -1,4 +1,5 @@
-from typing import List, Tuple, Optional
+from typing import Any, Dict, List, Tuple, Optional
+from typing_extensions import override
 
 from bridgic.core.automa.worker import Worker
 from bridgic.core.model.types import Message, Tool, ToolCall
@@ -58,3 +59,14 @@ class ToolSelectionWorker(Worker):
             tools=tools, 
         )
         return tool_calls, llm_response
+
+    @override
+    def dump_to_dict(self) -> Dict[str, Any]:
+        state_dict = super().dump_to_dict()
+        state_dict["tool_selection_llm"] = self._tool_selection_llm
+        return state_dict
+
+    @override
+    def load_from_dict(self, state_dict: Dict[str, Any]) -> None:
+        super().load_from_dict(state_dict)
+        self._tool_selection_llm = state_dict["tool_selection_llm"]
