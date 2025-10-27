@@ -31,7 +31,7 @@ class OpenAILikeConfiguration(BaseModel):
     presence_penalty: Optional[float] = None
     """Penalize new tokens based on whether they appear so far. [-2.0, 2.0]."""
     frequency_penalty: Optional[float] = None
-    """ Penalize new tokens based on their frequency so far. [-2.0, 2.0]."""
+    """Penalize new tokens based on their frequency so far. [-2.0, 2.0]."""
     max_tokens: Optional[int] = None
     """Maximum number of tokens to generate for the completion."""
     stop: Optional[List[str]] = None

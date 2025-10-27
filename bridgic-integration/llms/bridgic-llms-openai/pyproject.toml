@@ -17,6 +17,7 @@ dependencies = [
     "openai>=1.60.0",
     "httpx>=0.28.1",
     "httpx-aiohttp>=0.1.8",
+    "bridgic-llms-openai-like>=0.1.0",
 ]
 
 [dependency-groups]
