@@ -241,7 +241,7 @@ def test_vllm_server_structured_output_json_schema(llm):
 
     response: Dict[str, Any] = llm.structured_output(
         model=_model_name,
-        constraint=JsonSchema(name="ThinkAndAnswer", schema_dict=schema),
+        constraint=JsonSchema(schema_dict=schema),
         messages=[
             Message.from_text(
                 text="You are a helpful assistant.",
@@ -274,7 +274,7 @@ async def test_vllm_server_astructured_output_json_schema(llm):
 
     response: Dict[str, Any] = await llm.astructured_output(
         model=_model_name,
-        constraint=JsonSchema(name="ThinkAndAnswer", schema_dict=schema),
+        constraint=JsonSchema(schema_dict=schema),
         messages=[
             Message.from_text(
                 text="You are a helpful assistant.",
@@ -307,7 +307,7 @@ number ::= "2020" | "2021" | "2022" | "2023" | "2024"
 """
     response: str = llm.structured_output(
         model=_model_name,
-        constraint=EbnfGrammar(syntax=ebnf_syntax, description="A grammar for selecting sales data."),
+        constraint=EbnfGrammar(syntax=ebnf_syntax),
         messages=[
             Message.from_text(
                 text="You are a helpful assistant. You are good at writting SQL statements.",
@@ -349,7 +349,7 @@ number ::= "2020" | "2021" | "2022" | "2023" | "2024"
 """
     response: str = await llm.astructured_output(
         model=_model_name,
-        constraint=EbnfGrammar(syntax=ebnf_syntax, description="A grammar for selecting sales data."),
+        constraint=EbnfGrammar(syntax=ebnf_syntax),
         messages=[
             Message.from_text(
                 text="You are a helpful assistant. You are good at writting SQL statements.",

@@ -1,13 +1,11 @@
 import pytest
 import os
 import json
-import re
 import datetime
 
 from pydantic import BaseModel, Field
-from typing import List, Dict, Any, Literal, Any, Union, Optional
+from typing import Dict, Any
 
-from bridgic.core.model import BaseLlm
 from bridgic.core.model.types import *
 from bridgic.core.model.protocols import *
 from bridgic.core.utils._console import printer
@@ -16,6 +14,7 @@ from bridgic.llms.openai import OpenAIConfiguration, OpenAILlm
 
 _api_key = os.environ.get("OPENAI_API_KEY")
 _model_name = os.environ.get("OPENAI_MODEL_NAME")
+_api_base = os.environ.get("OPENAI_BASE_URL")
 
 @pytest.fixture
 def llm():
@@ -23,6 +22,7 @@ def llm():
     return OpenAILlm(
         api_key=_api_key,
         configuration=configuration,
+        api_base=_api_base,
     )
 
 @pytest.fixture
@@ -182,7 +182,7 @@ def test_openai_structured_output_json_schema(llm):
 
     response: Dict[str, Any] = llm.structured_output(
         model=_model_name,
-        constraint=JsonSchema(schema_dict=schema, name="ThinkAndAnswer"),
+        constraint=JsonSchema(schema_dict=schema),
         messages=[
             Message.from_text(
                 text="You are a helpful assistant.",
@@ -215,40 +215,7 @@ async def test_openai_astructured_output_json_schema(llm):
 
     response: Dict[str, Any] = await llm.astructured_output(
         model=_model_name,
-        constraint=JsonSchema(schema_dict=schema, name="ThinkAndAnswer"),
-        messages=[
-            Message.from_text(
-                text="You are a helpful assistant.",
-                role=Role.SYSTEM,
-            ),
-            Message.from_text(
-                text="What is the result of 12345 + 54321?",
-                role=Role.USER,
-            ),
-        ],
-    )
-    printer.print("\n" + json.dumps(response), color='purple')
-    assert isinstance(response["thought"], str)
-    assert isinstance(response["answer"], str)
-
-@pytest.mark.skipif(
-    (_api_key is None) or (_model_name is None),
-    reason="OPENAI_API_KEY or OPENAI_MODEL_NAME is not set",
-)
-@pytest.mark.asyncio
-async def test_openai_astructured_output_json_schema(llm):
-    schema = {
-        "type": "object",
-        "properties": {
-            "thought": {"type": "string", "description": "The thought about the problem.", "maxLength": 100},
-            "answer": {"type": "string", "description": "The answer to the question.", "minLength": 5},
-        },
-        "required": ["thought", "answer"],
-    }
-
-    response: Dict[str, Any] = await llm.astructured_output(
-        model=_model_name,
-        constraint=JsonSchema(schema_dict=schema, name="ThinkAndAnswer"),
+        constraint=JsonSchema(schema_dict=schema),
         messages=[
             Message.from_text(
                 text="You are a helpful assistant.",
