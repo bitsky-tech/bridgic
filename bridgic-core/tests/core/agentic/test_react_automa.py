@@ -8,8 +8,23 @@ from bridgic.core.model.protocols import ToolSelection
 from bridgic.core.agentic.tool_specs import as_tool
 from bridgic.core.automa.args import System
 from bridgic.core.agentic import ReActAutoma
-from bridgic.llms.openai import OpenAILlm, OpenAIConfiguration
-from bridgic.llms.vllm import VllmServerLlm, VllmServerConfiguration
+
+try:
+    from bridgic.llms.openai import OpenAILlm, OpenAIConfiguration
+    OPENAI_AVAILABLE = True
+except ImportError:
+    OPENAI_AVAILABLE = False
+    OpenAILlm = None
+    OpenAIConfiguration = None
+
+try:
+    from bridgic.llms.vllm import VllmServerLlm, VllmServerConfiguration
+    VLLM_AVAILABLE = True
+except ImportError:
+    VLLM_AVAILABLE = False
+    VllmServerLlm = None
+    VllmServerConfiguration = None
+
 from tests.core.model.mock_llm import MockLlm
 
 _openai_api_key = os.environ.get("OPENAI_API_KEY")
@@ -25,7 +40,7 @@ def llm() -> ToolSelection:
     # Use OpenAI LLM by setting environment variables:
     # export OPENAI_API_KEY="xxx"
     # export OPENAI_MODEL_NAME="xxx"
-    if _openai_api_key:
+    if _openai_api_key and OPENAI_AVAILABLE:
         print(f"\nUsing `OpenAILlm` ({_openai_model_name}) to test ReactAutoma...")
         return OpenAILlm(
             api_key=_openai_api_key,
@@ -37,7 +52,7 @@ def llm() -> ToolSelection:
     # export VLLM_SERVER_API_KEY="xxx"
     # export VLLM_SERVER_API_BASE="xxx"
     # export VLLM_SERVER_MODEL_NAME="xxx"
-    if _vllm_api_base:
+    if _vllm_api_base and VLLM_AVAILABLE:
         print(f"\nUsing `VllmServerLlm` ({_vllm_model_name}) to test ReactAutoma...")
         return VllmServerLlm(
             api_key=_vllm_api_key,
@@ -393,8 +408,8 @@ def tmp_path(tmp_path_factory):
     return tmp_path_factory.mktemp("tmp_path")
 
 @pytest.mark.skipif(
-    not ((_openai_api_key is not None and _openai_model_name is not None) or (_vllm_api_base is not None and _vllm_api_key is not None and _vllm_model_name is not None)),
-    reason="Either OpenAI (OPENAI_API_KEY and OPENAI_MODEL_NAME) or VLLM (VLLM_SERVER_API_BASE, VLLM_SERVER_API_KEY, and VLLM_SERVER_MODEL_NAME) must be fully configured.",
+    not ((_openai_api_key is not None and _openai_model_name is not None and OPENAI_AVAILABLE) or (_vllm_api_base is not None and _vllm_api_key is not None and _vllm_model_name is not None and VLLM_AVAILABLE)),
+    reason="Either OpenAI (OPENAI_API_KEY and OPENAI_MODEL_NAME) or VLLM (VLLM_SERVER_API_BASE, VLLM_SERVER_API_KEY, and VLLM_SERVER_MODEL_NAME) must be fully configured and packages must be available.",
 )
 @pytest.mark.asyncio
 async def test_refund_react_processing_with_human_approval(refund_react_automa: ReActAutoma, request, tmp_path):
@@ -460,8 +475,8 @@ def refund_approval_feedback(request):
     return [confirm_feedback, reject_feedback]
 
 @pytest.mark.skipif(
-    not ((_openai_api_key is not None and _openai_model_name is not None) or (_vllm_api_base is not None and _vllm_api_key is not None and _vllm_model_name is not None)),
-    reason="Either OpenAI (OPENAI_API_KEY and OPENAI_MODEL_NAME) or VLLM (VLLM_SERVER_API_BASE, VLLM_SERVER_API_KEY, and VLLM_SERVER_MODEL_NAME) must be fully configured.",
+    not ((_openai_api_key is not None and _openai_model_name is not None and OPENAI_AVAILABLE) or (_vllm_api_base is not None and _vllm_api_key is not None and _vllm_model_name is not None and VLLM_AVAILABLE)),
+    reason="Either OpenAI (OPENAI_API_KEY and OPENAI_MODEL_NAME) or VLLM (VLLM_SERVER_API_BASE, VLLM_SERVER_API_KEY, and VLLM_SERVER_MODEL_NAME) must be fully configured and packages must be available.",
 )
 @pytest.mark.asyncio
 async def test_refund_approval_feedback_results(refund_approval_feedback, refund_react_automa_deserialized):
