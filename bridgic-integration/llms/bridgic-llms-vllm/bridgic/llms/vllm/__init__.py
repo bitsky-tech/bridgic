@@ -13,7 +13,7 @@ pip install bridgic-llms-vllm
 """
 
 from importlib.metadata import version
-from .vllm_server_llm import VllmServerLlm, VllmServerConfiguration
+from ._vllm_server_llm import VllmServerLlm, VllmServerConfiguration
 
 __version__ = version("bridgic-llms-vllm")
 __all__ = ["VllmServerConfiguration", "VllmServerLlm", "__version__"]

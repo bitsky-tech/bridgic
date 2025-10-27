@@ -22,7 +22,7 @@ This model-agnostic approach allows you to swap, extend, or combine providers wi
 
 At the heart of Bridgic's model integration lies the **Protocol Pattern**, which defines clear behavioral contracts without imposing implementation details. This design enables:
 
-1. **Extensibility**: New model providers can be integrated by implementing well-defined protocols (`StructuredOutput`, `ToolSelection`, etc.)
+1. **Extensibility**: New model providers can be integrated by implementing well-defined protocols ([`StructuredOutput`](../../../../reference/bridgic-core/bridgic/core/model/protocols/#bridgic.core.model.protocols.StructuredOutput), [`ToolSelection`](../../../../reference/bridgic-core/bridgic/core/model/protocols/#bridgic.core.model.protocols.ToolSelection), etc.)
 2. **Capability Declaration**: Each provider explicitly declares its capabilities through protocol implementation, making it clear what features are available
 3. **Flexibility**: Providers can implement only the protocols they support, avoiding forced compatibility with unsupported features
 4. **Type Safety**: Protocols provide compile-time type checking and IDE support, improving developer experience

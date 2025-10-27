@@ -1,6 +1,6 @@
 [project]
 name = "bridgic-core"
-version = "0.1.0"
+version = "0.1.1"
 license = {text = "MIT"}
 classifiers = [
     # "Private :: Do Not Upload",
@@ -23,9 +23,9 @@ dependencies = [
 dev = [
     "pytest>=8.4.0",
     "pytest-asyncio>=1.0.0",
-    "bridgic-llms-openai>=0.1.0",
-    "bridgic-llms-openai-like>=0.1.0",
-    "bridgic-llms-vllm>=0.1.0",
+    "bridgic-llms-openai>=0.1.1",
+    "bridgic-llms-openai-like>=0.1.1",
+    "bridgic-llms-vllm>=0.1.1",
 ]
 
 [tool.pytest.ini_options]

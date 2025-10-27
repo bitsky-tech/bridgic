@@ -9,7 +9,7 @@ from openai.types.chat import ChatCompletionNamedToolChoiceParam, ChatCompletion
 from bridgic.core.model import BaseLlm
 from bridgic.core.model.types import *
 from bridgic.core.model.protocols import StructuredOutput, ToolSelection, PydanticModel, JsonSchema, Constraint, EbnfGrammar, Regex, Choice
-from bridgic.llms.openai_like.openai_like_llm import OpenAILikeLlm, OpenAILikeConfiguration
+from bridgic.llms.openai_like import OpenAILikeLlm, OpenAILikeConfiguration
 from bridgic.core.utils._console import printer
 from bridgic.core.utils._collection import validate_required_params, merge_dict, filter_dict
 
@@ -31,8 +31,14 @@ class VllmServerLlm(OpenAILikeLlm, StructuredOutput, ToolSelection):
         The base URL of the LLM provider.
     api_key: str
         The API key of the LLM provider.
+    configuration: Optional[VllmServerConfiguration]
+        The configuration for the OpenAI-compatible API. If None, uses the default configuration.
     timeout: Optional[float]
-        The timeout in seconds.
+        The timeout in seconds. If None, no timeout is applied.
+    http_client : Optional[httpx.Client]
+        Custom synchronous HTTP client for requests. If None, creates a default client.
+    http_async_client : Optional[httpx.AsyncClient]
+        Custom asynchronous HTTP client for requests. If None, creates a default client.
     """
 
     def __init__(

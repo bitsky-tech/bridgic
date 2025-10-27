@@ -21,31 +21,21 @@ from bridgic.core.utils._collection import filter_dict, merge_dict, validate_req
 class OpenAILikeConfiguration(BaseModel):
     """
     Default configuration for OpenAI-compatible chat completions.
-
-    Attributes
-    ----------
-    model : str, optional
-        Default model to use when a call-time `model` is not provided.
-    temperature : float, optional
-        Sampling temperature in [0, 2]. Higher is more random, lower is more deterministic.
-    top_p : float, optional
-        Nucleus sampling probability mass in (0, 1]. Alternative to temperature.
-    presence_penalty : float, optional
-        Penalize new tokens based on whether they appear so far. [-2.0, 2.0].
-    frequency_penalty : float, optional
-        Penalize new tokens based on their frequency so far. [-2.0, 2.0].
-    max_tokens : int, optional
-        Maximum number of tokens to generate for the completion.
-    stop : list[str], optional
-        Up to 4 sequences where generation will stop.
     """
     model: Optional[str] = None
+    """Default model to use when a call-time `model` is not provided."""
     temperature: Optional[float] = None
+    """Sampling temperature in [0, 2]. Higher is more random, lower is more deterministic."""
     top_p: Optional[float] = None
+    """Nucleus sampling probability mass in (0, 1]. Alternative to temperature."""
     presence_penalty: Optional[float] = None
+    """Penalize new tokens based on whether they appear so far. [-2.0, 2.0]."""
     frequency_penalty: Optional[float] = None
+    """Penalize new tokens based on their frequency so far. [-2.0, 2.0]."""
     max_tokens: Optional[int] = None
+    """Maximum number of tokens to generate for the completion."""
     stop: Optional[List[str]] = None
+    """Up to 4 sequences where generation will stop."""
 
 
 class OpenAILikeLlm(BaseLlm):
@@ -60,8 +50,14 @@ class OpenAILikeLlm(BaseLlm):
         The base URL of the LLM provider.
     api_key: str
         The API key of the LLM provider.
+    configuration: Optional[OpenAILikeConfiguration]
+        The configuration for the OpenAI-compatible API. If None, uses the default configuration.
     timeout: Optional[float]
-        The timeout in seconds.
+        The timeout in seconds. If None, no timeout is applied.
+    http_client : Optional[httpx.Client]
+        Custom synchronous HTTP client for requests. If None, creates a default client.
+    http_async_client : Optional[httpx.AsyncClient]
+        Custom asynchronous HTTP client for requests. If None, creates a default client.
     """
 
     api_base: str

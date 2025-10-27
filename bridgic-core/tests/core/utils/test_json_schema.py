@@ -5,6 +5,7 @@ from enum import Enum
 from datetime import datetime, date, time
 import json
 
+from bridgic.core.automa.args._args_descriptor import From, System
 from bridgic.core.utils._json_schema import create_func_params_json_schema
 
 # Test case 1: the simplest case
@@ -822,6 +823,84 @@ def test_func_params_json_schema_case_11():
         "unit"
       ],
       "title": "get_weather_v4",
+      "type": "object"
+    }
+    
+    assert json_schema == expected_json_schema
+
+
+def get_weather_v5(
+    location: MyLocation,
+    unit: WeatherUnit,
+    rtx = System("runtime_context"),
+    from_value = From("from_value"),
+    current_automa =System("automa"),
+    default_value = 1,
+) -> str:
+    """
+    Retrieves current weather for the given location.
+
+    @param location: City and country e.g. Bogotá, Colombia.
+    @type location: MyLocation
+    @param unit: Units the temperature will be returned in.
+    @type unit: WeatherUnit
+    @param default_value: Default value.
+    @type default_value: int
+    @return: The weather for the given location.
+    @rtype: str
+    """
+    ...
+
+def test_func_params_json_schema_case_12():
+    json_schema = create_func_params_json_schema(get_weather_v5)
+    expected_json_schema = {
+      "$defs": {
+        "WeatherUnit": {
+          "enum": [
+            "celsius",
+            "fahrenheit"
+          ],
+          "title": "WeatherUnit",
+          "type": "string"
+        }
+      },
+      "properties": {
+        'default_value': {'default': 1, 'description': 'Default value.', 'title': 'Default Value'},
+        "location": {
+          "description": "City and country e.g. Bogot\u00e1, Colombia.",
+          "examples": [
+            {
+              "city": "New York",
+              "country": "United States"
+            }
+          ],
+          "properties": {
+            "country": {
+              "title": "Country",
+              "type": "string"
+            },
+            "city": {
+              "title": "City",
+              "type": "string"
+            }
+          },
+          "required": [
+            "country",
+            "city"
+          ],
+          "title": "MyLocation",
+          "type": "object"
+        },
+        "unit": {
+          "$ref": "#/$defs/WeatherUnit",
+          "description": "Units the temperature will be returned in."
+        },
+      },
+      "required": [
+        "location",
+        "unit"
+      ],
+      "title": "get_weather_v5",
       "type": "object"
     }
     
