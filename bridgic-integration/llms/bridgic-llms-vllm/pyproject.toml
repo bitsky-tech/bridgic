@@ -1,6 +1,6 @@
 [project]
 name = "bridgic-llms-vllm"
-version = "0.1.1.dev1"
+version = "0.1.1"
 license = {text = "MIT"}
 classifiers = [
     # "Private :: Do Not Upload",
@@ -13,8 +13,8 @@ authors = [
     { name = "Tielei Zhang", email = "zhangtl04@gmail.com" },
 ]
 dependencies = [
-    "bridgic-core>=0.1.0",
-    "bridgic-llms-openai-like>=0.1.1.dev1",
+    "bridgic-core>=0.1.1",
+    "bridgic-llms-openai-like>=0.1.1",
 ]
 
 [dependency-groups]

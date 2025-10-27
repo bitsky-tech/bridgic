@@ -15,7 +15,7 @@ init-dev:
 	@if [ -d .venv ]; then echo ".venv already exists, removing..."; rm -rf .venv; fi
 	@uv venv --python=python3.9 .venv && echo ".venv created."
 	@echo "\n==> Installing development dependencies for the project..."
-	@source .venv/bin/activate && uv sync --group dev
+	@source .venv/bin/activate && uv sync --group dev --group publish
 	@echo "\n==> Initializing virtual environment for subpackages..."
 	@source .venv/bin/activate && \
 	find . -maxdepth 4 -type d -name "bridgic-*" | while read dir; do \
@@ -49,8 +49,8 @@ build-all:
 	${MAKE} build
 
 publish:
-	@version=$$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])") && \
-    python $(VERSION_CHECK) --version "$$version" --repo "$(repo)" --package "$(package_name)" && \
+	@version=$$(uv run python -c "import tomli; print(tomli.load(open('pyproject.toml', 'rb'))['project']['version'])") && \
+    uv run python $(VERSION_CHECK) --version "$$version" --repo "$(repo)" --package "$(package_name)" && \
 	$(MAKE) _publish_$(repo)
 
 _publish_btsk:
