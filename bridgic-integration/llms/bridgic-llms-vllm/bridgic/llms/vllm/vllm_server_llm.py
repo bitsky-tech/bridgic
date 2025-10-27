@@ -31,8 +31,14 @@ class VllmServerLlm(OpenAILikeLlm, StructuredOutput, ToolSelection):
         The base URL of the LLM provider.
     api_key: str
         The API key of the LLM provider.
+    configuration: Optional[VllmServerConfiguration]
+        The configuration for the OpenAI-compatible API. If None, uses the default configuration.
     timeout: Optional[float]
-        The timeout in seconds.
+        The timeout in seconds. If None, no timeout is applied.
+    http_client : Optional[httpx.Client]
+        Custom synchronous HTTP client for requests. If None, creates a default client.
+    http_async_client : Optional[httpx.AsyncClient]
+        Custom asynchronous HTTP client for requests. If None, creates a default client.
     """
 
     def __init__(
