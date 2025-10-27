@@ -197,6 +197,9 @@ dev = [
     { name = "pytest-asyncio" },
     { name = "pytest-cov" },
 ]
+publish = [
+    { name = "tomli" },
+]
 
 [package.metadata]
 requires-dist = [
@@ -210,6 +213,7 @@ dev = [
     { name = "pytest-asyncio", specifier = ">=1.0.0" },
     { name = "pytest-cov", specifier = ">=4.0.0" },
 ]
+publish = [{ name = "tomli", specifier = ">=2.0.0" }]
 
 [[package]]
 name = "bridgic-core"
