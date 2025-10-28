@@ -1,5 +1,5 @@
-import copy
 import asyncio
+import uuid
 from typing import Any, Dict, List, TYPE_CHECKING, Optional, Tuple
 from typing_extensions import override
 from functools import partial
@@ -9,6 +9,9 @@ from bridgic.core.types._error import WorkerRuntimeError
 from bridgic.core.types._serialization import Serializable
 from bridgic.core.utils._inspect_tools import get_param_names_all_kinds
 from bridgic.core.utils._args_map import safely_map_args
+from bridgic.core.logging import get_worker_logger
+from bridgic.core.logging._decorators import worker_logger
+from bridgic.core.constants import DEFAULT_WORKER_SOURCE_PREFIX
 
 if TYPE_CHECKING:
     from bridgic.core.automa._automa import Automa
@@ -63,7 +66,14 @@ class Worker(Serializable):
         # Cached method signatures, with no need for serialization.
         self.__cached_param_names_of_arun = None
         self.__cached_param_names_of_run = None
+        
+        # Generate unique worker ID (combines class name with UUID for global uniqueness)
+        self._worker_id = f"{self.__class__.__name__}_{uuid.uuid4().hex[:12]}"
+        
+        # Initialize logger
+        self._logger = get_worker_logger(self.__class__.__name__, source=f"{DEFAULT_WORKER_SOURCE_PREFIX}-{self.__class__.__name__}")
 
+    @worker_logger(lambda self: getattr(getattr(self, "_callable", None), "__name__", self.__class__.__name__), method_label="arun")
     async def arun(self, *args: Tuple[Any, ...], **kwargs: Dict[str, Any]) -> Any:
         """
         The asynchronous method to run the worker.
@@ -89,6 +99,15 @@ class Worker(Serializable):
         """
         raise NotImplementedError(f"run() is not implemented in {type(self)}")
 
+    def _format_result_for_log(self, result: Any, max_length: int = 200) -> str:
+        try:
+            result_str = str(result)
+            if len(result_str) > max_length:
+                return result_str[:max_length] + f"... (truncated, total length: {len(result_str)})"
+            return result_str
+        except Exception:
+            return f"<Unable to serialize result of type {type(result).__name__}>"
+
     def _get_top_level_automa(self) -> Optional["Automa"]:
         """
         Get the top-level automa instance reference.
@@ -97,6 +116,61 @@ class Worker(Serializable):
         while top_level_automa and (not top_level_automa.is_top_level()):
             top_level_automa = top_level_automa.parent
         return top_level_automa
+    
+    def _get_execution_context(self) -> Dict[str, Any]:
+        """
+        Get execution context information for logging.
+        Returns information about parent Automa, nesting level, worker_key, etc.
+        """
+        context = {}
+        
+        # Try to find worker_key from parent Automa
+        worker_key = None
+        dependencies = None
+        
+        if self.parent and hasattr(self.parent, '_workers'):
+            # Search for this worker instance in parent's workers dict
+            # Note: In GraphAutoma, workers might be wrapped in _GraphAdaptedWorker
+            for key, worker_obj in self.parent._workers.items():
+                # Check if it's directly this worker
+                if worker_obj is self:
+                    worker_key = key
+                    if hasattr(worker_obj, 'dependencies'):
+                        dependencies = worker_obj.dependencies
+                    break
+                # Check if it's a wrapped worker (_GraphAdaptedWorker case)
+                elif hasattr(worker_obj, '_decorated_worker') and worker_obj._decorated_worker is self:
+                    worker_key = key
+                    if hasattr(worker_obj, 'key'):
+                        worker_key = worker_obj.key
+                    if hasattr(worker_obj, 'dependencies'):
+                        dependencies = worker_obj.dependencies
+                    break
+        
+        context["worker_key"] = worker_key
+        context["dependencies"] = dependencies
+        
+        # Find parent automa
+        if self.parent:
+            context["parent_automa_name"] = self.parent.name
+            context["parent_automa_id"] = self.parent._worker_id if hasattr(self.parent, '_worker_id') else f"{self.parent.__class__.__name__}_{id(self.parent)}"
+            context["parent_automa_class"] = self.parent.__class__.__name__
+        
+        # Calculate nesting level
+        nesting_level = 0
+        current = self.parent
+        while current:
+            nesting_level += 1
+            current = current.parent
+        context["nesting_level"] = nesting_level
+        
+        # Get top-level automa
+        top_automa = self._get_top_level_automa()
+        if top_automa and top_automa != self.parent:
+            context["top_automa_name"] = top_automa.name
+            context["top_automa_id"] = top_automa._worker_id if hasattr(top_automa, '_worker_id') else f"{top_automa.__class__.__name__}_{id(top_automa)}"
+        
+        return context
     
     def get_input_param_names(self) -> Dict[_ParameterKind, List[Tuple[str, Any]]]:
         """
@@ -157,6 +231,7 @@ class Worker(Serializable):
     def dump_to_dict(self) -> Dict[str, Any]:
         state_dict = {}
         state_dict["local_space"] = self.__local_space
+        state_dict["worker_id"] = self._worker_id
         return state_dict
 
     @override
@@ -165,9 +240,15 @@ class Worker(Serializable):
         self.__parent = None
         self.__local_space = state_dict["local_space"]
         
+        # Restore worker ID
+        self._worker_id = state_dict["worker_id"]
+        
         # Cached method signatures, with no need for serialization.
         self.__cached_param_names_of_arun = None
         self.__cached_param_names_of_run = None
+        
+        # Re-initialize logger after deserialization
+        self._logger = get_worker_logger(self.__class__.__name__, source=f"{DEFAULT_WORKER_SOURCE_PREFIX}-{self.__class__.__name__}")
         
     def ferry_to(self, key: str, /, *args, **kwargs):
         """

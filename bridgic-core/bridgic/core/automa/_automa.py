@@ -1,6 +1,7 @@
 import asyncio
 import uuid
 import threading
+import time
 
 from typing import List, Any, Optional, Dict
 from typing_extensions import override
@@ -15,6 +16,8 @@ from bridgic.core.automa.args import RuntimeContext
 from bridgic.core.utils._msgpackx import load_bytes
 from bridgic.core.utils._inspect_tools import get_param_names_by_kind
 from bridgic.core.types._error import AutomaRuntimeError
+from bridgic.core.logging import get_automa_logger
+from bridgic.core.constants import DEFAULT_AUTOMA_SOURCE_PREFIX
 
 class RunningOptions(BaseModel):
     debug: bool = False
@@ -86,6 +89,9 @@ class Automa(Worker):
         self._ongoing_interactions = {}
 
         self._thread_pool = thread_pool
+        
+        # Initialize logger
+        self._logger = get_automa_logger(self.name, source=f"{DEFAULT_AUTOMA_SOURCE_PREFIX}-{self.__class__.__name__}")
 
     @override
     def dump_to_dict(self) -> Dict[str, Any]:
@@ -106,6 +112,7 @@ class Automa(Worker):
         self._worker_interaction_indices = {}
         self._ongoing_interactions = state_dict["ongoing_interactions"]
         self._thread_pool = None
+        self._logger = get_automa_logger(self.name, source=f"{DEFAULT_AUTOMA_SOURCE_PREFIX}-{self.__class__.__name__}")
 
     @classmethod
     def load_from_snapshot(
@@ -186,6 +193,10 @@ class Automa(Worker):
         """
         if debug is not None:
             self._running_options.debug = debug
+            # Log automa configuration change
+            self._logger.debug(
+                f"Automa '{self.name}' running options updated: debug={debug}"
+            )
 
     def _get_top_running_options(self) -> RunningOptions:
         if self.parent is None:
@@ -214,6 +225,12 @@ class Automa(Worker):
             self._default_event_handler = event_handler
         else:
             self._event_handlers[event_type] = event_handler
+        
+        # Log event handler registration
+        handler_type = "default" if event_type is None else event_type
+        self._logger.debug(
+            f"Automa '{self.name}' registered event handler for: {handler_type}"
+        )
 
     def unregister_event_handler(self, event_type: Optional[str]) -> None:
         """
