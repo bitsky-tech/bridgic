@@ -22,7 +22,7 @@ class Worker:
 The [`arun`](../../reference/bridgic-core/bridgic/core/automa/worker/#bridgic.core.automa.worker.Worker.arun) method of the [`Worker`](../../reference/bridgic-core/bridgic/core/automa/worker/#bridgic.core.automa.worker.Worker) class is called to execute a task. You can pass any required arguments to `arun`, and it will return a value as the result of the task.
 
 !!! hint "Tips"
-    In fact, in addition to the `arun` method, a `Worker` also has a [`run`](../../reference/bridgic-core/bridgic/core/automa/worker/#bridgic.core.automa.worker.Worker.run) method. This relates to Bridgic's concurrency mode. Please refer to the relevant sections for more details.
+    In fact, in addition to the `arun` method, a `Worker` also has a [`run`](../../reference/bridgic-core/bridgic/core/automa/worker/#bridgic.core.automa.worker.Worker.run) method. This relates to Bridgic's [concurrency mode](../../../../tutorials/items/core_mechanism/concurrency_mode/). Please refer to the relevant sections for more details.
 
 Besides worker, "automa" is another core concept in Bridgic. An automa acts as a container for a group of workers. Instead of performing tasks by itself, an automa schedules and orchestrates the workers it contains, running them according to a predefined or dynamic execution flow in order to accomplish the overall task.
 

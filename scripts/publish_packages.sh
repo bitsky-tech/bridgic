@@ -32,9 +32,9 @@ while IFS= read -r -d '' dir; do
         sub_package=$(basename "$dir")
         echo "==> Found Bridgic subpackage: $sub_package"
 
-        version=$(python -c "import tomllib; print(tomllib.load(open('$dir/pyproject.toml', 'rb'))['project']['version'])")
+        version=$(uv run python -c "import tomli; print(tomli.load(open('$dir/pyproject.toml', 'rb'))['project']['version'])")
 
-        if python scripts/version_check.py --version "$version" --repo "$repo" --package "$sub_package"; then
+        if uv run python scripts/version_check.py --version "$version" --repo "$repo" --package "$sub_package"; then
             echo "==> Publishing subpackage [$sub_package]..."
             if ! make -C "$dir" publish repo="$repo"; then
                 echo "$dir" >> "$failures_file"
@@ -51,7 +51,7 @@ while IFS= read -r -d '' dir; do
 done < <(find . -maxdepth 4 -type d -name "bridgic-*" -print0)
 echo ""
 
-version=$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])")
+version=$(python -c "import tomli; print(tomli.load(open('pyproject.toml', 'rb'))['project']['version'])")
 if python scripts/version_check.py --version "$version" --repo "$repo" --package "$main_package"; then
     echo "==> Publishing package [$main_package]..."
     if ! make publish repo="$repo"; then
