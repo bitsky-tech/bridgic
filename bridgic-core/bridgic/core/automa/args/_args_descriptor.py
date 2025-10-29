@@ -183,6 +183,8 @@ class System(ArgsDescriptor):
                 f"`automa:.*`: a sub-automa in current automa."
             )
 
+JSON_SCHEMA_IGNORE_ARG_TYPES = (System, From)
+
 def resolve_system(dep: System, current_worker_key: str, worker_dict: Dict[str, Worker], current_automa: "GraphAutoma") -> Any:
     if dep.key == "runtime_context":
         return RuntimeContext(worker_key=current_worker_key)
