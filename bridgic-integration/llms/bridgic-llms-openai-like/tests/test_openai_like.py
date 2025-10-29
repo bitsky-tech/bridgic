@@ -4,7 +4,7 @@ import httpx_aiohttp
 
 from bridgic.core.model.types import *
 from bridgic.core.utils._console import printer
-from bridgic.llms.openai_like.openai_like_llm import OpenAILikeLlm
+from bridgic.llms.openai_like import OpenAILikeLlm
 
 _api_base = os.environ.get("OPENAI_LIKE_API_BASE")
 _api_key = os.environ.get("OPENAI_LIKE_API_KEY")

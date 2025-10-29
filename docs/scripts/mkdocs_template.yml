@@ -24,7 +24,8 @@ nav:
         - LLM Integration: tutorials/items/model_integration/llm_integration.ipynb
   - Understanding:
     - Introduction: home/introduction.md
-    - Concepts: home/concepts.md
+    - Basics: home/basics.md
+    # - Concepts: home/concepts.md
   - API Reference:
 {{API_REFERENCE_CONTENT}}
 
@@ -238,3 +239,4 @@ extra_javascript:
   - javascripts/mathjax.js
   - javascripts/polyfill.min.js
   - javascripts/tex-mml-chtml.js
+  - javascripts/clipboard.js
