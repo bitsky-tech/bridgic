@@ -1,7 +1,7 @@
 from pydantic import BaseModel
 from dataclasses import dataclass
 import asyncio
-from bridgic.asl.component import component, graph, concurrent, Data
+from bridgic.asl.component import Component, graph, concurrent, Data
 from bridgic.core.automa.worker import Worker
 from bridgic.core.automa.args import System
 
@@ -25,40 +25,36 @@ class Worker3(Worker):
 
 async def worker4(x, y, z):
     res = x + y + z
-    print(f'==> worker4: {res}')
     return res
 
 async def worker5(x, y, z):
     res = x + y + z + 1
-    print(f'==> worker5: {res}')
     return res
 
 async def merge(x, y):
-    print(f'result: {x}, {y}')
     return x, y
 
 
 # 最常用的形式，不使用设置和参数，使用 bridigc 框架的默认行为
-@component
-class MyGraph:
+class MyGraph(Component):
     x: int = None
 
     with graph() as g:
-        a = worker1 @ g
+        a = worker1
 
-        with graph() @ g as g2:
-            d = worker1 @ g2
-            e = worker2 @ g2
-            +a >> d >> ~e
+        with graph() as g2:
+            d = worker1
+            e = worker2
+            +d >> ~e
 
-        b = worker2 @ g
-        c = Worker3(y=1) @ g
+        b = worker2
+        c = Worker3(y=1)
 
         +a >> g2 >> b >> ~c
 
 async def get_res():
-    graph = MyGraph()
-    result = await graph.arun(x=1)
+    g = MyGraph()
+    result = await g.arun(x=1)
     print(result)
 
 

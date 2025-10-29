@@ -1,10 +1,9 @@
-from typing import overload
 from bridgic.core.automa._graph_automa import GraphAutoma
 import pytest
 
 from bridgic.core.automa.worker import Worker
 from bridgic.core.automa.args import System
-from bridgic.asl.component import component, graph, concurrent
+from bridgic.asl.component import graph, concurrent, Component
 
 
 def worker1(user_input: int = None):
@@ -63,14 +62,13 @@ async def ferry_to_worker(user_input: int, automa: GraphAutoma = System("automa"
 # - - - - - - - - - - - - - - -
 @pytest.fixture
 def kinds_of_worker_graph():
-    @component
-    class MyGraph:
+    class MyGraph(Component):
         user_input: int = None
 
         with graph() as g:
-            a = worker1 @ g
-            b = worker2 @ g
-            c = Worker3(y=1) @ g
+            a = worker1
+            b = worker2
+            c = Worker3(y=1)
 
             +a >> b >> ~c
 
@@ -88,25 +86,23 @@ async def test_kinds_of_worker_can_run_correctly(kinds_of_worker_graph):
 # - - - - - - - - - - - - - - -
 @pytest.fixture
 def component_based_reuse_graph():
-    @component
-    class MyGraph1:
+    class MyGraph1(Component):
         user_input: int = None
 
         with graph() as g:
-            a = worker1 @ g
-            b = worker2 @ g
-            c = Worker3(y=1) @ g
+            a = worker1
+            b = worker2
+            c = Worker3(y=1)
 
             +a >> b >> ~c
 
-    @component
-    class MyGraph2:
+    class MyGraph2(Component):
         user_input: int = None
 
         with graph() as g:
-            a = worker1 @ g
-            b = MyGraph1() @ g
-            c = Worker3(y=1) @ g
+            a = worker1
+            b = MyGraph1()
+            c = Worker3(y=1)
 
             +a >> b >> ~c
 
@@ -124,15 +120,14 @@ async def test_component_based_reuse(component_based_reuse_graph):
 # - - - - - - - - - - - - - - -
 @pytest.fixture
 def group_workers_can_run_correctly_graph():
-    @component
-    class MyGraph1:
+    class MyGraph1(Component):
         user_input: int = None
 
         with graph() as g:
-            a = worker1 @ g
-            b = worker2 @ g
-            c = Worker3(y=1) @ g
-            d = worker4 @ g
+            a = worker1
+            b = worker2
+            c = Worker3(y=1)
+            d = worker4
 
             +a >> (b & c) >> ~d
 
@@ -147,17 +142,16 @@ async def test_group_workers_can_run_correctly(group_workers_can_run_correctly_g
 
 @pytest.fixture
 def groups_workers_can_run_correctly_graph():
-    @component
-    class MyGraph1:
+    class MyGraph1(Component):
         x: int = None
 
         with graph() as g:
-            a = worker1 @ g
-            b = worker11 @ g
-            c = worker12 @ g
-            d = worker5 @ g
-            e = worker6 @ g
-            merge = merge @ g
+            a = worker1
+            b = worker11
+            c = worker12
+            d = worker5
+            e = worker6
+            merge = merge
 
             +(a & b & c) >> (d & e) >> ~merge
 
@@ -175,17 +169,16 @@ async def test_groups_workers_can_run_correctly(groups_workers_can_run_correctly
 # - - - - - - - - - - - - - - -
 @pytest.fixture
 def nested_graphs_can_run_correctly_graph():
-    @component
-    class MyGraph1:
+    class MyGraph1(Component):
         user_input: int = None
 
         with graph() as g1:
-            a = worker1 @ g1
-            with graph() @ g1 as g2:
-                c = worker2 @ g2
-                d = Worker3(y=1) @ g2
+            a = worker1 
+            with graph() as g2:
+                c = worker2
+                d = Worker3(y=1)
                 +c >> ~d
-            b = worker2 @ g1
+            b = worker2
 
             +a >> g2 >> ~b
 
@@ -194,7 +187,6 @@ def nested_graphs_can_run_correctly_graph():
 @pytest.mark.asyncio
 async def test_nested_graphs_can_run_correctly(nested_graphs_can_run_correctly_graph):
     graph = nested_graphs_can_run_correctly_graph()
-    print(graph)
     result = await graph.arun(user_input=1)
     assert result == 7
 
@@ -204,14 +196,13 @@ async def test_nested_graphs_can_run_correctly(nested_graphs_can_run_correctly_g
 # - - - - - - - - - - - - - - - 
 @pytest.fixture
 def ferry_to_with_no_dependency_graph():
-    @component
-    class MyGraph1:
+    class MyGraph1(Component):
         user_input: int = None
 
         with graph() as g1:
-            ferry_to_worker = ferry_to_worker @ g1
-            worker2 = worker2 @ g1
-            worker3 = Worker3(y=1) @ g1
+            ferry_to_worker = ferry_to_worker
+            worker2 = worker2
+            worker3 = Worker3(y=1)
 
             +ferry_to_worker, ~worker2, ~worker3
 
@@ -220,10 +211,8 @@ def ferry_to_with_no_dependency_graph():
 @pytest.mark.asyncio
 async def test_no_dependency_can_run_correctly(ferry_to_with_no_dependency_graph):
     graph = ferry_to_with_no_dependency_graph()
-    print(graph)
     result = await graph.arun(user_input=1)
     assert result == 3
 
-    print(graph)
     result = await graph.arun(user_input=2)
     assert result == 3

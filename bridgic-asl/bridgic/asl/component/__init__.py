@@ -1,7 +1,8 @@
-from ._component import component, graph, concurrent, Data
+from ._component import Component
+from ._canvas_object import graph, concurrent, Data
 
 __all__ = [
-    "component",
+    "Component",
     "graph",
     "concurrent",
     "Data",
