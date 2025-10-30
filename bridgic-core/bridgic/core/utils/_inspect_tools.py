@@ -2,9 +2,10 @@ import inspect
 import importlib
 import enum
 
-from typing import Callable, List, Dict, Any, Tuple
+from typing import Callable, List, Dict, Any, Tuple, Optional, Annotated, get_origin
 from typing_extensions import get_overloads, overload
 from bridgic.core.utils._collection import deep_hash
+from docstring_parser import parse as parse_docstring  # type: ignore
 
 _marked_overloads: Dict[str, Dict[str, Any]] = {}
 
@@ -150,3 +151,58 @@ def load_qualified_class_or_func(full_qualified_name: str):
         raise ImportError(f"Class not found in path: '{full_qualified_name}' due to error: {e}")
 
     return obj
+
+def get_tool_description_from(
+    spec_func: Callable,
+    tool_name: Optional[str] = None
+) -> str:
+    """
+    Get the tool description from the spec function.
+
+    Parameters
+    ----------
+    spec_func : Callable
+        The function to get the tool description from.
+    tool_name : Optional[str]
+        The name of the tool. If not provided, the function name will be used.
+
+    Returns
+    -------
+    str
+        The tool description.
+    """
+    docstring = parse_docstring(spec_func.__doc__)
+    tool_description = docstring.description
+    if tool_description:
+        tool_description = tool_description.strip()
+
+    if not tool_name:
+        tool_name = spec_func.__name__
+
+    if not tool_description:
+        # No description provided, use the function signature as the description.
+        fn_sig = inspect.signature(spec_func)
+        filtered_params = []
+        ignore_params: List[str] = ["self", "cls"]
+
+        for param_name, param_value in fn_sig.parameters.items():
+            if param_name in ignore_params:
+                continue
+
+            # Resolve the original type of the parameter.
+            param_type = param_value.annotation
+            if get_origin(param_type) is Annotated:
+                param_type = param_type.__origin__
+
+            # Remove the default value of the parameter.
+            default_value = inspect.Parameter.empty
+
+            filtered_params.append(param_value.replace(
+                annotation=param_type,
+                default=default_value,
+            ))
+
+        fn_sig = fn_sig.replace(parameters=filtered_params)
+        tool_description = f"{tool_name}{fn_sig}\n"
+
+    return tool_description
