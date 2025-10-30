@@ -1,19 +1,53 @@
-from typing import Callable, List, Any, Dict, Tuple
+from typing import Callable, List, Any, Dict, Tuple, Union
+import inspect
 
 from bridgic.core.automa import GraphAutoma
 from bridgic.core.automa.worker import Worker
+from bridgic.core.automa.args import ArgsMappingRule
 from bridgic.core.automa._graph_automa import GraphMeta
 from bridgic.asl.component._canvas_object import (
     _Canvas,
     _Element,
-    TrackingNamespace
+    TrackingNamespace,
+    set_method_signature
 )
+
+
+async def dynamic_lambda_worker_start(*args, **kwargs) -> Any:
+    pass
+
+
+async def dynamic_lambda_worker_end(*args, **kwargs) -> Any:
+    pass
 
 
 class ComponentMeta(GraphMeta):
     @classmethod
     def __prepare__(mcls, name, bases):
         return TrackingNamespace()
+
+    def __new__(mcls, name, bases, namespace):
+        cls = super().__new__(mcls, name, bases, namespace)
+
+        # collect the input parameters
+        annotations = namespace.get("__annotations__", {}) or {}
+        input_params = {}
+        for param_name, param_type in annotations.items():
+            default_value = namespace.get(param_name, None)
+            input_params[param_name] = {
+                "type": param_type,
+                "default": default_value,
+            }
+
+        # dynamically set the signature of the arun method
+        arun_func = getattr(cls, "arun", None)
+        input_params["self"] = {
+            "type": inspect._empty,
+            "default": inspect._empty,
+        }
+        set_method_signature(arun_func, input_params)
+
+        return cls
 
 
 class Component(GraphAutoma, metaclass=ComponentMeta):
@@ -25,39 +59,71 @@ class Component(GraphAutoma, metaclass=ComponentMeta):
     def _build_graph(self) -> None:
         # build the graph
         for canvas in self._canvases:
+            automa_type = canvas.automa_type
             automa = canvas.worker_material
             elements = canvas.elements
-            self._inner_build_logic_flow(automa, elements)
-
-    def _inner_build_data_flow(self, automa: GraphAutoma, elements: List["_Element"]) -> None:
-        pass
+            self._inner_build_logic_flow(automa_type, automa, elements)
             
-    def _inner_build_logic_flow(self, automa: GraphAutoma, elements: Dict[str, "_Element"]) -> None:
+    def _inner_build_logic_flow(self, automa_type: str, automa: GraphAutoma, elements: Dict[str, "_Element"]) -> None:
+        def build_concurrent(
+            key: str,
+            worker_material: Union[Worker, Callable],
+        ) -> None:
+            if isinstance(worker_material, Worker):
+                automa.add_worker(
+                    key=key,
+                    worker=worker_material,
+                )
+            elif isinstance(worker_material, Callable):
+                automa.add_func_as_worker(
+                    key=key,
+                    func=worker_material,
+                )
+
+        def build_graph(
+            key: str,
+            worker_material: Union[Worker, Callable],
+            is_start: bool,
+            is_output: bool,
+            dependencies: List[str],
+            args_mapping_rule: ArgsMappingRule,
+        ) -> None:
+            if isinstance(worker_material, Worker):
+                automa.add_worker(
+                    key=key,
+                    worker=worker_material,
+                    is_start=is_start,
+                    is_output=is_output,
+                    dependencies=dependencies,
+                    args_mapping_rule=args_mapping_rule,
+                )
+            elif isinstance(worker_material, Callable):
+                automa.add_func_as_worker(
+                    key=key,
+                    func=worker_material,
+                    is_start=is_start,
+                    is_output=is_output,
+                    dependencies=dependencies,
+                    args_mapping_rule=args_mapping_rule,
+                )
+
         for _, element in elements.items():
+            if element.is_lambda:
+                lambda_worker_meterial = dynamic_lambda_worker()
+
             key = element.settings.key
+            worker_material = element.worker_material
             is_start = element.settings.is_start
             is_output = element.settings.is_output
             dependencies = element.settings.dependencies
             args_mapping_rule = element.settings.args_mapping_rule
             
-            if isinstance(element.worker_material, Worker):
-                automa.add_worker(
-                    key=key,
-                    worker=element.worker_material,
-                    is_start=is_start,
-                    is_output=is_output,
-                    dependencies=dependencies,
-                    args_mapping_rule=args_mapping_rule,
-                )
-            elif isinstance(element.worker_material, Callable):
-                automa.add_func_as_worker(
-                    key=key,
-                    func=element.worker_material,
-                    is_start=is_start,
-                    is_output=is_output,
-                    dependencies=dependencies,
-                    args_mapping_rule=args_mapping_rule,
-                )
+            if automa_type == "concurrent":
+                build_concurrent(key, worker_material)
+            elif automa_type == "graph":
+                build_graph(key, worker_material, is_start, is_output, dependencies, args_mapping_rule)
+            else:
+                raise ValueError(f"Invalid automa type: {automa_type}")
 
     def _collect_canvases(self):
         # collect all canvases and elements

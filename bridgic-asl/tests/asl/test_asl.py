@@ -2,8 +2,8 @@ from bridgic.core.automa._graph_automa import GraphAutoma
 import pytest
 
 from bridgic.core.automa.worker import Worker
-from bridgic.core.automa.args import System, ArgsMappingRule
-from bridgic.asl.component import graph, concurrent, Component, Settings
+from bridgic.core.automa.args import System, ArgsMappingRule, From
+from bridgic.asl.component import graph, Component, Settings, Data
 
 
 def worker1(user_input: int = None):
@@ -252,10 +252,37 @@ async def test_settings_can_be_set_correctly(settings_can_be_set_correctly_graph
     assert result == 5
 
 
+# - - - - - - - - - - - - - - -
+# test Args Injection can run correctly
+# - - - - - - - - - - - - - - - 
+@pytest.fixture
+def args_injection_can_run_correctly_graph():
+    class MyGraph1(Component):
+        user_input: int = None
+
+        with graph() as g:
+            a = worker1
+            b = worker2
+            c = merge * Data(y=From("a"))
+
+            +a >> b >> ~c
+
+    return MyGraph1
+
+@pytest.mark.asyncio
+async def test_args_injection_can_run_correctly(args_injection_can_run_correctly_graph):
+    graph = args_injection_can_run_correctly_graph()
+    print(graph)
+    result = await graph.arun(user_input=1)
+    assert result == (4, 2)
+
 ####################################################################################################################################################
 # test ASL-python code raise error correctly
 ####################################################################################################################################################
 
+# - - - - - - - - - - - - - - -
+# test raise duplicate dependency error correctly
+# - - - - - - - - - - - - - - - 
 @pytest.mark.asyncio
 async def test_raise_duplicate_dependency_error_correctly():
     with pytest.raises(ValueError, match="Duplicate dependency"):
