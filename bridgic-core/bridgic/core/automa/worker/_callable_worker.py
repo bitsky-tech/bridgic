@@ -8,6 +8,7 @@ from typing_extensions import override
 from bridgic.core.automa.worker import Worker
 from bridgic.core.types._error import WorkerRuntimeError
 from bridgic.core.utils._inspect_tools import load_qualified_class_or_func, get_param_names_all_kinds
+from bridgic.core.logging._decorators import worker_logger
 
 if TYPE_CHECKING:
     from bridgic.core.automa._automa import Automa
@@ -49,6 +50,7 @@ class CallableWorker(Worker):
         # Cached method signatures, with no need for serialization.
         self.__cached_param_names_of_callable = None
 
+    @worker_logger(lambda self: self._callable.__name__, method_label="arun")
     async def arun(self, *args: Tuple[Any, ...], **kwargs: Dict[str, Any]) -> Any:
         if self._expected_bound_parent:
             raise WorkerRuntimeError(
@@ -59,6 +61,7 @@ class CallableWorker(Worker):
             return await self._callable(*args, **kwargs)
         return await super().arun(*args, **kwargs)
 
+    @worker_logger(lambda self: self._callable.__name__, method_label="run")
     def run(self, *args: Tuple[Any, ...], **kwargs: Dict[str, Any]) -> Any:
         assert self._is_async is False
         return self._callable(*args, **kwargs)
