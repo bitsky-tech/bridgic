@@ -286,6 +286,14 @@ class TestLoggingMethods:
         log_output = self.log_stream.getvalue()
         assert "WorkerStart" in log_output
         assert "worker_001" in log_output
+        # Non-ASCII characters should not be escaped
+        self.logger.log_worker_start(
+            worker_id="工人_002",
+            worker_name="测试Worker",
+            input_data={"提示": "请确认是否发送退款邮件给"},
+        )
+        assert "工人_002" in self.log_stream.getvalue()
+        assert "请确认是否发送退款邮件给" in self.log_stream.getvalue()
         assert "TestWorker" in log_output
     
     def test_log_worker_end(self):

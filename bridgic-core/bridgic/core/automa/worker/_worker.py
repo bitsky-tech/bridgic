@@ -99,7 +99,7 @@ class Worker(Serializable):
         """
         raise NotImplementedError(f"run() is not implemented in {type(self)}")
 
-    def _format_result_for_log(self, result: Any, max_length: int = 200) -> str:
+    def _format_result_for_log(self, result: Any, max_length: int = 2000) -> str:
         try:
             result_str = str(result)
             if len(result_str) > max_length:

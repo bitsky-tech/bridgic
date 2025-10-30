@@ -92,7 +92,7 @@ class BaseEvent(BaseModel):
     
     def to_json(self) -> str:
         """Convert the event to JSON string."""
-        return json.dumps(self.model_dump(), default=str)
+        return json.dumps(self.model_dump(), default=str, ensure_ascii=False)
     
     def __str__(self) -> str:
         """String representation of the event."""
@@ -165,7 +165,7 @@ class WorkerStartEvent(WorkerEvent):
             "triggered_by": self.triggered_by,
             "source": self.source,
             "metadata": self.metadata,
-        })
+        }, ensure_ascii=False)
 
 
 class WorkerEndEvent(WorkerEvent):
@@ -200,7 +200,7 @@ class WorkerEndEvent(WorkerEvent):
             "execution_time": self.execution_time,
             "source": self.source,
             "metadata": self.metadata,
-        })
+        }, ensure_ascii=False)
 
 
 class WorkerErrorEvent(WorkerEvent):
@@ -247,7 +247,7 @@ class WorkerErrorEvent(WorkerEvent):
             "execution_time": self.execution_time,
             "source": self.source,
             "metadata": self.metadata,
-        })
+        }, ensure_ascii=False)
 
 
 class WorkerFerryEvent(WorkerEvent):
@@ -301,7 +301,7 @@ class WorkerFerryEvent(WorkerEvent):
             "execution_id": self.execution_id,
             "source": self.source,
             "metadata": self.metadata,
-        })
+        }, ensure_ascii=False)
 
 
 class AutomaEvent(BaseEvent):
@@ -352,7 +352,7 @@ class AutomaStartEvent(AutomaEvent):
             "workflow_data": self.workflow_data,
             "source": self.source,
             "metadata": self.metadata,
-        })
+        }, ensure_ascii=False)
 
 
 class AutomaEndEvent(AutomaEvent):
@@ -386,7 +386,7 @@ class AutomaEndEvent(AutomaEvent):
             "execution_time": self.execution_time,
             "source": self.source,
             "metadata": self.metadata,
-        })
+        }, ensure_ascii=False)
 
 
 class AutomaErrorEvent(AutomaEvent):
@@ -432,7 +432,7 @@ class AutomaErrorEvent(AutomaEvent):
             "execution_time": self.execution_time,
             "source": self.source,
             "metadata": self.metadata,
-        })
+        }, ensure_ascii=False)
 
 
 class ModelCallEvent(BaseEvent):
@@ -487,7 +487,7 @@ class ModelCallEvent(BaseEvent):
             "execution_time": self.execution_time,
             "source": self.source,
             "metadata": self.metadata,
-        })
+        }, ensure_ascii=False)
 
 
 
@@ -526,7 +526,7 @@ class CacheHitEvent(CacheEvent):
             "cache_operation": self.cache_operation,
             "source": self.source,
             "metadata": self.metadata,
-        })
+        }, ensure_ascii=False)
 
 
 class CacheMissEvent(CacheEvent):
@@ -545,7 +545,7 @@ class CacheMissEvent(CacheEvent):
             "cache_operation": self.cache_operation,
             "source": self.source,
             "metadata": self.metadata,
-        })
+        }, ensure_ascii=False)
 
 
 class CacheSetEvent(CacheEvent):
@@ -564,7 +564,7 @@ class CacheSetEvent(CacheEvent):
             "cache_operation": self.cache_operation,
             "source": self.source,
             "metadata": self.metadata,
-        })
+        }, ensure_ascii=False)
 
 
 class CacheDeleteEvent(CacheEvent):
@@ -583,7 +583,7 @@ class CacheDeleteEvent(CacheEvent):
             "cache_operation": self.cache_operation,
             "source": self.source,
             "metadata": self.metadata,
-        })
+        }, ensure_ascii=False)
 
 
 # Union type for all events
