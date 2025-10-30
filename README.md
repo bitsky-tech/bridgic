@@ -73,7 +73,7 @@ In this example, the text processing workflow demonstrates how static dependenci
 
 ### 2. Dynamic Routing
 
-The `ferry_to()` API enables an automa to flexibly decide at runtime which worker should run next, allowing the workflow to change its path on the fly depending on current conditions. This capability goes hand-in-hand with static dependency declarations, making the execution process much more adaptive and intelligent. With dynamic routing powered by `ferry_to()`, you can easily implement agentic systems that adjust their behavior in runtime.
+The `ferry_to()` API enables an automa to dynamically decide at runtime which worker should run next, allowing the workflow to adapt its execution path based on current conditions. This capability works hand in hand with static dependency declarations, making the execution process much more adaptive and intelligent. With dynamic routing powered by `ferry_to()`, you can easily build agentic systems that adjust their behavior at runtime.
 
 ```python
 from bridgic.core.automa import GraphAutoma, worker
@@ -82,7 +82,7 @@ class SimpleRouter(GraphAutoma):
     @worker(is_start=True)
     async def analyze_request(self, request: str) -> str:
         print(f"Analyzing request: {request}")
-        if "?" in request: # Use a simple rule to route by detecting "?".
+        if "?" in request:  # Route by using a simple rule that checks for "?".
             print("Detected question - routing to Q&A handler")
             self.ferry_to("handle_question", question=request)
         else:
