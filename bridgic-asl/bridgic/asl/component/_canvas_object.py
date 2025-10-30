@@ -1,3 +1,4 @@
+import inspect
 from dataclasses import dataclass
 from contextvars import ContextVar
 from typing import List, Any, Union, Callable, Tuple
@@ -12,11 +13,16 @@ graph_stack = ContextVar("graph_stack", default=[])
 
 class TrackingNamespace(dict):
     def __setitem__(self, key: str, value: Any):
+        # get the settings from the value
+        settings = getattr(value, "__settings__", None)
+
         # only track the special values
         if not key.startswith('_'):
             if isinstance(value, Worker) or isinstance(value, Callable):
                 if key != 'arun' and key != 'run':
-                    value = _Element(key, value)
+                    value: _Element = _Element(key, value)
+                    if settings:
+                        value.update_settings(settings)
         super().__setitem__(key, value)
 
         # get current activate `with` context
@@ -30,12 +36,15 @@ class TrackingNamespace(dict):
             if value not in stack:
                 return
 
-            if not value.name:
-                value.name = key
+            if not value.settings.key:
+                value.settings.key = key
+
+            if settings:
+                value.update_settings(settings)
 
             if len(stack) >= 2 and stack[-1] is value:
                 parent = stack[-2]
-                parent.register(value.name, value)
+                parent.register(value.settings.key, value)
             return
 
         # register the normal object
@@ -64,11 +73,23 @@ class Data:
 
 @dataclass
 class Settings:
-    key: str
-    is_start: bool
-    is_output: bool
-    dependencies: List[str]
-    args_mapping_rule: ArgsMappingRule
+    key: str = None
+    is_start: bool = None
+    is_output: bool = None
+    dependencies: List[str] = None
+    args_mapping_rule: ArgsMappingRule = None
+
+    def __post_init__(self):
+        if not self.key:
+            self.key = ""
+        if not self.is_start:
+            self.is_start = False
+        if not self.is_output:
+            self.is_output = False
+        if not self.dependencies:
+            self.dependencies = []
+        if not self.args_mapping_rule:
+            self.args_mapping_rule = ArgsMappingRule.AS_IS
 
     def update(self, other: "Settings") -> None:
         if other.key != self.key:
@@ -78,32 +99,30 @@ class Settings:
         if other.is_output != self.is_output:
             self.is_output = other.is_output
         if other.dependencies != self.dependencies:  # detect duplicate error
-            other_dependencies_keys = [dependency_obj.name for dependency_obj in other.dependencies]
-            if len(other_dependencies_keys) != len(set(other_dependencies_keys)):
-                raise ValueError(f"Duplicate dependency: {other_dependencies_keys}.")
-            self.dependencies = other_dependencies_keys
+            if len(other.dependencies) != len(set(other.dependencies)):
+                raise ValueError(f"Duplicate dependency: {other.dependencies}.")
+            self.dependencies = other.dependencies
         if other.args_mapping_rule != self.args_mapping_rule:
             self.args_mapping_rule = other.args_mapping_rule
 
-    def __rmul__(self, other: Union[Callable, Worker, "_Canvas"]):
+    def __rmul__(self, other: Union[Callable, Worker]):
         """
         "*" operator is used to set the settings of a obj.
         """
-        pass
+        setattr(other, "__settings__", self)
+        return other
 
 
 class _CanvasObject:
-    def __init__(self, name: str, worker_material: Union[Worker, Callable]) -> None:
-        self.name = name
+    def __init__(self, key: str, worker_material: Union[Worker, Callable]) -> None:
         self.worker_material = worker_material
         self.parent_canvas = None
         self.left_canvas_obj = None
         self.right_canvas_obj = None
 
         # settings initialization
-        # TODO: 配合 Setting 右结合 * 运算符更新一个 setting
         self.settings = Settings(
-            key=self.name,
+            key=key,
             is_start=False,
             is_output=False,
             dependencies=[],
@@ -112,25 +131,33 @@ class _CanvasObject:
 
         self.parameters = {}
 
+    def update_settings(self, settings: Settings) -> None:
+        self.settings.update(settings)
+        return self
+
     def __rshift__(self, other: Union["_CanvasObject", Tuple["_CanvasObject"]]) -> None:
         """
         ">>" operator is used to set the current worker as a dependency of the other worker.
         """
+        def check_duplicate_dependency(current_canvas_obj: _CanvasObject, left_canvas_objs: List[str]) -> None:
+            for dependency in left_canvas_objs:
+                if dependency in current_canvas_obj.settings.dependencies:
+                    raise ValueError(f"Duplicate dependency: {dependency}.")
+
         current_canvas_obj = self
-        left_canvas_objs = [self.name]
+        left_canvas_objs = [self.settings.key]
         while current_canvas_obj.left_canvas_obj:
             current_canvas_obj = current_canvas_obj.left_canvas_obj
-            left_canvas_objs.append(current_canvas_obj.name)
+            left_canvas_objs.append(current_canvas_obj.settings.key)
         left_canvas_objs.reverse()  # Keep the order consistent with the declaration.
 
+        check_duplicate_dependency(other, left_canvas_objs)
         other.settings.dependencies.extend(left_canvas_objs)
+
         current_canvas_obj = other
         while current_canvas_obj.left_canvas_obj:
             current_canvas_obj = current_canvas_obj.left_canvas_obj
-            current_canvas_obj_dependencies = set(current_canvas_obj.settings.dependencies)
-            for dependency_name in left_canvas_objs:
-                if dependency_name in current_canvas_obj_dependencies:
-                    raise ValueError(f"Duplicate dependency: {dependency_name}.")
+            check_duplicate_dependency(current_canvas_obj, left_canvas_objs)
             current_canvas_obj.settings.dependencies.extend(left_canvas_objs)
         return other
 
@@ -179,7 +206,7 @@ class _CanvasObject:
     def __str__(self) -> str:
         return (
             f"CanvasObject("
-            f"name={self.name}, "
+            f"key={self.settings.key}, "
             f"worker_material={self.worker_material}, "
             f"settings={self.settings}"
         )
@@ -208,16 +235,15 @@ class _Canvas(_CanvasObject):
         stack.pop()
         graph_stack.set(stack)
 
-    def register(self, name, value):
-        value.parent_canvas = self.name
-        self.elements[name] = value
+    def register(self, key, value):
+        value.parent_canvas = self.settings.key
+        self.elements[key] = value
         if isinstance(value, _Canvas):
-            value.settings.key = name
+            value.settings.key = key
 
     def __str__(self) -> str:
         return (
             f"_Canvas("
-            f"name={self.name}, "
             f"key={self.settings.key}, "
             f"parent_canvas={self.parent_canvas}, "
             f"elements={self.elements}, "
@@ -234,14 +260,14 @@ def concurrent() -> _Canvas:
 
 
 class _Element(_CanvasObject):
-    def __init__(self, name: str, worker_material: Union[Worker, Callable]) -> None:
-        super().__init__(name, worker_material)
+    def __init__(self, key: str, worker_material: Union[Worker, Callable]) -> None:
+        super().__init__(key, worker_material)
         self.parent_canvas = None
 
     def __str__(self) -> str:
         return (
             f"_Element("
-            f"name={self.settings.key}, "
+            f"key={self.settings.key}, "
             f"parent_canvas={self.parent_canvas}, "
             f"settings={self.settings})"
         )

@@ -72,16 +72,16 @@ class Component(GraphAutoma, metaclass=ComponentMeta):
                         root = value
                     else:
                         raise ValueError("Multiple root canvases are not allowed.")
-                canvases_dict[value.name] = value
+                canvases_dict[value.settings.key] = value
 
         # bottom up order traversal to get the canvases
         def bottom_up_order_traversal(canvases: List[_Canvas]) -> List[_Canvas]:
             if len(canvases) == 1:
                 return canvases
             
-            canvas_map = {canvas.name: canvas for canvas in canvases}
+            canvas_map = {canvas.settings.key: canvas for canvas in canvases}
             all_parents = {canvas.parent_canvas for canvas in canvases if canvas.parent_canvas}
-            leaves = [canvas for canvas in canvases if canvas.name not in all_parents]
+            leaves = [canvas for canvas in canvases if canvas.settings.key not in all_parents]
             return leaves + [element for canvas in leaves for element in bottom_up_order_traversal([canvas_map[canvas.parent_canvas]])]
 
         canvases_list = list(canvases_dict.values())

@@ -2,8 +2,8 @@ from bridgic.core.automa._graph_automa import GraphAutoma
 import pytest
 
 from bridgic.core.automa.worker import Worker
-from bridgic.core.automa.args import System
-from bridgic.asl.component import graph, concurrent, Component
+from bridgic.core.automa.args import System, ArgsMappingRule
+from bridgic.asl.component import graph, concurrent, Component, Settings
 
 
 def worker1(user_input: int = None):
@@ -216,3 +216,77 @@ async def test_no_dependency_can_run_correctly(ferry_to_with_no_dependency_graph
 
     result = await graph.arun(user_input=2)
     assert result == 3
+
+
+# - - - - - - - - - - - - - - -
+# test Settings can be set correctly
+# - - - - - - - - - - - - - - - 
+@pytest.fixture
+def settings_can_be_set_correctly_graph():
+    class MyGraph1(Component):
+        user_input: int = None
+
+        with graph() as g:
+            a = worker1 * Settings(
+                key="worker_1", 
+                is_start=True, 
+            )
+            b = worker2 * Settings(
+                key="worker_2", 
+                dependencies=["worker_1"], 
+                args_mapping_rule=ArgsMappingRule.AS_IS
+            )
+            c = Worker3(y=1) * Settings(
+                key="worker_3", 
+                is_output=True, 
+                dependencies=["worker_2"], 
+            )
+
+    return MyGraph1
+
+@pytest.mark.asyncio
+async def test_settings_can_be_set_correctly(settings_can_be_set_correctly_graph):
+    graph = settings_can_be_set_correctly_graph()
+    print(graph)
+    result = await graph.arun(user_input=1)
+    assert result == 5
+
+
+####################################################################################################################################################
+# test ASL-python code raise error correctly
+####################################################################################################################################################
+
+@pytest.mark.asyncio
+async def test_raise_duplicate_dependency_error_correctly():
+    with pytest.raises(ValueError, match="Duplicate dependency"):
+        class MyGraph1(Component):
+            user_input: int = None
+
+            with graph() as g:
+                a = worker1 * Settings(
+                    key="worker_1", 
+                    is_start=True, 
+                )
+                b = worker2 * Settings(
+                    key="worker_2", 
+                    dependencies=["worker_1"], 
+                    args_mapping_rule=ArgsMappingRule.AS_IS
+                )
+                c = Worker3(y=1) * Settings(
+                    key="worker_3", 
+                    is_output=True, 
+                    dependencies=["worker_2"], 
+                )
+                
+                +a >> b >> ~c
+
+    with pytest.raises(ValueError, match="Duplicate dependency"):
+        class MyGraph2(Component):
+            user_input: int = None
+
+            with graph() as g:
+                a = worker1 * Settings(
+                    dependencies=["worker_1", "worker_1"]
+                )
+
+    
