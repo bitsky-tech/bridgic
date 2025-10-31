@@ -2,6 +2,7 @@ import inspect
 import importlib
 import enum
 
+from types import MethodType
 from typing import Callable, List, Dict, Any, Tuple
 from typing_extensions import get_overloads, overload
 from bridgic.core.utils._collection import deep_hash
@@ -150,3 +151,113 @@ def load_qualified_class_or_func(full_qualified_name: str):
         raise ImportError(f"Class not found in path: '{full_qualified_name}' due to error: {e}")
 
     return obj
+
+
+def override_func_signature(
+    name: str,
+    func: Callable,
+    data: Dict[str, Any],
+) -> None:
+    sig = inspect.signature(func)
+
+    # validate the parameters: only allow overriding existing non-varargs names
+    existing_param_names = set(sig.parameters.keys())
+    extra_keys = set(data.keys()) - existing_param_names
+    if extra_keys:
+        raise TypeError(f"{name} has unsupported parameters: {sorted(extra_keys)}")
+
+    # override the function signature (preserve original order and others)
+    new_params = []
+    for param_name, p in sig.parameters.items():
+        if p.kind in (p.VAR_POSITIONAL, p.VAR_KEYWORD):
+            new_params.append(p)
+            continue
+
+        if param_name in data:
+            spec = data[param_name] or {}
+            new_param = p
+
+            # update annotation when provided
+            if "type" in spec:
+                annotation = spec.get("type", inspect._empty)
+                new_param = new_param.replace(annotation=annotation)
+
+            # update default when provided (allow None as a valid default)
+            if "default" in spec:
+                default_value = spec.get("default", inspect._empty)
+                new_param = new_param.replace(default=default_value)
+
+            new_params.append(new_param)
+        else:
+            new_params.append(p)
+
+    setattr(func, "__signature__", sig.replace(parameters=new_params))
+
+
+def set_func_signature(
+    func: Callable,
+    data: Dict[str, Any],
+) -> None:
+    # Build a fresh signature solely from `data` (ignore original *args/**kwargs)
+    # data: { name: {"type": ..., "default": ...}, ... }
+    required_params = []
+    optional_params = []
+
+    for param_name, spec in data.items():
+        annotation = spec.get("type", inspect._empty)
+        has_default_key = "default" in spec
+        default_value = spec.get("default", inspect._empty) if has_default_key else inspect._empty
+
+        param = inspect.Parameter(
+            name=param_name,
+            kind=inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            default=default_value,
+            annotation=annotation,
+        )
+
+        if default_value is inspect._empty:
+            required_params.append(param)
+        else:
+            optional_params.append(param)
+
+    new_signature = inspect.Signature(parameters=required_params + optional_params)
+    setattr(func, "__signature__", new_signature)
+
+
+def set_method_signature(
+    method: MethodType,
+    data: Dict[str, Any],
+) -> None:
+    # Build a new signature purely based on provided spec (no 'self' for bound methods)
+    required_params = []
+    optional_params = []
+    for param_name, spec in data.items():
+        annotation = spec.get("type", inspect._empty)
+        has_default_key = "default" in spec
+        default_value = spec.get("default", inspect._empty) if has_default_key else inspect._empty
+
+        param = inspect.Parameter(
+            name=param_name,
+            kind=inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            default=default_value,
+            annotation=annotation,
+        )
+
+        if default_value is inspect._empty:
+            required_params.append(param)
+        else:
+            optional_params.append(param)
+
+    params = required_params + optional_params
+    setattr(method, "__signature__", inspect.Signature(parameters=params))
+
+
+def get_func_signature_data(func: Callable) -> Dict[str, Any]:
+    sig = inspect.signature(func)
+    return {
+        param_name: {
+            "type": param.annotation,
+            "default": param.default,
+        }
+        for param_name, param in sig.parameters.items()
+    }
