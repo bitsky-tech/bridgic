@@ -267,7 +267,7 @@ class Automa(Worker):
 
         The event handler implemented by the application layer will be called in the same thread as the worker (maybe the main thread or a new thread from the thread pool).
         
-        Note that `post_event` can be called in a non-async method or an async method.
+        Note that `post_event` can be called either in a non-async method or in an async method.
 
         The event will be bubbled up to the top-level Automa, where it will be processed by the event handler registered with the event type.
 
@@ -306,7 +306,7 @@ class Automa(Worker):
         """
         Request feedback for the specified event from the application layer outside the Automa. This method blocks the caller until the feedback is received.
 
-        Note that `post_event` should only be called from within a non-async method running in the new thread of the Automa thread pool.
+        Note that `request_feedback` should only be called from within a non-async method running in a new thread of the Automa thread pool.
 
         Parameters
         ----------
@@ -342,7 +342,7 @@ class Automa(Worker):
         """
         Request feedback for the specified event from the application layer outside the Automa. This method blocks the caller until the feedback is received.
 
-        The event handler implemented by the application layer will be called in the next event loop, in the main thread.
+        The event handler implemented by the application layer will be called in the next event loop iteration, in the main thread.
 
         Parameters
         ----------
@@ -399,25 +399,19 @@ class Automa(Worker):
         interacting_worker: Optional[Worker] = None,
     ) -> InteractionFeedback:
         """
-        Trigger an interruption in the "human-computer interaction" during the execution of Automa.
+        Trigger an interruption in the "human-in-the-loop interaction" during the execution of the Automa.
 
         Parameters
         ----------
         event: Event
             The event that triggered the interaction.
         interacting_worker: Optional[Worker]
-            The worker that is currently interacting with human. If not provided, the worker will be located automatically.
+            The worker instance that is currently interacting with human. If not provided, the worker will be located automatically.
 
         Returns
         -------
         InteractionFeedback
             The feedback received from the application layer.
-
-        Raises
-        ------
-        _InteractionEventException
-            If the Automa is not the top-level Automa and the `interact_with_human()` method is called by 
-            one or more workers, this exception will be raised to the upper level Automa.
         """
         if not interacting_worker:
             kickoff_worker_key: str = self._locate_interacting_worker()

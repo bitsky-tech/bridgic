@@ -80,5 +80,6 @@ class FeedbackSender(ABC):
         ...
 
 EventHandlerType: TypeAlias = Union[Callable[[Event, FeedbackSender], None], Callable[[Event], None]]
-
-
+"""
+The type of the event handler. It can be a function that takes an Event and a FeedbackSender as arguments, or a function that takes only an Event as an argument.
+"""
