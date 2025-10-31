@@ -5,12 +5,89 @@ from pydantic.fields import FieldInfo
 from bridgic.core.automa.args._args_descriptor import JSON_SCHEMA_IGNORE_ARG_TYPES
 from docstring_parser import parse as parse_docstring # type: ignore
 
+def _extract_description_from_annotated(annotated_type: Any) -> Optional[str]:
+    for metadata in annotated_type.__metadata__:
+        if isinstance(metadata, FieldInfo):
+            return metadata.description
+        if isinstance(metadata, WithJsonSchema) and metadata.json_schema:
+            return metadata.json_schema.get("description")
+    return None
+
+def _resolve_param_description(
+    param_name: str,
+    param_type: Any,
+    param_default: Any,
+    docstring_params: Optional[List[Any]],
+) -> Optional[str]:
+    # Priority 1: Check if param_default is a FieldInfo and has a description.
+    if isinstance(param_default, FieldInfo) and param_default.description:
+        return param_default.description
+
+    # Priority 2: Check for description inside Annotated.
+    if get_origin(param_type) is Annotated:
+        # Check for simple string description: Annotated[type, "description"].
+        if len(param_type.__metadata__) == 1 and isinstance(param_type.__metadata__[0], str):
+            return cast(str, param_type.__metadata__[0])
+        # Check for FieldInfo or WithJsonSchema description inside Annotated.
+        description = _extract_description_from_annotated(param_type)
+        if description:
+            return description
+
+    # Priority 3: Look for description from docstring
+    if docstring_params:
+        for p in docstring_params:
+            if p.arg_name == param_name:
+                return p.description
+
+    return None
+
+def _build_field_definition(
+    param_type: Any,
+    param_default: Any,
+    description: Optional[str],
+) -> Any:
+    has_default = False
+    actual_default = None
+
+    if isinstance(param_default, FieldInfo):
+        # If param_default is FieldInfo, check its default attribute.
+        if param_default.default is not inspect.Parameter.empty:
+            has_default = True
+            actual_default = param_default.default
+    elif param_default is not inspect.Parameter.empty:
+        # If param_default is a raw value (could even be None), just use it.
+        has_default = True
+        actual_default = param_default
+
+    if description is None:
+        if not has_default:
+            return param_type
+        elif isinstance(param_default, FieldInfo):
+            return (param_type, param_default)
+        else:
+            return (param_type, actual_default)
+
+    field_kwargs = {"description": description}
+
+    if has_default:
+        field_kwargs["default"] = actual_default
+
+    if isinstance(param_default, FieldInfo):
+        if hasattr(param_default, "alias") and param_default.alias:
+            field_kwargs["alias"] = param_default.alias
+        if hasattr(param_default, "title") and param_default.title:
+            field_kwargs["title"] = param_default.title
+
+    return (param_type, Field(**field_kwargs))
+
 def create_func_params_json_schema(
     func: Callable,
     ignore_params: List[str] = ["self", "cls"],
 ) -> Dict[str, Any]:
     """
-    Create a JSON schema for the parameters of a function. The docstring of the function will be used to extract the description of the parameters, if available.
+    Generate a JSON schema representing the input parameters of a callable. If the function's 
+    docstring provides parameter descriptions, they will be incorporated into the schema. 
+    Otherwise, the function's signature will be used to generate the schema.
 
     Parameters
     ----------
@@ -24,14 +101,6 @@ def create_func_params_json_schema(
     Dict[str, Any]
         The JSON schema for the parameters of the function.
     """
-    def _get_param_description_from_annotation(annotated_type: Any) -> Optional[str]:
-        for metadata in annotated_type.__metadata__:
-            if isinstance(metadata, FieldInfo):
-                return metadata.description
-            if isinstance(metadata, WithJsonSchema) and metadata.json_schema:
-                return metadata.json_schema.get("description")
-        return None
-
     sig = inspect.signature(func)
     docstring = parse_docstring(func.__doc__)
     field_defs: Dict[str, Any] = {}
@@ -40,60 +109,28 @@ def create_func_params_json_schema(
         if param_name in ignore_params:
             continue
 
-        # First: Resolve the type of the parameter
         param_type = param.annotation
         if param_type is inspect.Parameter.empty:
-            # In the case of no annotation
             param_type = Any
 
-        # Second: Resolve the default of the parameter
         param_default = param.default
         if isinstance(param_default, JSON_SCHEMA_IGNORE_ARG_TYPES):
             continue
-        # param_default may be inspect.Parameter.empty in the case of no default.
+
+        # Resolve parameter description in order of priority.
+        param_description = _resolve_param_description(
+            param_name,
+            param_type,
+            param_default,
+            docstring.params if docstring else None,
+        )
+
+        # Build the field definition to the current parameter.
+        field_def = _build_field_definition(param_type, param_default, param_description)
+        field_defs[param_name] = field_def
     
-        # Third: Resolve the description of the parameter
-        # The description of a parameter may come from multiple sources, with the following order of priority (from highest to lowest):
-        # 1. param: type = Field(description="description here", ...)
-        # 2. param: Annotated[type, "description here"]
-        # 3. param: Annotated[type, Field(description="description here", ...)]
-        # 4. param: Annotated[type, WithJsonSchema({"description":"description here", ...})]
-        # 5. the params section of the function's docstring
-        param_description = None
-        need_overwritten = False # Whether the description of the parameter needs to be overwritten.
-        if isinstance(param_default, FieldInfo):
-            param_description = param_default.description
-        if not param_description and get_origin(param_type) is Annotated:
-            if len(param_type.__metadata__) == 1 and isinstance(param_type.__metadata__[0], str):
-                param_description = cast(str, param_type.__metadata__[0])
-                need_overwritten = bool(param_description)
-            else:
-                param_description = _get_param_description_from_annotation(param_type)
-        if not param_description and docstring.params:
-            # Search the param description in the docstring.params
-            for p in docstring.params:
-                if p.arg_name == param_name:
-                    param_description = p.description
-                    need_overwritten = bool(param_description)
-                    break
-        
-        # Assemble the Field object and add it to the field_defs
-        if need_overwritten:
-            if param_default is inspect.Parameter.empty:
-                field = Field(description=param_description)
-            elif isinstance(param_default, FieldInfo):
-                field = param_default
-                field.description = param_description
-            else:
-                field = Field(default=param_default, description=param_description)
-            field_defs[param_name] = (param_type, field)
-        else:
-            if param_default is inspect.Parameter.empty:
-                field_defs[param_name] = param_type
-            else:
-                field_defs[param_name] = (param_type, param_default)
-    
-    # Note: Set arbitrary_types_allowed=True to allow custom parameter types that support JSON schema, by implementting `__get_pydantic_core_schema__` or `__get_pydantic_json_schema__`.
+    # Note: Set arbitrary_types_allowed=True to allow custom parameter types that support JSON schema, 
+    # by implementting `__get_pydantic_core_schema__` or `__get_pydantic_json_schema__`.
     JsonSchemaModel = create_model(
         func.__name__,
         __config__=ConfigDict(arbitrary_types_allowed=True), 
