@@ -8,7 +8,7 @@ import os
 from collections import defaultdict
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, AsyncGenerator
 from uuid import UUID, uuid4
 
 from agent_tracer.schema import TracingConfig
@@ -62,7 +62,8 @@ class StepTraceContext:
         inputs: dict[str, Any],
         metadata: dict[str, Any] | None = None,
         custom_data: dict[str, Any] | None = None,
-    ):
+        parent_step_trace_context: "StepTraceContext" | None = None,
+    ) -> None:
         self.trace_id: str = trace_id
         self.trace_name: str = trace_name
         self.trace_type: str = trace_type
@@ -72,7 +73,7 @@ class StepTraceContext:
         self.outputs: dict[str, Any] = defaultdict(dict)
         self.outputs_metadata: dict[str, Any] = defaultdict(dict)
         self.logs: dict[str, list[Log | dict[Any, Any]]] = defaultdict(list)
-
+        self.parent_step_trace_context: "StepTraceContext" | None = parent_step_trace_context
 
 class TracingService:
     """Main tracing service for agent observability.
@@ -346,9 +347,10 @@ class TracingService:
                     inputs,
                     step_trace_context.inputs_metadata,
                     step_trace_context.custom_data,
+                    step_trace_context.parent_step_trace_context,
                 )
             except Exception as e:
-                logger.exception(f"Error starting trace {step_trace_context.trace_name}: {e}")
+                logger.exception(f"Error starting trace {step_trace_context.trace_name}: {e}", exc_info=True)
 
     def _end_step_traces(
         self,
@@ -378,7 +380,8 @@ class TracingService:
         metadata: dict[str, Any] | None = None,
         trace_type: str = "tool",
         custom_data: dict[str, Any] | None = None,
-    ):
+        parent_step_trace_context: "StepTraceContext" | None = None,
+    ) -> AsyncGenerator[StepTraceContext, None]:
         """Trace a step/component in the workflow.
 
         Args:
@@ -402,20 +405,20 @@ class TracingService:
 
         trace_id = f"{step_name}-{uuid4()}"
         inputs = self._cleanup_inputs(inputs)
-        step_trace_context = StepTraceContext(trace_id, step_name, trace_type, inputs, metadata, custom_data)
+        step_trace_context = StepTraceContext(trace_id, step_name, trace_type, inputs, metadata, custom_data, parent_step_trace_context)
         step_context_var.set(step_trace_context)
 
         trace_context = trace_context_var.get()
         if trace_context is None:
             logger.warning("trace_step called but no trace context found")
-            yield self
+            yield step_trace_context
             return
 
         trace_context.all_inputs[step_name] |= inputs or {}
         await trace_context.traces_queue.put((self._start_step_traces, (step_trace_context, trace_context)))
 
         try:
-            yield self
+            yield step_trace_context
         except Exception as e:
             await trace_context.traces_queue.put((self._end_step_traces, (step_trace_context, trace_context, e)))
             raise

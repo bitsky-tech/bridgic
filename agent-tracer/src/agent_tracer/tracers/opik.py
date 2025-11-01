@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any
 from typing_extensions import override
 
 from agent_tracer.base import BaseTracer
+from agent_tracer.service import StepTraceContext
 from agent_tracer.utils import serialize_value
 
 if TYPE_CHECKING:
@@ -106,6 +107,7 @@ class OpikTracer(BaseTracer):
         inputs: dict[str, Any],
         metadata: dict[str, Any] | None = None,
         custom_data: dict[str, Any] | None = None,
+        parent_step_trace_context: StepTraceContext | None = None,
     ) -> None:
         if not self._ready:
             return
@@ -115,13 +117,20 @@ class OpikTracer(BaseTracer):
         name = trace_name.removesuffix(f" ({trace_id})")
         processed_inputs = self._convert_to_opik_types(inputs) if inputs else {}
         processed_metadata = self._convert_to_opik_types(metadata) if metadata else {}
-
+        # Use the actual Opik span id from the already-created parent span, if available
+        parent_span_id = None
+        if parent_step_trace_context and parent_step_trace_context.trace_id in self.spans:
+            try:
+                parent_span_id = getattr(self.spans[parent_step_trace_context.trace_id], "id", None)
+            except Exception:
+                parent_span_id = None
         span = SpanData(
             trace_id=self.opik_trace_id,
             name=name,
             input=processed_inputs,
             metadata=processed_metadata,
             type="general",
+            parent_span_id=parent_span_id,
         )
 
         self.spans[trace_id] = span

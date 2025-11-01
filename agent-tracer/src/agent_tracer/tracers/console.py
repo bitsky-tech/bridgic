@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any
 from typing_extensions import override
 
 from agent_tracer.base import BaseTracer
+from agent_tracer.service import StepTraceContext
 from agent_tracer.utils import serialize_value
 
 if TYPE_CHECKING:
@@ -110,6 +111,7 @@ class ConsoleTracer(BaseTracer):
         inputs: dict[str, Any],
         metadata: dict[str, Any] | None = None,
         custom_data: dict[str, Any] | None = None,
+        parent_step_trace_context: StepTraceContext | None = None,
     ) -> None:
         """Add a child trace/span.
 
@@ -120,6 +122,7 @@ class ConsoleTracer(BaseTracer):
             inputs: Input data for the trace
             metadata: Optional metadata
             custom_data: Optional custom data (e.g., vertex information)
+            parent_step_trace_context: Optional parent step trace context (used for nested traces)
         """
         start_time = datetime.now()
         self._spans[trace_id] = {
@@ -131,6 +134,7 @@ class ConsoleTracer(BaseTracer):
             "custom_data": serialize_value(custom_data) if custom_data else None,
             "start_time": start_time,
             "logs": [],
+            "parent_step_trace_context": parent_step_trace_context.trace_id if parent_step_trace_context else None,
         }
 
         print(f"\n[TRACE] ⏩ Step Started: {trace_name} ({trace_type})")
@@ -170,6 +174,8 @@ class ConsoleTracer(BaseTracer):
 
         print(f"\n[TRACE] ⏹️  Step Ended: {trace_name}")
         print(f"  Trace ID: {trace_id}")
+        print(f"  Trace Type: {span['trace_type']}")
+        print(f"  Parent Step Trace ID: {span['parent_step_trace_context']}")
         print(f"  Ended at: {end_time.isoformat()}")
         print(f"  Duration: {duration:.3f}s")
 

@@ -11,6 +11,8 @@ if TYPE_CHECKING:
 
     from agent_tracer.schema import Log
 
+    from agent_tracer.service import StepTraceContext
+
 
 class BaseTracer(ABC):
     """Abstract base class for all tracer implementations."""
@@ -54,6 +56,7 @@ class BaseTracer(ABC):
         inputs: dict[str, Any],
         metadata: dict[str, Any] | None = None,
         custom_data: dict[str, Any] | None = None,
+        parent_step_trace_context: StepTraceContext | None = None,
     ) -> None:
         """Add a child trace/span.
 
@@ -64,6 +67,7 @@ class BaseTracer(ABC):
             inputs: Input data for the trace
             metadata: Optional metadata
             custom_data: Optional custom data (e.g., vertex information)
+            parent_step_trace_context: Optional parent step trace context (used for nested traces)
         """
         raise NotImplementedError
 

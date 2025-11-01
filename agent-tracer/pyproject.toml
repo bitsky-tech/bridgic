@@ -53,7 +53,6 @@ langfuse = [
 ]
 langwatch = [
     "langwatch>=0.1.0",
-    "nanoid>=2.0.0",
     "langchain-core>=0.1.0",
 ]
 arize-phoenix = [
