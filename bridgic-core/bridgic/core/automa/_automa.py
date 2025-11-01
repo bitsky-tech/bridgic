@@ -113,6 +113,21 @@ class Automa(Worker):
         snapshot: Snapshot,
         thread_pool: Optional[ThreadPoolExecutor] = None,
     ) -> "Automa":
+        """
+        Load an Automa instance from a snapshot.
+
+        Parameters
+        ----------
+        snapshot: Snapshot
+            The snapshot to load the Automa instance from.
+        thread_pool: Optional[ThreadPoolExecutor]
+            The thread pool for parallel running of I/O-bound tasks. If not provided, a default thread pool will be used.
+
+        Returns
+        -------
+        Automa
+            The loaded Automa instance.
+        """
         # Here you can compare snapshot.serialization_version with SERIALIZATION_VERSION, and handle any necessary version compatibility issues if needed.
         automa = load_bytes(snapshot.serialized_bytes)
         if thread_pool:
@@ -121,6 +136,16 @@ class Automa(Worker):
 
     @property
     def thread_pool(self) -> Optional[ThreadPoolExecutor]:
+        """
+        Get/Set the thread pool for parallel running of I/O-bound tasks used by the current Automa instance and its nested Automa instances.
+
+        Note: If an Automa is nested within another Automa, the thread pool of the top-level Automa will be used, rather than the thread pool of the nested Automa.
+
+        Returns
+        -------
+        Optional[ThreadPoolExecutor]
+            The thread pool.
+        """
         return self._thread_pool
 
     @thread_pool.setter
@@ -128,7 +153,7 @@ class Automa(Worker):
         """
         Set the thread pool for parallel running of I/O-bound tasks.
 
-        If an Automa is nested within another Automa, the thread pool of the top-level Automa will be used, rather than the thread pool of the nested Automa.
+        Note: If an Automa is nested within another Automa, the thread pool of the top-level Automa will be used, rather than the thread pool of the nested Automa.
         """
         self._thread_pool = executor
 
