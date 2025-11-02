@@ -9,7 +9,7 @@ async def main():
     """Example of using console-only tracing."""
     # Configure to only use console output
     # By default, enable_console=True, so console output is enabled
-    # Other tracers (LangSmith, LangFuse, etc.) will only initialize if their
+    # Other tracers (LangFuse, LangWatch, Opik, etc.) will only initialize if their
     # environment variables are set
     
     # Option 1: Use default config (console enabled by default)

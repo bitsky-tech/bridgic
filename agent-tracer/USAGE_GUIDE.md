@@ -21,10 +21,10 @@ This guide covers all aspects of using agent-tracer in your projects.
 pip install agent-tracer
 
 # With specific tracer
-pip install agent-tracer[langsmith]
+pip install agent-tracer[langfuse]
 
 # With multiple tracers
-pip install agent-tracer[langsmith,langfuse]
+pip install agent-tracer[langfuse,langwatch]
 
 # With all tracers (recommended for development)
 pip install agent-tracer[all]
@@ -44,14 +44,6 @@ pip install agent-tracer[dev,all]
 
 Set environment variables for the tracers you want to use:
 
-#### LangSmith
-
-```bash
-export LANGCHAIN_API_KEY="lsv2_pt_..."
-export LANGCHAIN_PROJECT="my-project"  # Optional, defaults to "AgentTracer"
-export LANGCHAIN_TRACING_V2="true"     # Auto-set by tracer
-```
-
 #### LangFuse
 
 ```bash
@@ -66,35 +58,12 @@ export LANGFUSE_HOST="https://cloud.langfuse.com"
 export LANGWATCH_API_KEY="lw_..."
 ```
 
-#### Arize Phoenix
-
-```bash
-# For Arize Cloud
-export ARIZE_API_KEY="your-api-key"
-export ARIZE_SPACE_ID="your-space-id"
-export ARIZE_COLLECTOR_ENDPOINT="https://otlp.arize.com"  # Optional
-
-# For Phoenix OSS (local instance)
-export PHOENIX_COLLECTOR_ENDPOINT="http://localhost:6006"
-export PHOENIX_API_KEY=""  # Optional for local
-
-# Batch mode (optional, default: false)
-export ARIZE_PHOENIX_BATCH="true"
-```
-
 #### Opik
 
 ```bash
 export OPIK_API_KEY="your-api-key"
 export OPIK_WORKSPACE="your-workspace"  # Optional
 export OPIK_URL_OVERRIDE="https://..."  # Optional, for self-hosted
-```
-
-#### Traceloop
-
-```bash
-export TRACELOOP_API_KEY="your-api-key"
-export TRACELOOP_BASE_URL="https://api.traceloop.com"  # Optional
 ```
 
 ### Programmatic Configuration
@@ -503,7 +472,7 @@ tracer = TracingService(config=config)
 
 ```bash
 # Install missing dependencies
-pip install agent-tracer[langsmith]
+pip install agent-tracer[langfuse]
 pip install agent-tracer[all]
 ```
 

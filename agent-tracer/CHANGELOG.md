@@ -10,12 +10,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Initial release of agent-tracer
 - Framework-agnostic tracing API
-- Support for LangSmith tracer
 - Support for LangFuse tracer  
 - Support for LangWatch tracer
-- Support for Arize Phoenix tracer
 - Support for Opik tracer
-- Support for Traceloop tracer
 - Async/await support for modern Python applications
 - Automatic sensitive data masking (API keys, passwords, etc.)
 - Hierarchical tracing (workflows → agents → tools)

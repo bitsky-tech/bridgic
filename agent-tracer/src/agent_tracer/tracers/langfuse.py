@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any
 from typing_extensions import override
 
 from agent_tracer.base import BaseTracer
+from agent_tracer.service import StepTraceContext
 from agent_tracer.utils import serialize_value
 
 if TYPE_CHECKING:
@@ -24,8 +25,6 @@ logger = logging.getLogger(__name__)
 
 class LangFuseTracer(BaseTracer):
     """LangFuse tracer for observability."""
-
-    flow_id: str
 
     def __init__(
         self,
@@ -42,7 +41,6 @@ class LangFuseTracer(BaseTracer):
         self.trace_id = trace_id
         self.user_id = user_id
         self.session_id = session_id
-        self.flow_id = str(trace_name).split(" - ")[-1]
         self.spans: dict = OrderedDict()  # spans that are not ended
 
         config = self._get_config()
@@ -66,7 +64,7 @@ class LangFuseTracer(BaseTracer):
                 return False
             self.trace = self._client.trace(
                 id=str(self.trace_id),
-                name=self.flow_id,
+                name=self.trace_name,
                 user_id=self.user_id,
                 session_id=self.session_id,
             )
@@ -90,6 +88,7 @@ class LangFuseTracer(BaseTracer):
         inputs: dict[str, Any],
         metadata: dict[str, Any] | None = None,
         custom_data: dict[str, Any] | None = None,
+        parent_step_trace_context: StepTraceContext | None = None,
     ) -> None:
         start_time = datetime.now(tz=timezone.utc)
         if not self._ready:

@@ -9,8 +9,9 @@ Get started with agent-tracer in 5 minutes!
 pip install agent-tracer
 
 # With specific tracer
-pip install agent-tracer[langsmith]
 pip install agent-tracer[langfuse]
+pip install agent-tracer[langwatch]
+pip install agent-tracer[opik]
 
 # With all tracers
 pip install agent-tracer[all]
@@ -19,13 +20,6 @@ pip install agent-tracer[all]
 ## Configuration
 
 Set up your tracing backend(s) via environment variables:
-
-### LangSmith
-
-```bash
-export LANGCHAIN_API_KEY="your-api-key"
-export LANGCHAIN_PROJECT="your-project-name"
-```
 
 ### LangFuse
 
@@ -41,28 +35,11 @@ export LANGFUSE_HOST="https://cloud.langfuse.com"
 export LANGWATCH_API_KEY="your-api-key"
 ```
 
-### Arize Phoenix
-
-```bash
-# For Arize Cloud
-export ARIZE_API_KEY="your-api-key"
-export ARIZE_SPACE_ID="your-space-id"
-
-# For Phoenix OSS (local)
-export PHOENIX_COLLECTOR_ENDPOINT="http://localhost:6006"
-```
-
 ### Opik
 
 ```bash
 export OPIK_API_KEY="your-api-key"
 export OPIK_WORKSPACE="your-workspace"
-```
-
-### Traceloop
-
-```bash
-export TRACELOOP_API_KEY="your-api-key"
 ```
 
 ### Console Output (Default)
@@ -133,12 +110,9 @@ python my_agent.py
 
 Visit your configured tracing platform to see the results:
 
-- **LangSmith**: https://smith.langchain.com
 - **LangFuse**: https://cloud.langfuse.com
 - **LangWatch**: https://app.langwatch.ai
-- **Arize Phoenix**: https://app.phoenix.arize.com
 - **Opik**: https://www.comet.com/opik
-- **Traceloop**: https://app.traceloop.com
 
 ## Next Steps
 

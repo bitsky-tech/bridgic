@@ -189,12 +189,10 @@ agent-tracer/
 │       ├── utils.py            # Utility functions
 │       └── tracers/            # Tracer implementations
 │           ├── __init__.py
-│           ├── langsmith.py
 │           ├── langfuse.py
 │           ├── langwatch.py
-│           ├── arize_phoenix.py
 │           ├── opik.py
-│           └── traceloop.py
+│           └── console.py
 ├── tests/                      # Test files
 ├── examples/                   # Example scripts
 ├── docs/                       # Documentation

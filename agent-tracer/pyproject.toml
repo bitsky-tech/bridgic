@@ -18,13 +18,9 @@ keywords = [
     "ai",
     "agents",
     "llm",
-    "langsmith",
     "langfuse",
     "langwatch",
-    "arize",
-    "phoenix",
-    "opik",
-    "traceloop"
+    "opik"
 ]
 classifiers = [
     "Development Status :: 4 - Beta",
@@ -44,10 +40,6 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-langsmith = [
-    "langsmith>=0.1.0",
-    "langchain>=0.1.0",
-]
 langfuse = [
     "langfuse>=2.0.0",
 ]
@@ -55,31 +47,15 @@ langwatch = [
     "langwatch>=0.1.0",
     "langchain-core>=0.1.0",
 ]
-arize-phoenix = [
-    "arize-phoenix-otel>=0.1.0",
-    "openinference-instrumentation-langchain>=0.1.0",
-    "opentelemetry-api>=1.20.0",
-    "opentelemetry-sdk>=1.20.0",
-]
 opik = [
     "opik>=0.1.0",
     "langchain-core>=0.1.0",
 ]
-traceloop = [
-    "traceloop-sdk>=0.1.0",
-    "opentelemetry-api>=1.20.0",
-    "opentelemetry-sdk>=1.20.0",
-]
 all = [
-    "langsmith>=0.1.0",
-    "langchain>=0.1.0",
     "langfuse>=2.0.0",
     "langwatch>=0.1.0",
     "nanoid>=2.0.0",
-    "arize-phoenix-otel>=0.1.0",
-    "openinference-instrumentation-langchain>=0.1.0",
     "opik>=0.1.0",
-    "traceloop-sdk>=0.1.0",
     "opentelemetry-api>=1.20.0",
     "opentelemetry-sdk>=1.20.0",
     "langchain-core>=0.1.0",

@@ -15,13 +15,10 @@ Successfully extracted the tracing module from Langflow and made it completely s
 
 ### ✅ Multiple Backend Support
 
-Integrated support for 6 major tracing platforms:
-- **LangSmith**: LangChain's observability platform
+Integrated support for 3 major tracing platforms:
 - **LangFuse**: Open-source LLM observability
 - **LangWatch**: Agent monitoring and analytics
-- **Arize Phoenix**: ML observability with OpenTelemetry
 - **Opik**: Comet's LLM evaluation platform
-- **Traceloop**: OpenTelemetry-based tracing
 
 ### ✅ Developer Experience
 
@@ -56,12 +53,10 @@ agent-tracer/
 │   ├── service.py             # Main service
 │   ├── utils.py               # Utilities
 │   └── tracers/               # Tracer implementations
-│       ├── langsmith.py
 │       ├── langfuse.py
 │       ├── langwatch.py
-│       ├── arize_phoenix.py
 │       ├── opik.py
-│       └── traceloop.py
+│       └── console.py
 ├── tests/                     # Test suite
 ├── examples/                  # Usage examples
 ├── pyproject.toml            # Package configuration

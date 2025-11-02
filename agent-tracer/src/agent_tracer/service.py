@@ -117,22 +117,6 @@ class TracingService:
         except Exception as e:
             logger.exception(f"Error starting tracing service: {e}")
 
-    def _initialize_langsmith_tracer(self, trace_context: TraceContext) -> None:
-        """Initialize LangSmith tracer if configured."""
-        try:
-            from agent_tracer.tracers.langsmith import LangSmithTracer
-
-            if "langsmith" not in trace_context.tracers or trace_context.tracers["langsmith"].trace_id != trace_context.run_id:
-                trace_context.tracers["langsmith"] = LangSmithTracer(
-                    trace_name=trace_context.run_name,
-                    trace_type="chain",
-                    project_name=trace_context.project_name,
-                    trace_id=trace_context.run_id,
-                )
-        except ImportError:
-            logger.debug("LangSmith not available (install with: pip install agent-tracer[langsmith])")
-        except Exception as e:
-            logger.debug(f"Error initializing LangSmith tracer: {e}")
 
     def _initialize_langwatch_tracer(self, trace_context: TraceContext) -> None:
         """Initialize LangWatch tracer if configured."""
@@ -169,22 +153,6 @@ class TracingService:
         except Exception as e:
             logger.debug(f"Error initializing LangFuse tracer: {e}")
 
-    def _initialize_arize_phoenix_tracer(self, trace_context: TraceContext) -> None:
-        """Initialize Arize Phoenix tracer if configured."""
-        try:
-            from agent_tracer.tracers.arize_phoenix import ArizePhoenixTracer
-
-            trace_context.tracers["arize_phoenix"] = ArizePhoenixTracer(
-                trace_name=trace_context.run_name,
-                trace_type="chain",
-                project_name=trace_context.project_name,
-                trace_id=trace_context.run_id,
-                session_id=trace_context.session_id,
-            )
-        except ImportError:
-            logger.debug("Arize Phoenix not available (install with: pip install agent-tracer[arize-phoenix])")
-        except Exception as e:
-            logger.debug(f"Error initializing Arize Phoenix tracer: {e}")
 
     def _initialize_opik_tracer(self, trace_context: TraceContext) -> None:
         """Initialize Opik tracer if configured."""
@@ -204,23 +172,6 @@ class TracingService:
         except Exception as e:
             logger.debug(f"Error initializing Opik tracer: {e}")
 
-    def _initialize_traceloop_tracer(self, trace_context: TraceContext) -> None:
-        """Initialize Traceloop tracer if configured."""
-        try:
-            from agent_tracer.tracers.traceloop import TraceloopTracer
-
-            trace_context.tracers["traceloop"] = TraceloopTracer(
-                trace_name=trace_context.run_name,
-                trace_type="chain",
-                project_name=trace_context.project_name,
-                trace_id=trace_context.run_id,
-                user_id=trace_context.user_id,
-                session_id=trace_context.session_id,
-            )
-        except ImportError:
-            logger.debug("Traceloop not available (install with: pip install agent-tracer[traceloop])")
-        except Exception as e:
-            logger.debug(f"Error initializing Traceloop tracer: {e}")
 
     def _initialize_console_tracer(self, trace_context: TraceContext) -> None:
         """Initialize Console tracer if enabled."""
@@ -269,12 +220,9 @@ class TracingService:
 
             # Initialize all available tracers
             self._initialize_console_tracer(trace_context)  # Initialize console tracer first
-            self._initialize_langsmith_tracer(trace_context)
             self._initialize_langwatch_tracer(trace_context)
             self._initialize_langfuse_tracer(trace_context)
-            self._initialize_arize_phoenix_tracer(trace_context)
             self._initialize_opik_tracer(trace_context)
-            self._initialize_traceloop_tracer(trace_context)
         except Exception as e:
             logger.debug(f"Error initializing tracers: {e}")
 
@@ -482,7 +430,7 @@ class TracingService:
         """Get a specific tracer by name.
 
         Args:
-            tracer_name: Name of the tracer (e.g., "langsmith", "langfuse")
+            tracer_name: Name of the tracer (e.g., "langfuse", "langwatch")
 
         Returns:
             The tracer instance or None

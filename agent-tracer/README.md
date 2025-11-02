@@ -5,7 +5,7 @@ A framework-agnostic tracing library for AI agents and LLM applications. Built t
 ## Features
 
 - 🔌 **Framework Agnostic**: Works with any Python-based agent framework (LangChain, CrewAI, AutoGPT, custom frameworks, etc.)
-- 🎯 **Multiple Backends**: Support for LangSmith, LangFuse, LangWatch, Arize Phoenix, Opik, and Traceloop
+- 🎯 **Multiple Backends**: Support for LangFuse, LangWatch, and Opik
 - 🚀 **Easy Integration**: Simple API that doesn't require framework-specific knowledge
 - 🔄 **Async Support**: Built with async/await for modern Python applications
 - 📊 **Rich Context**: Capture inputs, outputs, metadata, logs, and errors
@@ -23,11 +23,14 @@ pip install agent-tracer
 ### With Specific Tracers
 
 ```bash
-# Install with LangSmith support
-pip install agent-tracer[langsmith]
-
 # Install with LangFuse support
 pip install agent-tracer[langfuse]
+
+# Install with LangWatch support
+pip install agent-tracer[langwatch]
+
+# Install with Opik support
+pip install agent-tracer[opik]
 
 # Install with all tracers
 pip install agent-tracer[all]
@@ -77,10 +80,6 @@ asyncio.run(main())
 Configure tracers via environment variables:
 
 ```bash
-# LangSmith
-export LANGCHAIN_API_KEY="your-key"
-export LANGCHAIN_PROJECT="your-project"
-
 # LangFuse
 export LANGFUSE_SECRET_KEY="your-secret"
 export LANGFUSE_PUBLIC_KEY="your-public"
@@ -89,16 +88,9 @@ export LANGFUSE_HOST="https://cloud.langfuse.com"
 # LangWatch
 export LANGWATCH_API_KEY="your-key"
 
-# Arize Phoenix
-export ARIZE_API_KEY="your-key"
-export ARIZE_SPACE_ID="your-space-id"
-
 # Opik
 export OPIK_API_KEY="your-key"
 export OPIK_WORKSPACE="your-workspace"
-
-# Traceloop
-export TRACELOOP_API_KEY="your-key"
 ```
 
 ## Framework Integration Examples
@@ -310,12 +302,10 @@ agent-tracer/
 │       ├── utils.py             # Utility functions
 │       └── tracers/
 │           ├── __init__.py
-│           ├── langsmith.py     # LangSmith implementation
 │           ├── langfuse.py      # LangFuse implementation
 │           ├── langwatch.py     # LangWatch implementation
-│           ├── arize_phoenix.py # Arize Phoenix implementation
 │           ├── opik.py          # Opik implementation
-│           └── traceloop.py     # Traceloop implementation
+│           └── console.py       # Console tracer implementation
 ├── tests/
 ├── examples/
 │   ├── langchain_example.py
@@ -338,12 +328,10 @@ agent-tracer/
 
 | Tracer | Status | Features |
 |--------|--------|----------|
-| LangSmith | ✅ Full Support | LangChain callbacks, nested traces |
 | LangFuse | ✅ Full Support | User/session tracking, hierarchical spans |
 | LangWatch | ✅ Full Support | Thread tracking, component traces |
-| Arize Phoenix | ✅ Full Support | OpenTelemetry, session tracking |
 | Opik | ✅ Full Support | Thread/user tracking, metadata |
-| Traceloop | ✅ Full Support | OpenTelemetry, custom attributes |
+| Console | ✅ Full Support | Local debugging and development |
 
 ## Contributing
 

@@ -29,13 +29,10 @@
 
 ### 3. 多后端支持 ✅
 
-成功移植并适配了6个追踪器：
-- ✅ LangSmith
+成功移植并适配了3个追踪器：
 - ✅ LangFuse
 - ✅ LangWatch
-- ✅ Arize Phoenix
 - ✅ Opik
-- ✅ Traceloop
 
 ### 4. 完整的项目结构 ✅
 
@@ -175,12 +172,9 @@ await tracer.end_trace(outputs={"final": result})
 - typing-extensions >= 4.5.0
 
 **可选依赖**（按追踪器）：
-- langsmith: `pip install agent-tracer[langsmith]`
 - langfuse: `pip install agent-tracer[langfuse]`
 - langwatch: `pip install agent-tracer[langwatch]`
-- arize-phoenix: `pip install agent-tracer[arize-phoenix]`
 - opik: `pip install agent-tracer[opik]`
-- traceloop: `pip install agent-tracer[traceloop]`
 - all: `pip install agent-tracer[all]`
 
 ## 使用场景

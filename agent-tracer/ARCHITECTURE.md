@@ -53,12 +53,10 @@ Abstract base class defining the interface all tracers must implement.
 
 Each tracer backend has its own implementation:
 
-- **LangSmithTracer**: LangSmith integration with RunTree
 - **LangFuseTracer**: LangFuse with hierarchical spans
 - **LangWatchTracer**: LangWatch with component tracking
-- **ArizePhoenixTracer**: Arize/Phoenix with OpenTelemetry
 - **OpikTracer**: Opik with thread tracking
-- **TraceloopTracer**: Traceloop with OpenTelemetry
+- **ConsoleTracer**: Local console output for debugging
 
 ### 4. Context Management
 
@@ -93,7 +91,7 @@ User Code
     ↓
 TracingService.start_trace()
     ↓
-Initialize Tracers (LangSmith, LangFuse, etc.)
+Initialize Tracers (LangFuse, LangWatch, Opik, etc.)
     ↓
 Start Background Worker
     ↓
@@ -142,10 +140,10 @@ This allows proper context isolation in concurrent scenarios.
 Tracers are initialized lazily based on environment variables:
 
 ```python
-def _initialize_langsmith_tracer(self, trace_context):
+def _initialize_langfuse_tracer(self, trace_context):
     try:
-        from agent_tracer.tracers.langsmith import LangSmithTracer
-        trace_context.tracers["langsmith"] = LangSmithTracer(...)
+        from agent_tracer.tracers.langfuse import LangFuseTracer
+        trace_context.tracers["langfuse"] = LangFuseTracer(...)
     except ImportError:
         # Tracer not installed, skip silently
         pass
@@ -308,12 +306,9 @@ async def test_basic_flow():
 
 Each tracer has its own optional dependencies:
 
-- LangSmith: `langsmith`, `langchain`
 - LangFuse: `langfuse`
 - LangWatch: `langwatch`, `nanoid`
-- Arize Phoenix: `arize-phoenix-otel`, `opentelemetry`
 - Opik: `opik`
-- Traceloop: `traceloop-sdk`, `opentelemetry`
 
 ## Compatibility
 
@@ -325,7 +320,6 @@ Each tracer has its own optional dependencies:
 ## References
 
 - [OpenTelemetry Specification](https://opentelemetry.io/docs/specs/otel/)
-- [LangSmith Documentation](https://docs.smith.langchain.com/)
 - [LangFuse Documentation](https://langfuse.com/docs)
 - [Python AsyncIO](https://docs.python.org/3/library/asyncio.html)
 - [Context Variables](https://docs.python.org/3/library/contextvars.html)

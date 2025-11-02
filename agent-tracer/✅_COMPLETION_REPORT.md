@@ -46,12 +46,10 @@
 - [x] 添加敏感数据屏蔽
 
 ### 追踪器实现 / Tracer Implementations
-- [x] LangSmith (langsmith.py) - 218 行
 - [x] LangFuse (langfuse.py) - 163 行
 - [x] LangWatch (langwatch.py) - 168 行
-- [x] Arize Phoenix (arize_phoenix.py) - 325 行
 - [x] Opik (opik.py) - 202 行
-- [x] Traceloop (traceloop.py) - 209 行
+- [x] Console (console.py) - 本地调试追踪器
 
 ### 核心模块 / Core Modules
 - [x] base.py - 抽象基类 (97 行)
@@ -190,12 +188,10 @@ src/agent_tracer/
 ├── utils.py                 ✅ 工具函数
 └── tracers/
     ├── __init__.py          ✅ 追踪器包
-    ├── langsmith.py         ✅ LangSmith
     ├── langfuse.py          ✅ LangFuse
     ├── langwatch.py         ✅ LangWatch
-    ├── arize_phoenix.py     ✅ Arize Phoenix
     ├── opik.py              ✅ Opik
-    └── traceloop.py         ✅ Traceloop
+    └── console.py           ✅ Console
 ```
 
 ### 测试套件 / Test Suite

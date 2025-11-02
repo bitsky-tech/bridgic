@@ -5,7 +5,7 @@
 ## 特性
 
 - 🔌 **框架无关**: 适用于任何Python Agent框架（LangChain、CrewAI、AutoGPT、自定义框架等）
-- 🎯 **多后端支持**: 支持LangSmith、LangFuse、LangWatch、Arize Phoenix、Opik和Traceloop
+- 🎯 **多后端支持**: 支持LangFuse、LangWatch和Opik
 - 🚀 **易于集成**: 简单的API，无需框架特定知识
 - 🔄 **异步支持**: 为现代Python应用构建的async/await支持
 - 📊 **丰富上下文**: 捕获输入、输出、元数据、日志和错误
@@ -23,11 +23,14 @@ pip install agent-tracer
 ### 安装特定追踪器
 
 ```bash
-# 安装LangSmith支持
-pip install agent-tracer[langsmith]
-
 # 安装LangFuse支持
 pip install agent-tracer[langfuse]
+
+# 安装LangWatch支持
+pip install agent-tracer[langwatch]
+
+# 安装Opik支持
+pip install agent-tracer[opik]
 
 # 安装所有追踪器
 pip install agent-tracer[all]
@@ -77,10 +80,6 @@ asyncio.run(main())
 通过环境变量配置追踪器：
 
 ```bash
-# LangSmith
-export LANGCHAIN_API_KEY="your-key"
-export LANGCHAIN_PROJECT="your-project"
-
 # LangFuse
 export LANGFUSE_SECRET_KEY="your-secret"
 export LANGFUSE_PUBLIC_KEY="your-public"
@@ -89,16 +88,9 @@ export LANGFUSE_HOST="https://cloud.langfuse.com"
 # LangWatch
 export LANGWATCH_API_KEY="your-key"
 
-# Arize Phoenix
-export ARIZE_API_KEY="your-key"
-export ARIZE_SPACE_ID="your-space-id"
-
 # Opik
 export OPIK_API_KEY="your-key"
 export OPIK_WORKSPACE="your-workspace"
-
-# Traceloop
-export TRACELOOP_API_KEY="your-key"
 ```
 
 ## 框架集成示例
@@ -240,12 +232,10 @@ async with tracer.trace_step("processing", {"input": data}):
 
 | 追踪器 | 状态 | 功能 |
 |--------|------|------|
-| LangSmith | ✅ 完全支持 | LangChain回调，嵌套追踪 |
 | LangFuse | ✅ 完全支持 | 用户/会话追踪，层次化span |
 | LangWatch | ✅ 完全支持 | 线程追踪，组件追踪 |
-| Arize Phoenix | ✅ 完全支持 | OpenTelemetry，会话追踪 |
 | Opik | ✅ 完全支持 | 线程/用户追踪，元数据 |
-| Traceloop | ✅ 完全支持 | OpenTelemetry，自定义属性 |
+| Console | ✅ 完全支持 | 本地调试和开发 |
 
 ## 设计原则
 
@@ -268,12 +258,10 @@ agent-tracer/
 │       ├── service.py           # TracingService主API
 │       ├── utils.py             # 工具函数
 │       └── tracers/             # 追踪器实现
-│           ├── langsmith.py
 │           ├── langfuse.py
 │           ├── langwatch.py
-│           ├── arize_phoenix.py
 │           ├── opik.py
-│           └── traceloop.py
+│           └── console.py
 ├── tests/                       # 测试
 ├── examples/                    # 示例
 └── docs/                        # 文档
