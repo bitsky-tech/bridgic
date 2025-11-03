@@ -113,6 +113,21 @@ class Automa(Worker):
         snapshot: Snapshot,
         thread_pool: Optional[ThreadPoolExecutor] = None,
     ) -> "Automa":
+        """
+        Load an Automa instance from a snapshot.
+
+        Parameters
+        ----------
+        snapshot: Snapshot
+            The snapshot to load the Automa instance from.
+        thread_pool: Optional[ThreadPoolExecutor]
+            The thread pool for parallel running of I/O-bound tasks. If not provided, a default thread pool will be used.
+
+        Returns
+        -------
+        Automa
+            The loaded Automa instance.
+        """
         # Here you can compare snapshot.serialization_version with SERIALIZATION_VERSION, and handle any necessary version compatibility issues if needed.
         automa = load_bytes(snapshot.serialized_bytes)
         if thread_pool:
@@ -121,6 +136,16 @@ class Automa(Worker):
 
     @property
     def thread_pool(self) -> Optional[ThreadPoolExecutor]:
+        """
+        Get/Set the thread pool for parallel running of I/O-bound tasks used by the current Automa instance and its nested Automa instances.
+
+        Note: If an Automa is nested within another Automa, the thread pool of the top-level Automa will be used, rather than the thread pool of the nested Automa.
+
+        Returns
+        -------
+        Optional[ThreadPoolExecutor]
+            The thread pool.
+        """
         return self._thread_pool
 
     @thread_pool.setter
@@ -128,7 +153,7 @@ class Automa(Worker):
         """
         Set the thread pool for parallel running of I/O-bound tasks.
 
-        If an Automa is nested within another Automa, the thread pool of the top-level Automa will be used, rather than the thread pool of the nested Automa.
+        Note: If an Automa is nested within another Automa, the thread pool of the top-level Automa will be used, rather than the thread pool of the nested Automa.
         """
         self._thread_pool = executor
 
@@ -267,7 +292,7 @@ class Automa(Worker):
 
         The event handler implemented by the application layer will be called in the same thread as the worker (maybe the main thread or a new thread from the thread pool).
         
-        Note that `post_event` can be called in a non-async method or an async method.
+        Note that `post_event` can be called either in a non-async method or in an async method.
 
         The event will be bubbled up to the top-level Automa, where it will be processed by the event handler registered with the event type.
 
@@ -306,7 +331,7 @@ class Automa(Worker):
         """
         Request feedback for the specified event from the application layer outside the Automa. This method blocks the caller until the feedback is received.
 
-        Note that `post_event` should only be called from within a non-async method running in the new thread of the Automa thread pool.
+        Note that `request_feedback` should only be called from within a non-async method running in a new thread of the Automa thread pool.
 
         Parameters
         ----------
@@ -342,7 +367,7 @@ class Automa(Worker):
         """
         Request feedback for the specified event from the application layer outside the Automa. This method blocks the caller until the feedback is received.
 
-        The event handler implemented by the application layer will be called in the next event loop, in the main thread.
+        The event handler implemented by the application layer will be called in the next event loop iteration, in the main thread.
 
         Parameters
         ----------
@@ -399,25 +424,19 @@ class Automa(Worker):
         interacting_worker: Optional[Worker] = None,
     ) -> InteractionFeedback:
         """
-        Trigger an interruption in the "human-computer interaction" during the execution of Automa.
+        Trigger an interruption in the "human-in-the-loop interaction" during the execution of the Automa.
 
         Parameters
         ----------
         event: Event
             The event that triggered the interaction.
         interacting_worker: Optional[Worker]
-            The worker that is currently interacting with human. If not provided, the worker will be located automatically.
+            The worker instance that is currently interacting with human. If not provided, the worker will be located automatically.
 
         Returns
         -------
         InteractionFeedback
             The feedback received from the application layer.
-
-        Raises
-        ------
-        _InteractionEventException
-            If the Automa is not the top-level Automa and the `interact_with_human()` method is called by 
-            one or more workers, this exception will be raised to the upper level Automa.
         """
         if not interacting_worker:
             kickoff_worker_key: str = self._locate_interacting_worker()

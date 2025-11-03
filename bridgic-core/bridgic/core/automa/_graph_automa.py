@@ -980,11 +980,7 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
         ------
         InteractionException
             If the Automa is the top-level Automa and the `interact_with_human()` method is called by 
-            one or more workers, this exception will be raised to the application layer.
-
-        _InteractionEventException
-            If the Automa is not the top-level Automa and the `interact_with_human()` method is called by 
-            one or more workers, this exception will be raised to the upper level Automa.
+            one or more workers within the lastest event loop iteration, this exception will be raised to the application layer.
         """
 
         def _reinit_current_kickoff_workers_if_needed():
