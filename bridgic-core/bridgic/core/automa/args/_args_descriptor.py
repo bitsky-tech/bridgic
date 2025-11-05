@@ -81,7 +81,7 @@ def resolve_from(dep: From, worker_output: Dict[str, Any]) -> Any:
     inject_res = worker_output.get(dep.key, dep.default)
     if isinstance(inject_res, InjectorNone):
         raise WorkerArgsInjectionError(
-            f"the worker: `{dep.key}` is not found in the worker dictionary. "
+            f"the worker: `{dep.key}` is not found in the automa or `{dep.key}` is already removed. "
             "You may need to set the default value of the parameter to a `From` instance with the key of the worker."
         )
     return inject_res

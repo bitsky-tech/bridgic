@@ -501,9 +501,6 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
         del self._workers[key]
         # Incrementally update the dynamic states of removed workers.
         del self._workers_dynamic_states[key]
-        # Remove the worker output.
-        if key in self._worker_output:
-            del self._worker_output[key]
 
         if key in self._worker_forwards:
             # Update the dependencies of the successor workers, if needed.

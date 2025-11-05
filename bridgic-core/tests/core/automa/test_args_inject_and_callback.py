@@ -353,11 +353,11 @@ async def test_automa_deserialization_with_from(
 ########################################################
 
 # - - - - - - - - - - - - - -
-# WorkerArgsInjectionError
+# From Error
 # - - - - - - - - - - - - - -
 @pytest.fixture
-def automa_with_from_with_default_value_error():
-    class AutomaFromWithDefaultValueError(GraphAutoma):
+def automa_with_from_error_1():
+    class AutomaFromError1(GraphAutoma):
         """
         test from with default value
         """
@@ -373,23 +373,59 @@ def automa_with_from_with_default_value_error():
         async def worker_2(self, x: int, y: int = From("no_exist_worker")) -> int:
             return x + y
 
-    return AutomaFromWithDefaultValueError()
+    return AutomaFromError1()
 
 @pytest.mark.asyncio
-async def test_automa_with_from_with_default_value_error(automa_with_from_with_default_value_error: GraphAutoma):
+async def test_automa_with_from_error_1(automa_with_from_error_1: GraphAutoma):
     with pytest.raises(
         WorkerArgsInjectionError, 
         match=f"the worker: `no_exist_worker` is not found in the worker dictionary. "
         "You may need to set the default value of the parameter to a `From` instance with the key of the worker."
     ):
-        await automa_with_from_with_default_value_error.arun(user_input=1)
+        await automa_with_from_error_1.arun(user_input=1)
 
+
+@pytest.fixture
+def automa_with_from_error_2():
+    """
+    test From to get a non-exist worker's output.
+    """
+    class AutomaFromError2(GraphAutoma):
+        @worker(is_start=True)
+        async def worker_0(self, user_input) -> int:
+            return user_input + 1
+
+        @worker(is_start=True)
+        async def worker_01(self, user_input: int) -> int:
+            self.remove_worker("worker_01")
+            return user_input + 1
+
+        @worker(dependencies=["worker_0"], is_output=True)
+        async def worker_02(self, x: int, y: int = From("worker_01")) -> int:
+            return x + y  # 4
+        
+    return AutomaFromError2()
+
+@pytest.mark.asyncio
+async def test_automa_with_from_error_2(automa_with_from_error_2: GraphAutoma):
+    # with pytest.raises(
+    #     WorkerArgsInjectionError, 
+    #     match=(
+    #         f"the worker: `worker_01` is not found in the worker dictionary. "
+    #     )
+    # ):
+    #     await automa_with_from_error_2.arun(user_input=1)
+    result = await automa_with_from_error_2.arun(user_input=1)
+    assert result == 4
 
 # - - - - - - - - - - - - - -
-# SystemArgsInjectionError
+# System Error
 # - - - - - - - - - - - - - -
 @pytest.mark.asyncio
 async def test_automa_with_system_error_1():
+    """
+    test system with default value, the keys are supported is limited.
+    """
     with pytest.raises(
         WorkerArgsInjectionError, 
         match=(
@@ -400,9 +436,6 @@ async def test_automa_with_system_error_1():
         )
     ):
         class AutomaWithSystemError1(GraphAutoma):
-            """
-            test system with default value
-            """
             @worker(is_start=True, args_mapping_rule=ArgsMappingRule.AS_IS)
             async def worker_0(self, user_input: int, automa: GraphAutoma = System("automa-no_exist_automa")) -> int:
                 return user_input + 1
@@ -412,10 +445,10 @@ async def test_automa_with_system_error_1():
 
 @pytest.fixture
 def automa_with_system_error_2():
+    """
+    test system with sub-automa key, the key must be a valid worker key.
+    """
     class AutomaWithSystemError2(GraphAutoma):
-        """
-        test system with default value
-        """
         @worker(is_start=True, args_mapping_rule=ArgsMappingRule.AS_IS)
         async def worker_0(self, user_input: int, sub_automa: GraphAutoma = System("automa:no_exist_automa")) -> int:
             return user_input + 1
@@ -435,10 +468,10 @@ async def test_automa_with_system_error_2(automa_with_system_error_2: GraphAutom
 
 @pytest.fixture
 def automa_with_system_error_3():
+    """
+    test system with sub-automa key, the key must be an Automa instance.
+    """
     class AutomaWithSystemError3(GraphAutoma):
-        """
-        test system with default value
-        """
         @worker(is_start=True, args_mapping_rule=ArgsMappingRule.AS_IS)
         async def worker_0(self, user_input: int, sub_automa: GraphAutoma = System("automa:worker_0")) -> int:
             return user_input + 1
