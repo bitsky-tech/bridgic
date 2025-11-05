@@ -410,15 +410,15 @@ def automa_with_from_error_2():
 
 @pytest.mark.asyncio
 async def test_automa_with_from_error_2(automa_with_from_error_2: GraphAutoma):
-    # with pytest.raises(
-    #     WorkerArgsInjectionError, 
-    #     match=(
-    #         f"the worker: `worker_01` is not found in the worker dictionary. "
-    #     )
-    # ):
-    #     await automa_with_from_error_2.arun(user_input=1)
-    result = await automa_with_from_error_2.arun(user_input=1)
-    assert result == 4
+    with pytest.raises(
+        WorkerArgsInjectionError, 
+        match=(
+            f"the worker: `no_exist_worker` is not found in the automa or `no_exist_worker` is already removed. "
+            "You may need to set the default value of the parameter to a `From` instance with the key of the worker."
+        )
+    ):
+        await automa_with_from_error_2.arun(user_input=1)
+
 
 # - - - - - - - - - - - - - -
 # System Error
