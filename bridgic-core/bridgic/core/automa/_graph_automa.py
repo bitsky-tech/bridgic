@@ -14,14 +14,14 @@ from pydantic import BaseModel, Field, ConfigDict
 
 from bridgic.core.utils._console import printer
 from bridgic.core.utils._msgpackx import dump_bytes
-from bridgic.core.automa.worker import Worker
 from bridgic.core.types._error import *
 from bridgic.core.types._common import AutomaType, ArgsMappingRule
 from bridgic.core.utils._args_map import safely_map_args
 from bridgic.core.automa import Automa, Snapshot
-from bridgic.core.automa.worker import CallableWorker
+from bridgic.core.automa.worker import CallableWorker, Worker
 from bridgic.core.automa.interaction import Interaction, InteractionFeedback, InteractionException
 from bridgic.core.automa._automa import _InteractionAndFeedback, _InteractionEventException
+from bridgic.core.automa._callback import WorkerCallback
 from bridgic.core.automa._graph_meta import GraphMeta
 from bridgic.core.automa.args._args_descriptor import injector
 
@@ -39,6 +39,7 @@ class _GraphAdaptedWorker(Worker):
     is_output: bool
     args_mapping_rule: str
     _decorated_worker: Worker
+    _worker_callbacks: List[WorkerCallback]
 
     def __init__(
         self,
@@ -49,6 +50,7 @@ class _GraphAdaptedWorker(Worker):
         is_start: bool = False,
         is_output: bool = False,
         args_mapping_rule: ArgsMappingRule = ArgsMappingRule.AS_IS,
+        callbacks: List[WorkerCallback] = [],
     ):
         super().__init__()
         self.key = key or f"autokey-{uuid.uuid4().hex[:8]}"
@@ -57,6 +59,7 @@ class _GraphAdaptedWorker(Worker):
         self.is_output = is_output
         self.args_mapping_rule = args_mapping_rule
         self._decorated_worker = worker
+        self._worker_callbacks = callbacks
 
     @override
     def dump_to_dict(self) -> Dict[str, Any]:
@@ -67,6 +70,7 @@ class _GraphAdaptedWorker(Worker):
         state_dict["is_output"] = self.is_output
         state_dict["args_mapping_rule"] = self.args_mapping_rule
         state_dict["decorated_worker"] = self._decorated_worker
+        state_dict["worker_callbacks"] = self._worker_callbacks
         return state_dict
 
     @override
@@ -78,7 +82,7 @@ class _GraphAdaptedWorker(Worker):
         self.is_output = state_dict["is_output"]
         self.args_mapping_rule = state_dict["args_mapping_rule"]
         self._decorated_worker = state_dict["decorated_worker"]
-
+        self._worker_callbacks = state_dict["worker_callbacks"]
     #
     # Delegate all the properties and methods of _GraphAdaptedWorker to the decorated worker.
     # TODO: Maybe 'Worker' should be a Protocol.
@@ -86,7 +90,16 @@ class _GraphAdaptedWorker(Worker):
 
     @override
     async def arun(self, *args, **kwargs) -> Any:
-        return await self._decorated_worker.arun(*args, **kwargs)
+        # Call pre-worker-execute callbacks.
+        for callback in self._worker_callbacks:
+            await callback.pre_worker_execute(self.key, self.parent, {"args": args, "kwargs": kwargs})
+        # Call the decorated worker.
+        result = await self._decorated_worker.arun(*args, **kwargs)
+        # Call post-worker-execute callbacks.
+        for callback in self._worker_callbacks:
+            await callback.post_worker_execute(self.key, self.parent, {"args": args, "kwargs": kwargs}, result)
+        # Return the result.
+        return result
 
     @override
     def get_input_param_names(self) -> Dict[_ParameterKind, List[Tuple[str, Any]]]:
@@ -157,6 +170,7 @@ class _AddWorkerDeferredTask(BaseModel):
     is_start: bool = False
     is_output: bool = False
     args_mapping_rule: ArgsMappingRule = ArgsMappingRule.AS_IS
+    callbacks: List[WorkerCallback] = []
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
@@ -335,6 +349,7 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
                     is_start=worker_func.__is_start__,
                     is_output=worker_func.__is_output__,
                     args_mapping_rule=worker_func.__args_mapping_rule__,
+                    callbacks=worker_func.__callbacks__,
                 )
 
         ###############################################################################
@@ -421,6 +436,7 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
         is_start: bool = False,
         is_output: bool = False,
         args_mapping_rule: ArgsMappingRule = ArgsMappingRule.AS_IS,
+        callbacks: List[WorkerCallback] = [],
     ) -> None:
         """
         Incrementally add a worker into the automa. For internal use only.
@@ -445,6 +461,7 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
             is_start=is_start,
             is_output=is_output,
             args_mapping_rule=args_mapping_rule,
+            callbacks=callbacks,
         )
 
         # Register the worker_obj.
@@ -484,6 +501,9 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
         del self._workers[key]
         # Incrementally update the dynamic states of removed workers.
         del self._workers_dynamic_states[key]
+        # Remove the worker output.
+        if key in self._worker_output:
+            del self._worker_output[key]
 
         if key in self._worker_forwards:
             # Update the dependencies of the successor workers, if needed.
@@ -543,6 +563,7 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
         is_start: bool = False,
         is_output: bool = False,
         args_mapping_rule: ArgsMappingRule = ArgsMappingRule.AS_IS,
+        callbacks: List[WorkerCallback] = [],
     ) -> None:
         """
         The private version of the method `add_worker()`.
@@ -590,6 +611,7 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
                 is_start=is_start,
                 is_output=is_output,
                 args_mapping_rule=args_mapping_rule,
+                callbacks=callbacks,
             )
         else:
             # Add worker during the [Running Phase].
@@ -600,6 +622,7 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
                 is_start=is_start,
                 is_output=is_output,
                 args_mapping_rule=args_mapping_rule,
+                callbacks=callbacks,
             )
             # Note1: the execution order of topology change deferred tasks is important and is determined by the order of the calls of add_worker(), remove_worker() and add_dependency() in one DS.
             # Note2: add_worker() and remove_worker() may be called in a new thread. But _topology_change_deferred_tasks is not necessary to be thread-safe due to Visibility Guarantees of the Bridgic Concurrency Model.
@@ -614,6 +637,7 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
         is_start: bool = False,
         is_output: bool = False,
         args_mapping_rule: ArgsMappingRule = ArgsMappingRule.AS_IS,
+        callbacks: List[WorkerCallback] = [],
     ) -> None:
         """
         The private version of the method `add_func_as_worker()`.
@@ -638,6 +662,7 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
             is_start=is_start,
             is_output=is_output,
             args_mapping_rule=args_mapping_rule,
+            callbacks=callbacks,
         )
 
     def all_workers(self) -> List[str]:
@@ -660,6 +685,7 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
         is_start: bool = False,
         is_output: bool = False,
         args_mapping_rule: ArgsMappingRule = ArgsMappingRule.AS_IS,
+        callbacks: List[WorkerCallback] = [],
     ) -> None:
         """
         This method is used to add a worker dynamically into the automa.
@@ -684,6 +710,8 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
             Whether the worker is an output worker.
         args_mapping_rule : ArgsMappingRule
             The rule of arguments mapping.
+        callbacks : List[WorkerCallback]
+            A list of worker callbacks to be registered.
         """
         self._add_worker_internal(
             key=key,
@@ -692,6 +720,7 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
             is_start=is_start,
             is_output=is_output,
             args_mapping_rule=args_mapping_rule,
+            callbacks=callbacks,
         )
 
     def add_func_as_worker(
@@ -703,6 +732,7 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
         is_start: bool = False,
         is_output: bool = False,
         args_mapping_rule: ArgsMappingRule = ArgsMappingRule.AS_IS,
+        callbacks: List[WorkerCallback] = [],
     ) -> None:
         """
         This method is used to add a function as a worker into the automa.
@@ -724,6 +754,8 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
             Whether the decorated callable is an output worker. True means it is, while False means it is not.
         args_mapping_rule : ArgsMappingRule
             The rule of arguments mapping.
+        callbacks : List[WorkerCallback]
+            A list of worker callbacks to be registered.
         """
         self._add_func_as_worker_internal(
             key=key,
@@ -732,6 +764,7 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
             is_start=is_start,
             is_output=is_output,
             args_mapping_rule=args_mapping_rule,
+            callbacks=callbacks,
         )
 
     def worker(
@@ -742,6 +775,7 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
         is_start: bool = False,
         is_output: bool = False,
         args_mapping_rule: ArgsMappingRule = ArgsMappingRule.AS_IS,
+        callbacks: List[WorkerCallback] = [],
     ) -> Callable:
         """
         This is a decorator used to mark a function as an GraphAutoma detectable Worker. Dislike the 
@@ -762,6 +796,8 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
             Whether the decorated callable is an output worker. True means it is, while False means it is not.
         args_mapping_rule : str
             The rule of arguments mapping. The options are: "auto", "as_list", "as_dict", "suppressed".
+        callbacks : List[WorkerCallback]
+            A list of worker callbacks to be registered.
         """
         def wrapper(func: Callable):
             self._add_func_as_worker_internal(
@@ -771,6 +807,7 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
                 is_start=is_start,
                 is_output=is_output,
                 args_mapping_rule=args_mapping_rule,
+                callbacks=callbacks,
             )
 
         return wrapper

@@ -178,9 +178,10 @@ class System(ArgsDescriptor):
         
         if not any(re.match(pattern, self.key) for pattern in allowed_patterns):
             raise WorkerArgsInjectionError(
-                f"Key '{self.key}' is not supported. Supported keys: "
-                f"`runtime_context`: a context for data persistence of the current worker."
-                f"`automa:.*`: a sub-automa in current automa."
+                f"Key '{self.key}' is not supported. Supported keys: \n"
+                f"- `runtime_context`: a context for data persistence of the current worker.\n"
+                f"- `automa:<worker_key>`: a sub-automa in current automa.\n"
+                f"- `automa`: the current automa instance.\n"
             )
 
 JSON_SCHEMA_IGNORE_ARG_TYPES = (System, From)
