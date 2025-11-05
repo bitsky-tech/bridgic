@@ -413,7 +413,7 @@ async def test_automa_with_from_error_2(automa_with_from_error_2: GraphAutoma):
     with pytest.raises(
         WorkerArgsInjectionError, 
         match=(
-            f"the worker: `no_exist_worker` is not found in the automa or `no_exist_worker` is already removed. "
+            f"the worker: `worker_01` is not found in the automa or `worker_01` is already removed. "
             "You may need to set the default value of the parameter to a `From` instance with the key of the worker."
         )
     ):
