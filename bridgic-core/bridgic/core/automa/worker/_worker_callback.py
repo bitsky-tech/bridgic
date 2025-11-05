@@ -6,12 +6,12 @@ if TYPE_CHECKING:
 
 class WorkerCallback:
     """
-    Callback for worker execution hooks in the automa framework.
+    Callback for the execution of a worker instance during the running 
+    of a prebult automa.
 
-    This class defines callbacks that are invoked before and after worker
-    execution. Callbacks are intended for monitoring, logging, validation,
-    and other side effects. They cannot modify worker execution logic,
-    arguments, or output results.
+    This class defines the interfaces that will be called before or after 
+    the execution of the corresponding worker. Callbacks are typically used 
+    for validating input, monitoring execution, and collecting logs, etc.
 
     Methods
     -------
