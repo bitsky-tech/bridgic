@@ -21,7 +21,7 @@ from bridgic.core.automa import Automa, Snapshot
 from bridgic.core.automa.worker import CallableWorker, Worker
 from bridgic.core.automa.interaction import Interaction, InteractionFeedback, InteractionException
 from bridgic.core.automa._automa import _InteractionAndFeedback, _InteractionEventException
-from bridgic.core.automa._callback import WorkerCallback
+from bridgic.core.automa.worker._worker_callback import WorkerCallback
 from bridgic.core.automa._graph_meta import GraphMeta
 from bridgic.core.automa.args._args_descriptor import injector
 

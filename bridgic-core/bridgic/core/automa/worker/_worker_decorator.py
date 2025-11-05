@@ -10,7 +10,7 @@ from bridgic.core.utils._inspect_tools import (
 )
 from bridgic.core.types._error import WorkerSignatureError
 from bridgic.core.types._common import AutomaType, ArgsMappingRule
-from bridgic.core.automa._callback import WorkerCallback
+from bridgic.core.automa.worker._worker_callback import WorkerCallback
 
 @mark_overload("__automa_type__", AutomaType.Graph)
 def worker(
