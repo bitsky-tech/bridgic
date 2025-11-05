@@ -10,29 +10,29 @@ class PostEventCallback(WorkerCallback):
     async def post_worker_execute(
         self, 
         key: str, 
-        automa: GraphAutoma, 
-        params: Dict[str, Any], 
+        parent: GraphAutoma, 
+        arguments: Dict[str, Any], 
         result: Any,
     ) -> None:
         event = Event(
             event_type="post_event",
             data="this is a post event callback"
         )
-        automa.post_event(event)
+        parent.post_event(event)
 
 
 class RequestFeedbackCallback(WorkerCallback):
     async def pre_worker_execute(
         self, 
         key: str, 
-        automa: GraphAutoma, 
-        params: Dict[str, Any],
+        parent: GraphAutoma, 
+        arguments: Dict[str, Any],
     ) -> None:
         event = Event(
             event_type="request_feedback",
             data="Return yes to continue, otherwise return no to stop."
         )
-        feedback = await automa.request_feedback_async(event)
+        feedback = await parent.request_feedback_async(event)
         if feedback.data == "yes":
             pass
         else:
@@ -43,14 +43,14 @@ class InteractWithHumanCallback(WorkerCallback):
     async def pre_worker_execute(
         self, 
         key: str, 
-        automa: GraphAutoma, 
-        params: Dict[str, Any],
+        parent: GraphAutoma, 
+        arguments: Dict[str, Any],
     ) -> None:
         event = Event(
             event_type="interact_with_human",
             data="Return yes to continue, otherwise return no to stop."
         )
-        feedback = automa.interact_with_human(event)
+        feedback = parent.interact_with_human(event)
         if feedback.data == "yes":
             pass
         else:
@@ -61,11 +61,11 @@ class RemoveWorkerCallback(WorkerCallback):
     async def post_worker_execute(
         self, 
         key: str, 
-        automa: GraphAutoma, 
-        params: Dict[str, Any], 
+        parent: GraphAutoma, 
+        arguments: Dict[str, Any], 
         result: Any,
     ) -> None:
-        automa.remove_worker(key)
+        parent.remove_worker(key)
 
 
 # - - - - - - - - - - - - - - - -

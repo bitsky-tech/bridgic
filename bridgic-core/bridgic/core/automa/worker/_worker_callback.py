@@ -6,59 +6,59 @@ if TYPE_CHECKING:
 
 class WorkerCallback:
     """
-    Callback for worker execution hooks in the scheduling framework.
+    Callback for worker execution hooks in the automa framework.
 
     This class defines callbacks that are invoked before and after worker
     execution. Callbacks are intended for monitoring, logging, validation,
     and other side effects. They cannot modify worker execution logic,
-    input parameters, or output results.
+    arguments, or output results.
 
     Methods
     -------
-    pre_worker_execute(key, automa, params)
+    pre_worker_execute(key, parent, arguments)
         Hook invoked before worker execution.
-    post_worker_execute(key, automa, params, result)
+    post_worker_execute(key, parent, arguments, result)
         Hook invoked after worker execution.
         
     Notes
     -----
     All callback methods are asynchronous and support async operations.
-    If a callback raises an exception, the scheduler treats it as the
+    If a callback raises an exception, the automa treats it as the
     worker itself raised the exception. 
     """
     async def pre_worker_execute(
         self, 
         key: str, 
-        automa: "GraphAutoma",
-        params: Dict[str, Any], 
+        parent: "GraphAutoma",
+        arguments: Dict[str, Any], 
     ) -> None:
         """
         Hook invoked before worker execution.
 
-        Called immediately before the worker runs. Use for parameter
+        Called immediately before the worker runs. Use for arguments
         validation, logging, or monitoring. Cannot modify execution
-        parameters or logic.
+        arguments or logic.
 
         Parameters
         ----------
         key : str
             Worker identifier.
-        automa : GraphAutoma
-            Graph automaton instance containing this worker.
-        params : Dict[str, Any]
+        parent : GraphAutoma
+            Parent automa instance containing this worker.
+        arguments : Dict[str, Any]
             Execution parameters with keys "args" and "kwargs".
 
         Notes
         -----
-        This method cannot modify worker execution logic or parameters.
+        This method cannot modify worker execution logic or arguments.
         """
         pass
 
     async def post_worker_execute(
         self, 
         key: str, 
-        automa: "GraphAutoma",
-        params: Dict[str, Any], 
+        parent: "GraphAutoma",
+        arguments: Dict[str, Any], 
         result: Any,
     ) -> None:
         """
@@ -72,16 +72,16 @@ class WorkerCallback:
         ----------
         key : str
             Worker identifier.
-        automa : GraphAutoma
-            Graph automaton instance containing this worker.
-        params : Dict[str, Any]
-            Execution parameters with keys "args" and "kwargs".
+        parent : GraphAutoma
+            Parent automa instance containing this worker.
+        arguments : Dict[str, Any]
+            Execution arguments with keys "args" and "kwargs".
         result : Any
             Worker execution result.
 
         Notes
         -----
-        This method cannot modify worker execution logic or results.
+        This method cannot modify worker execution logic or arguments.
         """
         pass
 

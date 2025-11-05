@@ -24,16 +24,16 @@ def args_inject_and_callback_graph():
         async def pre_worker_execute(
             self, 
             key: str, 
-            automa: GraphAutoma, 
-            params: Dict[str, Any],
+            parent: GraphAutoma, 
+            arguments: Dict[str, Any],
         ) -> None:
             print(f"Pre callback for worker {key}")
         
         async def post_worker_execute(
             self, 
             key: str, 
-            automa: GraphAutoma, 
-            params: Dict[str, Any], 
+            parent: GraphAutoma, 
+            arguments: Dict[str, Any], 
             result: Any,
         ) -> None:
             print(f"Post callback for worker {key}")
