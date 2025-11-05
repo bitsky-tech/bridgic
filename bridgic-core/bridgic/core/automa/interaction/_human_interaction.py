@@ -64,8 +64,8 @@ if TYPE_CHECKING:
 
 class Interaction(BaseModel):
     """
-    Represents a single interaction between the Automa and a human. 
-    Each call to `interact_with_human` will generate an `Interaction` object.
+    An object that represents a single interaction between the Automa and a human. 
+    Each call to `interact_with_human` will generate an `Interaction` object which will be included in the `InteractionException` raised.
     """
     interaction_id: str
     """ The unique identifier for the interaction."""
@@ -74,10 +74,10 @@ class Interaction(BaseModel):
 
 class InteractionException(Exception):
     """
-    Exception raised when the `interact_with_human` method is called and a human interaction is triggered.
+    An exception raised when the `interact_with_human` method is called one or more times within the latest event loop iteration, causing one or multiple human interactions to be triggered.
     """
     _interactions: List[Interaction]
-    """The list of interactions that occurred during the most recent event loop."""
+    """The list of interactions that occurred during the latest event loop iteration."""
     _snapshot: "Snapshot"
     """The snapshot of the Automa's current state."""
 
@@ -88,17 +88,17 @@ class InteractionException(Exception):
     @property
     def interactions(self) -> List[Interaction]:
         """
-        Returns a list of `Interaction` objects that occurred during the most recent event loop.
+        A list of `Interaction` objects that occurred during the latest event loop iteration.
 
-        Multiple `Interaction` objects may be generated because, within the same event loop, several workers calling the `interact_with_human` method might be running concurrently in parallel branches of the graph.
+        Multiple `Interaction` objects may be generated because, within the latest event loop iteration, multiple workers calling the `interact_with_human` method might be running concurrently in parallel branches of the graph.
         """
         return self._interactions
 
     @property
     def snapshot(self) -> "Snapshot":
         """
-        Returns a `Snapshot` of the Automa's current state.
-        The serialization is automatically triggered by the `interact_with_human` method.
+        A `Snapshot` of the Automa's current state.
+        The serialization is triggered automatically by the `interact_with_human` method.
         """
         return self._snapshot
 

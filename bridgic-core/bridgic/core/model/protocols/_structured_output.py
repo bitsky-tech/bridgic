@@ -65,6 +65,7 @@ class EbnfGrammar(BaseModel):
     constraint_type: Literal["ebnf_grammar"] = "ebnf_grammar"
     """The type of the constraint, in this case `ebnf_grammar`."""
     syntax: str = Field(..., description="Syntax of the EBNF grammar constraint.")
+    """The syntax of the EBNF grammar constraint."""
 
 class LarkGrammar(BaseModel):
     """
