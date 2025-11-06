@@ -303,10 +303,40 @@ class _Element(_CanvasObject):
         )
 
 
-def graph(**kwargs: Any) -> _Canvas:
-    ctx = _Canvas(automa_type="graph", **kwargs)
-    return ctx
+class _GraphContextManager:
+    """
+    A context manager class that can be used both as `with graph as g` and `with graph() as g`.
+    """
+    def __init__(self, automa_type: str):
+        self.automa_type = automa_type
 
-def concurrent(**kwargs: Any) -> _Canvas:
-    ctx = _Canvas(automa_type="concurrent", **kwargs)
-    return ctx
+    def __call__(self, **kwargs: Any) -> _Canvas:
+        """Support `with graph() as g` syntax (backward compatibility)."""
+        ctx = _Canvas(automa_type=self.automa_type, **kwargs)
+        return ctx
+
+    def __enter__(self) -> _Canvas:
+        """Support `with graph as g` syntax."""
+        # Create a new canvas and enter its context
+        # The canvas will manage its own lifecycle through its __enter__ and __exit__
+        ctx = _Canvas(automa_type=self.automa_type)
+        return ctx.__enter__()
+
+    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+        """
+        Support `with graph as g` syntax.
+        
+        Note: This method should not be called directly by Python's with statement
+        because __enter__ returns a _Canvas instance, not self. However, we implement
+        it for completeness and to handle edge cases. The actual cleanup is handled
+        by the _Canvas.__exit__ method.
+        """
+        # The actual cleanup is handled by _Canvas.__exit__
+        # This method exists for interface completeness but should not be called
+        # in normal usage since __enter__ returns a _Canvas, not self
+        pass
+
+
+# Create module-level instances (not global variables, but singleton objects)
+graph = _GraphContextManager(automa_type="graph")
+concurrent = _GraphContextManager(automa_type="concurrent")
