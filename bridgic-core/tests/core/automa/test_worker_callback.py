@@ -1,0 +1,538 @@
+import pytest
+
+from typing import List, Tuple, Dict, Any, Union, Optional
+from bridgic.core.automa import GraphAutoma, worker, Snapshot, RunningOptions
+from bridgic.core.automa.worker import Worker, WorkerCallback, WorkerCallbackBuilder
+from bridgic.core.automa.interaction import Event, FeedbackSender, Feedback, InteractionException, InteractionFeedback
+from bridgic.core.config import GlobalSetting
+
+
+class PostEventCallback(WorkerCallback):
+    async def on_worker_end(
+        self, 
+        key: str,
+        is_top_level: bool = False,
+        parent: Optional[GraphAutoma] = None,
+        arguments: Dict[str, Any] = None,
+        result: Any = None,
+    ) -> None:
+        if parent:
+            event = Event(
+                event_type="post_event",
+                data="this is a post event callback"
+            )
+            parent.post_event(event)
+
+
+class RequestFeedbackCallback(WorkerCallback):
+    async def on_worker_start(
+        self, 
+        key: str,
+        is_top_level: bool = False,
+        parent: Optional[GraphAutoma] = None,
+        arguments: Dict[str, Any] = None,
+    ) -> None:
+        if parent:
+            event = Event(
+                event_type="request_feedback",
+                data="Return yes to continue, otherwise return no to stop."
+            )
+            feedback = await parent.request_feedback_async(event)
+            if feedback.data == "yes":
+                pass
+            else:
+                raise ValueError("User returned no to stop.")
+
+
+class InteractWithHumanCallback(WorkerCallback):
+    async def on_worker_start(
+        self, 
+        key: str,
+        is_top_level: bool = False,
+        parent: Optional[GraphAutoma] = None,
+        arguments: Dict[str, Any] = None,
+    ) -> None:
+        if parent:
+            event = Event(
+                event_type="interact_with_human",
+                data="Return yes to continue, otherwise return no to stop."
+            )
+            feedback = parent.interact_with_human(event)
+            if feedback.data == "yes":
+                pass
+            else:
+                raise ValueError("User returned no to stop.")
+
+
+class RemoveWorkerCallback(WorkerCallback):
+    async def on_worker_end(
+        self, 
+        key: str,
+        is_top_level: bool = False,
+        parent: Optional[GraphAutoma] = None,
+        arguments: Dict[str, Any] = None,
+        result: Any = None,
+    ) -> None:
+        if parent:
+            parent.remove_worker(key)
+
+
+# - - - - - - - - - - - - - - - -
+# test case: callback run post_event correctly
+# - - - - - - - - - - - - - - - -
+@pytest.fixture
+def graph_post_event_with_callbacks():
+    def handler_post_event(event: Event):
+        data = event.data
+        print(data)
+
+    class MyGraph(GraphAutoma):
+        @worker(is_start=True)
+        async def worker_0(self, user_input: int) -> int:
+            return user_input + 1
+
+        @worker(dependencies=["worker_0"], is_output=True, callback_builders=[WorkerCallbackBuilder(PostEventCallback)])
+        async def worker_1(self, x: int) -> int:
+            return x + 1
+
+    automa = MyGraph()
+    automa.register_event_handler(event_type="post_event", event_handler=handler_post_event)
+    return automa
+
+@pytest.mark.asyncio
+async def test_graph_post_event_with_callbacks(graph_post_event_with_callbacks: GraphAutoma, capsys):
+    result = await graph_post_event_with_callbacks.arun(user_input=1)
+    assert result == 3
+
+    captured = capsys.readouterr()
+    output = captured.out
+    assert "this is a post event callback" in output
+
+
+# - - - - - - - - - - - - - - - -
+# test case: callback run request_feedback_async correctly
+# - - - - - - - - - - - - - - - -
+@pytest.fixture
+def graph_request_feedback_async_with_callbacks():
+    def handler_request_feedback_yes(event: Event, feedback_sender: FeedbackSender):
+        data = event.data
+        print(data)
+        feedback_sender.send(Feedback(data="yes"))
+
+    def handler_request_feedback_no(event: Event, feedback_sender: FeedbackSender):
+        data = event.data
+        print(data)
+        feedback_sender.send(Feedback(data="no"))
+
+    class MyGraph1(GraphAutoma):
+        @worker(is_start=True)
+        async def worker_0(self, user_input: int) -> int:
+            return user_input + 1
+
+        @worker(dependencies=["worker_0"], callback_builders=[WorkerCallbackBuilder(RequestFeedbackCallback)], is_output=True)
+        async def worker_1(self, x: int) -> int:
+            return x + 1
+
+    class MyGraph2(GraphAutoma):
+        @worker(is_start=True)
+        async def worker_0(self, user_input: int) -> int:
+            return user_input + 1
+
+        @worker(dependencies=["worker_0"], callback_builders=[WorkerCallbackBuilder(RequestFeedbackCallback)], is_output=True)
+        async def worker_1(self, x: int) -> int:
+            return x + 1
+
+    graph1 = MyGraph1()
+    graph2 = MyGraph2()
+    graph1.register_event_handler(event_type="request_feedback", event_handler=handler_request_feedback_yes)
+    graph2.register_event_handler(event_type="request_feedback", event_handler=handler_request_feedback_no)
+    return graph1, graph2
+
+@pytest.mark.asyncio
+async def test_graph_request_feedback_async_with_callbacks(graph_request_feedback_async_with_callbacks: Tuple[GraphAutoma, GraphAutoma], capsys):
+    graph1, graph2 = graph_request_feedback_async_with_callbacks
+    result = await graph1.arun(user_input=1)
+    assert result == 3
+
+    with pytest.raises(ValueError, match="User returned no to stop."):
+        await graph2.arun(user_input=1)
+
+    captured = capsys.readouterr()
+    output = captured.out
+    assert "Return yes to continue, otherwise return no to stop." in output
+
+
+# - - - - - - - - - - - - - - - -
+# test case: callback run interact_with_human correctly
+# - - - - - - - - - - - - - - - -
+@pytest.fixture(scope="session")  # Shared fixtures for all test cases.
+def db_base_path(tmp_path_factory):
+    return tmp_path_factory.mktemp("data")
+
+
+class MyGraph(GraphAutoma):
+    @worker(is_start=True)
+    async def worker_0(self, user_input: int) -> int:
+        return user_input + 1
+
+    @worker(dependencies=["worker_0"], callback_builders=[WorkerCallbackBuilder(InteractWithHumanCallback)], is_output=True)
+    async def worker_1(self, x: int) -> int:
+        return x + 1
+
+
+@pytest.fixture
+def graph_interact_with_human_with_callbacks():
+    return MyGraph()
+
+@pytest.mark.asyncio
+async def test_graph_interact_with_human_with_callbacks_save_serialized(graph_interact_with_human_with_callbacks: MyGraph, request, db_base_path):
+    try:
+        result = await graph_interact_with_human_with_callbacks.arun(user_input=1)
+    except InteractionException as e:
+        assert e.interactions[0].event.event_type == "interact_with_human"
+        assert e.interactions[0].event.data == "Return yes to continue, otherwise return no to stop."
+        assert type(e.snapshot.serialized_bytes) is bytes
+        # Send e.interactions to human. Here is a simulation.
+        interaction_id = e.interactions[0].interaction_id
+        request.config.cache.set("interaction_id", interaction_id)
+        # Persist the snapshot to an external storage. Here is a simulation implementation using file storage.
+        # Use the Automa instance / scenario name as the search index name.
+        bytes_file = db_base_path / "graph_interact_with_human_with_callbacks.bytes"
+        version_file = db_base_path / "graph_interact_with_human_with_callbacks.version"
+        bytes_file.write_bytes(e.snapshot.serialized_bytes)
+        version_file.write_text(e.snapshot.serialization_version)
+
+@pytest.fixture
+def deserialized_graph_interact_with_human_with_callbacks(graph_interact_with_human_with_callbacks, db_base_path):
+        bytes_file = db_base_path / "graph_interact_with_human_with_callbacks.bytes"
+        version_file = db_base_path / "graph_interact_with_human_with_callbacks.version"
+        serialized_bytes = bytes_file.read_bytes()
+        serialization_version = version_file.read_text()
+        snapshot = Snapshot(
+            serialized_bytes=serialized_bytes, 
+            serialization_version=serialization_version
+        )
+        # Snapshot is restored.
+        assert snapshot.serialization_version == GraphAutoma.SERIALIZATION_VERSION
+        deserialized_graph = MyGraph.load_from_snapshot(snapshot)
+        assert type(deserialized_graph) is MyGraph
+        return deserialized_graph
+
+@pytest.fixture
+def interaction_feedback_yes(request):
+    interaction_id = request.config.cache.get("interaction_id", None)
+    feedback = InteractionFeedback(
+        interaction_id=interaction_id,
+        data="yes"
+    )
+    return feedback
+
+
+@pytest.mark.asyncio
+async def test_graph_interact_with_human_with_callbacks_deserialized(interaction_feedback_yes, deserialized_graph_interact_with_human_with_callbacks):
+    result = await deserialized_graph_interact_with_human_with_callbacks.arun(
+        interaction_feedback=interaction_feedback_yes
+    )
+    assert result == 3
+
+
+# - - - - - - - - - - - - - - - -
+# test case: callback to remove worker correctly
+# - - - - - - - - - - - - - - - -
+@pytest.fixture
+def graph_remove_worker_with_callbacks_1():
+    class MyGraph(GraphAutoma):
+        @worker(is_start=True)
+        async def worker_0(self, user_input: int) -> int:
+            return user_input + 1
+
+        @worker(dependencies=["worker_0"], callback_builders=[WorkerCallbackBuilder(RemoveWorkerCallback)])
+        async def worker_1(self, user_input: int) -> int:
+            return user_input + 1
+
+        @worker(dependencies=["worker_1", "worker_0"], is_output=True)
+        async def worker_2(self, x: int) -> int:
+            print(f"worker_2 is executing")
+            return x + 1
+
+    return MyGraph()
+
+@pytest.mark.asyncio
+async def test_graph_remove_worker_with_callbacks_1(graph_remove_worker_with_callbacks_1: GraphAutoma):
+    result = await graph_remove_worker_with_callbacks_1.arun(user_input=1)
+    assert result == None
+    assert "worker_1" not in graph_remove_worker_with_callbacks_1.all_workers()
+
+
+@pytest.fixture
+def graph_remove_worker_with_callbacks_2():
+    class MyGraph(GraphAutoma):
+        @worker(is_start=True)
+        async def worker_0(self, user_input: int) -> int:
+            return user_input + 1
+
+        @worker(dependencies=["worker_0"], callback_builders=[WorkerCallbackBuilder(RemoveWorkerCallback)], is_output=True)
+        async def worker_1(self, user_input: int) -> int:
+            return user_input + 1
+
+    return MyGraph()
+
+@pytest.mark.asyncio
+async def test_graph_remove_worker_with_callbacks_2(graph_remove_worker_with_callbacks_2: GraphAutoma):
+    result = await graph_remove_worker_with_callbacks_2.arun(user_input=1)
+    assert result == None
+    assert "worker_1" not in graph_remove_worker_with_callbacks_2.all_workers()
+
+
+# - - - - - - - - - - - - - - - -
+# test case: GlobalSetting callback_builders
+# - - - - - - - - - - - - - - - -
+class GlobalCallback(WorkerCallback):
+    async def on_worker_start(
+        self, 
+        key: str,
+        is_top_level: bool = False,
+        parent: Optional[GraphAutoma] = None,
+        arguments: Dict[str, Any] = None,
+    ) -> None:
+        print(f"global callback for {key}")
+
+
+@pytest.fixture
+def graph_with_global_setting():
+    # Set global callback
+    GlobalSetting.set(callback_builders=[WorkerCallbackBuilder(GlobalCallback)])
+
+    class MyGraph(GraphAutoma):
+        @worker(is_start=True)
+        async def worker_0(self, user_input: int) -> int:
+            return user_input + 1
+
+        @worker(dependencies=["worker_0"], is_output=True)
+        async def worker_1(self, x: int) -> int:
+            return x + 1
+
+    return MyGraph()
+
+@pytest.mark.asyncio
+async def test_global_setting_callback_builders(graph_with_global_setting: GraphAutoma, capsys):
+    result = await graph_with_global_setting.arun(user_input=1)
+    assert result == 3
+
+    captured = capsys.readouterr()
+    output = captured.out
+
+    assert "global callback for worker_0" in output
+    assert "global callback for worker_1" in output
+
+    # Clean up: reset global setting
+    GlobalSetting.set(callback_builders=[])
+
+
+# - - - - - - - - - - - - - - - -
+# test case: RunningOptions callback_builders
+# - - - - - - - - - - - - - - - -
+class AutomaCallback(WorkerCallback):
+    async def on_worker_start(
+        self, 
+        key: str,
+        is_top_level: bool = False,
+        parent: Optional[GraphAutoma] = None,
+        arguments: Dict[str, Any] = None,
+    ) -> None:
+        print(f"automa callback for {key}")
+
+
+@pytest.fixture
+def graph_with_running_options():
+    class MyGraph(GraphAutoma):
+        @worker(is_start=True)
+        async def worker_0(self, user_input: int) -> int:
+            return user_input + 1
+
+        @worker(dependencies=["worker_0"], is_output=True)
+        async def worker_1(self, x: int) -> int:
+            return x + 1
+
+    running_options = RunningOptions(callback_builders=[WorkerCallbackBuilder(AutomaCallback)])
+    return MyGraph(running_options=running_options)
+
+@pytest.mark.asyncio
+async def test_running_options_callback_builders(graph_with_running_options: GraphAutoma, capsys):
+    result = await graph_with_running_options.arun(user_input=1)
+    assert result == 3
+
+    captured = capsys.readouterr()
+    output = captured.out
+
+    assert "automa callback for worker_0" in output
+    assert "automa callback for worker_1" in output
+
+
+@pytest.fixture
+def graph_with_all_three_layers():
+    GlobalSetting.set(callback_builders=[WorkerCallbackBuilder(GlobalCallback)])
+
+    class MyGraph(GraphAutoma):
+        @worker(is_start=True)
+        async def worker_0(self, user_input: int) -> int:
+            return user_input + 1
+
+        @worker(
+            dependencies=["worker_0"], 
+            is_output=True,
+            callback_builders=[WorkerCallbackBuilder(PostEventCallback)]
+        )
+        async def worker_1(self, x: int) -> int:
+            return x + 1
+
+    running_options = RunningOptions(callback_builders=[WorkerCallbackBuilder(AutomaCallback)])
+    return MyGraph(running_options=running_options)
+
+@pytest.mark.asyncio
+async def test_all_callback_builders_merged(graph_with_all_three_layers: GraphAutoma, capsys):
+    result = await graph_with_all_three_layers.arun(user_input=1)
+    assert result == 3
+
+    captured = capsys.readouterr()
+    output = captured.out
+
+    assert "global callback for worker_0" in output
+    assert "automa callback for worker_0" in output
+    assert "global callback for worker_1" in output
+    assert "automa callback for worker_1" in output
+
+    # Clean up: reset global setting
+    GlobalSetting.set(callback_builders=[])
+
+
+# - - - - - - - - - - - - - - - -
+# test case: callback on_worker_error with specific exception type
+# - - - - - - - - - - - - - - - -
+class ValueErrorCallback(WorkerCallback):
+    async def on_worker_error(
+        self,
+        key: str,
+        is_top_level: bool = False,
+        parent: Optional[GraphAutoma] = None,
+        arguments: Dict[str, Any] = None,
+        error: ValueError = None,  # Specific type annotation
+    ) -> None:
+        print(f"ValueError handled for {key}: {str(error)}")
+
+
+class TypeErrorCallback(WorkerCallback):
+    async def on_worker_error(
+        self,
+        key: str,
+        is_top_level: bool = False,
+        parent: Optional[GraphAutoma] = None,
+        arguments: Dict[str, Any] = None,
+        error: TypeError = None,  # Specific type annotation
+    ) -> None:
+        print(f"TypeError handled for {key}: {str(error)}")
+
+
+class UnionExceptionCallback(WorkerCallback):
+    async def on_worker_error(
+        self,
+        key: str,
+        is_top_level: bool = False,
+        parent: Optional[GraphAutoma] = None,
+        arguments: Dict[str, Any] = None,
+        error: Union[ValueError, TypeError] = None,  # Union type annotation
+    ) -> None:
+        print(f"Union error handled for {key}: {str(error)}")
+
+class BaseExceptionCallback(WorkerCallback):
+    async def on_worker_error(
+        self,
+        key: str,
+        is_top_level: bool = False,
+        parent: Optional[GraphAutoma] = None,
+        arguments: Dict[str, Any] = None,
+        error: Exception = None,  # Base class annotation
+    ) -> None:
+        print(f"Exception handled for {key}: {str(error)}")
+
+
+@pytest.fixture
+def graph_with_inheritance_error():
+    class MyGraph(GraphAutoma):
+        @worker(
+            is_start=True,
+            callback_builders=[
+                WorkerCallbackBuilder(BaseExceptionCallback),
+            ]
+        )
+        async def worker_0(self, user_input: int) -> int:
+            raise ValueError("Test ValueError - should match Exception")
+
+    return MyGraph()
+
+
+@pytest.mark.asyncio
+async def test_on_worker_error_inheritance_matching(graph_with_inheritance_error: GraphAutoma, capsys):
+    """Test that exception matching works with inheritance relationship"""
+    result = await graph_with_inheritance_error.arun(user_input=1)
+    assert result is None
+
+    captured = capsys.readouterr()
+    output = captured.out
+    assert "Exception handled for worker_0" in output
+    assert "Test ValueError - should match Exception" in output
+
+@pytest.fixture
+def graph_with_multiple_callbacks_value_error():
+    class MyGraph(GraphAutoma):
+        @worker(
+            is_start=True,
+            callback_builders=[
+                WorkerCallbackBuilder(ValueErrorCallback),
+                WorkerCallbackBuilder(TypeErrorCallback),
+                WorkerCallbackBuilder(UnionExceptionCallback),
+            ]
+        )
+        async def worker_0(self, user_input: int) -> int:
+            raise ValueError("Test ValueError with multiple callbacks")
+
+    return MyGraph()
+
+
+@pytest.fixture
+def graph_with_multiple_callbacks_runtime_error():
+    class MyGraph(GraphAutoma):
+        @worker(
+            is_start=True,
+            callback_builders=[
+                WorkerCallbackBuilder(ValueErrorCallback),
+                WorkerCallbackBuilder(TypeErrorCallback),
+                WorkerCallbackBuilder(UnionExceptionCallback),
+            ]
+        )
+        async def worker_0(self, user_input: int) -> int:
+            raise RuntimeError("Test RuntimeError - not in Union")
+
+    return MyGraph()
+
+@pytest.mark.asyncio
+async def test_on_worker_error_with_matched_callbacks(graph_with_multiple_callbacks_value_error: GraphAutoma, capsys):
+    result = await graph_with_multiple_callbacks_value_error.arun(user_input=1)
+    assert result is None
+
+    captured = capsys.readouterr()
+    output = captured.out
+    assert "ValueError handled for worker_0" in output
+    assert "TypeError handled for worker_0" not in output
+    assert "Union error handled for worker_0" in output
+
+@pytest.mark.asyncio
+async def test_on_worker_error_no_mathed_callbacks(graph_with_multiple_callbacks_runtime_error: GraphAutoma, capsys):
+    """Test that Union callback doesn't handle exceptions not in the Union"""
+    # Should raise exception because RuntimeError is not in Union[ValueError, TypeError]
+    with pytest.raises(RuntimeError, match="Test RuntimeError - not in Union"):
+        await graph_with_multiple_callbacks_runtime_error.arun(user_input=1)
+
+# - - - - - - - - - - - - - - - -
+# test case: callback on_worker_error with inheritance relationship
+# - - - - - - - - - - - - - - - -
