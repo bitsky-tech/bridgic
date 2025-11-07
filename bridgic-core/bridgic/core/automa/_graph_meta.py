@@ -2,6 +2,7 @@ from typing import Dict, List, Callable, _ProtocolMeta
 from collections import defaultdict, deque
 
 from bridgic.core.automa.worker._worker_decorator import packup_worker_decorator_rumtime_args, get_worker_decorator_default_paramap
+from bridgic.core.automa.worker._worker_callback import WorkerCallbackBuilder
 from bridgic.core.types._common import AutomaType
 from bridgic.core.types._error import AutomaDeclarationError, AutomaCompilationError
 
@@ -30,13 +31,25 @@ class GraphMeta(_ProtocolMeta):
                 )
                 default_paramap = get_worker_decorator_default_paramap(AutomaType.Graph)
                 func = attr_value
+
                 setattr(func, "__is_worker__", True)
                 setattr(func, "__worker_key__", complete_args.get("key", default_paramap["key"]))
                 setattr(func, "__dependencies__", complete_args.get("dependencies", default_paramap["dependencies"]))
                 setattr(func, "__is_start__", complete_args.get("is_start", default_paramap["is_start"]))
                 setattr(func, "__is_output__", complete_args.get("is_output", default_paramap["is_output"]))
                 setattr(func, "__args_mapping_rule__", complete_args.get("args_mapping_rule", default_paramap["args_mapping_rule"]))
-                setattr(func, "__callbacks__", complete_args.get("callbacks", default_paramap["callbacks"]))
+
+                callback_builders = complete_args.get("callback_builders", default_paramap["callback_builders"])
+                if not callback_builders:
+                    callback_builders = []
+                else:
+                    for cb in callback_builders:
+                        if not isinstance(cb, WorkerCallbackBuilder):
+                            raise TypeError(
+                                f"Expected WorkerCallbackBuilder for callback_builders, got {type(cb)}. "
+                                f"Use WorkerCallbackBuilder(callback_type, init_kwargs) instead of callback instances."
+                            )
+                setattr(func, "__callback_builders__", callback_builders)
         
         for attr_name, attr_value in dct.items():
             # Attributes with __is_worker__ will be registered as workers.

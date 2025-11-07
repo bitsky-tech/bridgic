@@ -9,8 +9,11 @@ for executing specific business logic.
 
 from ._worker import Worker
 from ._callable_worker import CallableWorker
+from ._worker_callback import WorkerCallback, WorkerCallbackBuilder
 
 __all__ = [
     "Worker",
     "CallableWorker",
+    "WorkerCallback",
+    "WorkerCallbackBuilder",
 ]
