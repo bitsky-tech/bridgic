@@ -6,6 +6,8 @@ from bridgic.core.types._serialization import Serializable
 
 if TYPE_CHECKING:
     from bridgic.core.automa._graph_automa import GraphAutoma
+    from bridgic.core.automa._automa import _InteractionEventException
+    from bridgic.core.automa.interaction._human_interaction import InteractionException
 
 # Type variable for WorkerCallback subclasses
 T_WorkerCallback = TypeVar("T_WorkerCallback", bound="WorkerCallback")
@@ -93,26 +95,43 @@ class WorkerCallback(Serializable):
         parent: Optional["GraphAutoma"] = None,
         arguments: Dict[str, Any] = None,
         error: Exception = None,
-    ) -> None:
+    ) -> bool:
         """
         Hook invoked when worker execution raises an exception.
 
-        Called when the worker execution raises an exception. Use for error
-        handling, logging, or event publishing. Cannot modify execution
-        logic or arguments.
+        Called when the worker execution raises an exception. Use for error handling, logging, 
+        or event publishing. Cannot modify execution logic or arguments.
 
-        **Important: Exception Matching Mechanism**
+        **Exception Matching Mechanism: How to Handle a Specific Exception**
 
-        The exception matching is based on the **type annotation** of the `error`
-        parameter, using **inheritance relationship** (not exact type matching).
-        This means:
-        - The parameter name MUST be `error` and the type annotation is critical 
-          for the matching mechanism.
-        - If you annotate `error: ValueError`, it will match `ValueError` and all
-          its subclasses (e.g., `UnicodeDecodeError`).
-        - If you annotate `error: Exception`, it will match all exceptions (since
-          all exceptions inherit from Exception).
-        - You can use `Union[Type1, Type2, ...]` to match multiple exception types.
+        The framework enable your callback to handle a given exception based on the 
+        **type annotation** of the `error` parameter in your `on_worker_error` method.
+        The matching follows these rules:
+
+        - The parameter name MUST be `error` and the type annotation is critical for the 
+          matching mechanism.
+        - If you annotate `error: ValueError`, it will match `ValueError` and all its 
+          subclasses (e.g., `UnicodeDecodeError`).
+        - If you annotate `error: Exception`, it will match all exceptions (since all exceptions 
+          inherit from Exception).
+        - If you want to match multiple exception types, you can use `Union[Type1, Type2, ...]`.
+
+
+        **Return Value: Whether to Suppress the Exception**
+
+        - If `on_worker_error` returns `True`, the framework will suppress the exception. 
+          The framework will then proceed as if there was no error, and the worker result 
+          will be set to None.
+        - If `on_worker_error` returns `False`, the framework will simply observe the error; 
+          after all matching callbacks are called, the framework will re-raise the exception.
+
+        **Special Case: Interaction Exceptions Cannot Be Suppressed**
+
+        To ensure human-interaction mechanisms work correctly, exceptions of type
+        `_InteractionEventException` or `InteractionException` (including their subclasses) 
+        **CANNOT** be suppressed by any callback. Even if your callback returns `True`, the 
+        framework will forcibly re-raise the exception. This ensures these exceptions always 
+        propagate correctly through the automa hierarchy to trigger necessary human interactions.
 
         Parameters
         ----------
@@ -129,8 +148,13 @@ class WorkerCallback(Serializable):
             parameter determines which exceptions this callback will handle. The matching
             is based on inheritance relationship (using isinstance), so a callback with
             `error: ValueError` will match ValueError and all its subclasses.
+
+        Returns
+        -------
+        bool
+            True if the automa should suppress the exception (not re-raise it); False otherwise.
         """
-        pass
+        return False
 
     @override
     def dump_to_dict(self) -> Dict[str, Any]:
@@ -243,9 +267,14 @@ async def try_handle_error_with_callbacks(
     """
     Try to handle an exception using the provided callbacks.
 
-    This function checks each callback's type annotation for the `on_worker_error` method.
-    If a callback's annotation matches the exception type, it will be called.
-    The function returns True if at least one callback handled the exception, False otherwise.
+    This function returns True if at least one callback's `on_worker_error` method returns True
+    (indicating a request to suppress the exception) and the exception to be handled is not an 
+    interaction exception. Otherwise the function returns False, which means the framework will 
+    re-raise the exception as usual.
+
+    **Important**: Interaction exceptions (`_InteractionEventException` or `InteractionException`
+    and their subclasses) cannot be suppressed. If the exception is an interaction exception,
+    this function will always return False regardless of callback return values.
 
     Parameters
     ----------
@@ -265,18 +294,27 @@ async def try_handle_error_with_callbacks(
     Returns
     -------
     bool
-        True if at least one callback handled the exception, False otherwise.
+        True if at least one callback requested to suppress the exception and the exception
+        is not an interaction exception; False otherwise. The framework will re-raise the 
+        exception if this returns False.
     """
-    handled = False
+    # Import here to avoid circular import
+    from bridgic.core.automa._automa import _InteractionEventException
+    from bridgic.core.automa.interaction._human_interaction import InteractionException
+    
+    should_suppress = False
+    is_interaction_exception = isinstance(error, (_InteractionEventException, InteractionException))
+
     for callback in callbacks:
         if can_handle_exception(callback, error):
-            await callback.on_worker_error(
+            suppress_request = await callback.on_worker_error(
                 key=key,
                 is_top_level=is_top_level,
                 parent=parent,
                 arguments=arguments,
                 error=error,
             )
-            handled = True
+            if suppress_request and not is_interaction_exception:
+                should_suppress = True
     
-    return handled
+    return should_suppress

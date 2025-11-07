@@ -417,8 +417,9 @@ class ValueErrorCallback(WorkerCallback):
         parent: Optional[GraphAutoma] = None,
         arguments: Dict[str, Any] = None,
         error: ValueError = None,  # Specific type annotation
-    ) -> None:
+    ) -> bool:
         print(f"ValueError handled for {key}: {str(error)}")
+        return True  # Request to suppress the exception
 
 
 class TypeErrorCallback(WorkerCallback):
@@ -429,8 +430,9 @@ class TypeErrorCallback(WorkerCallback):
         parent: Optional[GraphAutoma] = None,
         arguments: Dict[str, Any] = None,
         error: TypeError = None,  # Specific type annotation
-    ) -> None:
+    ) -> bool:
         print(f"TypeError handled for {key}: {str(error)}")
+        return True  # Request to suppress the exception
 
 
 class UnionExceptionCallback(WorkerCallback):
@@ -441,8 +443,9 @@ class UnionExceptionCallback(WorkerCallback):
         parent: Optional[GraphAutoma] = None,
         arguments: Dict[str, Any] = None,
         error: Union[ValueError, TypeError] = None,  # Union type annotation
-    ) -> None:
+    ) -> bool:
         print(f"Union error handled for {key}: {str(error)}")
+        return True  # Request to suppress the exception
 
 class BaseExceptionCallback(WorkerCallback):
     async def on_worker_error(
@@ -452,8 +455,9 @@ class BaseExceptionCallback(WorkerCallback):
         parent: Optional[GraphAutoma] = None,
         arguments: Dict[str, Any] = None,
         error: Exception = None,  # Base class annotation
-    ) -> None:
+    ) -> bool:
         print(f"Exception handled for {key}: {str(error)}")
+        return True  # Request to suppress the exception
 
 
 @pytest.fixture
