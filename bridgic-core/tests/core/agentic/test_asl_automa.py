@@ -87,7 +87,7 @@ def kinds_of_worker_graph():
     class MyGraph(ASLAutoma):
         user_input: int = None
 
-        with graph() as g:
+        with graph as g:
             a = worker1
             b = worker2
             c = Worker3(y=1)
@@ -111,7 +111,7 @@ def combine_of_arrangement_logic_graph():
     class MyGraph(ASLAutoma):
         user_input: int = None
 
-        with graph() as g:
+        with graph as g:
             a = worker1
             b = worker2
             c = Worker3(y=1)
@@ -138,7 +138,7 @@ def component_based_reuse_graph():
     class MyGraph1(ASLAutoma):
         user_input: int = None
 
-        with graph() as g:
+        with graph as g:
             a = worker1
             b = worker2
             c = Worker3(y=1)
@@ -148,7 +148,7 @@ def component_based_reuse_graph():
     class MyGraph2(ASLAutoma):
         user_input: int = None
 
-        with graph() as g:
+        with graph as g:
             a = worker1
             b = MyGraph1()
             c = Worker3(y=1)
@@ -172,7 +172,7 @@ def group_workers_can_run_correctly_graph():
     class MyGraph1(ASLAutoma):
         user_input: int = None
 
-        with graph() as g:
+        with graph as g:
             a = worker1
             b = worker2
             c = Worker3(y=1)
@@ -194,7 +194,7 @@ def groups_workers_can_run_correctly_graph():
     class MyGraph1(ASLAutoma):
         x: int = None
 
-        with graph() as g:
+        with graph as g:
             a = worker1
             b = worker11
             c = worker12
@@ -221,9 +221,9 @@ def nested_graphs_can_run_correctly_graph():
     class MyGraph1(ASLAutoma):
         user_input: int = None
 
-        with graph() as g1:
+        with graph as g1:
             a = worker1 
-            with graph() as g2:
+            with graph as g2:
                 c = worker2
                 d = Worker3(y=1)
                 +c >> ~d
@@ -248,7 +248,7 @@ def ferry_to_with_no_dependency_graph():
     class MyGraph1(ASLAutoma):
         user_input: int = None
 
-        with graph() as g1:
+        with graph as g1:
             ferry_to_worker = ferry_to_worker
             worker2 = worker2
             worker3 = Worker3(y=1)
@@ -275,7 +275,7 @@ def settings_can_be_set_correctly_graph():
     class MyGraph1(ASLAutoma):
         user_input: int = None
 
-        with graph() as g:
+        with graph as g:
             a = worker1 * Settings(
                 key="worker_1", 
                 is_start=True, 
@@ -309,7 +309,7 @@ def args_injection_can_run_correctly_graph():
     class MyGraph1(ASLAutoma):
         user_input: int = None
 
-        with graph() as g:
+        with graph as g:
             a = worker1
             b = worker2
             c = merge * Data(y=From("a"))
@@ -334,7 +334,7 @@ def dynamic_lambda_worker_can_run_correctly_graph():
     class MyGraph1(ASLAutoma):
         x: int = None
 
-        with graph() as g:
+        with graph as g:
             a = produce_tasks
 
             dynamic_logic = lambda subtasks, **kwargs: (
@@ -373,7 +373,7 @@ async def test_raise_duplicate_dependency_error_correctly():
         class MyGraph1(ASLAutoma):
             user_input: int = None
 
-            with graph() as g:
+            with graph as g:
                 a = worker1 * Settings(
                     key="worker_1", 
                     is_start=True, 
@@ -395,7 +395,7 @@ async def test_raise_duplicate_dependency_error_correctly():
         class MyGraph2(ASLAutoma):
             user_input: int = None
 
-            with graph() as g:
+            with graph as g:
                 a = worker1 * Settings(
                     dependencies=["worker_1", "worker_1"]
                 )

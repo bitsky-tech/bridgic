@@ -12,53 +12,67 @@ from bridgic.core.automa.args import ArgsMappingRule
 from bridgic.core.agentic import ConcurrentAutoma
 from bridgic.core.utils._inspect_tools import override_func_signature, set_method_signature
 
-graph_stack = ContextVar("graph_stack", default=[])
+graph_stack: ContextVar[List["_Canvas"]] = ContextVar("graph_stack", default=[])
 
 
 class TrackingNamespace(dict):
-    def __setitem__(self, key: str, value: Any):
+    def __init__(self):
+        super().__init__()
 
+    def __setitem__(self, key: str, value: Any):
         # get the settings from the value and clear the settings of the value
         settings = copy.deepcopy(getattr(value, "__settings__", None))
         if settings:
             setattr(value, "__settings__", None)
 
         # track the _Element values
-        if not key.startswith('_'):
-            if isinstance(value, Worker) or isinstance(value, Callable):
-                if key != 'arun' and key != 'run':
-                    element: _Element = _Element(key, value)
-                    if settings:
-                        element.update_settings(settings)
-                    if isinstance(value, Callable) and getattr(value.__code__, "co_name", None) == '<lambda>':
-                        element.is_lambda = True
-                    value = element
+        if not key.startswith('_') and (isinstance(value, Worker) or isinstance(value, Callable)):
+            if key != 'arun' and key != 'run':
+                # create the _Element instance
+                element: _Element = _Element(key, value)
+
+                # update the settings of the element
+                if settings:
+                    element.update_settings(settings)
+
+                # judge if the value is a lambda function
+                if isinstance(value, Callable) and getattr(value.__code__, "co_name", None) == '<lambda>':
+                    element.is_lambda = True
+
+                # cover the value with the element
+                value = element
+        
+        # record the key-value pair in the tracking namespace
         super().__setitem__(key, value)
 
-        # get current activate `with` context
-        stack = graph_stack.get()
-        if not stack:  
-            return
-        current_graph = stack[-1]
+        # register the _CanvasObject to the current canvas
+        if isinstance(value, _CanvasObject):
+            stack = graph_stack.get()
+            
+            # if is a nested canvas, register to the parent canvas.
+            if isinstance(value, _Canvas):
+                # set the key of the nested canvas
+                if not value.settings.key:
+                    value.settings.key = key
 
-        # register the nested canvas
-        if isinstance(value, _Canvas):
-            if value not in stack:
-                return
+                # update the settings of the nested canvas
+                if settings:
+                    value.update_settings(settings)
+                
+                # if the stack is only one, the current canvas is the root canvas.
+                if len(stack) == 1:
+                    return
+                
+                # get the parent canvas
+                parent_canvas: _Canvas = stack[-2]
 
-            if not value.settings.key:
-                value.settings.key = key
-
-            if settings:
-                value.update_settings(settings)
-
-            if len(stack) >= 2 and stack[-1] is value:
-                parent = stack[-2]
-                parent.register(value.settings.key, value)
-            return
-
-        # register the normal object
-        current_graph.register(key, value)
+                # register to the parent canvas, the parent canvas is the root canvas.
+                parent_canvas.register(value.settings.key, value)
+            elif isinstance(value, _Element):
+                if len(stack) == 0:
+                    raise ValueError("All workers must be written under one graph.")
+                current_canvas: _Canvas = stack[-1]
+                current_canvas.register(value.settings.key, value)
 
 
 def make_automa(automa_type: str) -> Automa:
@@ -263,17 +277,6 @@ class _Canvas(_CanvasObject):
             }
         set_method_signature(self.worker_material.arun, data)
 
-    def __enter__(self) -> "_Canvas":
-        stack = list(graph_stack.get())
-        stack.append(self)
-        graph_stack.set(stack)
-        return self
-
-    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
-        stack = list(graph_stack.get())
-        stack.pop()
-        graph_stack.set(stack)
-
     def register(self, key, value):
         value.parent_canvas = self
         self.elements[key] = value
@@ -304,38 +307,21 @@ class _Element(_CanvasObject):
 
 
 class _GraphContextManager:
-    """
-    A context manager class that can be used both as `with graph as g` and `with graph() as g`.
-    """
     def __init__(self, automa_type: str):
         self.automa_type = automa_type
 
-    def __call__(self, **kwargs: Any) -> _Canvas:
-        """Support `with graph() as g` syntax (backward compatibility)."""
-        ctx = _Canvas(automa_type=self.automa_type, **kwargs)
+    def __enter__(self) -> _Canvas:
+        ctx = _Canvas(automa_type=self.automa_type)
+        stack = list(graph_stack.get())
+        stack.append(ctx)
+        graph_stack.set(stack)
         return ctx
 
-    def __enter__(self) -> _Canvas:
-        """Support `with graph as g` syntax."""
-        # Create a new canvas and enter its context
-        # The canvas will manage its own lifecycle through its __enter__ and __exit__
-        ctx = _Canvas(automa_type=self.automa_type)
-        return ctx.__enter__()
-
     def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
-        """
-        Support `with graph as g` syntax.
+        stack = list(graph_stack.get())
+        stack.pop()
+        graph_stack.set(stack)
         
-        Note: This method should not be called directly by Python's with statement
-        because __enter__ returns a _Canvas instance, not self. However, we implement
-        it for completeness and to handle edge cases. The actual cleanup is handled
-        by the _Canvas.__exit__ method.
-        """
-        # The actual cleanup is handled by _Canvas.__exit__
-        # This method exists for interface completeness but should not be called
-        # in normal usage since __enter__ returns a _Canvas, not self
-        pass
-
 
 # Create module-level instances (not global variables, but singleton objects)
 graph = _GraphContextManager(automa_type="graph")
