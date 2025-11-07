@@ -20,7 +20,25 @@ from bridgic.core.logging import get_automa_logger
 from bridgic.core.constants import DEFAULT_AUTOMA_SOURCE_PREFIX
 
 class RunningOptions(BaseModel):
+    """
+    Running options for an Automa instance.
+
+    This class contains two types of fields:
+
+    1. **Runtime-configurable fields**: Can be set at any time via `set_running_options()`.
+       - `debug`: Whether to enable debug mode.
+
+    2. **Initialization-only fields**: Must be set during Automa instantiation via the `running_options` parameter.
+       - `callback_builders`: Callback builders at the Automa instance level. These will be merged with 
+         global callback builders when workers are created during Automa initialization.
+    """
     debug: bool = False
+    """Whether to enable debug mode. Can be set at runtime via set_running_options()."""
+
+    callback_builders: List[WorkerCallbackBuilder] = []
+    """Callback builders at the Automa instance level. These will be merged with global callback builders."""
+
+    model_config = {"arbitrary_types_allowed": True}
 
 class _InteractionAndFeedback(BaseModel):
     interaction: Interaction
@@ -73,6 +91,7 @@ class Automa(Worker):
         self,
         name: str = None,
         thread_pool: Optional[ThreadPoolExecutor] = None,
+        running_options: Optional[RunningOptions] = None,
     ):
         super().__init__()
 
@@ -80,7 +99,7 @@ class Automa(Worker):
         self.name = name or f"automa-{uuid.uuid4().hex[:8]}"
 
         # Initialize the shared running options.
-        self._running_options = RunningOptions()
+        self._running_options = running_options or RunningOptions()
 
         # Initialize data structures for event handling and human interactions
         self._event_handlers = {}
@@ -201,20 +220,28 @@ class Automa(Worker):
         """
         return self.parent is None
 
-    def set_running_options(self, debug: bool = None):
+    def set_running_options(
+        self,
+        debug: Optional[bool] = None,
+    ):
         """
-        Set running options for this Automa instance, and ensure these options propagate through all nested Automa instances.
+        Set runtime-configurable running options for this Automa instance.
 
-        When different options are set on different nested Automa instances, the setting from the outermost 
+        This method only supports fields that can be changed at runtime. Fields that must be set 
+        during initialization (such as `callback_builders`) cannot be changed here and must be 
+        provided via the `running_options` parameter in the Automa constructor.
+
+        For fields that can be delayed to be set, some settings (like `debug`) from the outermost 
         (top-level) Automa will override the settings of all inner (nested) Automa instances.
-
-        For example, if the top-level Automa instance sets `debug = True` and the nested instances sets `debug = False`, 
-        then the nested Automa instance will run in debug mode, when the top-level Automa instance is executed.
+        For example, if the top-level Automa instance sets `debug = True` and the nested instances 
+        sets `debug = False`, then the nested Automa instance will run in debug mode when the 
+        top-level Automa instance is executed. We call it the Setting Penetration Mechanism.
 
         Parameters
         ----------
         debug : bool, optional
-            Whether to enable debug mode. If not set, the effect is the same as setting `debug = False` by default.
+            Whether to enable debug mode. If None, the current value is not changed.
+            This field is subject to the Setting Penetration Mechanism.
         """
         if debug is not None:
             self._running_options.debug = debug

@@ -7,7 +7,7 @@ import uuid
 
 from inspect import Parameter, _ParameterKind
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any, List, Dict, Set, Mapping, Callable, Tuple, Optional, Literal, Union, ClassVar
+from typing import Any, List, Dict, Set, Mapping, Callable, Tuple, Optional, Literal, Union, ClassVar, TYPE_CHECKING
 from typing_extensions import override
 from types import MethodType
 from dataclasses import dataclass
@@ -21,8 +21,9 @@ from bridgic.core.utils._args_map import safely_map_args
 from bridgic.core.automa import Automa, Snapshot
 from bridgic.core.automa.worker import CallableWorker, Worker
 from bridgic.core.automa.interaction import Interaction, InteractionFeedback, InteractionException
-from bridgic.core.automa._automa import _InteractionAndFeedback, _InteractionEventException
-from bridgic.core.automa.worker._worker_callback import WorkerCallback
+from bridgic.core.automa._automa import _InteractionAndFeedback, _InteractionEventException, RunningOptions
+from bridgic.core.automa.worker._worker_callback import WorkerCallback, WorkerCallbackBuilder, try_handle_error_with_callbacks
+from bridgic.core.config import GlobalSetting
 from bridgic.core.automa._graph_meta import GraphMeta
 from bridgic.core.automa.args._args_descriptor import injector
 from bridgic.core.constants import STATUS_SUCCESS
@@ -52,7 +53,7 @@ class _GraphAdaptedWorker(Worker):
         is_start: bool = False,
         is_output: bool = False,
         args_mapping_rule: ArgsMappingRule = ArgsMappingRule.AS_IS,
-        callbacks: List[WorkerCallback] = [],
+        callback_builders: List[WorkerCallbackBuilder] = [],
     ):
         super().__init__()
         self.key = key or f"autokey-{uuid.uuid4().hex[:8]}"
@@ -61,7 +62,8 @@ class _GraphAdaptedWorker(Worker):
         self.is_output = is_output
         self.args_mapping_rule = args_mapping_rule
         self._decorated_worker = worker
-        self._worker_callbacks = callbacks
+        # Build callback instances from builders
+        self._worker_callbacks = [cb.build() for cb in callback_builders]
 
     @override
     def dump_to_dict(self) -> Dict[str, Any]:
@@ -92,15 +94,42 @@ class _GraphAdaptedWorker(Worker):
 
     @override
     async def arun(self, *args, **kwargs) -> Any:
-        # Call pre-worker-execute callbacks.
         for callback in self._worker_callbacks:
-            await callback.pre_worker_execute(self.key, self.parent, {"args": args, "kwargs": kwargs})
-        # Call the decorated worker.
-        result = await self._decorated_worker.arun(*args, **kwargs)
-        # Call post-worker-execute callbacks.
+            await callback.on_worker_start(
+                key=self.key,
+                is_top_level=False,
+                parent=self.parent,
+                arguments={"args": args, "kwargs": kwargs},
+            )
+
+        try:
+            result = await self._decorated_worker.arun(*args, **kwargs)
+        except Exception as e:
+            # Try to handle the exception with callbacks
+            handled = await try_handle_error_with_callbacks(
+                callbacks=self._worker_callbacks,
+                key=self.key,
+                is_top_level=False,
+                parent=self.parent,
+                arguments={"args": args, "kwargs": kwargs},
+                error=e,
+            )
+
+            # If no callback handled the exception, re-raise it
+            if not handled:
+                raise
+
+            # If exception was handled, set result to None
+            result = None
+
         for callback in self._worker_callbacks:
-            await callback.post_worker_execute(self.key, self.parent, {"args": args, "kwargs": kwargs}, result)
-        # Return the result.
+            await callback.on_worker_end(
+                key=self.key,
+                is_top_level=False,
+                parent=self.parent,
+                arguments={"args": args, "kwargs": kwargs},
+                result=result,
+            )
         return result
 
     @override
@@ -119,13 +148,13 @@ class _GraphAdaptedWorker(Worker):
     def __str__(self) -> str:
         # TODO: need some refactoring
         return str(self._decorated_worker)
-    
+
     @override
     def __eq__(self, other):
         if self is other:
             return True
         return self._decorated_worker == other
-    
+
     def is_automa(self) -> bool:
         return isinstance(self._decorated_worker, Automa)
 
@@ -172,7 +201,7 @@ class _AddWorkerDeferredTask(BaseModel):
     is_start: bool = False
     is_output: bool = False
     args_mapping_rule: ArgsMappingRule = ArgsMappingRule.AS_IS
-    callbacks: List[WorkerCallback] = []
+    callback_builders: List[WorkerCallbackBuilder] = []
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
@@ -292,6 +321,7 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
         self,
         name: Optional[str] = None,
         thread_pool: Optional[ThreadPoolExecutor] = None,
+        running_options: Optional[RunningOptions] = None,
     ):
         """
         Parameters
@@ -309,10 +339,14 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
             - If provided, all workers (including all nested Automa instances) will be run in it. In this case, the 
             application layer code is responsible to create it and shut it down.
 
+        running_options : Optional[RunningOptions]
+            Running options for this Automa instance, including callback_builders.
+            If None, uses default RunningOptions.
+
         state_dict : Optional[Dict[str, Any]]
             A dictionary for initializing the automa's runtime states. This parameter is designed for framework use only.
         """
-        super().__init__(name=name, thread_pool=thread_pool)
+        super().__init__(name=name, thread_pool=thread_pool, running_options=running_options)
 
         self._workers = {}
         self._worker_outputs = {}
@@ -351,7 +385,7 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
                     is_start=worker_func.__is_start__,
                     is_output=worker_func.__is_output__,
                     args_mapping_rule=worker_func.__args_mapping_rule__,
-                    callbacks=worker_func.__callbacks__,
+                    callback_builders=worker_func.__callback_builders__,
                 )
 
         ###############################################################################
@@ -367,7 +401,6 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
         self._current_kickoff_workers = []
         # -- Automa input buffer.
         self._input_buffer = _AutomaInputBuffer()
-
 
         ###############################################################################
         # Initialization of [Part Two: Task-Related Runtime States] ####### End #######
@@ -438,7 +471,7 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
         is_start: bool = False,
         is_output: bool = False,
         args_mapping_rule: ArgsMappingRule = ArgsMappingRule.AS_IS,
-        callbacks: List[WorkerCallback] = [],
+        callback_builders: List[WorkerCallbackBuilder] = [],
     ) -> None:
         """
         Incrementally add a worker into the automa. For internal use only.
@@ -448,7 +481,13 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
             raise AutomaRuntimeError(
                 f"duplicate workers with the same key '{key}' are not allowed to be added!"
             )
-        
+
+        # Merge callback builders from three layers: Global -> Automa (RunningOptions) -> Worker
+        effective_callback_builders = []
+        effective_callback_builders.extend(GlobalSetting.read().callback_builders)
+        effective_callback_builders.extend(self._running_options.callback_builders)
+        effective_callback_builders.extend(callback_builders)
+
         # Note: the dependencies argument must be a new copy of the list, created with list(dependencies).
         # Refer to the Python documentation for more details:
         # 1. https://docs.python.org/3/reference/compound_stmts.html#function-definitions
@@ -463,7 +502,7 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
             is_start=is_start,
             is_output=is_output,
             args_mapping_rule=args_mapping_rule,
-            callbacks=callbacks,
+            callback_builders=effective_callback_builders,
         )
 
         # Register the worker_obj.
@@ -480,9 +519,6 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
             if trigger not in self._worker_forwards:
                 self._worker_forwards[trigger] = []
             self._worker_forwards[trigger].append(key)
-
-        # TODO : Validation may be needed in appropriate time later, because we are not able to guarantee 
-        # the existence of the trigger-workers in self._workers of the final automa graph after dynamically changing.
 
     def _remove_worker_incrementally(
         self,
@@ -562,7 +598,7 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
         is_start: bool = False,
         is_output: bool = False,
         args_mapping_rule: ArgsMappingRule = ArgsMappingRule.AS_IS,
-        callbacks: List[WorkerCallback] = [],
+        callback_builders: List[WorkerCallbackBuilder] = [],
     ) -> None:
         """
         The private version of the method `add_worker()`.
@@ -580,7 +616,7 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
                     f"arun of Worker must be an async method, "
                     f"but got {type(worker_obj.arun)} for worker '{key}'"
                 )
-            
+
             if not isinstance(dependencies, list):
                 raise TypeError(
                     f"dependencies must be a list, "
@@ -591,7 +627,7 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
                     f"dependencies must be a List of str, "
                     f"but got {dependencies} for worker {key}"
                 )
-            
+
             if args_mapping_rule not in ArgsMappingRule:
                 raise ValueError(
                     f"args_mapping_rule must be one of the following: {[e for e in ArgsMappingRule]}, "
@@ -610,7 +646,7 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
                 is_start=is_start,
                 is_output=is_output,
                 args_mapping_rule=args_mapping_rule,
-                callbacks=callbacks,
+                callback_builders=callback_builders,
             )
         else:
             # Add worker during the [Running Phase].
@@ -621,7 +657,7 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
                 is_start=is_start,
                 is_output=is_output,
                 args_mapping_rule=args_mapping_rule,
-                callbacks=callbacks,
+                callback_builders=callback_builders,
             )
             # Note1: the execution order of topology change deferred tasks is important and is determined by the order of the calls of add_worker(), remove_worker() and add_dependency() in one DS.
             # Note2: add_worker() and remove_worker() may be called in a new thread. But _topology_change_deferred_tasks is not necessary to be thread-safe due to Visibility Guarantees of the Bridgic Concurrency Model.
@@ -636,14 +672,14 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
         is_start: bool = False,
         is_output: bool = False,
         args_mapping_rule: ArgsMappingRule = ArgsMappingRule.AS_IS,
-        callbacks: List[WorkerCallback] = [],
+        callback_builders: List[WorkerCallbackBuilder] = [],
     ) -> None:
         """
         The private version of the method `add_func_as_worker()`.
         """
         if not isinstance(func, MethodType) and key in self._registered_worker_funcs:
             func = MethodType(func, self)
-        
+
         # Validate: if func is a method, its bounded __self__ must be self when add_func_as_worker() is called.
         if hasattr(func, "__self__") and func.__self__ is not self:
             raise AutomaRuntimeError(
@@ -661,7 +697,7 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
             is_start=is_start,
             is_output=is_output,
             args_mapping_rule=args_mapping_rule,
-            callbacks=callbacks,
+            callback_builders=callback_builders,
         )
 
     def all_workers(self) -> List[str]:
@@ -684,7 +720,7 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
         is_start: bool = False,
         is_output: bool = False,
         args_mapping_rule: ArgsMappingRule = ArgsMappingRule.AS_IS,
-        callbacks: List[WorkerCallback] = [],
+        callback_builders: List[WorkerCallbackBuilder] = [],
     ) -> None:
         """
         This method is used to add a worker dynamically into the automa.
@@ -709,8 +745,9 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
             Whether the worker is an output worker.
         args_mapping_rule : ArgsMappingRule
             The rule of arguments mapping.
-        callbacks : List[WorkerCallback]
-            A list of worker callbacks to be registered.
+        callback_builders : List[WorkerCallbackBuilder]
+            A list of worker callback builders to be registered.
+            Callback instances will be created from builders when the worker is instantiated.
         """
         self._add_worker_internal(
             key=key,
@@ -719,7 +756,7 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
             is_start=is_start,
             is_output=is_output,
             args_mapping_rule=args_mapping_rule,
-            callbacks=callbacks,
+            callback_builders=callback_builders,
         )
 
     def add_func_as_worker(
@@ -731,7 +768,7 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
         is_start: bool = False,
         is_output: bool = False,
         args_mapping_rule: ArgsMappingRule = ArgsMappingRule.AS_IS,
-        callbacks: List[WorkerCallback] = [],
+        callback_builders: List[WorkerCallbackBuilder] = [],
     ) -> None:
         """
         This method is used to add a function as a worker into the automa.
@@ -753,8 +790,9 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
             Whether the decorated callable is an output worker. True means it is, while False means it is not.
         args_mapping_rule : ArgsMappingRule
             The rule of arguments mapping.
-        callbacks : List[WorkerCallback]
-            A list of worker callbacks to be registered.
+        callback_builders : List[WorkerCallbackBuilder]
+            A list of worker callback builders to be registered.
+            Callback instances will be created from builders when the worker is instantiated.
         """
         self._add_func_as_worker_internal(
             key=key,
@@ -763,7 +801,7 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
             is_start=is_start,
             is_output=is_output,
             args_mapping_rule=args_mapping_rule,
-            callbacks=callbacks,
+            callback_builders=callback_builders,
         )
 
     def worker(
@@ -774,7 +812,7 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
         is_start: bool = False,
         is_output: bool = False,
         args_mapping_rule: ArgsMappingRule = ArgsMappingRule.AS_IS,
-        callbacks: List[WorkerCallback] = [],
+        callback_builders: List[WorkerCallbackBuilder] = [],
     ) -> Callable:
         """
         This is a decorator used to mark a function as an GraphAutoma detectable Worker. Dislike the 
@@ -795,8 +833,9 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
             Whether the decorated callable is an output worker. True means it is, while False means it is not.
         args_mapping_rule : str
             The rule of arguments mapping. The options are: "auto", "as_list", "as_dict", "suppressed".
-        callbacks : List[WorkerCallback]
-            A list of worker callbacks to be registered.
+        callback_builders : List[WorkerCallbackBuilder]
+            A list of worker callback builders to be registered.
+            Callback instances will be created from builders when the worker is instantiated.
         """
         def wrapper(func: Callable):
             self._add_func_as_worker_internal(
@@ -806,11 +845,11 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
                 is_start=is_start,
                 is_output=is_output,
                 args_mapping_rule=args_mapping_rule,
-                callbacks=callbacks,
+                callback_builders=callback_builders,
             )
 
         return wrapper
-    
+
     def remove_worker(self, key: str) -> None:
         """
         Remove a worker from the Automa. This method can be called at any time to remove a worker from the Automa.
@@ -1027,7 +1066,7 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
         # Note: ferry_to() may be called in a new thread.
         # But _ferry_deferred_tasks is not necessary to be thread-safe due to Visibility Guarantees of the Bridgic Concurrency Model.
         self._ferry_deferred_tasks.append(deferred_task)
-    
+
     def _clean_all_worker_local_space(self):
         """
         Clean the local space of all workers.
@@ -1099,6 +1138,7 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
                         is_start=topology_task.is_start,
                         is_output=topology_task.is_output,
                         args_mapping_rule=topology_task.args_mapping_rule,
+                        callback_builders=topology_task.callback_builders,
                     )
                 elif topology_task.task_type == "remove_worker":
                     self._remove_worker_incrementally(topology_task.worker_key)
@@ -1208,6 +1248,28 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
         # An Automa needs to be re-run with _current_kickoff_workers reinitialized.
         _reinit_current_kickoff_workers_if_needed()
 
+        is_top_level = self.is_top_level()
+
+        # If this is the top-level automa, execute its callbacks separately.
+        if is_top_level:
+            effective_builders = []
+            effective_builders.extend(GlobalSetting.read().callback_builders)
+            effective_builders.extend(self._running_options.callback_builders)
+            automa_callbacks = [cb.build() for cb in effective_builders]
+
+            for callback in automa_callbacks:
+                await callback.on_worker_start(
+                    key=self.name,
+                    is_top_level=True,
+                    parent=None,
+                    arguments={
+                        "args": self._input_buffer.args,
+                        "kwargs": self._input_buffer.kwargs,
+                        "interaction_feedback": interaction_feedback,
+                        "interaction_feedbacks": interaction_feedbacks,
+                    },
+                )
+
         rx_feedbacks = _check_and_normalize_interaction_params(interaction_feedback, interaction_feedbacks)
         if rx_feedbacks:
             rx_feedbacks = _match_ongoing_interaction_and_feedbacks(rx_feedbacks)
@@ -1294,7 +1356,7 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
                     worker_key=kickoff_info.worker_key,
                     task=task,
                 ))
-            
+
             # Wait until all of the tasks are finished.
             while True:
                 undone_tasks = [t.task for t in self._running_tasks if not t.task.done()]
@@ -1307,17 +1369,20 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
                     # The same exception will be raised again in the following task.result().
                     # Note: A Task is done when the wrapped coroutine either returned a value, raised an exception, or the Task was cancelled.
                     # Refer to: https://docs.python.org/3/library/asyncio-task.html#task-object
-            
+
             # Process graph topology change deferred tasks triggered by add_worker() and remove_worker().
             _execute_topology_change_deferred_tasks(self._topology_change_deferred_tasks)
 
-            # Perform post-task follow-up operations.
+            # Handle exceptions raised by all running tasks.
             interaction_exceptions: List[_InteractionEventException] = []
+            non_interaction_exceptions: List[Exception] = []
+
             for task in self._running_tasks:
-                # task.task.result must be called here! It will raise an exception if task failed.
                 try:
+                    # It will raise an exception if task failed.
                     task_result = task.task.result()
                     _set_worker_run_finished(task.worker_key)
+
                     if task.worker_key in self._workers:
                         # The current running worker may be removed.
                         worker_obj = self._workers[task.worker_key]
@@ -1333,23 +1398,25 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
                             del self._worker_interaction_indices[task.worker_key]
                         if task.worker_key in self._ongoing_interactions:
                             del self._ongoing_interactions[task.worker_key]
-
-                except _InteractionEventException as e:
-                    interaction_exceptions.append(e)
-                    if task.worker_key in self._workers and not self._workers[task.worker_key].is_automa():
-                        if task.worker_key not in self._ongoing_interactions:
-                            self._ongoing_interactions[task.worker_key] = []
-                        interaction=e.args[0]
-                        # Make sure the interaction_id is unique for each human interaction.
-                        found = False
-                        for iaf in self._ongoing_interactions[task.worker_key]:
-                            if iaf.interaction.interaction_id == interaction.interaction_id:
-                                found = True
-                                break
-                        if not found:
-                            self._ongoing_interactions[task.worker_key].append(_InteractionAndFeedback(
-                                interaction=interaction,
-                            ))
+                except Exception as e:
+                    if isinstance(e, _InteractionEventException):
+                        interaction_exceptions.append(e)
+                        if task.worker_key in self._workers and not self._workers[task.worker_key].is_automa():
+                            if task.worker_key not in self._ongoing_interactions:
+                                self._ongoing_interactions[task.worker_key] = []
+                            interaction=e.args[0]
+                            # Make sure the interaction_id is unique for each human interaction.
+                            found = False
+                            for iaf in self._ongoing_interactions[task.worker_key]:
+                                if iaf.interaction.interaction_id == interaction.interaction_id:
+                                    found = True
+                                    break
+                            if not found:
+                                self._ongoing_interactions[task.worker_key].append(_InteractionAndFeedback(
+                                    interaction=interaction,
+                                ))
+                    else:
+                        non_interaction_exceptions.append(e)
 
             if len(self._topology_change_deferred_tasks) > 0:
                 # Graph topology validation and risk detection. Only needed when topology changes.
@@ -1362,7 +1429,31 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
 
             # TODO: Ferry-related risk detection may be added here...
 
-            # Just after post-task operations (several deferred tasks) and before finding next kickoff workers, collect and process the interaction exceptions.
+            # Handle exceptions with callbacks at the top-level automa before re-raising them.
+            if is_top_level:
+                # Collect callbacks from GlobalSetting and RunningOptions for top-level automa
+                effective_builders = []
+                effective_builders.extend(GlobalSetting.read().callback_builders)
+                effective_builders.extend(self._running_options.callback_builders)
+                automa_callbacks = [cb.build() for cb in effective_builders]
+
+                # Process interaction exceptions with callbacks (they cannot be suppressed, but callbacks can observe them)
+                for e in interaction_exceptions + non_interaction_exceptions:
+                    await try_handle_error_with_callbacks(
+                        callbacks=automa_callbacks,
+                        key=self.name,
+                        is_top_level=True,
+                        parent=None,
+                        arguments={
+                            "args": self._input_buffer.args,
+                            "kwargs": self._input_buffer.kwargs,
+                            "interaction_feedback": interaction_feedback,
+                            "interaction_feedbacks": interaction_feedbacks,
+                        },
+                        error=e,
+                    )
+
+            # For inner interaction exceptions, collect them and throw an InteractionException as a whole.
             if len(interaction_exceptions) > 0:
                 all_interactions: List[Interaction] = [interaction for e in interaction_exceptions for interaction in e.args]
                 if self.parent is None:
@@ -1379,6 +1470,10 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
                 else:
                     # Continue raise exception to the upper level Automa.
                     raise _InteractionEventException(*all_interactions)
+
+            # For non-interaction exceptions, immediately raise the first one directly, since none of them are meant to be suppressed.
+            if len(non_interaction_exceptions) > 0:
+                raise non_interaction_exceptions[0]
 
             # Find next kickoff workers and rebuild _current_kickoff_workers
             run_finished_worker_keys: List[str] = [kickoff_info.worker_key for kickoff_info in self._current_kickoff_workers if kickoff_info.run_finished]
@@ -1431,45 +1526,23 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
         self._worker_interaction_indices.clear()
         self._automa_running = False
 
-        # Log automa end and return result
-        execution_time = time.time() - start_time
-        result = None
+        # Get result before calling callbacks
         if is_output_worker_keys:
             result = self._worker_output.get(list(is_output_worker_keys)[0], None)
-        
-        self._logger.log_automa_end(
-            automa_id=automa_id,
-            automa_name=self.name,
-            result_data={
-                "has_result": result is not None,
-                "result_type": type(result).__name__ if result is not None else None,
-            },
-            execution_id=execution_id,
-            execution_time=execution_time,
-            metadata={"status": STATUS_SUCCESS, "execution_time": execution_time}
-        )
-        
-        # If this Automa is nested (has a parent), also log as a worker end
-        if is_nested and nested_worker_context:
-            output_data = {
-                "result_type": type(result).__name__ if result is not None else "NoneType",
-                "result": self._format_result_for_log(result)
-            }
-            self._logger.log_worker_end(
-                worker_id=self._worker_id,
-                worker_name=self.__class__.__name__,
-                output_data=output_data,
-                execution_id=execution_id,
-                execution_time=execution_time,
-                worker_key=nested_worker_context["worker_key"],
-                metadata={
-                    "method": "arun",
-                    "status": "success",
-                    "worker_type": "nested_automa",
-                    **nested_worker_context["context_info"]
-                }
-            )
-        
+        else:
+            result = None
+
+        # If this is the top-level automa, execute its callbacks separately.
+        if is_top_level:
+            for callback in automa_callbacks:
+                await callback.on_worker_end(
+                    key=self.name,
+                    is_top_level=True,
+                    parent=None,
+                    arguments={"args": args, "kwargs": kwargs},
+                    result=result,
+                )
+
         return result
 
     def _get_worker_dependencies(self, worker_key: str) -> List[str]:
@@ -1649,4 +1722,3 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
         for k, v in self._workers.items():
             d[k] = f"{v} depends on {getattr(v, 'dependencies', [])}"
         return json.dumps(d, ensure_ascii=False, indent=4)
-        
