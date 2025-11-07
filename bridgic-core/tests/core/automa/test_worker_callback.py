@@ -5,6 +5,7 @@ from bridgic.core.automa import GraphAutoma, worker, Snapshot, RunningOptions
 from bridgic.core.automa.worker import Worker, WorkerCallback, WorkerCallbackBuilder
 from bridgic.core.automa.interaction import Event, FeedbackSender, Feedback, InteractionException, InteractionFeedback
 from bridgic.core.config import GlobalSetting
+from bridgic.core.utils._console import printer
 
 
 class PostEventCallback(WorkerCallback):
@@ -371,7 +372,7 @@ class AutomaSuppressValueErrorCallback(WorkerCallback):
 def graph_with_running_options():
     class MyGraph(GraphAutoma):
         @worker(is_start=True)
-        async def worker_0(self, user_input: int) -> int:
+        def worker_0(self, user_input: int) -> int:
             return user_input + 1
 
         @worker(dependencies=["worker_0"], is_output=True)
@@ -606,6 +607,185 @@ async def test_on_worker_error_no_mathed_callbacks(graph_with_multiple_callbacks
     with pytest.raises(RuntimeError, match="Test RuntimeError - not in Union"):
         await graph_with_multiple_callbacks_runtime_error.arun(user_input=1)
 
+
 # - - - - - - - - - - - - - - - -
-# test case: callback on_worker_error with inheritance relationship
+# Test case: nested automa callback propagation with delayed worker addition
 # - - - - - - - - - - - - - - - -
+class TopLevelCallback(WorkerCallback):
+    """Callback for top-level automa"""
+    async def on_worker_start(
+        self,
+        key: str,
+        is_top_level: bool = False,
+        parent: Optional[GraphAutoma] = None,
+        arguments: Dict[str, Any] = None,
+    ) -> None:
+        print(f"[TopLevel] on_worker_start: {key}")
+
+    async def on_worker_end(
+        self,
+        key: str,
+        is_top_level: bool = False,
+        parent: Optional[GraphAutoma] = None,
+        arguments: Dict[str, Any] = None,
+        result: Any = None,
+    ) -> None:
+        print(f"[TopLevel] on_worker_end: {key}, result={result}")
+
+
+class MiddleLevelCallback(WorkerCallback):
+    """Callback for middle-level automa"""
+    async def on_worker_start(
+        self,
+        key: str,
+        is_top_level: bool = False,
+        parent: Optional[GraphAutoma] = None,
+        arguments: Dict[str, Any] = None,
+    ) -> None:
+        print(f"[MiddleLevel] on_worker_start: {key}")
+
+    async def on_worker_end(
+        self,
+        key: str,
+        is_top_level: bool = False,
+        parent: Optional[GraphAutoma] = None,
+        arguments: Dict[str, Any] = None,
+        result: Any = None,
+    ) -> None:
+        print(f"[MiddleLevel] on_worker_end: {key}, result={result}")
+
+
+class InnerLevelCallback(WorkerCallback):
+    """Callback for inner-level automa"""
+    async def on_worker_start(
+        self,
+        key: str,
+        is_top_level: bool = False,
+        parent: Optional[GraphAutoma] = None,
+        arguments: Dict[str, Any] = None,
+    ) -> None:
+        print(f"[InnerLevel] on_worker_start: {key}")
+
+    async def on_worker_end(
+        self,
+        key: str,
+        is_top_level: bool = False,
+        parent: Optional[GraphAutoma] = None,
+        arguments: Dict[str, Any] = None,
+        result: Any = None,
+    ) -> None:
+        print(f"[InnerLevel] on_worker_end: {key}, result={result}")
+
+
+@pytest.fixture
+def nested_automa_with_delayed_addition():
+    """Test nested automa with delayed worker addition"""
+    
+    class InnerAutoma(GraphAutoma):
+        @worker(is_start=True)
+        async def inner_start(self, x: int) -> int:
+            # Dynamically add a worker during execution
+            self.add_func_as_worker(
+                key="inner_dynamic",
+                func=self.inner_dynamic_func,
+                dependencies=["inner_start"],
+                is_output=True,
+            )
+            return x + 1
+
+        async def inner_dynamic_func(self, x: int) -> int:
+            return x + 2
+
+    class MiddleAutoma(GraphAutoma):
+        @worker(is_start=True)
+        async def middle_start(self, x: int) -> int:
+            return x + 10
+
+    class TopAutoma(GraphAutoma):
+        @worker(is_start=True)
+        async def top_start(self, x: int) -> int:
+            return x + 100
+
+    inner_automa = InnerAutoma(
+        running_options=RunningOptions(
+            callback_builders=[WorkerCallbackBuilder(InnerLevelCallback)]
+        )
+    )
+
+    middle_automa = MiddleAutoma(
+        running_options=RunningOptions(
+            callback_builders=[WorkerCallbackBuilder(MiddleLevelCallback)]
+        )
+    )
+
+    top_automa = TopAutoma(
+        name="top_automa_instance",
+        running_options=RunningOptions(
+            callback_builders=[WorkerCallbackBuilder(TopLevelCallback)]
+        )
+    )
+    top_automa.add_worker(
+        key="middle_automa",
+        worker=middle_automa,
+        dependencies=["top_start"],
+        is_output=True,
+    )
+    middle_automa.add_worker(
+        key="inner_automa",
+        worker=inner_automa,
+        dependencies=["middle_start"],
+        is_output=True,
+    )
+
+    return top_automa
+
+
+@pytest.mark.asyncio
+async def test_nested_automa_delayed_worker_addition(nested_automa_with_delayed_addition: GraphAutoma, capsys):
+    """Test that callbacks are propagated to dynamically added workers in nested automa"""
+    result = await nested_automa_with_delayed_addition.arun(x=1)
+    assert result == 114  # 1 + 100 + 10 + 1 + 2 = 114
+
+    captured = capsys.readouterr()
+    output = captured.out
+
+    assert "[TopLevel] on_worker_start: top_automa_instance" in output
+    assert "[TopLevel] on_worker_end: top_automa_instance" in output
+
+    assert "[TopLevel] on_worker_start: top_start" in output
+    assert "[TopLevel] on_worker_end: top_start" in output
+
+    assert "[TopLevel] on_worker_start: middle_automa" in output
+    assert "[TopLevel] on_worker_end: middle_automa" in output
+    assert "[MiddleLevel] on_worker_start: middle_automa" in output
+    assert "[MiddleLevel] on_worker_end: middle_automa" in output
+
+    assert "[TopLevel] on_worker_start: middle_start" in output
+    assert "[TopLevel] on_worker_end: middle_start" in output
+    assert "[MiddleLevel] on_worker_start: middle_start" in output
+    assert "[MiddleLevel] on_worker_end: middle_start" in output
+
+    assert "[TopLevel] on_worker_start: inner_automa" in output
+    assert "[TopLevel] on_worker_end: inner_automa" in output
+    assert "[MiddleLevel] on_worker_start: inner_automa" in output
+    assert "[MiddleLevel] on_worker_end: inner_automa" in output
+    assert "[InnerLevel] on_worker_start: inner_automa" in output
+    assert "[InnerLevel] on_worker_end: inner_automa" in output
+
+    assert "[TopLevel] on_worker_start: inner_start" in output
+    assert "[TopLevel] on_worker_end: inner_start" in output
+    assert "[MiddleLevel] on_worker_start: inner_start" in output
+    assert "[MiddleLevel] on_worker_end: inner_start" in output
+    assert "[InnerLevel] on_worker_start: inner_start" in output
+    assert "[InnerLevel] on_worker_end: inner_start" in output
+
+    assert "[TopLevel] on_worker_start: inner_dynamic" in output
+    assert "[TopLevel] on_worker_end: inner_dynamic" in output
+    assert "[MiddleLevel] on_worker_start: inner_dynamic" in output
+    assert "[MiddleLevel] on_worker_end: inner_dynamic" in output
+    assert "[InnerLevel] on_worker_start: inner_dynamic" in output
+    assert "[InnerLevel] on_worker_end: inner_dynamic" in output
+
+    # Verify callback execution order
+    lines = list(filter(lambda line: len(line.strip()) > 0, output.split('\n')))
+    assert len(lines) == 30

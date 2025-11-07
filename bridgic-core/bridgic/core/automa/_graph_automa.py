@@ -480,10 +480,15 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
                 f"duplicate workers with the same key '{key}' are not allowed to be added!"
             )
 
-        # Merge callback builders from three layers: Global -> Automa (RunningOptions) -> Worker
+        # Merge callback builders: Global -> Ancestor Automa(s) -> Current Automa -> Nested Automa (if worker is automa) -> Worker
         effective_callback_builders = []
         effective_callback_builders.extend(GlobalSetting.read().callback_builders)
-        effective_callback_builders.extend(self._running_options.callback_builders)
+        # Collect callback builders from all ancestor automas in the ancestor chain (from top-level to current)
+        effective_callback_builders.extend(self._collect_ancestor_callback_builders())
+        # If the worker itself is an automa, include its own RunningOptions callback builders
+        if isinstance(worker, Automa):
+            effective_callback_builders.extend(worker._running_options.callback_builders)
+        # Include the callback builders from the worker itself.
         effective_callback_builders.extend(callback_builders)
 
         # Note: the dependencies argument must be a new copy of the list, created with list(dependencies).
@@ -517,6 +522,93 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
             if trigger not in self._worker_forwards:
                 self._worker_forwards[trigger] = []
             self._worker_forwards[trigger].append(key)
+
+        # If the added worker is an automa, recursively add callbacks to all nested workers.
+        if new_worker_obj.is_automa():
+            nested_automa = new_worker_obj.get_decorated_worker()
+            if isinstance(nested_automa, GraphAutoma):
+                # Collect callback builders from all ancestor automas in the ancestor chain (from top-level to current)
+                ancestor_callback_builders = self._collect_ancestor_callback_builders()
+                self._propagate_callbacks_to_nested_automa(
+                    nested_automa=nested_automa,
+                    callback_builders=ancestor_callback_builders,
+                )
+
+    def _collect_ancestor_callback_builders(self) -> List[WorkerCallbackBuilder]:
+        """
+        Collect callback builders from all ancestor automas in the ancestor chain.
+        
+        This method traverses up the automa ancestor chain (from current to top-level)
+        to collect all callback builders from ancestor automas' RunningOptions, ensuring 
+        that callbacks from all levels are propagated to nested workers. The current 
+        automa's callbacks are included as the last in the chain.
+        
+        The ancestor chain is the path from the current automa up to the top-level automa
+        through the parent relationship. This method collects callbacks from all automas
+        in this chain, ordered from top-level (first) to current level (last).
+        
+        Returns
+        -------
+        List[WorkerCallbackBuilder]
+            A list of callback builders collected from all ancestor automas in the ancestor
+            chain and the current automa, ordered from top-level (first) to current level (last).
+        """
+        # First, collect all callback builders by traversing up the ancestor chain
+        # (from current to top-level, stored in reverse order)
+        ancestor_callback_builders_reverse = []
+        current: Optional[GraphAutoma] = self
+        
+        # Traverse up the ancestor chain to collect callback builders
+        while current is not None:
+            if isinstance(current, GraphAutoma):
+                ancestor_callback_builders_reverse.append(current._running_options.callback_builders)
+            current = current.parent
+        
+        # Reverse to get order from top-level (first) to current (last)
+        callback_builders = []
+        for builders in reversed(ancestor_callback_builders_reverse):
+            callback_builders.extend(builders)
+        
+        return callback_builders
+
+    def _propagate_callbacks_to_nested_automa(
+        self,
+        nested_automa: "GraphAutoma",
+        callback_builders: List[WorkerCallbackBuilder],
+    ) -> None:
+        """
+        Recursively propagate callback builders to all workers in a nested automa.
+
+        This method ensures that callbacks from all ancestor automas in the ancestor chain
+        are applied to all workers in nested automa instances, including deeply nested ones.
+
+        Parameters
+        ----------
+        nested_automa : GraphAutoma
+            The nested automa instance to propagate callbacks to.
+        callback_builders : List[WorkerCallbackBuilder]
+            The callback builders from all ancestor automas in the ancestor chain 
+            (from top-level to current) to propagate.
+        """
+        for worker_key in nested_automa.all_workers():
+            nested_worker = nested_automa._workers[worker_key]
+
+            # Add callback instances built from all ancestor automas' callback builders in the ancestor chain.
+            new_callbacks = [cb.build() for cb in callback_builders]
+            nested_worker._worker_callbacks += new_callbacks
+
+            # Check if the nested worker is also an automa, and recursively propagate.
+            if nested_worker.is_automa():
+                deeper_nested_automa = nested_worker.get_decorated_worker()
+                if isinstance(deeper_nested_automa, GraphAutoma):
+                    # Recursively propagate to deeper nested automas.
+                    # Include current nested automa's callbacks in the propagation chain,
+                    # so that deeper nested workers get callbacks from all ancestor automas.
+                    all_callback_builders = nested_automa._running_options.callback_builders + callback_builders
+                    self._propagate_callbacks_to_nested_automa(
+                        nested_automa=deeper_nested_automa,
+                        callback_builders=all_callback_builders,
+                    )
 
     def _remove_worker_incrementally(
         self,
