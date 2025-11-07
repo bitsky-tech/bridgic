@@ -315,7 +315,7 @@ def graph_with_global_setting():
     return MyGraph()
 
 @pytest.mark.asyncio
-async def test_global_setting_callback_builders(graph_with_global_setting: GraphAutoma, capsys):
+async def test_global_setting_callback(graph_with_global_setting: GraphAutoma, capsys):
     result = await graph_with_global_setting.arun(user_input=1)
     assert result == 3
 
@@ -342,6 +342,30 @@ class AutomaCallback(WorkerCallback):
     ) -> None:
         print(f"automa callback for {key}")
 
+class AutomaObserveValueErrorCallback(WorkerCallback):
+    async def on_worker_error(
+        self, 
+        key: str,
+        is_top_level: bool = False,
+        parent: Optional[GraphAutoma] = None,
+        arguments: Dict[str, Any] = None,
+        error: ValueError = None,
+    ) -> bool:
+        print(f"automa callback for {key} to observe value error: {str(error)}")
+        return False
+
+class AutomaSuppressValueErrorCallback(WorkerCallback):
+    async def on_worker_error(
+        self, 
+        key: str,
+        is_top_level: bool = False,
+        parent: Optional[GraphAutoma] = None,
+        arguments: Dict[str, Any] = None,
+        error: ValueError = None,
+    ) -> bool:
+        print(f"automa callback for {key} to suppress value error: {str(error)}")
+        return True
+
 
 @pytest.fixture
 def graph_with_running_options():
@@ -358,7 +382,7 @@ def graph_with_running_options():
     return MyGraph(running_options=running_options)
 
 @pytest.mark.asyncio
-async def test_running_options_callback_builders(graph_with_running_options: GraphAutoma, capsys):
+async def test_running_options_callback(graph_with_running_options: GraphAutoma, capsys):
     result = await graph_with_running_options.arun(user_input=1)
     assert result == 3
 
@@ -368,6 +392,51 @@ async def test_running_options_callback_builders(graph_with_running_options: Gra
     assert "automa callback for worker_0" in output
     assert "automa callback for worker_1" in output
 
+@pytest.fixture
+def graph_with_running_options_with_observed_value_error():
+    class MyGraph(GraphAutoma):
+        @worker(is_start=True)
+        async def worker_0(self, user_input: int) -> int:
+            return user_input + 1
+
+        @worker(dependencies=["worker_0"], is_output=True)
+        async def worker_1(self, x: int) -> int:
+            raise ValueError("Test ValueError")
+
+    running_options = RunningOptions(callback_builders=[WorkerCallbackBuilder(AutomaObserveValueErrorCallback)])
+    return MyGraph(running_options=running_options)
+
+@pytest.mark.asyncio
+async def test_running_options_callback_with_error_observed(graph_with_running_options_with_observed_value_error: GraphAutoma, capsys):
+    with pytest.raises(ValueError, match="Test ValueError"):
+        await graph_with_running_options_with_observed_value_error.arun(user_input=1)
+
+    captured = capsys.readouterr()
+    output = captured.out
+    assert "automa callback for worker_1 to observe value error: Test ValueError" in output
+
+@pytest.fixture
+def graph_with_running_options_with_value_error():
+    class MyGraph(GraphAutoma):
+        @worker(is_start=True)
+        async def worker_0(self, user_input: int) -> int:
+            return user_input + 1
+
+        @worker(dependencies=["worker_0"], is_output=True)
+        async def worker_1(self, x: int) -> int:
+            raise ValueError("Test ValueError")
+
+    running_options = RunningOptions(callback_builders=[WorkerCallbackBuilder(AutomaSuppressValueErrorCallback)])
+    return MyGraph(running_options=running_options)
+
+@pytest.mark.asyncio
+async def test_running_options_callback_with_error_suppressed(graph_with_running_options_with_value_error: GraphAutoma, capsys):
+    result = await graph_with_running_options_with_value_error.arun(user_input=1)
+    assert result == None
+
+    captured = capsys.readouterr()
+    output = captured.out
+    assert "automa callback for worker_1 to suppress value error: Test ValueError" in output
 
 @pytest.fixture
 def graph_with_all_three_layers():

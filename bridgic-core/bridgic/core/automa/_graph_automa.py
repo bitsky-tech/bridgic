@@ -400,7 +400,6 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
         # -- Automa input buffer.
         self._input_buffer = _AutomaInputBuffer()
 
-
         ###############################################################################
         # Initialization of [Part Two: Task-Related Runtime States] ####### End #######
         ###############################################################################
@@ -519,9 +518,6 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
                 self._worker_forwards[trigger] = []
             self._worker_forwards[trigger].append(key)
 
-        # TODO : Validation may be needed in appropriate time later, because we are not able to guarantee 
-        # the existence of the trigger-workers in self._workers of the final automa graph after dynamically changing.
-
     def _remove_worker_incrementally(
         self,
         key: str
@@ -618,7 +614,7 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
                     f"arun of Worker must be an async method, "
                     f"but got {type(worker_obj.arun)} for worker '{key}'"
                 )
-            
+
             if not isinstance(dependencies, list):
                 raise TypeError(
                     f"dependencies must be a list, "
@@ -629,7 +625,7 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
                     f"dependencies must be a List of str, "
                     f"but got {dependencies} for worker {key}"
                 )
-            
+
             if args_mapping_rule not in ArgsMappingRule:
                 raise ValueError(
                     f"args_mapping_rule must be one of the following: {[e for e in ArgsMappingRule]}, "
@@ -681,7 +677,7 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
         """
         if not isinstance(func, MethodType) and key in self._registered_worker_funcs:
             func = MethodType(func, self)
-        
+
         # Validate: if func is a method, its bounded __self__ must be self when add_func_as_worker() is called.
         if hasattr(func, "__self__") and func.__self__ is not self:
             raise AutomaRuntimeError(
@@ -851,7 +847,7 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
             )
 
         return wrapper
-    
+
     def remove_worker(self, key: str) -> None:
         """
         Remove a worker from the Automa. This method can be called at any time to remove a worker from the Automa.
@@ -1014,7 +1010,7 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
         # Note: ferry_to() may be called in a new thread.
         # But _ferry_deferred_tasks is not necessary to be thread-safe due to Visibility Guarantees of the Bridgic Concurrency Model.
         self._ferry_deferred_tasks.append(deferred_task)
-    
+
     def _clean_all_worker_local_space(self):
         """
         Clean the local space of all workers.
@@ -1142,6 +1138,14 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
         if self.thread_pool is None:
             self.thread_pool = ThreadPoolExecutor(thread_name_prefix="bridgic-thread")
 
+        if not self._automa_running:
+            # Here is the last chance to compile and check the DDG in the end of the [Initialization Phase] (phase 1 just before the first DS).
+            self._compile_graph_and_detect_risks()
+            self._automa_running = True
+
+        # An Automa needs to be re-run with _current_kickoff_workers reinitialized.
+        _reinit_current_kickoff_workers_if_needed()
+
         is_top_level = self.is_top_level()
 
         # If this is the top-level automa, execute its callbacks separately.
@@ -1156,16 +1160,13 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
                     key=self.name,
                     is_top_level=True,
                     parent=None,
-                    arguments={"args": args, "kwargs": kwargs},
+                    arguments={
+                        "args": self._input_buffer.args,
+                        "kwargs": self._input_buffer.kwargs,
+                        "interaction_feedback": interaction_feedback,
+                        "interaction_feedbacks": interaction_feedbacks,
+                    },
                 )
-
-        if not self._automa_running:
-            # Here is the last chance to compile and check the DDG in the end of the [Initialization Phase] (phase 1 just before the first DS).
-            self._compile_graph_and_detect_risks()
-            self._automa_running = True
-
-        # An Automa needs to be re-run with _current_kickoff_workers reinitialized.
-        _reinit_current_kickoff_workers_if_needed()
 
         rx_feedbacks = _check_and_normalize_interaction_params(interaction_feedback, interaction_feedbacks)
         if rx_feedbacks:
@@ -1266,17 +1267,20 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
                     # The same exception will be raised again in the following task.result().
                     # Note: A Task is done when the wrapped coroutine either returned a value, raised an exception, or the Task was cancelled.
                     # Refer to: https://docs.python.org/3/library/asyncio-task.html#task-object
-            
+
             # Process graph topology change deferred tasks triggered by add_worker() and remove_worker().
             _execute_topology_change_deferred_tasks(self._topology_change_deferred_tasks)
 
-            # Perform post-task follow-up operations.
+            # Handle exceptions raised by all running tasks.
             interaction_exceptions: List[_InteractionEventException] = []
+            non_interaction_exceptions: List[Exception] = []
+
             for task in self._running_tasks:
-                # task.task.result must be called here! It will raise an exception if task failed.
                 try:
+                    # It will raise an exception if task failed.
                     task_result = task.task.result()
                     _set_worker_run_finished(task.worker_key)
+
                     if task.worker_key in self._workers:
                         # The current running worker may be removed.
                         worker_obj = self._workers[task.worker_key]
@@ -1292,23 +1296,25 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
                             del self._worker_interaction_indices[task.worker_key]
                         if task.worker_key in self._ongoing_interactions:
                             del self._ongoing_interactions[task.worker_key]
-
-                except _InteractionEventException as e:
-                    interaction_exceptions.append(e)
-                    if task.worker_key in self._workers and not self._workers[task.worker_key].is_automa():
-                        if task.worker_key not in self._ongoing_interactions:
-                            self._ongoing_interactions[task.worker_key] = []
-                        interaction=e.args[0]
-                        # Make sure the interaction_id is unique for each human interaction.
-                        found = False
-                        for iaf in self._ongoing_interactions[task.worker_key]:
-                            if iaf.interaction.interaction_id == interaction.interaction_id:
-                                found = True
-                                break
-                        if not found:
-                            self._ongoing_interactions[task.worker_key].append(_InteractionAndFeedback(
-                                interaction=interaction,
-                            ))
+                except Exception as e:
+                    if isinstance(e, _InteractionEventException):
+                        interaction_exceptions.append(e)
+                        if task.worker_key in self._workers and not self._workers[task.worker_key].is_automa():
+                            if task.worker_key not in self._ongoing_interactions:
+                                self._ongoing_interactions[task.worker_key] = []
+                            interaction=e.args[0]
+                            # Make sure the interaction_id is unique for each human interaction.
+                            found = False
+                            for iaf in self._ongoing_interactions[task.worker_key]:
+                                if iaf.interaction.interaction_id == interaction.interaction_id:
+                                    found = True
+                                    break
+                            if not found:
+                                self._ongoing_interactions[task.worker_key].append(_InteractionAndFeedback(
+                                    interaction=interaction,
+                                ))
+                    else:
+                        non_interaction_exceptions.append(e)
 
             if len(self._topology_change_deferred_tasks) > 0:
                 # Graph topology validation and risk detection. Only needed when topology changes.
@@ -1321,7 +1327,31 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
 
             # TODO: Ferry-related risk detection may be added here...
 
-            # Just after post-task operations (several deferred tasks) and before finding next kickoff workers, collect and process the interaction exceptions.
+            # Handle exceptions with callbacks at the top-level automa before re-raising them.
+            if is_top_level:
+                # Collect callbacks from GlobalSetting and RunningOptions for top-level automa
+                effective_builders = []
+                effective_builders.extend(GlobalSetting.read().callback_builders)
+                effective_builders.extend(self._running_options.callback_builders)
+                automa_callbacks = [cb.build() for cb in effective_builders]
+
+                # Process interaction exceptions with callbacks (they cannot be suppressed, but callbacks can observe them)
+                for e in interaction_exceptions + non_interaction_exceptions:
+                    await try_handle_error_with_callbacks(
+                        callbacks=automa_callbacks,
+                        key=self.name,
+                        is_top_level=True,
+                        parent=None,
+                        arguments={
+                            "args": self._input_buffer.args,
+                            "kwargs": self._input_buffer.kwargs,
+                            "interaction_feedback": interaction_feedback,
+                            "interaction_feedbacks": interaction_feedbacks,
+                        },
+                        error=e,
+                    )
+
+            # For inner interaction exceptions, collect them and throw an InteractionException as a whole.
             if len(interaction_exceptions) > 0:
                 all_interactions: List[Interaction] = [interaction for e in interaction_exceptions for interaction in e.args]
                 if self.parent is None:
@@ -1338,6 +1368,10 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
                 else:
                     # Continue raise exception to the upper level Automa.
                     raise _InteractionEventException(*all_interactions)
+
+            # For non-interaction exceptions, immediately raise the first one directly, since none of them are meant to be suppressed.
+            if len(non_interaction_exceptions) > 0:
+                raise non_interaction_exceptions[0]
 
             # Find next kickoff workers and rebuild _current_kickoff_workers
             run_finished_worker_keys: List[str] = [kickoff_info.worker_key for kickoff_info in self._current_kickoff_workers if kickoff_info.run_finished]
