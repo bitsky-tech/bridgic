@@ -148,7 +148,7 @@ def feedback_yes(request):
 @pytest.mark.asyncio
 async def test_adder_automa_deserialized_resume(feedback_yes, adder_automa_deserialized, request, db_base_path):
     result = await adder_automa_deserialized.arun(
-        interaction_feedback=feedback_yes
+        feedback_data=feedback_yes
     )
     assert result == 6 + 200 + 2
 

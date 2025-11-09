@@ -232,7 +232,7 @@ def interaction_feedback_yes(request):
 @pytest.mark.asyncio
 async def test_graph_interact_with_human_with_callbacks_deserialized(interaction_feedback_yes, deserialized_graph_interact_with_human_with_callbacks):
     result = await deserialized_graph_interact_with_human_with_callbacks.arun(
-        interaction_feedback=interaction_feedback_yes
+        feedback_data=interaction_feedback_yes
     )
     assert result == 3
 

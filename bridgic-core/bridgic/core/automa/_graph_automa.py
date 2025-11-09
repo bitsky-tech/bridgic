@@ -1113,8 +1113,7 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
     async def arun(
         self, 
         *args: Tuple[Any, ...],
-        interaction_feedback: Optional[InteractionFeedback] = None,
-        interaction_feedbacks: Optional[List[InteractionFeedback]] = None,
+        feedback_data: Optional[Union[InteractionFeedback, List[InteractionFeedback]]] = None,
         **kwargs: Dict[str, Any]
     ) -> Any:
         """
@@ -1123,18 +1122,12 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
         Parameters
         ----------
         args : optional
-            Positional arguments to be passed.
-
-        interaction_feedback : Optional[InteractionFeedback]
-            Feedback that is received from a human interaction. Only one of interaction_feedback or 
-            interaction_feedbacks should be provided at a time.
-
-        interaction_feedbacks : Optional[List[InteractionFeedback]]
-            Feedbacks that are received from multiple interactions occurred simultaneously before the Automa 
-            was paused. Only one of interaction_feedback or interaction_feedbacks should be provided at a time.
-
+            Positional arguments.
+        feedback_data : Optional[Union[InteractionFeedback, List[InteractionFeedback]]]
+            Feedbacks that are received from one or multiple human interactions occurred before the Automa 
+            was paused. This argument may be of type `InteractionFeedback` or `List[InteractionFeedback]`. If only one interaction occurred, `feedback_data` should be of type `InteractionFeedback`. If multiple interactions occurred simultaneously, `feedback_data` should be of type `List[InteractionFeedback]`.
         kwargs : optional
-            Keyword arguments to be passed.
+            Keyword arguments which may be further propagated to contained workers.
 
         Returns
         -------
@@ -1188,9 +1181,17 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
                     break
 
         def _check_and_normalize_interaction_params(
+            feedback_data: Optional[Union[InteractionFeedback, List[InteractionFeedback]]] = None,
             interaction_feedback: Optional[InteractionFeedback] = None,
             interaction_feedbacks: Optional[List[InteractionFeedback]] = None,
         ):
+            if feedback_data:
+                if isinstance(feedback_data, list):
+                    rx_feedbacks = feedback_data
+                else:
+                    rx_feedbacks = [feedback_data]
+                return rx_feedbacks
+            # For backward compatibility with old parameter names. To be removed in the future.
             if interaction_feedback and interaction_feedbacks:
                 raise AutomaRuntimeError(
                     f"Only one of interaction_feedback or interaction_feedbacks can be used. "
@@ -1255,12 +1256,14 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
                     arguments={
                         "args": self._input_buffer.args,
                         "kwargs": self._input_buffer.kwargs,
-                        "interaction_feedback": interaction_feedback,
-                        "interaction_feedbacks": interaction_feedbacks,
+                        "feedback_data": feedback_data,
                     },
                 )
 
-        rx_feedbacks = _check_and_normalize_interaction_params(interaction_feedback, interaction_feedbacks)
+        # For backward compatibility with old parameter names. To be removed in the future.
+        interaction_feedback = kwargs.get("interaction_feedback")
+        interaction_feedbacks = kwargs.get("interaction_feedbacks")
+        rx_feedbacks = _check_and_normalize_interaction_params(feedback_data, interaction_feedback, interaction_feedbacks)
         if rx_feedbacks:
             rx_feedbacks = _match_ongoing_interaction_and_feedbacks(rx_feedbacks)
 
@@ -1331,7 +1334,7 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
                 if worker_obj.is_automa():
                     coro = worker_obj.arun(
                         *next_args, 
-                        interaction_feedbacks=rx_feedbacks, 
+                        feedback_data=rx_feedbacks, 
                         **next_kwargs
                     )
                 else:
@@ -1437,8 +1440,7 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
                         arguments={
                             "args": self._input_buffer.args,
                             "kwargs": self._input_buffer.kwargs,
-                            "interaction_feedback": interaction_feedback,
-                            "interaction_feedbacks": interaction_feedbacks,
+                            "feedback_data": feedback_data,
                         },
                         error=e,
                     )

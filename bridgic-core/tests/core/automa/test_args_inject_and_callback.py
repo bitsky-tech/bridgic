@@ -345,7 +345,7 @@ async def test_automa_deserialization_with_from(
     deserialized_automa_serialization_with_from: GraphAutoma
 ):
     result = await deserialized_automa_serialization_with_from.arun(
-        interaction_feedback=interaction_feedback_1_yes
+        feedback_data=interaction_feedback_1_yes
     )
     assert result == 405
 

@@ -521,7 +521,7 @@ async def test_flow_5_interact_2(flow_5_deserialized_first, db_base_path, reques
 
     with pytest.raises(InteractionException) as excinfo:
         result = await flow_5_deserialized_first.arun(
-            interaction_feedback=feedback
+            feedback_data=feedback
         )
     e = excinfo.value
     assert_and_persist_one_interaction(e, "add_func_2", db_base_path, request)
@@ -542,7 +542,7 @@ async def test_flow_5_interact_3(flow_5_deserialized_second, db_base_path, reque
 
     with pytest.raises(InteractionException) as excinfo:
         result = await flow_5_deserialized_second.arun(
-            interaction_feedback=feedback
+            feedback_data=feedback
         )
     e = excinfo.value
     assert_and_persist_one_interaction(e, "add_func_3", db_base_path, request)
@@ -563,7 +563,7 @@ async def test_flow_5_interact_4(flow_5_deserialized_third, db_base_path, reques
 
     with pytest.raises(InteractionException) as excinfo:
         result = await flow_5_deserialized_third.arun(
-            interaction_feedback=feedback
+            feedback_data=feedback
         )
     e = excinfo.value
     assert_and_persist_one_interaction(e, "add_func_4", db_base_path, request)
@@ -583,7 +583,7 @@ async def test_flow_5_interact_5(flow_5_deserialized_fourth, db_base_path, reque
     )
 
     result = await flow_5_deserialized_fourth.arun(
-        interaction_feedback=feedback
+        feedback_data=feedback
     )
     assert result == 8 + 1 + 2 + 3 + 4
 
