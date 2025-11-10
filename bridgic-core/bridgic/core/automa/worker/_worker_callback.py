@@ -177,12 +177,18 @@ class WorkerCallbackBuilder(Generic[T_WorkerCallback]):
     directly. Instead, the framework calls the `build` method automatically to create 
     its own `WorkerCallback` instance for each worker instance.
 
+    Notes
+    -----
     **Register a Callback in Different Scope**
+
+    There are three ways to register a callback for three levels of customization:
 
     - Case 1: Use in worker decorator to register the callback for a specific worker.
     - Case 2: Use in RunningOptions to register the callback for a specific Automa instance.
     - Case 3: Use in GlobalSetting to register the callback for all workers.
 
+    Notes
+    -----
     **Shared Instance Mode**
 
     - When `is_shared=True` (default), all workers within the same scope will share the same 
