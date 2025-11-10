@@ -1,5 +1,7 @@
 import pytest
 import uuid
+import asyncio
+import re
 
 from typing import List, Tuple, Dict, Any, Union, Optional
 from contextvars import ContextVar
@@ -764,7 +766,7 @@ async def test_nested_automa_delayed_worker_addition(nested_automa_with_delayed_
 
     captured = capsys.readouterr()
     output = captured.out
-    printer.print(f"\n\n{output}")
+    # printer.print(f"\n\n{output}")
 
     assert "[TopLevel] on_worker_start: top_automa_instance" in output
     assert "[TopLevel] on_worker_end: top_automa_instance" in output
@@ -806,3 +808,108 @@ async def test_nested_automa_delayed_worker_addition(nested_automa_with_delayed_
     # Verify callback execution order
     lines = list(filter(lambda line: len(line.strip()) > 0, output.split('\n')))
     assert len(lines) == 30
+
+
+# - - - - - - - - - - - - - - - -
+# Test case: context isolation when using callbacks
+# - - - - - - - - - - - - - - - -
+@pytest.fixture
+def simple_automa_1_with_context_callback():
+    """Create a simple automa with TopLevelCallback that uses ContextVar"""
+    class SimpleAutoma(GraphAutoma):
+        @worker(is_start=True, is_output=True)
+        async def worker_1(self, x: int) -> int:
+            return x + 1
+    
+    automa = SimpleAutoma(
+        name="simple_automa_1",
+        running_options=RunningOptions(
+            callback_builders=[WorkerCallbackBuilder(TopLevelCallback)]
+        )
+    )
+    
+    return automa
+
+@pytest.fixture
+def simple_automa_2_with_context_callback():
+    """Create a simple automa with TopLevelCallback that uses ContextVar"""
+    class SimpleAutoma(GraphAutoma):
+        @worker(is_start=True, is_output=True)
+        async def worker_1(self, x: int) -> int:
+            return x + 1
+
+    automa = SimpleAutoma(
+        name="simple_automa_2",
+        running_options=RunningOptions(
+            callback_builders=[WorkerCallbackBuilder(TopLevelCallback)]
+        )
+    )
+
+    return automa
+
+
+@pytest.mark.asyncio
+async def test_context_isolation(
+    simple_automa_1_with_context_callback: GraphAutoma,
+    simple_automa_2_with_context_callback: GraphAutoma,
+    capsys,
+):
+    """
+    Test that ContextVar values are isolated between concurrent arun() calls.
+    
+    This test verifies that when multiple automa instances (or the same instance) 
+    are run concurrently, the ContextVar values (like trace_id) are properly isolated, 
+    ensuring that each arun() call gets its own context copy even when executed in parallel.
+    """
+    automa_1 = simple_automa_1_with_context_callback
+    automa_2 = simple_automa_2_with_context_callback
+    
+    # Collect all trace_ids from multiple iterations
+    all_trace_ids = []
+    
+    # Run 3 iterations, each with two concurrent arun() calls
+    # This tests Context isolation across multiple concurrent executions
+    for iteration in range(3):
+        # Run two arun() calls concurrently on different automa instances
+        results = await asyncio.gather(
+            automa_1.arun(x=1),
+            automa_2.arun(x=1),
+        )
+        
+        # Verify all results are correct
+        assert results == [2, 2]
+        
+        # Capture output for this iteration
+        captured = capsys.readouterr()
+        output = captured.out
+        
+        # Extract trace_ids from top-level automa callbacks only
+        automa_1_pattern = r'on_worker_start: simple_automa_1.*?root-([a-f0-9]{8})'
+        automa_2_pattern = r'on_worker_start: simple_automa_2.*?root-([a-f0-9]{8})'
+        
+        automa_1_match = re.search(automa_1_pattern, output)
+        automa_2_match = re.search(automa_2_pattern, output)
+        
+        assert automa_1_match is not None, f"Could not find trace_id for automa_1 in iteration {iteration + 1}. Output: {output}"
+        assert automa_2_match is not None, f"Could not find trace_id for automa_2 in iteration {iteration + 1}. Output: {output}"
+        
+        trace_id_1 = automa_1_match.group(1)
+        trace_id_2 = automa_2_match.group(1)
+        
+        # Verify the two trace_ids are different within the same iteration
+        assert trace_id_1 != trace_id_2, (
+            f"Trace IDs should be different for concurrent execution in iteration {iteration + 1}. "
+            f"Got trace_id_1={trace_id_1}, trace_id_2={trace_id_2}"
+        )
+        
+        # Collect trace_ids
+        all_trace_ids.append(trace_id_1)
+        all_trace_ids.append(trace_id_2)
+    
+    # Verify all trace_ids are unique (Context isolation across all executions)
+    unique_trace_ids = set(all_trace_ids)
+    assert len(unique_trace_ids) == 6, (
+        f"All trace_ids should be unique across all iterations. "
+        f"Got {len(unique_trace_ids)} unique values out of {len(all_trace_ids)} total. "
+        f"Trace IDs: {all_trace_ids}"
+    )
