@@ -1,11 +1,13 @@
 import pytest
+import uuid
 
 from typing import List, Tuple, Dict, Any, Union, Optional
+from contextvars import ContextVar
 from bridgic.core.automa import GraphAutoma, worker, Snapshot, RunningOptions
 from bridgic.core.automa.worker import Worker, WorkerCallback, WorkerCallbackBuilder
 from bridgic.core.automa.interaction import Event, FeedbackSender, Feedback, InteractionException, InteractionFeedback
 from bridgic.core.config import GlobalSetting
-from bridgic.core.utils._console import printer
+from bridgic.core.utils._console import printer, colored
 
 
 class PostEventCallback(WorkerCallback):
@@ -620,7 +622,22 @@ class TopLevelCallback(WorkerCallback):
         parent: Optional[GraphAutoma] = None,
         arguments: Dict[str, Any] = None,
     ) -> None:
-        print(f"[TopLevel] on_worker_start: {key}")
+        if is_top_level:
+            self.trace_id = ContextVar("trace_id")
+            self.trace_id.set(f"root-{uuid.uuid4().hex[:8]}")
+            self.span_id = ContextVar("span_id")
+            self.span_id.set(f"span-{key}")
+            parent_span_id = None
+        else:
+            parent_span_id = self.span_id.get()
+            self.span_id.set(f"span-{key}")
+
+        printer.print(
+            f"[TopLevel] on_worker_start: {key}, "
+            f"trace_id={colored(self.trace_id.get(), 'red')}, "
+            f"parent_span_id={colored(parent_span_id, 'blue')}, "
+            f"span_id={colored(self.span_id.get(), 'yellow')}"
+        )
 
     async def on_worker_end(
         self,
@@ -630,8 +647,7 @@ class TopLevelCallback(WorkerCallback):
         arguments: Dict[str, Any] = None,
         result: Any = None,
     ) -> None:
-        print(f"[TopLevel] on_worker_end: {key}, result={result}")
-
+        printer.print(f"[TopLevel] on_worker_end: {key}, result={result}")
 
 class MiddleLevelCallback(WorkerCallback):
     """Callback for middle-level automa"""
@@ -642,7 +658,7 @@ class MiddleLevelCallback(WorkerCallback):
         parent: Optional[GraphAutoma] = None,
         arguments: Dict[str, Any] = None,
     ) -> None:
-        print(f"[MiddleLevel] on_worker_start: {key}")
+        printer.print(f"[MiddleLevel] on_worker_start: {key}")
 
     async def on_worker_end(
         self,
@@ -652,7 +668,7 @@ class MiddleLevelCallback(WorkerCallback):
         arguments: Dict[str, Any] = None,
         result: Any = None,
     ) -> None:
-        print(f"[MiddleLevel] on_worker_end: {key}, result={result}")
+        printer.print(f"[MiddleLevel] on_worker_end: {key}, result={result}")
 
 
 class InnerLevelCallback(WorkerCallback):
@@ -664,7 +680,7 @@ class InnerLevelCallback(WorkerCallback):
         parent: Optional[GraphAutoma] = None,
         arguments: Dict[str, Any] = None,
     ) -> None:
-        print(f"[InnerLevel] on_worker_start: {key}")
+        printer.print(f"[InnerLevel] on_worker_start: {key}")
 
     async def on_worker_end(
         self,
@@ -674,7 +690,7 @@ class InnerLevelCallback(WorkerCallback):
         arguments: Dict[str, Any] = None,
         result: Any = None,
     ) -> None:
-        print(f"[InnerLevel] on_worker_end: {key}, result={result}")
+        printer.print(f"[InnerLevel] on_worker_end: {key}, result={result}")
 
 
 @pytest.fixture
@@ -748,6 +764,7 @@ async def test_nested_automa_delayed_worker_addition(nested_automa_with_delayed_
 
     captured = capsys.readouterr()
     output = captured.out
+    printer.print(f"\n\n{output}")
 
     assert "[TopLevel] on_worker_start: top_automa_instance" in output
     assert "[TopLevel] on_worker_end: top_automa_instance" in output
