@@ -534,43 +534,6 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
                     callback_builders=ancestor_callback_builders,
                 )
 
-    def _collect_ancestor_callback_builders(self) -> List[WorkerCallbackBuilder]:
-        """
-        Collect callback builders from all ancestor automas in the ancestor chain.
-        
-        This method traverses up the automa ancestor chain (from current to top-level)
-        to collect all callback builders from ancestor automas' RunningOptions, ensuring 
-        that callbacks from all levels are propagated to nested workers. The current 
-        automa's callbacks are included as the last in the chain.
-        
-        The ancestor chain is the path from the current automa up to the top-level automa
-        through the parent relationship. This method collects callbacks from all automas
-        in this chain, ordered from top-level (first) to current level (last).
-        
-        Returns
-        -------
-        List[WorkerCallbackBuilder]
-            A list of callback builders collected from all ancestor automas in the ancestor
-            chain and the current automa, ordered from top-level (first) to current level (last).
-        """
-        # First, collect all callback builders by traversing up the ancestor chain
-        # (from current to top-level, stored in reverse order)
-        ancestor_callback_builders_reverse = []
-        current: Optional[GraphAutoma] = self
-        
-        # Traverse up the ancestor chain to collect callback builders
-        while current is not None:
-            if isinstance(current, GraphAutoma):
-                ancestor_callback_builders_reverse.append(current._running_options.callback_builders)
-            current = current.parent
-        
-        # Reverse to get order from top-level (first) to current (last)
-        callback_builders = []
-        for builders in reversed(ancestor_callback_builders_reverse):
-            callback_builders.extend(builders)
-        
-        return callback_builders
-
     def _propagate_callbacks_to_nested_automa(
         self,
         nested_automa: "GraphAutoma",

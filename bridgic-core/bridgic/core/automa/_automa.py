@@ -34,7 +34,7 @@ class RunningOptions(BaseModel):
     """Whether to enable debug mode. Can be set at runtime via set_running_options()."""
 
     callback_builders: List[WorkerCallbackBuilder] = []
-    """Callback builders at the Automa instance level. These will be merged with global callback builders."""
+    """A list of callback builders specific to this Automa instance."""
 
     model_config = {"arbitrary_types_allowed": True}
 
@@ -245,6 +245,43 @@ class Automa(Worker):
             # Here we are at the top-level automa.
             return self._running_options
         return self.parent._get_top_running_options()
+
+    def _collect_ancestor_callback_builders(self) -> List[WorkerCallbackBuilder]:
+        """
+        Collect callback builders from all ancestor automas in the ancestor chain.
+
+        This method traverses up the automa ancestor chain (from current to top-level)
+        to collect all callback builders from ancestor automas' RunningOptions, ensuring
+        that callbacks from all levels are propagated to nested workers. The current
+        automa's callbacks are included as the last in the chain.
+
+        The ancestor chain is the path from the current automa up to the top-level automa
+        through the parent relationship. This method collects callbacks from all automas
+        in this chain, ordered from top-level (first) to current level (last).
+
+        Returns
+        -------
+        List[WorkerCallbackBuilder]
+            A list of callback builders collected from all ancestor automas in the ancestor
+            chain and the current automa, ordered from top-level (first) to current level (last).
+        """
+        # First, collect all callback builders by traversing up the ancestor chain
+        # (from current to top-level, stored in reverse order)
+        ancestor_callback_builders_reverse = []
+        current: Optional[Automa] = self
+
+        # Traverse up the ancestor chain to collect callback builders
+        while current is not None:
+            if isinstance(current, Automa):
+                ancestor_callback_builders_reverse.append(current._running_options.callback_builders)
+            current = current.parent
+
+        # Reverse to get order from top-level (first) to current (last)
+        callback_builders = []
+        for builders in reversed(ancestor_callback_builders_reverse):
+            callback_builders.extend(builders)
+
+        return callback_builders
 
     ###############################################################
     ########## [Bridgic Event Handling Mechanism] starts ##########
