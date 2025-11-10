@@ -724,16 +724,16 @@ def nested_automa_with_delayed_addition():
             callback_builders=[WorkerCallbackBuilder(TopLevelCallback)]
         )
     )
-    top_automa.add_worker(
-        key="middle_automa",
-        worker=middle_automa,
-        dependencies=["top_start"],
-        is_output=True,
-    )
     middle_automa.add_worker(
         key="inner_automa",
         worker=inner_automa,
         dependencies=["middle_start"],
+        is_output=True,
+    )
+    top_automa.add_worker(
+        key="middle_automa",
+        worker=middle_automa,
+        dependencies=["top_start"],
         is_output=True,
     )
 

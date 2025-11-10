@@ -15,7 +15,8 @@ from bridgic.core.automa.args import RuntimeContext
 from bridgic.core.utils._msgpackx import load_bytes
 from bridgic.core.utils._inspect_tools import get_param_names_by_kind
 from bridgic.core.types._error import AutomaRuntimeError
-from bridgic.core.automa.worker._worker_callback import WorkerCallbackBuilder
+from bridgic.core.automa.worker._worker_callback import WorkerCallbackBuilder, WorkerCallback
+from bridgic.core.config import GlobalSetting
 
 class RunningOptions(BaseModel):
     """
@@ -84,6 +85,9 @@ class Automa(Worker):
     _thread_pool: ThreadPoolExecutor
     _main_thread_id: int
     _main_loop: asyncio.AbstractEventLoop
+
+    # Cached callbacks for top-level automa execution, which are built once and reused across multiple arun() calls.
+    _cached_callbacks: Optional[List[WorkerCallback]] = None
 
     def __init__(
         self,
@@ -282,6 +286,25 @@ class Automa(Worker):
             callback_builders.extend(builders)
 
         return callback_builders
+
+    def _get_automa_callbacks(self) -> List[WorkerCallback]:
+        """
+        Get or build cached callback instances for top-level automa execution.
+
+        This method ensures that callback instances are built once and reused across
+        multiple arun() calls, respecting the is_shared setting of each builder.
+
+        Returns
+        -------
+        List[WorkerCallback]
+            List of callback instances for top-level automa execution.
+        """
+        if self._cached_callbacks is None:
+            effective_builders = []
+            effective_builders.extend(GlobalSetting.read().callback_builders)
+            effective_builders.extend(self._running_options.callback_builders)
+            self._cached_callbacks = [cb.build() for cb in effective_builders]
+        return self._cached_callbacks
 
     ###############################################################
     ########## [Bridgic Event Handling Mechanism] starts ##########
