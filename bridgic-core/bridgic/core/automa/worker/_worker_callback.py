@@ -1,6 +1,6 @@
 import inspect
 
-from typing import Any, Dict, Union, List, Optional, Type, TypeVar, TYPE_CHECKING, get_origin, get_args
+from typing import Any, Dict, Union, List, Optional, Type, Generic, TypeVar, TYPE_CHECKING, get_origin, get_args
 from typing_extensions import override
 from bridgic.core.types._serialization import Serializable
 
@@ -9,8 +9,8 @@ if TYPE_CHECKING:
     from bridgic.core.automa._automa import _InteractionEventException
     from bridgic.core.automa.interaction._human_interaction import InteractionException
 
-# Type variable for WorkerCallback subclasses
 T_WorkerCallback = TypeVar("T_WorkerCallback", bound="WorkerCallback")
+"""Type variable for WorkerCallback subclasses."""
 
 
 class WorkerCallback(Serializable):
@@ -166,13 +166,42 @@ class WorkerCallback(Serializable):
     def load_from_dict(self, state_dict: Dict[str, Any]) -> None:
         pass
 
-class WorkerCallbackBuilder:
+class WorkerCallbackBuilder(Generic[T_WorkerCallback]):
     """
     Builder class for creating instances of `WorkerCallback` subclasses.
 
     This builder is designed to construct instances of subclasses of `WorkerCallback`.
     The `_callback_type` parameter should be a subclass of `WorkerCallback`, and `build()` 
-    will return an instance of that specific subclass.
+    will return an instance of that specific subclass. There is no need to call `build()` 
+    directly. Instead, the framework calls the `build` method automatically to create 
+    its own `WorkerCallback` instance for each worker instance.
+
+    There are three ways to use the builder to register the callback for three levels of customization:
+
+    - Case 1: Use in @worker decorator to register the callback for a specific worker:
+    - Case 2: Use in RunningOptions to register the callback for a specific Automa instance:
+    - Case 3: Use in GlobalSetting to register the callback for all workers:
+
+    Examples
+    --------
+    There are three ways to use the builder, for different levels of customization:
+
+    >>> # Define a custom callback class:
+    >>> class MyEmptyCallback(WorkerCallback):
+    ...     pass
+    ...
+    >>> # Case 1: Use in worker decorator to register the callback for a specific worker:
+    >>> class MyGraphAutoma(GraphAutoma):
+    ...     @worker(callback_builders=[WorkerCallbackBuilder(MyEmptyCallback)])
+    ...     async def my_worker(self, x: int) -> int:
+    ...         return x + 1
+    ...
+    >>> # Case 2: Use in RunningOptions to register the callback for a specific Automa instance:
+    ...     running_options = RunningOptions(callback_builders=[WorkerCallbackBuilder(MyEmptyCallback)])
+    ...     graph = MyGraphAutoma(running_options=running_options)
+    ...
+    >>> # Case 3: Use in GlobalSetting to register the callback for all workers:
+    >>> GlobalSetting.set(callback_builders=[WorkerCallbackBuilder(MyEmptyCallback)])
     """
     _callback_type: Type[T_WorkerCallback]
     """The specific subclass of `WorkerCallback` to instantiate."""
