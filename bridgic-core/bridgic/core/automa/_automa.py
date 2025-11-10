@@ -11,6 +11,7 @@ from pydantic import BaseModel
 from concurrent.futures import ThreadPoolExecutor
 
 from bridgic.core.automa.worker import Worker
+from bridgic.core.automa.worker._worker_callback import WorkerCallbackBuilder
 from bridgic.core.automa.interaction import Event, FeedbackSender, EventHandlerType, InteractionFeedback, Feedback, Interaction, InteractionException
 from bridgic.core.automa.args import RuntimeContext
 from bridgic.core.utils._msgpackx import load_bytes
@@ -96,7 +97,7 @@ class Automa(Worker):
         super().__init__()
 
         # Set the name of the Automa instance.
-        self.name = name or f"automa-{uuid.uuid4().hex[:8]}"
+        self.name = name or f"{self.__class__.__name__}-{uuid.uuid4().hex[:8]}"
 
         # Initialize the shared running options.
         self._running_options = running_options or RunningOptions()

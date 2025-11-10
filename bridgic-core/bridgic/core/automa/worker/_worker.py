@@ -7,10 +7,10 @@ from inspect import _ParameterKind
 from bridgic.core.automa.interaction import Event, InteractionFeedback, Feedback
 from bridgic.core.types._error import WorkerRuntimeError
 from bridgic.core.types._serialization import Serializable
+from bridgic.core.types._worker_types import WorkerExecutionContext
 from bridgic.core.utils._inspect_tools import get_param_names_all_kinds
 from bridgic.core.utils._args_map import safely_map_args
 from bridgic.core.logging import get_worker_logger
-from bridgic.core.logging._decorators import worker_logger
 from bridgic.core.constants import DEFAULT_WORKER_SOURCE_PREFIX
 
 if TYPE_CHECKING:
@@ -67,13 +67,12 @@ class Worker(Serializable):
         self.__cached_param_names_of_arun = None
         self.__cached_param_names_of_run = None
         
-        # Generate unique worker ID (combines class name with UUID for global uniqueness)
-        self._worker_id = f"{self.__class__.__name__}_{uuid.uuid4().hex[:12]}"
-        
+        # Generate unique ID (combines class name with UUID for global uniqueness)
+        self._unique_id = f"{self.__class__.__name__}_{uuid.uuid4().hex[:12]}"
+
         # Initialize logger
         self._logger = get_worker_logger(self.__class__.__name__, source=f"{DEFAULT_WORKER_SOURCE_PREFIX}-{self.__class__.__name__}")
 
-    @worker_logger(lambda self: getattr(getattr(self, "_callable", None), "__name__", self.__class__.__name__), method_label="arun")
     async def arun(self, *args: Tuple[Any, ...], **kwargs: Dict[str, Any]) -> Any:
         """
         The asynchronous method to run the worker.
@@ -108,22 +107,21 @@ class Worker(Serializable):
         except Exception:
             return f"<Unable to serialize result of type {type(result).__name__}>"
 
-    def _get_top_level_automa(self) -> Optional["Automa"]:
+    def _get_top_level_automa(self) -> "Automa":
         """
         Get the top-level automa instance reference.
         """
-        top_level_automa = self.parent
-        while top_level_automa and (not top_level_automa.is_top_level()):
+        # If the current automa is the top-level automa, return itself.
+        top_level_automa = self
+        while top_level_automa and top_level_automa.parent is not None:
             top_level_automa = top_level_automa.parent
         return top_level_automa
     
-    def _get_execution_context(self) -> Dict[str, Any]:
+    def _get_execution_context(self) -> WorkerExecutionContext:
         """
         Get execution context information for logging.
         Returns information about parent Automa, nesting level, worker_key, etc.
         """
-        context = {}
-        
         # Try to find worker_key from parent Automa
         worker_key = None
         dependencies = None
@@ -147,14 +145,14 @@ class Worker(Serializable):
                         dependencies = worker_obj.dependencies
                     break
         
-        context["worker_key"] = worker_key
-        context["dependencies"] = dependencies
-        
         # Find parent automa
+        parent_automa_name = None
+        parent_automa_id = None
+        parent_automa_class = None
         if self.parent:
-            context["parent_automa_name"] = self.parent.name
-            context["parent_automa_id"] = self.parent._worker_id if hasattr(self.parent, '_worker_id') else f"{self.parent.__class__.__name__}_{id(self.parent)}"
-            context["parent_automa_class"] = self.parent.__class__.__name__
+            parent_automa_name = self.parent.name
+            parent_automa_id = self.parent._unique_id if hasattr(self.parent, '_unique_id') else f"{self.parent.__class__.__name__}_{id(self.parent)}"
+            parent_automa_class = self.parent.__class__.__name__
         
         # Calculate nesting level
         nesting_level = 0
@@ -162,15 +160,25 @@ class Worker(Serializable):
         while current:
             nesting_level += 1
             current = current.parent
-        context["nesting_level"] = nesting_level
         
         # Get top-level automa
         top_automa = self._get_top_level_automa()
+        top_automa_name = None
+        top_automa_id = None
         if top_automa and top_automa != self.parent:
-            context["top_automa_name"] = top_automa.name
-            context["top_automa_id"] = top_automa._worker_id if hasattr(top_automa, '_worker_id') else f"{top_automa.__class__.__name__}_{id(top_automa)}"
+            top_automa_name = top_automa.name
+            top_automa_id = top_automa._unique_id if hasattr(top_automa, '_unique_id') else f"{top_automa.__class__.__name__}_{id(top_automa)}"
         
-        return context
+        return WorkerExecutionContext(
+            worker_key=worker_key,
+            dependencies=dependencies,
+            parent_automa_name=parent_automa_name,
+            parent_automa_id=parent_automa_id,
+            parent_automa_class=parent_automa_class,
+            nesting_level=nesting_level,
+            top_automa_name=top_automa_name,
+            top_automa_id=top_automa_id,
+        )
     
     def get_input_param_names(self) -> Dict[_ParameterKind, List[Tuple[str, Any]]]:
         """
@@ -231,7 +239,7 @@ class Worker(Serializable):
     def dump_to_dict(self) -> Dict[str, Any]:
         state_dict = {}
         state_dict["local_space"] = self.__local_space
-        state_dict["worker_id"] = self._worker_id
+        state_dict["worker_id"] = self._unique_id
         return state_dict
 
     @override
@@ -241,7 +249,7 @@ class Worker(Serializable):
         self.__local_space = state_dict["local_space"]
         
         # Restore worker ID
-        self._worker_id = state_dict["worker_id"]
+        self._unique_id = state_dict["worker_id"]
         
         # Cached method signatures, with no need for serialization.
         self.__cached_param_names_of_arun = None

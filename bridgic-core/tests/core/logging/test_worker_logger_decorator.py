@@ -2,21 +2,27 @@ import asyncio
 import json
 import logging
 
+from bridgic.core.logging._decorators import worker_logger
 import pytest
 
 from bridgic.core.logging import get_worker_logger
-from bridgic.core.logging._decorators import worker_logger
+from bridgic.core.types._worker_types import WorkerExecutionContext
 
 
 class _DummyBase:
     def __init__(self, logger_name: str):
         # Use the same logger acquisition path as Worker
         self._logger = get_worker_logger(logger_name, source=f"test-{logger_name}")
-        self._worker_id = f"{logger_name}_unit"
+        self._unique_id = f"{logger_name}_unit"
 
     def _get_execution_context(self):
         # Minimal context for tests
-        return {"worker_key": "dummy", "dependencies": ["a", "b"], "parent_automa_name": "Auto", "nesting_level": 1}
+        return WorkerExecutionContext(
+            worker_key="dummy",
+            dependencies=["a", "b"],
+            parent_automa_name="Auto",
+            nesting_level=1
+        )
 
     def _format_result_for_log(self, result, max_length: int = 200) -> str:
         s = str(result)

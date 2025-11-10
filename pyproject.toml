@@ -36,3 +36,11 @@ include = ["/meta/bridgic/"]
 
 [tool.hatch.build.targets.wheel.sources]
 "/meta/bridgic" = "bridgic"
+
+[tool.uv.workspace]
+members = [
+    "bridgic-integration/callbacks/bridgic-trace-opik/bridgic-trace-opik",
+    "bridgic-integration/callbacks/bridgic-trace-opik",
+    "bridgic-integration/callbacks/bridgic-trace-langwatch",
+    "bridgic-integration/callbacks/bridgic-trace-langfuse",
+]

@@ -63,6 +63,7 @@ class _GraphAdaptedWorker(Worker):
         self.args_mapping_rule = args_mapping_rule
         self._decorated_worker = worker
         # Build callback instances from builders
+        self._decorated_worker_is_automa = isinstance(worker, GraphAutoma)
         self._worker_callbacks = [cb.build() for cb in callback_builders]
 
     @override
@@ -91,7 +92,6 @@ class _GraphAdaptedWorker(Worker):
     # Delegate all the properties and methods of _GraphAdaptedWorker to the decorated worker.
     # TODO: Maybe 'Worker' should be a Protocol.
     #
-
     @override
     async def arun(self, *args, **kwargs) -> Any:
         for callback in self._worker_callbacks:
@@ -219,7 +219,6 @@ class _FerryDeferredTask(BaseModel):
     kickoff_worker_key: Optional[str]
     args: Tuple[Any, ...]
     kwargs: Dict[str, Any]
-
 class GraphAutoma(Automa, metaclass=GraphMeta):
     """
     Dynamic Directed Graph (abbreviated as DDG) implementation of Automa. `GraphAutoma` manages 
@@ -502,7 +501,7 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
             is_start=is_start,
             is_output=is_output,
             args_mapping_rule=args_mapping_rule,
-            callback_builders=effective_callback_builders,
+            callback_builders=effective_callback_builders, # TODO: add trace_context to callbacks
         )
 
         # Register the worker_obj.
@@ -1028,12 +1027,12 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
                 frame_locals = frame_info.frame.f_locals
                 if 'self' in frame_locals:
                     potential_worker = frame_locals['self']
-                    if hasattr(potential_worker, '_worker_id') and hasattr(potential_worker, '__class__'):
+                    if hasattr(potential_worker, '_unique_id') and hasattr(potential_worker, '__class__'):
                         # Skip if it's the Automa itself
                         if potential_worker is self:
                             continue
                         # Found a worker in the call stack
-                        current_worker_id = potential_worker._worker_id
+                        current_worker_id = potential_worker._unique_id
                         current_worker_name = potential_worker.__class__.__name__
                         if hasattr(potential_worker, '_callable'):
                             # It's a CallableWorker, get the actual function name
@@ -1045,17 +1044,17 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
         except:
             pass
         
-        self._logger.log_worker_ferry(
-            worker_id=current_worker_id,
-            worker_name=current_worker_name,
-            from_worker_key=from_worker_key,
-            to_worker_key=key,
-            ferry_data=ferry_data,
-            automa_name=self.name,
-            automa_id=self._worker_id,
-            execution_id=current_execution_id,
-            metadata={"debug_mode": running_options.debug}
-        )
+        # self._logger.log_worker_ferry(
+        #     worker_id=current_worker_id,
+        #     worker_name=current_worker_name,
+        #     from_worker_key=from_worker_key,
+        #     to_worker_key=key,
+        #     ferry_data=ferry_data,
+        #     automa_name=self.name,
+        #     automa_id=self._unique_id,
+        #     execution_id=current_execution_id,
+        #     metadata={"debug_mode": running_options.debug}
+        # )
         
         deferred_task = _FerryDeferredTask(
             ferry_to_worker_key=key,
@@ -1189,51 +1188,14 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
         # Generate execution ID and log automa start
         execution_id = f"exec_{uuid.uuid4().hex[:16]}"
         # Use worker_id (inherited from Worker) as automa_id for consistency
-        automa_id = self._worker_id
+        automa_id = self._unique_id
         start_time = time.time()
         
         # If this Automa is nested (has a parent), log as a worker as well
         is_nested = self.parent is not None
         nested_worker_context = None  # Store context for later use in WorkerEnd
-        if is_nested:
-            context_info = self._get_execution_context()
-            worker_key = context_info.pop("worker_key", None)
-            dependencies = context_info.pop("dependencies", None)
-            # Store for WorkerEnd logging
-            nested_worker_context = {
-                "worker_key": worker_key,
-                "dependencies": dependencies,
-                "context_info": context_info
-            }
-            
-            self._logger.log_worker_start(
-                worker_id=self._worker_id,
-                worker_name=self.__class__.__name__,
-                input_data={"args": str(args), "kwargs": str(kwargs)},
-                execution_id=execution_id,
-                worker_key=worker_key,
-                dependencies=dependencies,
-                metadata={
-                    "method": "arun",
-                    "worker_type": "nested_automa",
-                    **context_info
-                }
-            )
-        
-        self._logger.log_automa_start(
-            automa_id=automa_id,
-            automa_name=self.name,
-            workflow_data={
-                "has_interaction_feedback": interaction_feedback is not None,
-                "has_interaction_feedbacks": interaction_feedbacks is not None,
-                "num_workers": len(getattr(self, '_workers', {})),
-            },
-            execution_id=execution_id,
-            metadata={"automa_type": "GraphAutoma"}
-        )
         
         running_options = self._get_top_running_options()
-
         self._main_loop = asyncio.get_running_loop()
         self._main_thread_id = threading.get_ident()
 
@@ -1275,7 +1237,7 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
             rx_feedbacks = _match_ongoing_interaction_and_feedbacks(rx_feedbacks)
 
         if running_options.debug:
-            printer.print(f"\n{type(self).__name__}-[{self.name}] is getting started.", color="green")
+            printer.print(f"\n[{self.name}] is getting started.", color="green")
 
         # Task loop divided into many dynamic steps (DS).
         is_output_worker_keys = set()
@@ -1346,11 +1308,11 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
                     )
                 else:
                     coro = worker_obj.arun(*next_args, **next_kwargs)
-
+                task_name = f"Task-{kickoff_info.worker_key}"
                 task = asyncio.create_task(
                     # TODO1: arun() may need to be wrapped to support better interrupt...
                     coro,
-                    name=f"Task-{kickoff_info.worker_key}"
+                    name=task_name
                 )
                 self._running_tasks.append(_RunnningTask(
                     worker_key=kickoff_info.worker_key,
@@ -1527,11 +1489,10 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
         self._automa_running = False
 
         # Get result before calling callbacks
+        result = None
         if is_output_worker_keys:
             result = self._worker_output.get(list(is_output_worker_keys)[0], None)
-        else:
-            result = None
-
+        
         # If this is the top-level automa, execute its callbacks separately.
         if is_top_level:
             for callback in automa_callbacks:
@@ -1542,7 +1503,6 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
                     arguments={"args": args, "kwargs": kwargs},
                     result=result,
                 )
-
         return result
 
     def _get_worker_dependencies(self, worker_key: str) -> List[str]:

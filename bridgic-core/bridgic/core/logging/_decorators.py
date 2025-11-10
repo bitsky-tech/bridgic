@@ -34,26 +34,26 @@ def worker_logger(get_worker_name: Callable[[Any], str], method_label: str):
                     return await func(self, *args, **kwargs)
                 token = _in_worker_log.set(True)
                 execution_id = f"exec_{uuid.uuid4().hex[:16]}"
-                context_info: Dict[str, Any] = self._get_execution_context()
-                worker_key = context_info.pop("worker_key", None)
-                dependencies = context_info.pop("dependencies", None)
+                context_info = self._get_execution_context()
+                worker_key = context_info.worker_key
+                dependencies = context_info.dependencies
                 worker_name = get_worker_name(self)
 
                 self._logger.log_worker_start(
-                    worker_id=self._worker_id,
+                    worker_id=self._unique_id,
                     worker_name=worker_name,
                     input_data={"args": str(args), "kwargs": str(kwargs)},
                     execution_id=execution_id,
                     worker_key=worker_key,
                     dependencies=dependencies,
-                    metadata={"method": method_label, **context_info},
+                    metadata={"method": method_label, **context_info.to_metadata_dict()},
                 )
 
                 start_time = time.time()
                 try:
                     result = await func(self, *args, **kwargs)
                     self._logger.log_worker_end(
-                        worker_id=self._worker_id,
+                        worker_id=self._unique_id,
                         worker_name=worker_name,
                         output_data={
                             "result_type": type(result).__name__,
@@ -62,12 +62,12 @@ def worker_logger(get_worker_name: Callable[[Any], str], method_label: str):
                         execution_id=execution_id,
                         execution_time=time.time() - start_time,
                         worker_key=worker_key,
-                        metadata={"method": method_label, "status": STATUS_SUCCESS, **context_info},
+                        metadata={"method": method_label, "status": STATUS_SUCCESS, **context_info.to_metadata_dict()},
                     )
                     return result
                 except Exception as e:
                     self._logger.log_worker_error(
-                        worker_id=self._worker_id,
+                        worker_id=self._unique_id,
                         worker_name=worker_name,
                         error_type=type(e).__name__,
                         error_message=str(e),
@@ -75,7 +75,7 @@ def worker_logger(get_worker_name: Callable[[Any], str], method_label: str):
                         error_traceback=traceback.format_exc(),
                         execution_time=time.time() - start_time,
                         worker_key=worker_key,
-                        metadata={"method": method_label, "status": STATUS_ERROR, **context_info},
+                        metadata={"method": method_label, "status": STATUS_ERROR, **context_info.to_metadata_dict()},
                     )
                     raise e
                 finally:
@@ -92,26 +92,26 @@ def worker_logger(get_worker_name: Callable[[Any], str], method_label: str):
                 return func(self, *args, **kwargs)
             token = _in_worker_log.set(True)
             execution_id = f"exec_{uuid.uuid4().hex[:16]}"
-            context_info: Dict[str, Any] = self._get_execution_context()
-            worker_key = context_info.pop("worker_key", None)
-            dependencies = context_info.pop("dependencies", None)
+            context_info = self._get_execution_context()
+            worker_key = context_info.worker_key
+            dependencies = context_info.dependencies
             worker_name = get_worker_name(self)
 
             self._logger.log_worker_start(
-                worker_id=self._worker_id,
+                worker_id=self._unique_id,
                 worker_name=worker_name,
                 input_data={"args": str(args), "kwargs": str(kwargs)},
                 execution_id=execution_id,
                 worker_key=worker_key,
                 dependencies=dependencies,
-                metadata={"method": method_label, **context_info},
+                metadata={"method": method_label, **context_info.to_metadata_dict()},
             )
 
             start_time = time.time()
             try:
                 result = func(self, *args, **kwargs)
                 self._logger.log_worker_end(
-                    worker_id=self._worker_id,
+                    worker_id=self._unique_id,
                     worker_name=worker_name,
                     output_data={
                         "result_type": type(result).__name__,
@@ -120,12 +120,12 @@ def worker_logger(get_worker_name: Callable[[Any], str], method_label: str):
                     execution_id=execution_id,
                     execution_time=time.time() - start_time,
                     worker_key=worker_key,
-                    metadata={"method": method_label, "status": STATUS_SUCCESS, **context_info},
+                    metadata={"method": method_label, "status": STATUS_SUCCESS, **context_info.to_metadata_dict()},
                 )
                 return result
             except Exception as e:
                 self._logger.log_worker_error(
-                    worker_id=self._worker_id,
+                    worker_id=self._unique_id,
                     worker_name=worker_name,
                     error_type=type(e).__name__,
                     error_message=str(e),
@@ -133,7 +133,7 @@ def worker_logger(get_worker_name: Callable[[Any], str], method_label: str):
                     error_traceback=traceback.format_exc(),
                     execution_time=time.time() - start_time,
                     worker_key=worker_key,
-                    metadata={"method": method_label, "status": STATUS_ERROR, **context_info},
+                    metadata={"method": method_label, "status": STATUS_ERROR, **context_info.to_metadata_dict()},
                 )
                 raise e
             finally:
