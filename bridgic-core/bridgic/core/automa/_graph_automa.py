@@ -24,6 +24,7 @@ from bridgic.core.automa._automa import _InteractionAndFeedback, _InteractionEve
 from bridgic.core.automa.worker._worker_callback import WorkerCallback
 from bridgic.core.automa._graph_meta import GraphMeta
 from bridgic.core.automa.args._args_descriptor import injector
+from bridgic.core.automa.args._args_binding import ArgsManager
 
 class _GraphAdaptedWorker(Worker):
     """
@@ -1034,6 +1035,7 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
                 self._input_buffer.kwargs = kwargs
 
         def _execute_topology_change_deferred_tasks(tc_tasks: List[Union[_AddWorkerDeferredTask, _RemoveWorkerDeferredTask, _AddDependencyDeferredTask]]):
+            # update the control flow topology
             for topology_task in tc_tasks:
                 if topology_task.task_type == "add_worker":
                     self._add_worker_incrementally(
@@ -1048,6 +1050,9 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
                     self._remove_worker_incrementally(topology_task.worker_key)
                 elif topology_task.task_type == "add_dependency":
                     self._add_dependency_incrementally(topology_task.worker_key, topology_task.dependency)
+
+            # update the data flow topology
+            args_manager.update_data_flow_topology(dynamic_tasks=tc_tasks)
 
         def _set_worker_run_finished(worker_key: str):
             for kickoff_info in self._current_kickoff_workers:
@@ -1114,6 +1119,13 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
             printer.print(f"\n{type(self).__name__}-[{self.name}] is getting started.", color="green")
 
         # Task loop divided into many dynamic steps (DS).
+        args_manager = ArgsManager(
+            input_args=self._input_buffer.args,
+            input_kwargs=self._input_buffer.kwargs,
+            worker_outputs=self._worker_output,
+            worker_forwards=self._worker_forwards,
+            worker_dict=self._workers
+        )
         is_output_worker_keys = set()
         while self._current_kickoff_workers:
             # A new DS started.
@@ -1134,28 +1146,21 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
                         kickoff_name = f"{kickoff_name}:({self.name})"
                     printer.print(f"[{kickoff_name}] will kick off [{kickoff_info.worker_key}]", color="cyan")
 
-                # First, Arguments Mapping:
-                if kickoff_info.last_kickoff == "__automa__":
-                    next_args, next_kwargs = self._input_buffer.args, {}
-                elif kickoff_info.from_ferry:
-                    next_args, next_kwargs = kickoff_info.args, kickoff_info.kwargs
-                else:
-                    next_args, next_kwargs = self._mapping_args(
-                        kickoff_worker_key=kickoff_info.last_kickoff,
-                        current_worker_key=kickoff_info.worker_key,
-                    )
-                # Second, Inputs Propagation:
-                next_args, next_kwargs = self._propagate_inputs(
+                # Arguments Mapping:
+                next_args, next_kwargs = args_manager.args_binding(
+                    last_worker_key=kickoff_info.last_kickoff,
+                    current_worker_key=kickoff_info.worker_key
+                ) if not kickoff_info.from_ferry else (kickoff_info.args, kickoff_info.kwargs)
+                # Inputs Propagation:
+                next_args, next_kwargs = args_manager.inputs_propagation(
                     current_worker_key=kickoff_info.worker_key,
                     next_args=next_args,
                     next_kwargs=next_kwargs,
-                    input_kwargs=self._input_buffer.kwargs,
                 )
-                # Third, Resolve data injection.
-                worker_obj = self._workers[kickoff_info.worker_key]
+                # Data injection.
                 next_args, next_kwargs = injector.inject(
                     current_worker_key=kickoff_info.worker_key, 
-                    current_worker_sig=worker_obj.get_input_param_names(), 
+                    current_worker_sig=self._workers[kickoff_info.worker_key].get_input_param_names(), 
                     current_automa=self,
                     next_args=next_args, 
                     next_kwargs=next_kwargs
