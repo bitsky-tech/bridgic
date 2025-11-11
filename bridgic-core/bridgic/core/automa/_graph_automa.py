@@ -1179,6 +1179,7 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
                         )
 
                 # Schedule task for each kickoff worker.
+                worker_obj = self._workers[kickoff_info.worker_key]
                 if worker_obj.is_automa():
                     coro = worker_obj.arun(
                         *next_args, 
