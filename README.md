@@ -73,30 +73,30 @@ In this example, the text processing workflow demonstrates how static dependenci
 
 ### 2. Dynamic Routing
 
-Use `ferry_to()` for dynamic routing based on runtime conditions. This enables intelligent decision-making by allowing the system to adapt its behavior according to the content or context of incoming requests, thereby creating highly autonomous agents that can select among different processing paths.
+The `ferry_to()` API enables an automa to dynamically decide at runtime which worker should run next, allowing the workflow to adapt its execution path based on current conditions. This capability works hand in hand with static dependency declarations, making the execution process much more adaptive and intelligent. With dynamic routing powered by `ferry_to()`, you can easily build agentic systems that adjust their behavior at runtime.
 
 ```python
 from bridgic.core.automa import GraphAutoma, worker
 
-class SmartRouter(GraphAutoma):
+class SimpleRouter(GraphAutoma):
     @worker(is_start=True)
     async def analyze_request(self, request: str) -> str:
         print(f"Analyzing request: {request}")
-        if "?" in request:
+        if "?" in request:  # Route by using a simple rule that checks for "?".
             print("Detected question - routing to Q&A handler")
             self.ferry_to("handle_question", question=request)
         else:
             print("Standard request - routing to general handler")
             self.ferry_to("handle_general", question=request)
 
-    @worker()
+    @worker()  # No dependencies declared because this worker will be triggered dynamically.
     async def handle_question(self, question: str) -> str:
         print("❓ QUESTION: Processing question")
         response = f"ANSWER: Based on your question '{question}', here's what I think..."
         print(f"Response: {response}")
         return response
 
-    @worker()
+    @worker()  # No dependencies declared because this worker will be triggered dynamically.
     async def handle_general(self, question: str) -> str:
         print("📝 GENERAL: Processing standard question")
         response = f"ACKNOWLEDGED: {question}"
@@ -104,8 +104,8 @@ class SmartRouter(GraphAutoma):
         return response
 
 async def main():
-    """Run the smart router example."""
-    router = SmartRouter()
+    """Run the simple router example."""
+    router = SimpleRouter()
     test_requests = [
         "What is the weather like today?",
         "Create a poeom about love."
