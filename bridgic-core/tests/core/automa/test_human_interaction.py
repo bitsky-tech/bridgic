@@ -83,7 +83,7 @@ def interaction_feedback_1_yes(request):
 async def test_adder_automa_1_interact_with_yes_feedback(interaction_feedback_1_yes, deserialized_adder_automa1):
     # Note: no need to pass the original argument x=100, because the deserialized_adder_automa1 is restored from the snapshot.
     result = await deserialized_adder_automa1.arun(
-        interaction_feedback=interaction_feedback_1_yes
+        feedback_data=interaction_feedback_1_yes
     )
     assert result == 303
 
@@ -99,7 +99,7 @@ def interaction_feedback_1_no(request):
 @pytest.mark.asyncio
 async def test_adder_automa_1_interact_with_no_feedback(interaction_feedback_1_no, deserialized_adder_automa1):
     result = await deserialized_adder_automa1.arun(
-        interaction_feedback=interaction_feedback_1_no
+        feedback_data=interaction_feedback_1_no
     )
     assert result == 103
 
@@ -173,7 +173,7 @@ def interaction_feedback_2_yes(request):
 @pytest.mark.asyncio
 async def test_adder_automa_2_interact_with_yes_feedback(interaction_feedback_2_yes, deserialized_adder_automa2):
     result = await deserialized_adder_automa2.arun(
-        interaction_feedback=interaction_feedback_2_yes
+        feedback_data=interaction_feedback_2_yes
     )
     assert result == 303
 
@@ -328,7 +328,7 @@ def interaction_feedbacks_for_graph_1(request):
 @pytest.mark.asyncio
 async def test_graph_1_deserialized(interaction_feedbacks_for_graph_1, graph_1_deserialized):
     result = await graph_1_deserialized.arun(
-        interaction_feedbacks=interaction_feedbacks_for_graph_1
+        feedback_data=interaction_feedbacks_for_graph_1
     )
     assert result == 1286 - 200
 
@@ -483,7 +483,7 @@ def feedback_yes_for_graph_2(request):
 @pytest.mark.asyncio
 async def test_graph_2_deserialized_again(feedback_no_for_graph_2, feedback_yes_for_graph_2, graph_2_deserialized_again):
     result = await graph_2_deserialized_again.arun(
-        interaction_feedback=feedback_no_for_graph_2
+        feedback_data=feedback_no_for_graph_2
     )
     assert result == 1286 - 20
 
@@ -491,7 +491,7 @@ async def test_graph_2_deserialized_again(feedback_no_for_graph_2, feedback_yes_
     # Here is actually a total Automa rerun. Therefore, the input arguments must be provided once again.
     with pytest.raises(Exception, match="required positional argument"):
         result = await graph_2_deserialized_again.arun(
-            interaction_feedback=feedback_yes_for_graph_2
+            feedback_data=feedback_yes_for_graph_2
         )
 
 ##### Test cases for nested Automas: Multiple human interactions in a worker. #####
@@ -609,7 +609,7 @@ async def test_graph_3_deserialized_first(
 ):
     try:
         result = await graph_3_deserialized_first.arun(
-            interaction_feedback=feedback_yes_for_graph_3_first_interaction
+            feedback_data=feedback_yes_for_graph_3_first_interaction
         )
     except InteractionException as e:
         assert len(e.interactions) == 1
@@ -639,7 +639,7 @@ async def test_graph_3_deserialized_second_without_feedback(graph_3_deserialized
     # This case is uncommon.
     try:
         result = await graph_3_deserialized_second.arun(
-            interaction_feedback=None
+            feedback_data=None
         )
     except InteractionException as e:
         assert len(e.interactions) == 1
@@ -684,7 +684,7 @@ async def test_graph_3_deserialized_second_with_feedback(
 ):
     try:
         result = await graph_3_deserialized_second_again.arun(
-            interaction_feedback=feedback_no_for_graph_3_second_interaction
+            feedback_data=feedback_no_for_graph_3_second_interaction
         )
     except InteractionException as e:
         assert len(e.interactions) == 1
@@ -723,7 +723,7 @@ async def test_graph_3_deserialized_third(
     graph_3_deserialized_third
 ):
     result = await graph_3_deserialized_third.arun(
-        interaction_feedback=feedback_yes_for_graph_3_third_interaction
+        feedback_data=feedback_yes_for_graph_3_third_interaction
     )
     assert result == 1286 + 40
 
@@ -854,7 +854,7 @@ def interaction_feedbacks_for_graph_4(request):
 @pytest.mark.asyncio
 async def test_graph_4_deserialized(interaction_feedbacks_for_graph_4, graph_4_deserialized):
     result = await graph_4_deserialized.arun(
-        interaction_feedbacks=interaction_feedbacks_for_graph_4
+        feedback_data=interaction_feedbacks_for_graph_4
     )
     assert result == 1286
 
@@ -990,7 +990,7 @@ async def test_graph_5_deserialized_first(
 ):
     try:
         result = await graph_5_deserialized_first.arun(
-            interaction_feedback=feedback_yes_for_graph_5_interaction_in_third_layer
+            feedback_data=feedback_yes_for_graph_5_interaction_in_third_layer
         )
     except InteractionException as e:
         assert len(e.interactions) == 1
@@ -1038,6 +1038,6 @@ async def test_graph_5_deserialized_second(
     graph_5_deserialized_second
 ):
     result = await graph_5_deserialized_second.arun(
-        interaction_feedback=feedback_yes_for_graph_5_interaction_in_top_layer
+        feedback_data=feedback_yes_for_graph_5_interaction_in_top_layer
     )
     assert result == 1286

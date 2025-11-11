@@ -543,7 +543,7 @@ class Automa(Worker):
         event: Event,
         worker_key: str
     ) -> InteractionFeedback:
-        # Match interaction_feedback to see if it matches
+        # Match the interaction and feedback to see if it matches
         matched_feedback: _InteractionAndFeedback = None
         cur_interact_index = self._get_and_increment_interaction_index(worker_key)
         if worker_key in self._ongoing_interactions:
@@ -560,13 +560,13 @@ class Automa(Worker):
         if matched_feedback is None or matched_feedback.feedback is None:
             # Important: The interaction_id should be unique for each human interaction.
             interaction_id = uuid.uuid4().hex if matched_feedback is None else matched_feedback.interaction.interaction_id
-            # Match interaction_feedback failed, raise an exception to go into the human interactioin process.
+            # Match failed, raise an exception to go into the human interactioin process.
             raise _InteractionEventException(Interaction(
                 interaction_id=interaction_id,
                 event=event,
             ))
         else:
-            # Match interaction_feedback succeeded, return it.
+            # Match the interaction and feedback succeeded, return it.
             return matched_feedback.feedback
 
     def _get_and_increment_interaction_index(self, worker_key: str) -> int:
