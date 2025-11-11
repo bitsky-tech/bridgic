@@ -1088,28 +1088,32 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
         args : optional
             Positional arguments.
         feedback_data : Optional[Union[InteractionFeedback, List[InteractionFeedback]]]
-            Feedbacks that are received from one or multiple human interactions occurred before the Automa 
-            was paused. This argument may be of type `InteractionFeedback` or `List[InteractionFeedback]`. If only one interaction occurred, `feedback_data` should be of type `InteractionFeedback`. If multiple interactions occurred simultaneously, `feedback_data` should be of type `List[InteractionFeedback]`.
+            Feedbacks that are received from one or multiple human interactions occurred before the
+            Automa was paused. This argument may be of type `InteractionFeedback` or 
+            `List[InteractionFeedback]`. If only one interaction occurred, `feedback_data` should be
+            of type `InteractionFeedback`. If multiple interactions occurred simultaneously, 
+            `feedback_data` should be of type `List[InteractionFeedback]`.
         kwargs : optional
             Keyword arguments which may be further propagated to contained workers.
 
         Returns
         -------
         Any
-            The execution result of the output-worker that has the setting `is_output=True`, otherwise None.
+            The execution result of the output-worker that has the setting `is_output=True`,
+            otherwise None.
 
         Raises
         ------
         InteractionException
-            If the Automa is the top-level Automa and the `interact_with_human()` method is called by 
-            one or more workers within the lastest event loop iteration, this exception will be raised to the application layer.
+            If the Automa is the top-level Automa and the `interact_with_human()` method is called
+            by one or more workers within the lastest event loop iteration, this exception will be
+            raised to the application layer.
         """
         # Wrap the internal execution logic in a task to provide isolation between multiple arun() calls.
         task = asyncio.create_task(
             self._arun_internal(
                 *args,
-                interaction_feedback=interaction_feedback,
-                interaction_feedbacks=interaction_feedbacks,
+                feedback_data=feedback_data,
                 **kwargs
             ),
             name=f"GraphAutoma-{self.name}-arun"
@@ -1119,8 +1123,7 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
     async def _arun_internal(
         self, 
         *args: Tuple[Any, ...],
-        interaction_feedback: Optional[InteractionFeedback] = None,
-        interaction_feedbacks: Optional[List[InteractionFeedback]] = None,
+        feedback_data: Optional[Union[InteractionFeedback, List[InteractionFeedback]]] = None,
         **kwargs: Dict[str, Any]
     ) -> Any:
         """
@@ -1516,8 +1519,7 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
                     arguments={
                         "args": self._input_buffer.args,
                         "kwargs": self._input_buffer.kwargs,
-                        "interaction_feedback": interaction_feedback,
-                        "interaction_feedbacks": interaction_feedbacks,
+                        "feedback_data": feedback_data,
                     },
                     result=result,
                 )
