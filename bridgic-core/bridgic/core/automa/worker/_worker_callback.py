@@ -1,6 +1,7 @@
 import inspect
 
-from typing import Any, Dict, Union, List, Optional, Type, TypeVar, TYPE_CHECKING, get_origin, get_args
+from threading import Lock
+from typing import Any, Dict, Union, List, Optional, Type, Generic, TypeVar, TYPE_CHECKING, get_origin, get_args
 from typing_extensions import override
 from bridgic.core.types._serialization import Serializable
 
@@ -9,8 +10,8 @@ if TYPE_CHECKING:
     from bridgic.core.automa._automa import _InteractionEventException
     from bridgic.core.automa.interaction._human_interaction import InteractionException
 
-# Type variable for WorkerCallback subclasses
 T_WorkerCallback = TypeVar("T_WorkerCallback", bound="WorkerCallback")
+"""Type variable for WorkerCallback subclasses."""
 
 
 class WorkerCallback(Serializable):
@@ -166,20 +167,78 @@ class WorkerCallback(Serializable):
     def load_from_dict(self, state_dict: Dict[str, Any]) -> None:
         pass
 
-class WorkerCallbackBuilder:
+class WorkerCallbackBuilder(Generic[T_WorkerCallback]):
     """
     Builder class for creating instances of `WorkerCallback` subclasses.
 
     This builder is designed to construct instances of subclasses of `WorkerCallback`.
     The `_callback_type` parameter should be a subclass of `WorkerCallback`, and `build()` 
-    will return an instance of that specific subclass.
+    will return an instance of that specific subclass. There is no need to call `build()` 
+    directly. Instead, the framework calls the `build` method automatically to create 
+    its own `WorkerCallback` instance for each worker instance.
+
+    Notes
+    -----
+    **Register a Callback in Different Scope**
+
+    There are three ways to register a callback for three levels of customization:
+
+    - Case 1: Use in worker decorator to register the callback for a specific worker.
+    - Case 2: Use in RunningOptions to register the callback for a specific Automa instance.
+    - Case 3: Use in GlobalSetting to register the callback for all workers.
+
+    Notes
+    -----
+    **Shared Instance Mode**
+
+    - When `is_shared=True` (default), all workers within the same scope will share the same 
+      callback instance. This is useful for scenarios where a single callback instance is needed 
+      to maintain some state across workers within the same scope, such as the connection to 
+      an external service. The scope is determined by where the builder is declared:
+      - If declared in GlobalSetting: shared across all workers globally
+      - If declared in RunningOptions: shared across all workers within that Automa instance
+    - When `is_shared=False`, each worker will get its own callback instance. This is useful for 
+      scenarios where a independent callback instance is needed for each worker.
+
+    Examples
+    --------
+    There are three ways to use the builder, for different levels of customization:
+
+    >>> # Define a custom callback class:
+    >>> class MyEmptyCallback(WorkerCallback):
+    ...     pass
+    ...
+    >>> # Case 1: Use in worker decorator to register the callback for a specific worker:
+    >>> class MyGraphAutoma(GraphAutoma):
+    ...     @worker(callback_builders=[WorkerCallbackBuilder(MyEmptyCallback)])
+    ...     async def my_worker(self, x: int) -> int:
+    ...         return x + 1
+    ...
+    >>> # Case 2: Use in RunningOptions to register the callback for a specific Automa instance:
+    ...     running_options = RunningOptions(callback_builders=[WorkerCallbackBuilder(MyEmptyCallback)])
+    ...     graph = MyGraphAutoma(running_options=running_options)
+    ...
+    >>> # Case 3: Use in GlobalSetting to register the callback for all workers:
+    >>> GlobalSetting.set(callback_builders=[WorkerCallbackBuilder(MyEmptyCallback)])
     """
     _callback_type: Type[T_WorkerCallback]
     """The specific subclass of `WorkerCallback` to instantiate."""
     _init_kwargs: Dict[str, Any]
     """The initialization arguments for the instance."""
+    _is_shared: bool
+    """Whether to use shared instance mode (reuse the same instance within the declaration scope)."""
 
-    def __init__(self, callback_type: Type[T_WorkerCallback], init_kwargs: Optional[Dict[str, Any]] = None):
+    _shared_instance: Optional[T_WorkerCallback] = None
+    """Shared instance of the callback within the declaration scope."""
+    _shared_lock: Lock = Lock()
+    """Lock for thread-safe shared instance creation."""
+
+    def __init__(
+        self,
+        callback_type: Type[T_WorkerCallback],
+        init_kwargs: Optional[Dict[str, Any]] = None,
+        is_shared: bool = True,
+    ):
         """
         Initialize the builder with a `WorkerCallback` subclass type.
 
@@ -187,11 +246,15 @@ class WorkerCallbackBuilder:
         ----------
         callback_type : Type[T_WorkerCallback]
             A subclass of `WorkerCallback` to be instantiated.
-        init_kwargs : Dict[str, Any], optional
+        init_kwargs : Optional[Dict[str, Any]]
             Keyword arguments to pass to the subclass constructor.
+        is_shared : bool, default True
+            If True, the callback instance will be shared within the declaration scope:
+            If False, each worker will get its own callback instance.
         """
         self._callback_type = callback_type
         self._init_kwargs = init_kwargs or {}
+        self._is_shared = is_shared
 
     def build(self) -> T_WorkerCallback:
         """
@@ -202,7 +265,14 @@ class WorkerCallbackBuilder:
         T_WorkerCallback
             An instance of the `WorkerCallback` subclass specified during initialization.
         """
-        return self._callback_type(**self._init_kwargs)
+        if self._is_shared:
+            if self._shared_instance is None:
+                with self._shared_lock:
+                    if self._shared_instance is None:
+                        self._shared_instance = self._callback_type(**self._init_kwargs)
+            return self._shared_instance
+        else:
+            return self._callback_type(**self._init_kwargs)
 
 
 def can_handle_exception(callback: WorkerCallback, error: Exception) -> bool:

@@ -1,10 +1,15 @@
 import pytest
+import uuid
+import asyncio
+import re
 
 from typing import List, Tuple, Dict, Any, Union, Optional
+from contextvars import ContextVar
 from bridgic.core.automa import GraphAutoma, worker, Snapshot, RunningOptions
 from bridgic.core.automa.worker import Worker, WorkerCallback, WorkerCallbackBuilder
 from bridgic.core.automa.interaction import Event, FeedbackSender, Feedback, InteractionException, InteractionFeedback
 from bridgic.core.config import GlobalSetting
+from bridgic.core.utils._console import printer, colored
 
 
 class PostEventCallback(WorkerCallback):
@@ -371,7 +376,7 @@ class AutomaSuppressValueErrorCallback(WorkerCallback):
 def graph_with_running_options():
     class MyGraph(GraphAutoma):
         @worker(is_start=True)
-        async def worker_0(self, user_input: int) -> int:
+        def worker_0(self, user_input: int) -> int:
             return user_input + 1
 
         @worker(dependencies=["worker_0"], is_output=True)
@@ -606,6 +611,305 @@ async def test_on_worker_error_no_mathed_callbacks(graph_with_multiple_callbacks
     with pytest.raises(RuntimeError, match="Test RuntimeError - not in Union"):
         await graph_with_multiple_callbacks_runtime_error.arun(user_input=1)
 
+
 # - - - - - - - - - - - - - - - -
-# test case: callback on_worker_error with inheritance relationship
+# Test case: nested automa callback propagation with delayed worker addition
 # - - - - - - - - - - - - - - - -
+class TopLevelCallback(WorkerCallback):
+    """Callback for top-level automa"""
+    async def on_worker_start(
+        self,
+        key: str,
+        is_top_level: bool = False,
+        parent: Optional[GraphAutoma] = None,
+        arguments: Dict[str, Any] = None,
+    ) -> None:
+        if is_top_level:
+            self.trace_id = ContextVar("trace_id")
+            self.trace_id.set(f"root-{uuid.uuid4().hex[:8]}")
+            self.span_id = ContextVar("span_id")
+            self.span_id.set(f"span-{key}")
+            parent_span_id = None
+        else:
+            parent_span_id = self.span_id.get()
+            self.span_id.set(f"span-{key}")
+
+        printer.print(
+            f"[TopLevel] on_worker_start: {key}, "
+            f"trace_id={colored(self.trace_id.get(), 'red')}, "
+            f"parent_span_id={colored(parent_span_id, 'blue')}, "
+            f"span_id={colored(self.span_id.get(), 'yellow')}"
+        )
+
+    async def on_worker_end(
+        self,
+        key: str,
+        is_top_level: bool = False,
+        parent: Optional[GraphAutoma] = None,
+        arguments: Dict[str, Any] = None,
+        result: Any = None,
+    ) -> None:
+        printer.print(f"[TopLevel] on_worker_end: {key}, result={result}")
+
+class MiddleLevelCallback(WorkerCallback):
+    """Callback for middle-level automa"""
+    async def on_worker_start(
+        self,
+        key: str,
+        is_top_level: bool = False,
+        parent: Optional[GraphAutoma] = None,
+        arguments: Dict[str, Any] = None,
+    ) -> None:
+        printer.print(f"[MiddleLevel] on_worker_start: {key}")
+
+    async def on_worker_end(
+        self,
+        key: str,
+        is_top_level: bool = False,
+        parent: Optional[GraphAutoma] = None,
+        arguments: Dict[str, Any] = None,
+        result: Any = None,
+    ) -> None:
+        printer.print(f"[MiddleLevel] on_worker_end: {key}, result={result}")
+
+
+class InnerLevelCallback(WorkerCallback):
+    """Callback for inner-level automa"""
+    async def on_worker_start(
+        self,
+        key: str,
+        is_top_level: bool = False,
+        parent: Optional[GraphAutoma] = None,
+        arguments: Dict[str, Any] = None,
+    ) -> None:
+        printer.print(f"[InnerLevel] on_worker_start: {key}")
+
+    async def on_worker_end(
+        self,
+        key: str,
+        is_top_level: bool = False,
+        parent: Optional[GraphAutoma] = None,
+        arguments: Dict[str, Any] = None,
+        result: Any = None,
+    ) -> None:
+        printer.print(f"[InnerLevel] on_worker_end: {key}, result={result}")
+
+
+@pytest.fixture
+def nested_automa_with_delayed_addition():
+    """Test nested automa with delayed worker addition"""
+    
+    class InnerAutoma(GraphAutoma):
+        @worker(is_start=True)
+        async def inner_start(self, x: int) -> int:
+            # Dynamically add a worker during execution
+            self.add_func_as_worker(
+                key="inner_dynamic",
+                func=self.inner_dynamic_func,
+                dependencies=["inner_start"],
+                is_output=True,
+            )
+            return x + 1
+
+        async def inner_dynamic_func(self, x: int) -> int:
+            return x + 2
+
+    class MiddleAutoma(GraphAutoma):
+        @worker(is_start=True)
+        async def middle_start(self, x: int) -> int:
+            return x + 10
+
+    class TopAutoma(GraphAutoma):
+        @worker(is_start=True)
+        async def top_start(self, x: int) -> int:
+            return x + 100
+
+    inner_automa = InnerAutoma(
+        running_options=RunningOptions(
+            callback_builders=[WorkerCallbackBuilder(InnerLevelCallback)]
+        )
+    )
+
+    middle_automa = MiddleAutoma(
+        running_options=RunningOptions(
+            callback_builders=[WorkerCallbackBuilder(MiddleLevelCallback)]
+        )
+    )
+
+    top_automa = TopAutoma(
+        name="top_automa_instance",
+        running_options=RunningOptions(
+            callback_builders=[WorkerCallbackBuilder(TopLevelCallback)]
+        )
+    )
+    middle_automa.add_worker(
+        key="inner_automa",
+        worker=inner_automa,
+        dependencies=["middle_start"],
+        is_output=True,
+    )
+    top_automa.add_worker(
+        key="middle_automa",
+        worker=middle_automa,
+        dependencies=["top_start"],
+        is_output=True,
+    )
+
+    return top_automa
+
+
+@pytest.mark.asyncio
+async def test_nested_automa_delayed_worker_addition(nested_automa_with_delayed_addition: GraphAutoma, capsys):
+    """Test that callbacks are propagated to dynamically added workers in nested automa"""
+    result = await nested_automa_with_delayed_addition.arun(x=1)
+    assert result == 114  # 1 + 100 + 10 + 1 + 2 = 114
+
+    captured = capsys.readouterr()
+    output = captured.out
+    # printer.print(f"\n\n{output}")
+
+    assert "[TopLevel] on_worker_start: top_automa_instance" in output
+    assert "[TopLevel] on_worker_end: top_automa_instance" in output
+
+    assert "[TopLevel] on_worker_start: top_start" in output
+    assert "[TopLevel] on_worker_end: top_start" in output
+
+    assert "[TopLevel] on_worker_start: middle_automa" in output
+    assert "[TopLevel] on_worker_end: middle_automa" in output
+    assert "[MiddleLevel] on_worker_start: middle_automa" in output
+    assert "[MiddleLevel] on_worker_end: middle_automa" in output
+
+    assert "[TopLevel] on_worker_start: middle_start" in output
+    assert "[TopLevel] on_worker_end: middle_start" in output
+    assert "[MiddleLevel] on_worker_start: middle_start" in output
+    assert "[MiddleLevel] on_worker_end: middle_start" in output
+
+    assert "[TopLevel] on_worker_start: inner_automa" in output
+    assert "[TopLevel] on_worker_end: inner_automa" in output
+    assert "[MiddleLevel] on_worker_start: inner_automa" in output
+    assert "[MiddleLevel] on_worker_end: inner_automa" in output
+    assert "[InnerLevel] on_worker_start: inner_automa" in output
+    assert "[InnerLevel] on_worker_end: inner_automa" in output
+
+    assert "[TopLevel] on_worker_start: inner_start" in output
+    assert "[TopLevel] on_worker_end: inner_start" in output
+    assert "[MiddleLevel] on_worker_start: inner_start" in output
+    assert "[MiddleLevel] on_worker_end: inner_start" in output
+    assert "[InnerLevel] on_worker_start: inner_start" in output
+    assert "[InnerLevel] on_worker_end: inner_start" in output
+
+    assert "[TopLevel] on_worker_start: inner_dynamic" in output
+    assert "[TopLevel] on_worker_end: inner_dynamic" in output
+    assert "[MiddleLevel] on_worker_start: inner_dynamic" in output
+    assert "[MiddleLevel] on_worker_end: inner_dynamic" in output
+    assert "[InnerLevel] on_worker_start: inner_dynamic" in output
+    assert "[InnerLevel] on_worker_end: inner_dynamic" in output
+
+    # Verify callback execution order
+    lines = list(filter(lambda line: len(line.strip()) > 0, output.split('\n')))
+    assert len(lines) == 30
+
+
+# - - - - - - - - - - - - - - - -
+# Test case: context isolation when using callbacks
+# - - - - - - - - - - - - - - - -
+@pytest.fixture
+def simple_automa_1_with_context_callback():
+    """Create a simple automa with TopLevelCallback that uses ContextVar"""
+    class SimpleAutoma(GraphAutoma):
+        @worker(is_start=True, is_output=True)
+        async def worker_1(self, x: int) -> int:
+            return x + 1
+    
+    automa = SimpleAutoma(
+        name="simple_automa_1",
+        running_options=RunningOptions(
+            callback_builders=[WorkerCallbackBuilder(TopLevelCallback)]
+        )
+    )
+    
+    return automa
+
+@pytest.fixture
+def simple_automa_2_with_context_callback():
+    """Create a simple automa with TopLevelCallback that uses ContextVar"""
+    class SimpleAutoma(GraphAutoma):
+        @worker(is_start=True, is_output=True)
+        async def worker_1(self, x: int) -> int:
+            return x + 1
+
+    automa = SimpleAutoma(
+        name="simple_automa_2",
+        running_options=RunningOptions(
+            callback_builders=[WorkerCallbackBuilder(TopLevelCallback)]
+        )
+    )
+
+    return automa
+
+
+@pytest.mark.asyncio
+async def test_context_isolation(
+    simple_automa_1_with_context_callback: GraphAutoma,
+    simple_automa_2_with_context_callback: GraphAutoma,
+    capsys,
+):
+    """
+    Test that ContextVar values are isolated between concurrent arun() calls.
+    
+    This test verifies that when multiple automa instances (or the same instance) 
+    are run concurrently, the ContextVar values (like trace_id) are properly isolated, 
+    ensuring that each arun() call gets its own context copy even when executed in parallel.
+    """
+    automa_1 = simple_automa_1_with_context_callback
+    automa_2 = simple_automa_2_with_context_callback
+    
+    # Collect all trace_ids from multiple iterations
+    all_trace_ids = []
+    
+    # Run 3 iterations, each with two concurrent arun() calls
+    # This tests Context isolation across multiple concurrent executions
+    for iteration in range(3):
+        # Run two arun() calls concurrently on different automa instances
+        results = await asyncio.gather(
+            automa_1.arun(x=1),
+            automa_2.arun(x=1),
+        )
+        
+        # Verify all results are correct
+        assert results == [2, 2]
+        
+        # Capture output for this iteration
+        captured = capsys.readouterr()
+        output = captured.out
+        
+        # Extract trace_ids from top-level automa callbacks only
+        automa_1_pattern = r'on_worker_start: simple_automa_1.*?root-([a-f0-9]{8})'
+        automa_2_pattern = r'on_worker_start: simple_automa_2.*?root-([a-f0-9]{8})'
+        
+        automa_1_match = re.search(automa_1_pattern, output)
+        automa_2_match = re.search(automa_2_pattern, output)
+        
+        assert automa_1_match is not None, f"Could not find trace_id for automa_1 in iteration {iteration + 1}. Output: {output}"
+        assert automa_2_match is not None, f"Could not find trace_id for automa_2 in iteration {iteration + 1}. Output: {output}"
+        
+        trace_id_1 = automa_1_match.group(1)
+        trace_id_2 = automa_2_match.group(1)
+        
+        # Verify the two trace_ids are different within the same iteration
+        assert trace_id_1 != trace_id_2, (
+            f"Trace IDs should be different for concurrent execution in iteration {iteration + 1}. "
+            f"Got trace_id_1={trace_id_1}, trace_id_2={trace_id_2}"
+        )
+        
+        # Collect trace_ids
+        all_trace_ids.append(trace_id_1)
+        all_trace_ids.append(trace_id_2)
+    
+    # Verify all trace_ids are unique (Context isolation across all executions)
+    unique_trace_ids = set(all_trace_ids)
+    assert len(unique_trace_ids) == 6, (
+        f"All trace_ids should be unique across all iterations. "
+        f"Got {len(unique_trace_ids)} unique values out of {len(all_trace_ids)} total. "
+        f"Trace IDs: {all_trace_ids}"
+    )
