@@ -98,7 +98,7 @@ class Automa(Worker):
         super().__init__()
 
         # Set the name of the Automa instance.
-        self.name = name or f"automa-{uuid.uuid4().hex[:8]}"
+        self.name = name or f"{self.__class__.__name__}-{uuid.uuid4().hex[:8]}"
 
         # Initialize the shared running options.
         self._running_options = running_options or RunningOptions()

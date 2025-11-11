@@ -89,12 +89,13 @@ class Worker(Serializable):
         """
         raise NotImplementedError(f"run() is not implemented in {type(self)}")
 
-    def _get_top_level_automa(self) -> Optional["Automa"]:
+    def _get_top_level_automa(self) -> "Automa":
         """
         Get the top-level automa instance reference.
         """
-        top_level_automa = self.parent
-        while top_level_automa and (not top_level_automa.is_top_level()):
+        # If the current automa is the top-level automa, return itself.
+        top_level_automa = self
+        while top_level_automa and top_level_automa.parent is not None:
             top_level_automa = top_level_automa.parent
         return top_level_automa
     
