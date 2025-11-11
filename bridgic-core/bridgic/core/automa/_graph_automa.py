@@ -1075,7 +1075,7 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
             worker_obj.local_space = {}
 
     async def arun(
-        self, 
+        self,
         *args: Tuple[Any, ...],
         feedback_data: Optional[Union[InteractionFeedback, List[InteractionFeedback]]] = None,
         **kwargs: Dict[str, Any]
@@ -1083,10 +1083,14 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
         """
         The entry point for running the constructed `GraphAutoma` instance.
 
+        For top-level automa, this method wraps the execution in a task to ensure
+        context isolation between multiple calls. For nested automa, it directly
+        calls `_arun_internal()` to avoid redundant task creation.
+
         Parameters
         ----------
         args : optional
-            Positional arguments.
+            Positional arguments to be passed.
         feedback_data : Optional[Union[InteractionFeedback, List[InteractionFeedback]]]
             Feedbacks that are received from one or multiple human interactions occurred before the
             Automa was paused. This argument may be of type `InteractionFeedback` or 
@@ -1109,26 +1113,37 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
             by one or more workers within the lastest event loop iteration, this exception will be
             raised to the application layer.
         """
-        # Wrap the internal execution logic in a task to provide isolation between multiple arun() calls.
-        task = asyncio.create_task(
-            self._arun_internal(
-                *args,
-                feedback_data=feedback_data,
-                **kwargs
-            ),
-            name=f"GraphAutoma-{self.name}-arun"
-        )
-        return await task
+        if self.is_top_level():
+            # For top-level automa, wrap in a task to ensure context isolation
+            task = asyncio.create_task(
+                self._arun_internal(*args, feedback_data=feedback_data, **kwargs),
+                name=f"GraphAutoma-{self.name}-arun"
+            )
+            return await task
+        else:
+            # For nested automa, directly call _arun_internal to avoid redundant task creation
+            return await self._arun_internal(*args, feedback_data=feedback_data, **kwargs)
 
     async def _arun_internal(
-        self, 
+        self,
         *args: Tuple[Any, ...],
         feedback_data: Optional[Union[InteractionFeedback, List[InteractionFeedback]]] = None,
         **kwargs: Dict[str, Any]
     ) -> Any:
         """
-        Internal implementation of arun. This method aims to ensure Context isolation between 
-        multiple calls of `arun()` method from the same Automa instance.
+        Internal implementation of `arun()` for `GraphAutoma`.
+
+        The scheduling behavior in `GraphAutoma` is automatically driven by:
+
+        1. **Worker dependencies**: Workers are scheduled to run only after all their necessary 
+        dependencies are satisfied. The dependencies automatically drives the execution order.
+
+        2. **Calling ferry_to**: During execution, a worker can explicitly trigger another worker 
+        with calling `ferry_to()`, which enables dynamic flow control and conditional branching.
+
+        3. **Dynamic topology changes**: When the graph topology is modified at runtime (such as adding 
+        or removing workers or dependencies), the scheduling system seamlessly updates to reflect 
+        the latest structure, ensuring that worker execution always follows the current graph.
         """
 
         def _reinit_current_kickoff_workers_if_needed():
@@ -1320,9 +1335,9 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
                 # Schedule task for each kickoff worker.
                 if worker_obj.is_automa():
                     coro = worker_obj.arun(
-                        *next_args, 
-                        feedback_data=rx_feedbacks, 
-                        **next_kwargs
+                        *next_args,
+                        feedback_data=rx_feedbacks,
+                        **next_kwargs,
                     )
                 else:
                     coro = worker_obj.arun(*next_args, **next_kwargs)
