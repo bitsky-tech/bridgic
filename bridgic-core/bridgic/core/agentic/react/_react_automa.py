@@ -5,7 +5,7 @@ from typing_extensions import override
 from concurrent.futures import ThreadPoolExecutor
 from jinja2 import Environment, PackageLoader, Template
 
-from bridgic.core.automa import Automa, GraphAutoma, worker
+from bridgic.core.automa import Automa, GraphAutoma, worker, RunningOptions
 from bridgic.core.automa.args import From, ArgsMappingRule, System
 from bridgic.core.model.protocols import ToolSelection
 from bridgic.core.model.types import Tool, ToolCall
@@ -45,10 +45,11 @@ class ReActAutoma(GraphAutoma):
         tools: Optional[List[Union[Callable, Automa, ToolSpec]]] = None,
         name: Optional[str] = None,
         thread_pool: Optional[ThreadPoolExecutor] = None,
+        running_options: Optional[RunningOptions] = None,
         max_iterations: int = DEFAULT_MAX_ITERATIONS,
         prompt_template: str = DEFAULT_TEMPLATE_FILE,
     ):
-        super().__init__(name=name, thread_pool=thread_pool)
+        super().__init__(name=name, thread_pool=thread_pool, running_options=running_options)
 
         self._llm = llm
         if system_prompt:
