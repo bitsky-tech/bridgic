@@ -60,7 +60,6 @@ class _GraphAdaptedWorker(Worker):
         self.is_output = is_output
         self.args_mapping_rule = args_mapping_rule
         self._decorated_worker = worker
-        # Build callback instances from builders
         self._worker_callbacks = [cb.build() for cb in callback_builders]
 
     @override
@@ -523,53 +522,19 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
                 self._worker_forwards[trigger] = []
             self._worker_forwards[trigger].append(key)
 
-        # If the added worker is an automa, recursively add callbacks to all nested workers.
+        # If the added worker is an automa, recursively propagate callbacks to inner workers.
         if new_worker_obj.is_automa():
             nested_automa = new_worker_obj.get_decorated_worker()
             if isinstance(nested_automa, GraphAutoma):
                 # Collect callback builders from all ancestor automas in the ancestor chain (from top-level to current)
                 ancestor_callback_builders = self._collect_ancestor_callback_builders()
+                # Append ancestor callbacks to the _cached_callbacks of the nested automa instance.
+                nested_automa._cached_callbacks = nested_automa._get_automa_callbacks() + [cb.build() for cb in ancestor_callback_builders]
+                # Recursively propagate ancestor callbacks to inner workers.
                 self._propagate_callbacks_to_nested_automa(
                     nested_automa=nested_automa,
                     callback_builders=ancestor_callback_builders,
                 )
-
-    def _collect_ancestor_callback_builders(self) -> List[WorkerCallbackBuilder]:
-        """
-        Collect callback builders from all ancestor automas in the ancestor chain.
-        
-        This method traverses up the automa ancestor chain (from current to top-level)
-        to collect all callback builders from ancestor automas' RunningOptions, ensuring 
-        that callbacks from all levels are propagated to nested workers. The current 
-        automa's callbacks are included as the last in the chain.
-        
-        The ancestor chain is the path from the current automa up to the top-level automa
-        through the parent relationship. This method collects callbacks from all automas
-        in this chain, ordered from top-level (first) to current level (last).
-        
-        Returns
-        -------
-        List[WorkerCallbackBuilder]
-            A list of callback builders collected from all ancestor automas in the ancestor
-            chain and the current automa, ordered from top-level (first) to current level (last).
-        """
-        # First, collect all callback builders by traversing up the ancestor chain
-        # (from current to top-level, stored in reverse order)
-        ancestor_callback_builders_reverse = []
-        current: Optional[GraphAutoma] = self
-        
-        # Traverse up the ancestor chain to collect callback builders
-        while current is not None:
-            if isinstance(current, GraphAutoma):
-                ancestor_callback_builders_reverse.append(current._running_options.callback_builders)
-            current = current.parent
-        
-        # Reverse to get order from top-level (first) to current (last)
-        callback_builders = []
-        for builders in reversed(ancestor_callback_builders_reverse):
-            callback_builders.extend(builders)
-        
-        return callback_builders
 
     def _propagate_callbacks_to_nested_automa(
         self,
@@ -604,10 +569,9 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
                     # Recursively propagate to deeper nested automas.
                     # Include current nested automa's callbacks in the propagation chain,
                     # so that deeper nested workers get callbacks from all ancestor automas.
-                    all_callback_builders = nested_automa._running_options.callback_builders + callback_builders
                     self._propagate_callbacks_to_nested_automa(
                         nested_automa=deeper_nested_automa,
-                        callback_builders=all_callback_builders,
+                        callback_builders=callback_builders,
                     )
 
     def _remove_worker_incrementally(
@@ -1140,6 +1104,29 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
             If the Automa is the top-level Automa and the `interact_with_human()` method is called by 
             one or more workers within the lastest event loop iteration, this exception will be raised to the application layer.
         """
+        # Wrap the internal execution logic in a task to provide isolation between multiple arun() calls.
+        task = asyncio.create_task(
+            self._arun_internal(
+                *args,
+                interaction_feedback=interaction_feedback,
+                interaction_feedbacks=interaction_feedbacks,
+                **kwargs
+            ),
+            name=f"GraphAutoma-{self.name}-arun"
+        )
+        return await task
+
+    async def _arun_internal(
+        self, 
+        *args: Tuple[Any, ...],
+        interaction_feedback: Optional[InteractionFeedback] = None,
+        interaction_feedbacks: Optional[List[InteractionFeedback]] = None,
+        **kwargs: Dict[str, Any]
+    ) -> Any:
+        """
+        Internal implementation of arun. This method aims to ensure Context isolation between 
+        multiple calls of `arun()` method from the same Automa instance.
+        """
 
         def _reinit_current_kickoff_workers_if_needed():
             # Note: After deserialization, the _current_kickoff_workers must not be empty!
@@ -1243,10 +1230,7 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
 
         # If this is the top-level automa, execute its callbacks separately.
         if is_top_level:
-            effective_builders = []
-            effective_builders.extend(GlobalSetting.read().callback_builders)
-            effective_builders.extend(self._running_options.callback_builders)
-            automa_callbacks = [cb.build() for cb in effective_builders]
+            automa_callbacks = self._get_automa_callbacks()
 
             for callback in automa_callbacks:
                 await callback.on_worker_start(
@@ -1424,11 +1408,8 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
 
             # Handle exceptions with callbacks at the top-level automa before re-raising them.
             if is_top_level:
-                # Collect callbacks from GlobalSetting and RunningOptions for top-level automa
-                effective_builders = []
-                effective_builders.extend(GlobalSetting.read().callback_builders)
-                effective_builders.extend(self._running_options.callback_builders)
-                automa_callbacks = [cb.build() for cb in effective_builders]
+                # Get cached callbacks for top-level automa
+                automa_callbacks = self._get_automa_callbacks()
 
                 # Process interaction exceptions with callbacks (they cannot be suppressed, but callbacks can observe them)
                 for e in interaction_exceptions + non_interaction_exceptions:
@@ -1526,12 +1507,18 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
 
         # If this is the top-level automa, execute its callbacks separately.
         if is_top_level:
+            automa_callbacks = self._get_automa_callbacks()
             for callback in automa_callbacks:
                 await callback.on_worker_end(
                     key=self.name,
                     is_top_level=True,
                     parent=None,
-                    arguments={"args": args, "kwargs": kwargs},
+                    arguments={
+                        "args": self._input_buffer.args,
+                        "kwargs": self._input_buffer.kwargs,
+                        "interaction_feedback": interaction_feedback,
+                        "interaction_feedbacks": interaction_feedbacks,
+                    },
                     result=result,
                 )
 
