@@ -4,6 +4,7 @@ from threading import Lock
 from typing import Any, Dict, Union, List, Optional, Type, Generic, TypeVar, TYPE_CHECKING, get_origin, get_args
 from typing_extensions import override
 from bridgic.core.types._serialization import Serializable
+from bridgic.core.utils._inspect_tools import load_qualified_class_or_func
 
 if TYPE_CHECKING:
     from bridgic.core.automa._graph_automa import GraphAutoma
@@ -273,6 +274,31 @@ class WorkerCallbackBuilder(Generic[T_WorkerCallback]):
             return self._shared_instance
         else:
             return self._callback_type(**self._init_kwargs)
+
+    @override
+    def dump_to_dict(self) -> Dict[str, Any]:
+        return {
+            "callback_type": self._callback_type.__module__ + "." + self._callback_type.__qualname__,
+            "init_kwargs": self._init_kwargs,
+            "is_shared": self._is_shared,
+        }
+
+    @override
+    def load_from_dict(self, state_dict: Dict[str, Any]) -> None:
+        # Load the callback type from its fully qualified name
+        callback_type_name = state_dict["callback_type"]
+        self._callback_type = load_qualified_class_or_func(callback_type_name)
+
+        # Load init_kwargs (default to empty dict if not present or None)
+        init_kwargs = state_dict.get("init_kwargs")
+        self._init_kwargs = init_kwargs if init_kwargs is not None else {}
+
+        # Load is_shared (default to True if not present for backward compatibility)
+        self._is_shared = state_dict.get("is_shared", True)
+
+        # Reset shared instance and lock (they will be recreated when needed)
+        self._shared_instance = None
+        self._shared_lock = Lock()
 
 
 def can_handle_exception(callback: WorkerCallback, error: Exception) -> bool:
