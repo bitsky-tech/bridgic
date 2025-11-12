@@ -1293,7 +1293,7 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
                 binding_args, binding_kwargs = args_manager.args_binding(
                     last_worker_key=kickoff_info.last_kickoff,
                     current_worker_key=kickoff_info.worker_key
-                ) if not kickoff_info.from_ferry else (kickoff_info.args, kickoff_info.kwargs)
+                ) if not kickoff_info.from_ferry else ((), {})
                 # Inputs Propagation
                 _, propagation_kwargs = args_manager.inputs_propagation(current_worker_key=kickoff_info.worker_key)
                 # Data injection.
@@ -1301,11 +1301,13 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
                     current_worker_key=kickoff_info.worker_key, 
                     current_automa=self
                 )
+                # Ferry arguments.
+                ferry_args, ferry_kwargs = kickoff_info.args, kickoff_info.kwargs
                 # combine the arguments from the three steps.
-                # kwargs will cover priority follows: propagation_kwargs < binding_kwargs < injection_kwargs
+                # kwargs will cover priority follows: propagation_kwargs < binding_kwargs < injection_kwargs < ferry_kwargs
                 next_args, next_kwargs = safely_map_args(
-                    binding_args, 
-                    {**propagation_kwargs, **binding_kwargs, **injection_kwargs}, 
+                    (*binding_args, *ferry_args), 
+                    {**propagation_kwargs, **binding_kwargs, **injection_kwargs, **ferry_kwargs}, 
                     self._workers[kickoff_info.worker_key].get_input_param_names()
                 )
                 
