@@ -1,15 +1,17 @@
 import json
 from copy import deepcopy
+from inspect import Parameter
 from dataclasses import dataclass
 from typing import Literal, Tuple, Any, List, Dict, Mapping, Union
 from typing_extensions import TYPE_CHECKING
 
 from bridgic.core.types._common import ArgsMappingRule
 from bridgic.core.types._error import WorkerArgsMappingError
-from bridgic.core.utils._args_map import safely_map_args
+from bridgic.core.automa.args._args_descriptor import WorkerInjector
 
 if TYPE_CHECKING:
     from bridgic.core.automa._graph_automa import (
+        GraphAutoma,
         _GraphAdaptedWorker,
         _AddWorkerDeferredTask,
         _RemoveWorkerDeferredTask,
@@ -27,6 +29,23 @@ _RECEIVER_RULES_SET = {ArgsMappingRule.AS_IS, ArgsMappingRule.UNPACK, ArgsMappin
 
 @dataclass
 class Distribute:
+    """
+    A descriptor to indicate that data should be distributed to multiple workers.
+
+    When is used to input arguments or worker with this class, the data will be distributed
+    element-wise to downstream workers instead of being gathered as a single value.
+
+    Parameters
+    ----------
+    data : Union[List, Tuple]
+        The data to be distributed. Must be a list or tuple with length matching
+        the number of workers that will receive it.
+
+    Raises
+    ------
+    ValueError
+        If the data is not a list or tuple.
+    """
     data: Union[List, Tuple]
 
     def __post_init__(self):
@@ -36,18 +55,31 @@ class Distribute:
 
 def parse_args_mapping_rule(args_mapping_rule: ArgsMappingRule) -> Tuple[RECEIVER_RULES, SENDER_RULES]:
     """
-    Parse the args_mapping_rule into a tuple of two modes, the first for the receiver and the second for the sender.
+    Parse an args mapping rule into receiver and sender modes.
 
-    Raises:
+    This function interprets the args_mapping_rule, which can be either a single
+    rule or a tuple of two rules. It returns a tuple where the first element is
+    the receiver rule (how the worker receives arguments) and the second is the
+    sender rule (how the worker sends its output).
+
+    Parameters
+    ----------
+    args_mapping_rule : ArgsMappingRule
+        The mapping rule(s) to parse. Can be a single rule or a tuple of two rules.
+        If a single receiver rule is provided, GATHER is used as the default sender rule.
+        If a single sender rule is provided, AS_IS is used as the default receiver rule.
+
+    Returns
     -------
-    ValueError: If the args_mapping_rule is not match any of the supported modes.
-    ValueError: If the args_mapping_rule tuple has more than two elements.
-    ValueError: If the two elements of the args_mapping_rule tuple are the same type.
+    Tuple[RECEIVER_RULES, SENDER_RULES]
+        A tuple containing (receiver_rule, sender_rule).
 
-    Returns:
-    --------
-    Tuple[RECEIVER_RULES, SENDER_RULES]: The parsed receiver and sender modes of the current worker.
-
+    Raises
+    ------
+    ValueError
+        If the args_mapping_rule doesn't match any supported mode.
+        If the args_mapping_rule tuple has more than two elements.
+        If both elements of the tuple are the same type.
     """
     def parse_single_mode(mode: ArgsMappingRule) -> Tuple[RECEIVER_RULES, SENDER_RULES]:
         # if the args_mapping_rule is a single mode, return the mode and the default mode.
@@ -76,7 +108,8 @@ def parse_args_mapping_rule(args_mapping_rule: ArgsMappingRule) -> Tuple[RECEIVE
 
 class ArgsManager:
     """
-    A class for binding arguments to a worker.
+    Manages argument binding, inputs propagation, and arguments injection between 
+    workers in a graph automa.
     """
     def __init__(
         self,
@@ -87,7 +120,20 @@ class ArgsManager:
         worker_dict: Dict[str, "_GraphAdaptedWorker"],
     ):
         """
-        Initialize the ArgsManager.
+        Initialize the ArgsManager with worker graph information.
+
+        Parameters
+        ----------
+        input_args : Tuple[Any, ...]
+            Initial positional arguments passed to the automa.
+        input_kwargs : Dict[str, Any]
+            Initial keyword arguments passed to the automa.
+        worker_outputs : Dict[str, Any]
+            Dictionary mapping worker keys to their output values.
+        worker_forwards : Dict[str, List[str]]
+            Dictionary mapping each worker key to the list of workers it triggers.
+        worker_dict : Dict[str, "_GraphAdaptedWorker"]
+            Dictionary mapping worker keys to their worker objects with binding information.
         """
         # record the args that are possibly passed to the workers
         self._input_args = input_args
@@ -136,6 +182,8 @@ class ArgsManager:
                 "sender_rule": sender_rule,
             }
 
+        self._injector = WorkerInjector()
+
     ###############################################################################
     # Arguments Binding between workers that have dependency relationships.
     ###############################################################################
@@ -144,6 +192,32 @@ class ArgsManager:
         last_worker_key: str, 
         current_worker_key: str,
     ) -> Tuple[Tuple[Any, ...], Dict[str, Any]]:
+        """
+        Bind arguments from a predecessor worker to the current worker.
+
+        This method handles argument binding between workers that have dependency
+        relationships. It supports two scenarios:
+        1. Start workers: binding initial input arguments to start workers
+        2. Dependent workers: binding outputs from dependency workers to the current worker
+
+        The binding process respects the receiver rule of the current worker and
+        the sender rules of the predecessor workers.
+
+        Parameters
+        ----------
+        last_worker_key : str
+            The key of the predecessor worker. Use "__automa__" for start workers
+            that should receive initial input arguments.
+        current_worker_key : str
+            The key of the current worker that will receive the arguments.
+
+        Returns
+        -------
+        Tuple[Tuple[Any, ...], Dict[str, Any]]
+            A tuple containing (positional_args, keyword_args) to be passed to
+            the current worker. Returns empty arguments if last_worker_key is not
+            a dependency of current_worker_key.
+        """
         kickoff_single = "start" if last_worker_key == "__automa__" else "dependency"
         worker_dependencies = self._worker_rule_dict[current_worker_key]["dependencies"]
         worker_receiver_rule = self._worker_rule_dict[current_worker_key]["receiver_rule"]
@@ -193,24 +267,30 @@ class ArgsManager:
             next_args, next_kwargs = _dependency_args_binding(worker_dependencies, worker_receiver_rule)
         return next_args, next_kwargs
 
-    ###############################################################################
-    # Arguments Binding of Inputs Arguments.
-    ###############################################################################
-    def inputs_propagation(
-        self,
-        current_worker_key: str,
-        next_args: Tuple[Any, ...],
-        next_kwargs: Dict[str, Any],
-    ) -> Tuple[Tuple[Any, ...], Dict[str, Any]]:
-        input_kwargs = {k:v for k,v in self._input_kwargs.items() if k not in next_kwargs}
-        next_kwargs = {**next_kwargs, **input_kwargs}
-        rx_param_names_dict = self._worker_rule_dict[current_worker_key]["param_names"]
-        next_args, next_kwargs = safely_map_args(next_args, next_kwargs, rx_param_names_dict)
-        return next_args, next_kwargs
-
     def _args_send(self, data_mode_list: List[Dict[str, Any]]) -> List[Any]:
         """
-        Send the data to the next workers.
+        Process and send data according to sender rules.
+
+        This method applies sender rules (GATHER or DISTRIBUTE) to prepare data
+        for downstream workers. With GATHER, the entire output is sent. With
+        DISTRIBUTE, elements are distributed one at a time to different workers.
+
+        Parameters
+        ----------
+        data_mode_list : List[Dict[str, Any]]
+            List of dictionaries, each containing 'worker_key', 'data', and 'send_rule'.
+
+        Returns
+        -------
+        List[Any]
+            List of processed data items ready to be sent to downstream workers.
+
+        Raises
+        ------
+        WorkerArgsMappingError
+            If the data is not iterable when DISTRIBUTE rule is used.
+            If the data length doesn't match the forward count for DISTRIBUTE.
+            If an unsupported sender rule is encountered.
         """
         send_data = []
         for data_mode in data_mode_list:
@@ -253,23 +333,37 @@ class ArgsManager:
         data: List[Any]
     ) -> Tuple[Tuple[Any, ...], Dict[str, Any]]:
         """
-        Resolve arguments mapping between workers that have dependency relationships.
+        Process received data according to the current worker's receiver rule.
+
+        This method applies receiver rules to transform data from predecessor workers
+        into the appropriate argument format for the current worker. Supported rules:
+        - AS_IS: Pass all data as positional arguments
+        - UNPACK: Unpack a single result (list/tuple/dict) into arguments
+        - MERGE: Wrap all results into a single tuple argument
+        - SUPPRESSED: Ignore all data and return empty arguments
 
         Parameters
         ----------
         last_worker_key : str
-            The key of the last worker.
+            The key of the predecessor worker that produced the data.
         current_worker_key : str
-            The key of the current worker.
+            The key of the current worker that will receive the arguments.
         current_worker_receiver_rule : RECEIVER_RULES
-            The receiver rule of the worker.
+            The receiver rule to apply when processing the data.
         data : List[Any]
-            The data to be mapped.
+            The data received from predecessor workers.
         
         Returns
         -------
         Tuple[Tuple[Any, ...], Dict[str, Any]]
-            The mapped positional arguments and keyword arguments.
+            A tuple containing (positional_args, keyword_args) ready to be passed
+            to the current worker.
+
+        Raises
+        ------
+        WorkerArgsMappingError
+            If UNPACK rule is used but the worker has multiple dependencies.
+            If UNPACK rule is used but the data type is not unpackable.
         """
         def as_is_return_values(results: List[Any]) -> Tuple[Tuple, Dict[str, Any]]:
             next_args, next_kwargs = tuple(results), {}
@@ -311,12 +405,99 @@ class ArgsManager:
 
         return next_args, next_kwargs
 
+    ###############################################################################
+    # Arguments Binding of Inputs Arguments.
+    ###############################################################################
+    def inputs_propagation(
+        self,
+        current_worker_key: str,
+    ) -> Tuple[Tuple[Any, ...], Dict[str, Any]]:
+        """
+        Propagate input arguments from the automa to a worker.
+
+        This method filters and propagates keyword arguments from the automa's
+        input buffer to a worker, but only for parameters that can accept keyword
+        arguments (positional_or_keyword or positional_only parameters).
+
+        Parameters
+        ----------
+        current_worker_key : str
+            The key of the worker that should receive the propagated inputs.
+
+        Returns
+        -------
+        Tuple[Tuple[Any, ...], Dict[str, Any]]
+            A tuple containing empty positional arguments and a dictionary of
+            keyword arguments that match the worker's parameter signature.
+        """
+        input_kwargs = {k:v for k,v in self._input_kwargs.items()}
+        rx_param_names_dict = self._worker_rule_dict[current_worker_key]["param_names"]
+
+        def get_param_names(param_names_dict: List[Tuple[str, Any]]) -> List[str]:
+            return [name for name, _ in param_names_dict]
+            
+        positional_only_param_names = get_param_names(rx_param_names_dict.get(Parameter.POSITIONAL_ONLY, []))
+        positional_or_keyword_param_names = get_param_names(rx_param_names_dict.get(Parameter.POSITIONAL_OR_KEYWORD, []))
+
+        propagation_kwargs = {}
+        for key, value in input_kwargs.items():
+            if key in positional_only_param_names:
+                propagation_kwargs[key] = value
+            elif key in positional_or_keyword_param_names:
+                propagation_kwargs[key] = value
+
+        return (), propagation_kwargs
+
+    ###############################################################################
+    # Arguments Injection for workers that need data from other workers that not directly depend on it.
+    ###############################################################################
+    def args_injection(
+        self,
+        current_worker_key: str,
+        current_automa: "GraphAutoma",
+    ) -> Tuple[Tuple[Any, ...], Dict[str, Any]]:
+        """
+        Inject arguments for workers that need data from non-dependency workers.
+
+        This method handles special argument injection using descriptors like `From()`
+        and `System()`, which allow workers to access data from workers they don't
+        directly depend on, or to access system-level resources.
+
+        Parameters
+        ----------
+        current_worker_key : str
+            The key of the worker that needs argument injection.
+        current_automa : GraphAutoma
+            The automa instance containing the worker graph and context.
+
+        Returns
+        -------
+        Tuple[Tuple[Any, ...], Dict[str, Any]]
+            A tuple containing (positional_args, keyword_args) with injected values
+            for parameters marked with special descriptors.
+        """
+        current_worker_sig = self._worker_rule_dict[current_worker_key]["param_names"]
+        return self._injector.inject(current_worker_key, current_worker_sig, current_automa)
+
     def update_data_flow_topology(
         self, 
         dynamic_tasks: List[Union["_AddWorkerDeferredTask", "_RemoveWorkerDeferredTask", "_AddDependencyDeferredTask"]],
     ) -> None:
         """
-        Update the data flow topology.
+        Update the data flow topology based on dynamic graph modifications.
+
+        This method processes deferred tasks that modify the worker graph at runtime,
+        updating internal data structures to reflect changes such as adding workers,
+        removing workers, or adding dependencies.
+
+        Parameters
+        ----------
+        dynamic_tasks : List[Union["_AddWorkerDeferredTask", "_RemoveWorkerDeferredTask", "_AddDependencyDeferredTask"]]
+            List of deferred tasks representing graph modifications to apply.
+            Each task can be one of:
+            - AddWorker: Add a new worker to the graph
+            - RemoveWorker: Remove a worker from the graph
+            - AddDependency: Add a dependency relationship between workers
         """
         for dynamic_task in dynamic_tasks:
             if dynamic_task.task_type == "add_worker":

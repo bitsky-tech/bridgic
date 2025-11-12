@@ -2,7 +2,7 @@ import pytest
 from typing import Tuple, Dict, Any
 
 from bridgic.core.automa import GraphAutoma, Snapshot, worker, AutomaRuntimeError, WorkerCallback
-from bridgic.core.automa.args import From, ArgsMappingRule, System
+from bridgic.core.automa.args import From, ArgsMappingRule, System, Distribute
 from bridgic.core.automa.interaction import Event, InteractionFeedback, InteractionException
 from bridgic.core.automa.worker import Worker
 from bridgic.core.types._error import WorkerArgsInjectionError
@@ -46,6 +46,12 @@ def args_inject_and_callback_graph():
         @worker(is_start=True)
         async def worker_0(self, user_input: int) -> int:
             return user_input + 1  # 2 
+
+        @worker(is_start=True)
+        async def worker_01(self, user_input: int) -> int:
+            res = user_input + 1
+            assert res == 3
+            return res
 
         @worker(dependencies=["worker_0"])
         async def worker_1(self, x: int, z: int = 1) -> int:
@@ -136,7 +142,7 @@ def args_inject_and_callback_graph():
 
 @pytest.mark.asyncio
 async def test_args_inject_and_callback(args_inject_and_callback_graph: GraphAutoma, capsys):
-    result = await args_inject_and_callback_graph.arun(user_input=1)
+    result = await args_inject_and_callback_graph.arun(user_input=Distribute([1, 2]))
     assert result == 13
 
     outputs = capsys.readouterr()

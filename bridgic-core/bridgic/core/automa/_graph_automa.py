@@ -23,7 +23,6 @@ from bridgic.core.automa.interaction import Interaction, InteractionFeedback, In
 from bridgic.core.automa._automa import _InteractionAndFeedback, _InteractionEventException
 from bridgic.core.automa.worker._worker_callback import WorkerCallback
 from bridgic.core.automa._graph_meta import GraphMeta
-from bridgic.core.automa.args._args_descriptor import injector
 from bridgic.core.automa.args._args_binding import ArgsManager
 
 class _GraphAdaptedWorker(Worker):
@@ -1147,25 +1146,25 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
                     printer.print(f"[{kickoff_name}] will kick off [{kickoff_info.worker_key}]", color="cyan")
 
                 # Arguments Mapping:
-                next_args, next_kwargs = args_manager.args_binding(
+                binding_args, binding_kwargs = args_manager.args_binding(
                     last_worker_key=kickoff_info.last_kickoff,
                     current_worker_key=kickoff_info.worker_key
                 ) if not kickoff_info.from_ferry else (kickoff_info.args, kickoff_info.kwargs)
-                # Inputs Propagation:
-                next_args, next_kwargs = args_manager.inputs_propagation(
-                    current_worker_key=kickoff_info.worker_key,
-                    next_args=next_args,
-                    next_kwargs=next_kwargs,
-                )
+                # Inputs Propagation
+                _, propagation_kwargs = args_manager.inputs_propagation(current_worker_key=kickoff_info.worker_key)
                 # Data injection.
-                next_args, next_kwargs = injector.inject(
+                _, injection_kwargs = args_manager.args_injection(
                     current_worker_key=kickoff_info.worker_key, 
-                    current_worker_sig=self._workers[kickoff_info.worker_key].get_input_param_names(), 
-                    current_automa=self,
-                    next_args=next_args, 
-                    next_kwargs=next_kwargs
+                    current_automa=self
                 )
-
+                # combine the arguments from the three steps.
+                # kwargs will cover priority follows: propagation_kwargs < binding_kwargs < injection_kwargs
+                next_args, next_kwargs = safely_map_args(
+                    binding_args, 
+                    {**propagation_kwargs, **binding_kwargs, **injection_kwargs}, 
+                    self._workers[kickoff_info.worker_key].get_input_param_names()
+                )
+                
                 # Collect the output worker keys.
                 if self._workers[kickoff_info.worker_key].is_output:
                     is_output_worker_keys.add(kickoff_info.worker_key)
