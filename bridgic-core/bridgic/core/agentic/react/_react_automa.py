@@ -120,16 +120,14 @@ class ReActAutoma(GraphAutoma):
         chat_history: Optional[List[Union[UserTextMessage, AssistantTextMessage, ToolMessage]]] = None,
         messages: Optional[List[ChatMessage]] = None,
         tools: Optional[List[Union[Callable, Automa, ToolSpec]]] = None,
-        interaction_feedback: Optional[InteractionFeedback] = None,
-        interaction_feedbacks: Optional[List[InteractionFeedback]] = None,
+        feedback_data: Optional[Union[InteractionFeedback, List[InteractionFeedback]]] = None,
     ) -> Any:
         return await super().arun(
             user_msg=user_msg,
             chat_history=chat_history,
             messages=messages,
             tools=tools,
-            interaction_feedback=interaction_feedback,
-            interaction_feedbacks=interaction_feedbacks,
+            feedback_data=feedback_data,
         )
 
     @worker(is_start=True)

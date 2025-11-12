@@ -15,9 +15,29 @@ from bridgic.core.automa.args import RuntimeContext
 from bridgic.core.utils._msgpackx import load_bytes
 from bridgic.core.utils._inspect_tools import get_param_names_by_kind
 from bridgic.core.types._error import AutomaRuntimeError
+from bridgic.core.automa.worker._worker_callback import WorkerCallbackBuilder, WorkerCallback
+from bridgic.core.config import GlobalSetting
 
 class RunningOptions(BaseModel):
+    """
+    Running options for an Automa instance.
+
+    This class contains two types of fields:
+
+    1. **Runtime-configurable fields**: Can be set at any time via `set_running_options()`.
+       - `debug`: Whether to enable debug mode.
+
+    2. **Initialization-only fields**: Must be set during Automa instantiation via the `running_options` parameter.
+       - `callback_builders`: Callback builders at the Automa instance level. These will be merged with 
+         global callback builders when workers are created during Automa initialization.
+    """
     debug: bool = False
+    """Whether to enable debug mode. Can be set at runtime via set_running_options()."""
+
+    callback_builders: List[WorkerCallbackBuilder] = []
+    """A list of callback builders specific to this Automa instance."""
+
+    model_config = {"arbitrary_types_allowed": True}
 
 class _InteractionAndFeedback(BaseModel):
     interaction: Interaction
@@ -66,10 +86,14 @@ class Automa(Worker):
     _main_thread_id: int
     _main_loop: asyncio.AbstractEventLoop
 
+    # Cached callbacks for top-level automa execution, which are built once and reused across multiple arun() calls.
+    _cached_callbacks: Optional[List[WorkerCallback]] = None
+
     def __init__(
         self,
         name: str = None,
         thread_pool: Optional[ThreadPoolExecutor] = None,
+        running_options: Optional[RunningOptions] = None,
     ):
         super().__init__()
 
@@ -77,7 +101,7 @@ class Automa(Worker):
         self.name = name or f"automa-{uuid.uuid4().hex[:8]}"
 
         # Initialize the shared running options.
-        self._running_options = RunningOptions()
+        self._running_options = running_options or RunningOptions()
 
         # Initialize data structures for event handling and human interactions
         self._event_handlers = {}
@@ -113,6 +137,21 @@ class Automa(Worker):
         snapshot: Snapshot,
         thread_pool: Optional[ThreadPoolExecutor] = None,
     ) -> "Automa":
+        """
+        Load an Automa instance from a snapshot.
+
+        Parameters
+        ----------
+        snapshot: Snapshot
+            The snapshot to load the Automa instance from.
+        thread_pool: Optional[ThreadPoolExecutor]
+            The thread pool for parallel running of I/O-bound tasks. If not provided, a default thread pool will be used.
+
+        Returns
+        -------
+        Automa
+            The loaded Automa instance.
+        """
         # Here you can compare snapshot.serialization_version with SERIALIZATION_VERSION, and handle any necessary version compatibility issues if needed.
         automa = load_bytes(snapshot.serialized_bytes)
         if thread_pool:
@@ -121,6 +160,16 @@ class Automa(Worker):
 
     @property
     def thread_pool(self) -> Optional[ThreadPoolExecutor]:
+        """
+        Get/Set the thread pool for parallel running of I/O-bound tasks used by the current Automa instance and its nested Automa instances.
+
+        Note: If an Automa is nested within another Automa, the thread pool of the top-level Automa will be used, rather than the thread pool of the nested Automa.
+
+        Returns
+        -------
+        Optional[ThreadPoolExecutor]
+            The thread pool.
+        """
         return self._thread_pool
 
     @thread_pool.setter
@@ -128,7 +177,7 @@ class Automa(Worker):
         """
         Set the thread pool for parallel running of I/O-bound tasks.
 
-        If an Automa is nested within another Automa, the thread pool of the top-level Automa will be used, rather than the thread pool of the nested Automa.
+        Note: If an Automa is nested within another Automa, the thread pool of the top-level Automa will be used, rather than the thread pool of the nested Automa.
         """
         self._thread_pool = executor
 
@@ -169,20 +218,28 @@ class Automa(Worker):
         """
         return self.parent is None
 
-    def set_running_options(self, debug: bool = None):
+    def set_running_options(
+        self,
+        debug: Optional[bool] = None,
+    ):
         """
-        Set running options for this Automa instance, and ensure these options propagate through all nested Automa instances.
+        Set runtime-configurable running options for this Automa instance.
 
-        When different options are set on different nested Automa instances, the setting from the outermost 
+        This method only supports fields that can be changed at runtime. Fields that must be set 
+        during initialization (such as `callback_builders`) cannot be changed here and must be 
+        provided via the `running_options` parameter in the Automa constructor.
+
+        For fields that can be delayed to be set, some settings (like `debug`) from the outermost 
         (top-level) Automa will override the settings of all inner (nested) Automa instances.
-
-        For example, if the top-level Automa instance sets `debug = True` and the nested instances sets `debug = False`, 
-        then the nested Automa instance will run in debug mode, when the top-level Automa instance is executed.
+        For example, if the top-level Automa instance sets `debug = True` and the nested instances 
+        sets `debug = False`, then the nested Automa instance will run in debug mode when the 
+        top-level Automa instance is executed. We call it the Setting Penetration Mechanism.
 
         Parameters
         ----------
         debug : bool, optional
-            Whether to enable debug mode. If not set, the effect is the same as setting `debug = False` by default.
+            Whether to enable debug mode. If None, the current value is not changed.
+            This field is subject to the Setting Penetration Mechanism.
         """
         if debug is not None:
             self._running_options.debug = debug
@@ -192,6 +249,62 @@ class Automa(Worker):
             # Here we are at the top-level automa.
             return self._running_options
         return self.parent._get_top_running_options()
+
+    def _collect_ancestor_callback_builders(self) -> List[WorkerCallbackBuilder]:
+        """
+        Collect callback builders from all ancestor automas in the ancestor chain.
+
+        This method traverses up the automa ancestor chain (from current to top-level)
+        to collect all callback builders from ancestor automas' RunningOptions, ensuring
+        that callbacks from all levels are propagated to nested workers. The current
+        automa's callbacks are included as the last in the chain.
+
+        The ancestor chain is the path from the current automa up to the top-level automa
+        through the parent relationship. This method collects callbacks from all automas
+        in this chain, ordered from top-level (first) to current level (last).
+
+        Returns
+        -------
+        List[WorkerCallbackBuilder]
+            A list of callback builders collected from all ancestor automas in the ancestor
+            chain and the current automa, ordered from top-level (first) to current level (last).
+        """
+        # First, collect all callback builders by traversing up the ancestor chain
+        # (from current to top-level, stored in reverse order)
+        ancestor_callback_builders_reverse = []
+        current: Optional[Automa] = self
+
+        # Traverse up the ancestor chain to collect callback builders
+        while current is not None:
+            if isinstance(current, Automa):
+                ancestor_callback_builders_reverse.append(current._running_options.callback_builders)
+            current = current.parent
+
+        # Reverse to get order from top-level (first) to current (last)
+        callback_builders = []
+        for builders in reversed(ancestor_callback_builders_reverse):
+            callback_builders.extend(builders)
+
+        return callback_builders
+
+    def _get_automa_callbacks(self) -> List[WorkerCallback]:
+        """
+        Get or build cached callback instances for top-level automa execution.
+
+        This method ensures that callback instances are built once and reused across
+        multiple arun() calls, respecting the is_shared setting of each builder.
+
+        Returns
+        -------
+        List[WorkerCallback]
+            List of callback instances for top-level automa execution.
+        """
+        if self._cached_callbacks is None:
+            effective_builders = []
+            effective_builders.extend(GlobalSetting.read().callback_builders)
+            effective_builders.extend(self._running_options.callback_builders)
+            self._cached_callbacks = [cb.build() for cb in effective_builders]
+        return self._cached_callbacks
 
     ###############################################################
     ########## [Bridgic Event Handling Mechanism] starts ##########
@@ -267,7 +380,7 @@ class Automa(Worker):
 
         The event handler implemented by the application layer will be called in the same thread as the worker (maybe the main thread or a new thread from the thread pool).
         
-        Note that `post_event` can be called in a non-async method or an async method.
+        Note that `post_event` can be called either in a non-async method or in an async method.
 
         The event will be bubbled up to the top-level Automa, where it will be processed by the event handler registered with the event type.
 
@@ -306,7 +419,7 @@ class Automa(Worker):
         """
         Request feedback for the specified event from the application layer outside the Automa. This method blocks the caller until the feedback is received.
 
-        Note that `post_event` should only be called from within a non-async method running in the new thread of the Automa thread pool.
+        Note that `request_feedback` should only be called from within a non-async method running in a new thread of the Automa thread pool.
 
         Parameters
         ----------
@@ -342,7 +455,7 @@ class Automa(Worker):
         """
         Request feedback for the specified event from the application layer outside the Automa. This method blocks the caller until the feedback is received.
 
-        The event handler implemented by the application layer will be called in the next event loop, in the main thread.
+        The event handler implemented by the application layer will be called in the next event loop iteration, in the main thread.
 
         Parameters
         ----------
@@ -399,25 +512,19 @@ class Automa(Worker):
         interacting_worker: Optional[Worker] = None,
     ) -> InteractionFeedback:
         """
-        Trigger an interruption in the "human-computer interaction" during the execution of Automa.
+        Trigger an interruption in the "human-in-the-loop interaction" during the execution of the Automa.
 
         Parameters
         ----------
         event: Event
             The event that triggered the interaction.
         interacting_worker: Optional[Worker]
-            The worker that is currently interacting with human. If not provided, the worker will be located automatically.
+            The worker instance that is currently interacting with human. If not provided, the worker will be located automatically.
 
         Returns
         -------
         InteractionFeedback
             The feedback received from the application layer.
-
-        Raises
-        ------
-        _InteractionEventException
-            If the Automa is not the top-level Automa and the `interact_with_human()` method is called by 
-            one or more workers, this exception will be raised to the upper level Automa.
         """
         if not interacting_worker:
             kickoff_worker_key: str = self._locate_interacting_worker()
@@ -436,7 +543,7 @@ class Automa(Worker):
         event: Event,
         worker_key: str
     ) -> InteractionFeedback:
-        # Match interaction_feedback to see if it matches
+        # Match the interaction and feedback to see if it matches
         matched_feedback: _InteractionAndFeedback = None
         cur_interact_index = self._get_and_increment_interaction_index(worker_key)
         if worker_key in self._ongoing_interactions:
@@ -453,13 +560,13 @@ class Automa(Worker):
         if matched_feedback is None or matched_feedback.feedback is None:
             # Important: The interaction_id should be unique for each human interaction.
             interaction_id = uuid.uuid4().hex if matched_feedback is None else matched_feedback.interaction.interaction_id
-            # Match interaction_feedback failed, raise an exception to go into the human interactioin process.
+            # Match failed, raise an exception to go into the human interactioin process.
             raise _InteractionEventException(Interaction(
                 interaction_id=interaction_id,
                 event=event,
             ))
         else:
-            # Match interaction_feedback succeeded, return it.
+            # Match the interaction and feedback succeeded, return it.
             return matched_feedback.feedback
 
     def _get_and_increment_interaction_index(self, worker_key: str) -> int:

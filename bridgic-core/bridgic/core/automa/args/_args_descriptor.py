@@ -81,7 +81,7 @@ def resolve_from(dep: From, worker_output: Dict[str, Any]) -> Any:
     inject_res = worker_output.get(dep.key, dep.default)
     if isinstance(inject_res, InjectorNone):
         raise WorkerArgsInjectionError(
-            f"the worker: `{dep.key}` is not found in the worker dictionary. "
+            f"the worker: `{dep.key}` is not found in the automa or `{dep.key}` is already removed. "
             "You may need to set the default value of the parameter to a `From` instance with the key of the worker."
         )
     return inject_res
@@ -178,9 +178,10 @@ class System(ArgsDescriptor):
         
         if not any(re.match(pattern, self.key) for pattern in allowed_patterns):
             raise WorkerArgsInjectionError(
-                f"Key '{self.key}' is not supported. Supported keys: "
-                f"`runtime_context`: a context for data persistence of the current worker."
-                f"`automa:.*`: a sub-automa in current automa."
+                f"Key '{self.key}' is not supported. Supported keys: \n"
+                f"- `runtime_context`: a context for data persistence of the current worker.\n"
+                f"- `automa:<worker_key>`: a sub-automa in current automa.\n"
+                f"- `automa`: the current automa instance.\n"
             )
 
 JSON_SCHEMA_IGNORE_ARG_TYPES = (System, From)
@@ -237,9 +238,7 @@ class WorkerInjector:
         self, 
         current_worker_key: str,
         current_worker_sig: Dict[_ParameterKind, List],
-        current_automa: "GraphAutoma",
-        next_args: Tuple[Any, ...],
-        next_kwargs: Dict[str, Any],
+        current_automa: "GraphAutoma"
     ) -> Any:
         """
         Inject dependencies into parameters whose default value is a `From` or `System`.
@@ -252,15 +251,11 @@ class WorkerInjector:
             Dictionary mapping parameters to their signature information of the current worker.
         current_automa : GraphAutoma
             The current automa instance.
-        next_args : Tuple[Any, ...]
-            Positional arguments to be passed to the current worker.
-        next_kwargs : Dict[str, Any]
-            Keyword arguments to be passed to the current worker.
             
         Returns
         -------
         Tuple[Tuple[Any, ...], Dict[str, Any]]
-            A tuple containing the processed positional and keyword arguments for the current worker.
+            A tuple containing the keyword arguments for the current worker to be injected.
         """
         worker_dict = current_automa._workers
         worker_output = current_automa._worker_output
@@ -281,23 +276,9 @@ class WorkerInjector:
                 value = resolve_system(default_value, current_worker_key, worker_dict, current_automa)
                 system_inject_kwargs[name] = value
 
-        if len(param_list) <= len(next_args) and (len(from_inject_kwargs) or len(system_inject_kwargs)):
-            raise WorkerArgsInjectionError(
-                f"The number of parameters is less than or equal to the number of positional arguments, "
-                f"but got {len(param_list)} parameters and {len(next_args)} positional arguments"
-            )
+        current_kwargs = {
+            **from_inject_kwargs,
+            **system_inject_kwargs
+        }
+        return (), current_kwargs
 
-        # kwargs will cover priority follows: original kwargs < from inject kwargs < system inject kwargs
-        current_kwargs = {}
-        for k, v in next_kwargs.items():
-            current_kwargs[k] = v
-        for k, v in from_inject_kwargs.items():
-            current_kwargs[k] = v
-        for k, v in system_inject_kwargs.items():
-            current_kwargs[k] = v
-
-        next_args, next_kwargs = safely_map_args(next_args, current_kwargs, current_worker_sig)
-        return next_args, next_kwargs
-
-
-injector = WorkerInjector()
