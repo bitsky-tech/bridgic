@@ -1,2 +1,0 @@
-"""Bridgic callbacks package."""
-

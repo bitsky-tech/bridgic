@@ -1,9 +1,8 @@
 """Opik tracing callback handler for Bridgic workers and automa."""
 
 from contextvars import ContextVar
-import logging
 import time
-import uuid
+import warnings
 from typing import Any, Dict, Optional, TYPE_CHECKING
 
 import opik.decorator.tracing_runtime_config as tracing_runtime_config
@@ -19,14 +18,11 @@ from bridgic.core.utils._collection import serialize_data, merge_optional_dicts
 from bridgic.core.utils._worker_context import get_worker_exec_context
 
 if TYPE_CHECKING:
-    from bridgic.core.automa._graph_automa import GraphAutoma
-    from bridgic.core.automa.worker import Worker
-
-LOGGER = logging.getLogger(__name__)
+    from bridgic.core.automa._graph_automa import GraphAutoma, _GraphAdaptedWorker
 
 span_context_var = ContextVar("span_context")
 
-class OpikCallbackHandler(WorkerCallback):
+class OpikTraceCallback(WorkerCallback):
     """
     Opik tracing callback handler for Bridgic workers and automa.
 
@@ -78,86 +74,31 @@ class OpikCallbackHandler(WorkerCallback):
 
     def _get_worker_instance(
         self, key: str, parent: Optional["GraphAutoma"]
-    ) -> "Worker":
-        """
-        Get the worker instance by key from parent automa.
-
-        Parameters
-        ----------
-        key : str
-            Worker key identifier.
-        parent : Optional[GraphAutoma]
-            Parent automa instance containing the worker.
-
-        Returns
-        -------
-        Worker
-            The worker instance.
-        """
+    ) -> "_GraphAdaptedWorker":
         if parent is None:
             raise ValueError("Parent automa is required to get worker instance")
         return parent._get_worker_instance(key)
 
-    def should_trace_as_automa(
-        self, is_top_level: bool, worker: Optional["Worker"] = None
+    def _should_trace_as_automa(
+        self, is_top_level: bool, worker: Optional["_GraphAdaptedWorker"] = None
     ) -> bool:
-        """
-        Determine whether a worker should be treated as an automa for tracing purposes.
-
-        For top-level automa, always returns True. For nested workers, returns True
-        if the worker is decorated and wraps an automa instance (used to determine
-        the correct worker key/name for tracing).
-
-        Parameters
-        ----------
-        is_top_level : bool
-            Whether this is a top-level automa execution.
-        worker : Optional[Worker]
-            The worker instance. If None, returns False.
-
-        Returns
-        -------
-        bool
-            True if the worker should be treated as an automa for tracing, False otherwise.
-        """
         if is_top_level:
             return True
 
         # Check if worker is decorated and wraps an automa
-        if worker is not None and hasattr(worker, "_decorated_worker_is_automa"):
-            return worker._decorated_worker_is_automa
+        if worker is not None:
+            return worker.is_automa()
 
         return False
 
     def _create_trace_data(self, trace_name: Optional[str] = None) -> trace.TraceData:
-        """
-        Create a new trace data instance.
-
-        Parameters
-        ----------
-        trace_name : Optional[str]
-            Name for the trace. If None, uses default.
-
-        Returns
-        -------
-        trace.TraceData
-            The created trace data instance.
-        """
         return trace.TraceData(
             name=trace_name,
             metadata={"created_from": "bridgic"},
             project_name=self._project_name,
         )
 
-    def start_trace(self, trace_name: Optional[str] = None) -> None:
-        """
-        Start a new trace for top-level automa execution.
-
-        Parameters
-        ----------
-        trace_name : Optional[str]
-            Name for the trace. If None, uses default.
-        """
+    def _start_trace(self, trace_name: Optional[str] = None) -> None:
         # Check if there's an existing trace in context
         self._owns_trace_context = False
         self._trace_inputs = None
@@ -181,21 +122,11 @@ class OpikCallbackHandler(WorkerCallback):
                     **self._opik_trace_data.as_start_parameters
                 )
 
-    def end_trace(
+    def _end_trace(
         self,
         output: Optional[Dict[str, Any]] = None,
         error_info: Optional[ErrorInfoDict] = None,
     ) -> None:
-        """
-        End the current trace.
-
-        Parameters
-        ----------
-        output : Optional[Dict[str, Any]]
-            Final output of the trace.
-        error_info : Optional[ErrorInfoDict]
-            Error information if trace ended with an error.
-        """
         if self._opik_trace_data is None:
             return
 
@@ -236,7 +167,7 @@ class OpikCallbackHandler(WorkerCallback):
         self._opik_trace_data.init_end_time()
         if self._trace_start_time is not None:
             end_time = self._opik_trace_data.end_time.timestamp()
-            self._opik_trace_data.metadata = OpikCallbackHandler._merge_metadata(
+            self._opik_trace_data.metadata = OpikTraceCallback._merge_metadata(
                 self._opik_trace_data.metadata,
                 {
                     "execution_duration": end_time - self._trace_start_time,
@@ -273,42 +204,23 @@ class OpikCallbackHandler(WorkerCallback):
         )
 
         # Flush trace data to ensure it's sent to the backend
-        self.flush()
+        self._flush()
 
         self._opik_trace_data = None
         self._owns_trace_context = False
         self._trace_start_time = None
         self._trace_inputs = None
 
-    def add_trace_step(
+    def _add_trace_step(
         self,
         step_name: str,
         inputs: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         parent_step_trace_context: Optional[span.SpanData] = None,
     ) -> span.SpanData:
-        """
-        Create a new trace step (span) for worker execution.
-
-        Parameters
-        ----------
-        step_name : str
-            Name of the step/worker.
-        inputs : Optional[Dict[str, Any]]
-            Input arguments for the worker.
-        metadata : Optional[Dict[str, Any]]
-            Additional metadata for the span.
-        parent_step_trace_context : Optional[span.SpanData]
-            Parent span context if this is a nested worker.
-
-        Returns
-        -------
-        span.SpanData
-            The created span data instance.
-        """
         if self._opik_trace_data is None:
             # If no trace exists, create one
-            self.start_trace()
+            self._start_trace()
 
         parent_span_id = None
         if parent_step_trace_context is not None:
@@ -342,42 +254,18 @@ class OpikCallbackHandler(WorkerCallback):
 
         return span_data
 
-    def set_outputs(
+    def _set_outputs(
         self,
         outputs: Optional[Dict[str, Any]] = None,
     ) -> None:
-        """
-        Set outputs for a trace step. This is a helper method that stores
-        output information to be used when ending the step.
-
-        Note: This method doesn't directly update the span. The actual update
-        happens in end_trace_step.
-
-        Parameters
-        ----------
-        outputs : Optional[Dict[str, Any]]
-            Output data from the worker execution.
-        output_metadata : Optional[Dict[str, Any]]
-            Additional metadata for the output.
-        """
         # Store outputs in the current worker state (top of stack)
         if self._worker_state_stack:
             current_state = self._worker_state_stack[-1]
             if "metadata" not in current_state:
                 current_state["metadata"] = {}
-            current_state["metadata"]["outputs"] = OpikCallbackHandler._serialize_data(outputs)
+            current_state["metadata"]["outputs"] = OpikTraceCallback._serialize_data(outputs)
 
-    def end_trace_step(self, step_trace_context: span.SpanData, worker_metadata: Optional[Dict[str, Any]] = None) -> None:
-        """
-        End a trace step (span).
-
-        Parameters
-        ----------
-        step_trace_context : span.SpanData
-            The span data instance to end.
-        worker_metadata : Optional[Dict[str, Any]]
-            Worker metadata containing outputs and other information.
-        """
+    def _end_trace_step(self, step_trace_context: span.SpanData, worker_metadata: Optional[Dict[str, Any]] = None) -> None:
         if step_trace_context is None:
             return
 
@@ -435,25 +323,25 @@ class OpikCallbackHandler(WorkerCallback):
             try:
                 worker = self._get_worker_instance(key, parent)
             except (KeyError, ValueError) as e:
-                LOGGER.warning(f"Failed to get worker instance for key '{key}': {e}")
+                warnings.warn(f"Failed to get worker instance for key '{key}': {e}")
                 return
 
         # Check if should trace as automa
-        should_trace_as_automa = self.should_trace_as_automa(is_top_level, worker)
+        should_trace_as_automa = self._should_trace_as_automa(is_top_level, worker)
         # For top-level automa, start trace
         if is_top_level:
             trace_name = key or "top_level_automa"
-            self.start_trace(trace_name=trace_name)
+            self._start_trace(trace_name=trace_name)
             # Assign trace context to the top-level automa
             span_context_var.set(self._opik_trace_data)
             if self._opik_trace_data is not None:
-                serialize_arguments = OpikCallbackHandler._serialize_data(arguments)
+                serialize_arguments = OpikTraceCallback._serialize_data(arguments)
                 metadata = {
                     "key": key,
                     "nesting_level": 0,
                     "start_time": self._opik_trace_data.start_time.timestamp(),
                 }
-                self._opik_trace_data.metadata = OpikCallbackHandler._merge_metadata(
+                self._opik_trace_data.metadata = OpikTraceCallback._merge_metadata(
                     self._opik_trace_data.metadata,
                     metadata,
                 )
@@ -476,7 +364,7 @@ class OpikCallbackHandler(WorkerCallback):
         key = worker_context_info.key or key
 
         # Prepare metadata
-        serialize_arguments = OpikCallbackHandler._serialize_data(arguments)
+        serialize_arguments = OpikTraceCallback._serialize_data(arguments)
 
         # Get parent trace context if exists
         parent_step_trace_context = None
@@ -484,7 +372,7 @@ class OpikCallbackHandler(WorkerCallback):
             parent_step_trace_context = span_context_var.get()
 
         # Create trace step (span) first to get the start_time
-        step_trace_context = self.add_trace_step(
+        step_trace_context = self._add_trace_step(
             step_name=f"{key}  [{nested_automa_instance.name}]" if should_trace_as_automa and nested_automa_instance is not None else key,
             inputs=serialize_arguments,
             metadata={
@@ -521,19 +409,9 @@ class OpikCallbackHandler(WorkerCallback):
         outputs: Dict[str, Any],
         error: Optional[Exception] = None,
     ) -> None:
-        """
-        End a worker span with outputs and optional error information.
-
-        Parameters
-        ----------
-        outputs : Dict[str, Any]
-            Output data for the span.
-        error : Optional[Exception]
-            Optional error that occurred during execution.
-        """
         # Pop worker state from stack
         if not self._worker_state_stack:
-            LOGGER.warning("Worker state stack is empty when ending worker span")
+            warnings.warn("Worker state stack is empty when ending worker span")
             return
         
         worker_state = self._worker_state_stack.pop()
@@ -548,7 +426,7 @@ class OpikCallbackHandler(WorkerCallback):
             worker_state["metadata"]["execution_duration"] = execution_duration
 
         # Store outputs in metadata
-        worker_state["metadata"]["outputs"] = OpikCallbackHandler._serialize_data(outputs)
+        worker_state["metadata"]["outputs"] = OpikTraceCallback._serialize_data(outputs)
 
         # Get span context from worker state
         span_context = worker_state.get("span_context")
@@ -558,7 +436,7 @@ class OpikCallbackHandler(WorkerCallback):
                 if error_info is not None:
                     span_context.update(error_info=error_info)
             # End trace step
-            self.end_trace_step(span_context, worker_metadata=worker_state["metadata"])
+            self._end_trace_step(span_context, worker_metadata=worker_state["metadata"])
             
             # Restore parent span context if exists
             if self._worker_state_stack:
@@ -573,25 +451,13 @@ class OpikCallbackHandler(WorkerCallback):
         execution_status: str = "completed",
         error_info: Optional[ErrorInfoDict] = None,
     ) -> None:
-        """
-        End trace for top-level automa execution.
-
-        Parameters
-        ----------
-        output : Dict[str, Any]
-            Output data for the trace.
-        execution_status : str
-            Execution status ("completed" or "failed").
-        error_info : Optional[ErrorInfoDict]
-            Optional error information if execution failed.
-        """
         if self._opik_trace_data is not None:
-            self._opik_trace_data.metadata = OpikCallbackHandler._merge_metadata(
+            self._opik_trace_data.metadata = OpikTraceCallback._merge_metadata(
                 self._opik_trace_data.metadata,
                 {"execution_status": execution_status},
             )
             self._opik_trace_data.output = output
-        self.end_trace(output=output, error_info=error_info)
+        self._end_trace(output=output, error_info=error_info)
 
     async def on_worker_end(
         self,
@@ -622,7 +488,7 @@ class OpikCallbackHandler(WorkerCallback):
         """
         outputs = {
             "result_type": type(result).__name__ if result is not None else None,
-            "result": OpikCallbackHandler._serialize_data(result),
+            "result": OpikTraceCallback._serialize_data(result),
         }
         # For top-level automa, end trace
         if is_top_level:
@@ -683,7 +549,7 @@ class OpikCallbackHandler(WorkerCallback):
             try:
                 worker = self._get_worker_instance(key, parent)
             except (KeyError, ValueError) as e:
-                LOGGER.warning(f"Failed to get worker instance for key '{key}': {e}")
+                warnings.warn(f"Failed to get worker instance for key '{key}': {e}")
                 return False
 
         # Prepare error outputs
@@ -697,12 +563,6 @@ class OpikCallbackHandler(WorkerCallback):
 
         return False
 
-    def flush(self) -> None:
-        """
-        Send pending Opik data to the backend.
-
-        This method should be called to ensure all trace data is sent
-        before the application exits.
-        """
+    def _flush(self) -> None:
         self._opik_client.flush()
 

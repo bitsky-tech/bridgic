@@ -1,2 +1,0 @@
-"""Tracing callbacks for Bridgic."""
-
