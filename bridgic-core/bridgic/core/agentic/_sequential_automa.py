@@ -3,7 +3,7 @@ from concurrent.futures import ThreadPoolExecutor
 from typing_extensions import override
 
 from bridgic.core.automa.worker import Worker
-from bridgic.core.automa import GraphAutoma
+from bridgic.core.automa import GraphAutoma, RunningOptions
 from bridgic.core.types._error import AutomaRuntimeError
 from bridgic.core.types._common import AutomaType, ArgsMappingRule
 
@@ -32,8 +32,9 @@ class SequentialAutoma(GraphAutoma):
         self,
         name: Optional[str] = None,
         thread_pool: Optional[ThreadPoolExecutor] = None,
+        running_options: Optional[RunningOptions] = None,
     ):
-        super().__init__(name=name, thread_pool=thread_pool)
+        super().__init__(name=name, thread_pool=thread_pool, running_options=running_options)
 
         cls = type(self)
         self._last_worker_key = None
