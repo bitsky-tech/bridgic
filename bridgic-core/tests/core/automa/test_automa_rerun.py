@@ -161,7 +161,7 @@ def feedback_yes(request):
 @pytest.mark.asyncio
 async def test_adder_automa_deserialized_rerun_to_interaction(feedback_yes, adder_automa_deserialized_first, request, db_base_path):
     result = await adder_automa_deserialized_first.arun(
-        interaction_feedback=feedback_yes
+        feedback_data=feedback_yes
     )
     assert result == 6 + 200 + 2
 
@@ -202,7 +202,7 @@ def feedback_no(request):
 @pytest.mark.asyncio
 async def test_adder_automa_deserialized_rerun_to_end(feedback_no, adder_automa_deserialized_second):
     result = await adder_automa_deserialized_second.arun(
-        interaction_feedback=feedback_no
+        feedback_data=feedback_no
     )
     assert result == 16 + 2
 

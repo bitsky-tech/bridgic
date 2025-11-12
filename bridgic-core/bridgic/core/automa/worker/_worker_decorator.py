@@ -10,6 +10,7 @@ from bridgic.core.utils._inspect_tools import (
 )
 from bridgic.core.types._error import WorkerSignatureError
 from bridgic.core.types._common import AutomaType, ArgsMappingRule
+from bridgic.core.automa.worker._worker_callback import WorkerCallbackBuilder
 
 @mark_overload("__automa_type__", AutomaType.Graph)
 def worker(
@@ -19,6 +20,7 @@ def worker(
     is_start: bool = False,
     is_output: bool = False,
     args_mapping_rule: ArgsMappingRule = ArgsMappingRule.AS_IS,
+    callback_builders: List[WorkerCallbackBuilder] = [],
 ) -> Callable:
     """
     A decorator for designating a method as a worker node in a `GraphAutoma` subclass.
@@ -35,6 +37,9 @@ def worker(
         Whether the decorated callable is an output worker. True means it is, while False means it is not.
     args_mapping_rule : ArgsMappingRule
         The rule of arguments mapping.
+    callback_builders: List[WorkerCallbackBuilder]
+        A list of worker callback builders to be registered.
+        Callback instances will be created from builders when the worker is instantiated.
     """
     ...
 
@@ -42,6 +47,7 @@ def worker(
 def worker(
     *,
     key: Optional[str] = None,
+    callback_builders: List[WorkerCallbackBuilder] = [],
 ) -> Callable:
     """
     A decorator for designating a method as a worker node in a `ConcurrentAutoma` or `ReActAutoma` subclass.
@@ -50,6 +56,9 @@ def worker(
     ----------
     key : Optional[str]
         The key of the worker. If not provided, the name of the decorated callable will be used.
+    callback_builders: List[WorkerCallbackBuilder]
+        A list of worker callback builders to be registered.
+        Callback instances will be created from builders when the worker is instantiated.
     """
     ...
 
@@ -58,6 +67,7 @@ def worker(
     *,
     key: Optional[str] = None,
     args_mapping_rule: ArgsMappingRule = ArgsMappingRule.AS_IS,
+    callback_builders: List[WorkerCallbackBuilder] = [],
 ) -> Callable:
     """
     A decorator for designating a method as a worker node in a `SequentialAutoma` subclass.
@@ -68,6 +78,9 @@ def worker(
         The key of the worker. If not provided, the name of the decorated callable will be used.
     args_mapping_rule: ArgsMappingRule
         The rule of arguments mapping.
+    callback_builders: List[WorkerCallbackBuilder]
+        A list of worker callback builders to be registered.
+        Callback instances will be created from builders when the worker is instantiated.
     """
     ...
 

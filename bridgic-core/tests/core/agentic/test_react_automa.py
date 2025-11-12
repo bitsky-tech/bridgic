@@ -482,7 +482,7 @@ def refund_approval_feedback(request):
 async def test_refund_approval_feedback_results(refund_approval_feedback, refund_react_automa_deserialized):
     """Test scenario of human approval and sending in ReAct mode"""
     result = await refund_react_automa_deserialized.arun(
-        interaction_feedbacks=refund_approval_feedback
+        feedback_data=refund_approval_feedback
     )
     
     assert "12345, approved: Yes" in result
