@@ -41,7 +41,6 @@ class _GraphAdaptedWorker(Worker):
     args_mapping_rule: str
     _decorated_worker: Worker
     _worker_callbacks: List[WorkerCallback]
-    _decorated_worker_is_automa: bool
 
     def __init__(
         self,
@@ -62,10 +61,7 @@ class _GraphAdaptedWorker(Worker):
         self.args_mapping_rule = args_mapping_rule
         self._decorated_worker = worker
         self._worker_callbacks = [cb.build() for cb in callback_builders]
-        # Check if the decorated worker is an automa
-        self._decorated_worker_is_automa = False
-        if isinstance(worker, GraphAutoma):
-            self._decorated_worker_is_automa = True
+
 
     @override
     def dump_to_dict(self) -> Dict[str, Any]:
@@ -77,7 +73,6 @@ class _GraphAdaptedWorker(Worker):
         state_dict["args_mapping_rule"] = self.args_mapping_rule
         state_dict["decorated_worker"] = self._decorated_worker
         state_dict["worker_callbacks"] = self._worker_callbacks
-        state_dict["decorated_worker_is_automa"] = self._decorated_worker_is_automa
         return state_dict
 
     @override
@@ -90,7 +85,6 @@ class _GraphAdaptedWorker(Worker):
         self.args_mapping_rule = state_dict["args_mapping_rule"]
         self._decorated_worker = state_dict["decorated_worker"]
         self._worker_callbacks = state_dict["worker_callbacks"]
-        self._decorated_worker_is_automa = state_dict["decorated_worker_is_automa"]
     #
     # Delegate all the properties and methods of _GraphAdaptedWorker to the decorated worker.
     # TODO: Maybe 'Worker' should be a Protocol.
