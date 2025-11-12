@@ -1,10 +1,9 @@
 import inspect
-import functools
-import copy
-from types import MethodType
-from dataclasses import dataclass
 from contextvars import ContextVar
-from typing import List, Any, Union, Callable, Tuple, Dict
+from dataclasses import dataclass
+from pydantic_core import PydanticUndefinedType
+from pydantic.fields import FieldInfo
+from typing import List, Any, Union, Callable, Tuple, Type, Optional, Dict
 
 from bridgic.core.automa.worker import Worker
 from bridgic.core.automa import Automa, GraphAutoma
@@ -13,75 +12,6 @@ from bridgic.core.agentic import ConcurrentAutoma
 from bridgic.core.utils._inspect_tools import override_func_signature, set_method_signature
 
 graph_stack: ContextVar[List["_Canvas"]] = ContextVar("graph_stack", default=[])
-
-
-class TrackingNamespace(dict):
-    def __init__(self):
-        super().__init__()
-
-    def __setitem__(self, key: str, value: Any):
-        # get the settings from the value and clear the settings of the value
-        settings = copy.deepcopy(getattr(value, "__settings__", None))
-        if settings:
-            setattr(value, "__settings__", None)
-
-        # track the _Element values
-        if not key.startswith('_') and (isinstance(value, Worker) or isinstance(value, Callable)):
-            if key != 'arun' and key != 'run':
-                # create the _Element instance
-                element: _Element = _Element(key, value)
-
-                # update the settings of the element
-                if settings:
-                    element.update_settings(settings)
-
-                # judge if the value is a lambda function
-                if isinstance(value, Callable) and getattr(value.__code__, "co_name", None) == '<lambda>':
-                    element.is_lambda = True
-
-                # cover the value with the element
-                value = element
-        
-        # record the key-value pair in the tracking namespace
-        super().__setitem__(key, value)
-
-        # register the _CanvasObject to the current canvas
-        if isinstance(value, _CanvasObject):
-            stack = graph_stack.get()
-            
-            # if is a nested canvas, register to the parent canvas.
-            if isinstance(value, _Canvas):
-                # set the key of the nested canvas
-                if not value.settings.key:
-                    value.settings.key = key
-
-                # update the settings of the nested canvas
-                if settings:
-                    value.update_settings(settings)
-                
-                # if the stack is only one, the current canvas is the root canvas.
-                if len(stack) == 1:
-                    return
-                
-                # get the parent canvas
-                parent_canvas: _Canvas = stack[-2]
-
-                # register to the parent canvas, the parent canvas is the root canvas.
-                parent_canvas.register(value.settings.key, value)
-            elif isinstance(value, _Element):
-                if len(stack) == 0:
-                    raise ValueError("All workers must be written under one graph.")
-                current_canvas: _Canvas = stack[-1]
-                current_canvas.register(value.settings.key, value)
-
-
-def make_automa(automa_type: str) -> Automa:
-    if automa_type == "graph":
-        return GraphAutoma()
-    elif automa_type == "concurrent":
-        return ConcurrentAutoma()
-    else:
-        raise ValueError(f"Invalid automa type: {automa_type}")
 
 
 class Data:
@@ -256,26 +186,11 @@ class _Canvas(_CanvasObject):
     """
     The input parameters of a graph were recorded.
     """
-    def __init__(self, automa_type: str, **kwargs: Any) -> None:
-        worker_material = make_automa(automa_type)
+    def __init__(self, automa: Automa) -> None:
+        worker_material = automa
         super().__init__(None, worker_material)
 
-        self.automa_type = automa_type
-        self.kwargs = kwargs
         self.elements = {}
-
-    def _initialize_inputs_params(self) -> None:
-        data = {}
-        data["self"] = {
-            "type": inspect._empty,
-            "default": inspect._empty,
-        }
-        for key, value in self.kwargs.items():
-            data[key] = {
-                "type": Any,
-                "default": value,
-            }
-        set_method_signature(self.worker_material.arun, data)
 
     def register(self, key, value):
         value.parent_canvas = self
@@ -308,10 +223,23 @@ class _Element(_CanvasObject):
 
 class _GraphContextManager:
     def __init__(self, automa_type: str):
-        self.automa_type = automa_type
+        self.automa = self._make_automa(automa_type)
+        self.arun_params = {}
+
+    def __call__(self, **kwargs: Dict[str, "ASLField"]) -> _Canvas:
+        params = {}
+        for key, value in kwargs.items():
+            if not isinstance(value, ASLField):
+                raise ValueError(f"Invalid field type: {type(value)}.")
+            self.arun_params[key] = {
+                "type": value.type,
+                "default": value.default if not isinstance(value.default, PydanticUndefinedType) else inspect._empty,
+            }
+        set_method_signature(self.automa.arun, self.arun_params)
+        return self
 
     def __enter__(self) -> _Canvas:
-        ctx = _Canvas(automa_type=self.automa_type)
+        ctx = _Canvas(automa=self.automa)
         stack = list(graph_stack.get())
         stack.append(ctx)
         graph_stack.set(stack)
@@ -321,8 +249,46 @@ class _GraphContextManager:
         stack = list(graph_stack.get())
         stack.pop()
         graph_stack.set(stack)
+
+    def _make_automa(self, automa_type: str) -> Automa:
+        if automa_type == "graph":
+            return GraphAutoma()
+        elif automa_type == "concurrent":
+            return ConcurrentAutoma()
+        else:
+            raise ValueError(f"Invalid automa type: {automa_type}")
         
 
 # Create module-level instances (not global variables, but singleton objects)
 graph = _GraphContextManager(automa_type="graph")
 concurrent = _GraphContextManager(automa_type="concurrent")
+
+
+class ASLField(FieldInfo):
+    """
+    A custom Field class that extends Pydantic's FieldInfo with support for storing default type information.
+    
+    The `default_type` parameter is stored as metadata and does not automatically generate default values.
+    You must explicitly provide a `default` value if you want a default.
+    """
+    
+    def __init__(
+        self,
+        type: Type[Any] = Any,
+        default: Any = ...,
+        **kwargs: Any
+    ):
+        """
+        Initialize ASLField with optional default_type metadata.
+        
+        Parameters
+        ----------
+        default : Any
+            Explicit default value. Must be provided if you want a default value.
+        type : Type[Any]
+            Type information stored as metadata. Does not automatically generate default values.
+        **kwargs : Any
+            Other Field parameters (description, ge, le, etc.)
+        """
+        super().__init__(default=default, **kwargs)
+        self.type = type

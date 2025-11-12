@@ -4,16 +4,68 @@ import functools
 from typing import Callable, List, Any, Dict, Tuple, Union
 
 from bridgic.core.automa import GraphAutoma
-from bridgic.core.agentic import ConcurrentAutoma
 from bridgic.core.automa.worker import Worker
 from bridgic.core.automa.args import ArgsMappingRule, System
 from bridgic.core.automa._graph_automa import GraphMeta
-from bridgic.core.agentic.asl._canvas_object import (
-    _Canvas,
-    _Element,
-    TrackingNamespace,
-    set_method_signature,
-)
+from bridgic.core.agentic import ConcurrentAutoma
+from bridgic.core.agentic.asl._canvas_object import _Canvas, _Element, _CanvasObject, graph_stack
+
+
+class TrackingNamespace(dict):
+    def __setitem__(self, key: str, value: Any):
+        # get the settings from the value and clear the settings of the value
+        settings = copy.deepcopy(getattr(value, "__settings__", None))
+        if settings:
+            setattr(value, "__settings__", None)
+
+        # track the _Element values
+        if not key.startswith('_') and (isinstance(value, Worker) or isinstance(value, Callable)):
+            if key != 'arun' and key != 'run':
+                # create the _Element instance
+                element: _Element = _Element(key, value)
+
+                # update the settings of the element
+                if settings:
+                    element.update_settings(settings)
+
+                # judge if the value is a lambda function
+                if isinstance(value, Callable) and getattr(value.__code__, "co_name", None) == '<lambda>':
+                    element.is_lambda = True
+
+                # cover the value with the element
+                value = element
+        
+        # record the key-value pair in the tracking namespace
+        super().__setitem__(key, value)
+
+        # register the _CanvasObject to the current canvas
+        if isinstance(value, _CanvasObject):
+            stack = graph_stack.get()
+            
+            # if is a nested canvas, register to the parent canvas.
+            if isinstance(value, _Canvas):
+                # set the key of the nested canvas
+                if not value.settings.key:
+                    value.settings.key = key
+
+                # update the settings of the nested canvas
+                if settings:
+                    value.update_settings(settings)
+                
+                # if the stack is only one, the current canvas is the root canvas.
+                if len(stack) == 1:
+                    return
+                
+                # get the parent canvas
+                parent_canvas: _Canvas = stack[-2]
+
+                # register to the parent canvas, the parent canvas is the root canvas.
+                parent_canvas.register(value.settings.key, value)
+            elif isinstance(value, _Element):
+                if len(stack) == 0:
+                    raise ValueError("All workers must be written under one graph.")
+                current_canvas: _Canvas = stack[-1]
+                current_canvas.register(value.settings.key, value)
 
 
 class ASLAutomaMeta(GraphMeta):
@@ -23,25 +75,6 @@ class ASLAutomaMeta(GraphMeta):
 
     def __new__(mcls, name, bases, namespace):
         cls = super().__new__(mcls, name, bases, namespace)
-
-        # collect the input parameters
-        annotations = namespace.get("__annotations__", {}) or {}
-        input_params = {}
-        for param_name, param_type in annotations.items():
-            default_value = namespace.get(param_name, None)
-            input_params[param_name] = {
-                "type": param_type,
-                "default": default_value,
-            }
-
-        # dynamically set the signature of the arun method
-        arun_func = getattr(cls, "arun", None)
-        input_params["self"] = {
-            "type": inspect._empty,
-            "default": inspect._empty,
-        }
-        set_method_signature(arun_func, input_params)
-
         return cls
 
 
@@ -55,12 +88,11 @@ class ASLAutoma(GraphAutoma, metaclass=ASLAutomaMeta):
     def _build_graph(self) -> None:
         # build the graph
         for canvas in self._canvases:
-            automa_type = canvas.automa_type
             automa = canvas.worker_material
             elements = canvas.elements
-            self._inner_build_logic_flow(automa_type, automa, elements)
+            self._inner_build_logic_flow(automa, elements)
             
-    def _inner_build_logic_flow(self, automa_type: str, automa: GraphAutoma, elements: Dict[str, "_Element"]) -> None:
+    def _inner_build_logic_flow(self, automa: GraphAutoma, elements: Dict[str, "_Element"]) -> None:
         exit_keys = []
         for _, element in elements.items():
             if element.settings.key in exit_keys:
@@ -88,13 +120,13 @@ class ASLAutoma(GraphAutoma, metaclass=ASLAutomaMeta):
                 else:
                     new_dependencies.append(dependency)
             
-            if automa_type == "concurrent":
+            if isinstance(automa, ConcurrentAutoma):
                 build_concurrent(
                     automa=automa,
                     key=key,
                     worker_material=worker_material,
                 )
-            elif automa_type == "graph":
+            elif isinstance(automa, GraphAutoma):
                 build_graph(
                     automa=automa,
                     key=key,
@@ -105,7 +137,7 @@ class ASLAutoma(GraphAutoma, metaclass=ASLAutomaMeta):
                     args_mapping_rule=args_mapping_rule,
                 )
             else:
-                raise ValueError(f"Invalid automa type: {automa_type}")
+                raise ValueError(f"Invalid automa type: {type(automa)}.")
 
             exit_keys.append(key)
 

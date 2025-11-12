@@ -249,7 +249,11 @@ def set_method_signature(
             optional_params.append(param)
 
     params = required_params + optional_params
-    setattr(method, "__signature__", inspect.Signature(parameters=params))
+    new_signature = inspect.Signature(parameters=params)
+    
+    # For bound methods, set signature on the underlying function object
+    # Bound method objects are read-only, so we need to modify __func__.__signature__
+    setattr(method.__func__, "__signature__", new_signature)
 
 
 def get_func_signature_data(func: Callable) -> Dict[str, Any]:

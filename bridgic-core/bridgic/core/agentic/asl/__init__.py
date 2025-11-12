@@ -1,5 +1,5 @@
 from ._asl_automa import ASLAutoma
-from ._canvas_object import graph, concurrent, Data, Settings
+from ._canvas_object import graph, concurrent, Data, Settings, ASLField
 
 __all__ = [
     "ASLAutoma",
@@ -7,4 +7,5 @@ __all__ = [
     "concurrent",
     "Data",
     "Settings",
+    "ASLField",
 ]
