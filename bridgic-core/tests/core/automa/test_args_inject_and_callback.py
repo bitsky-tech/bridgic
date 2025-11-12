@@ -1,10 +1,10 @@
 import pytest
-from typing import Tuple, Dict, Any
+from typing import Tuple, Dict, Any, Optional
 
-from bridgic.core.automa import GraphAutoma, Snapshot, worker, AutomaRuntimeError, WorkerCallback
+from bridgic.core.automa import GraphAutoma, Snapshot, worker, AutomaRuntimeError
 from bridgic.core.automa.args import From, ArgsMappingRule, System, Distribute
 from bridgic.core.automa.interaction import Event, InteractionFeedback, InteractionException
-from bridgic.core.automa.worker import Worker
+from bridgic.core.automa.worker import Worker, WorkerCallback, WorkerCallbackBuilder
 from bridgic.core.types._error import WorkerArgsInjectionError
 
 ########################################################
@@ -21,20 +21,22 @@ def args_inject_and_callback_graph():
     """
     # Define a callback to print the worker key and the result.
     class PrintCallback(WorkerCallback):
-        async def pre_worker_execute(
+        async def on_worker_start(
             self, 
-            key: str, 
-            parent: GraphAutoma, 
-            arguments: Dict[str, Any],
+            key: str,
+            is_top_level: bool = False,
+            parent: Optional[GraphAutoma] = None,
+            arguments: Dict[str, Any] = None,
         ) -> None:
             print(f"Pre callback for worker {key}")
         
-        async def post_worker_execute(
+        async def on_worker_end(
             self, 
-            key: str, 
-            parent: GraphAutoma, 
-            arguments: Dict[str, Any], 
-            result: Any,
+            key: str,
+            is_top_level: bool = False,
+            parent: Optional[GraphAutoma] = None,
+            arguments: Dict[str, Any] = None,
+            result: Any = None,
         ) -> None:
             print(f"Post callback for worker {key}")
 
@@ -57,7 +59,7 @@ def args_inject_and_callback_graph():
         async def worker_1(self, x: int, z: int = 1) -> int:
             return x + 1  # 3
 
-        @worker(dependencies=["worker_1"], callbacks=[PrintCallback()])
+        @worker(dependencies=["worker_1"], callback_builders=[WorkerCallbackBuilder(PrintCallback)])
         async def worker_2(
             self, x: int, 
             y: int = From("worker_0"), 
@@ -68,7 +70,7 @@ def args_inject_and_callback_graph():
             assert sub_automa is my_graph_1
             return x + y  # 5
 
-        @worker(dependencies=["worker_2"], callbacks=[PrintCallback()])
+        @worker(dependencies=["worker_2"], callback_builders=[WorkerCallbackBuilder(PrintCallback)])
         def worker_3(
             self, 
             x: int, 
@@ -123,20 +125,20 @@ def args_inject_and_callback_graph():
         key="worker_4",
         func=worker_4,
         dependencies=["worker_3"],
-        callbacks=[PrintCallback()],
+        callback_builders=[WorkerCallbackBuilder(PrintCallback)],
     )
     my_graph.add_worker(
         key="worker_5",
         worker=MyWorker(),
         dependencies=["worker_4"],
-        callbacks=[PrintCallback()],
+        callback_builders=[WorkerCallbackBuilder(PrintCallback)],
     )
     my_graph.add_worker(
         key="worker_6",
         worker=MyWorker2(),
         dependencies=["worker_5"],
         is_output=True,
-        callbacks=[PrintCallback()],
+        callback_builders=[WorkerCallbackBuilder(PrintCallback)],
     )
     return my_graph
 
@@ -365,7 +367,7 @@ async def test_automa_deserialization_with_from(
     deserialized_automa_serialization_with_from: GraphAutoma
 ):
     result = await deserialized_automa_serialization_with_from.arun(
-        interaction_feedback=interaction_feedback_1_yes
+        feedback_data=interaction_feedback_1_yes
     )
     assert result == 405
 
