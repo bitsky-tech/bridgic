@@ -1075,7 +1075,7 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
             worker_obj.local_space = {}
 
     async def arun(
-        self, 
+        self,
         *args: Tuple[Any, ...],
         feedback_data: Optional[Union[InteractionFeedback, List[InteractionFeedback]]] = None,
         **kwargs: Dict[str, Any]
@@ -1083,10 +1083,44 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
         """
         The entry point for running the constructed `GraphAutoma` instance.
 
+        This method serves as the entry point for both initial execution and resumption after 
+        interruption of an automa instance. It automatically drives the execution of workers 
+        based on their `dependencies` and explicit `ferry_to()` calls. Each execution will be 
+        wrapped in an `asyncio.Task` to ensure context isolation.
+
+        **Automatic Scheduling**
+
+        The scheduling behavior in `GraphAutoma` is automatically driven by:
+
+        - Worker dependencies: Workers are scheduled to run only after all their necessary 
+          dependencies are satisfied. The dependencies automatically drive the execution order.
+
+        - Calling ferry_to: During execution, a worker can explicitly trigger another worker 
+          by calling `ferry_to()`, which enables dynamic flow control and conditional branching.
+
+        - Dynamic topology changes: When the graph topology is modified at runtime (such as 
+          adding or removing workers or dependencies), the scheduling system seamlessly updates 
+          to reflect the latest structure, ensuring that worker execution always follows the 
+          current graph.
+
+        **Human Interaction Mechanism**
+
+        Workers can request human input by calling `interact_with_human()` during execution. 
+        When this occurs:
+
+        - The execution will be paused after the running workers finish their execution.
+        - The Automa's state will be serialized into a `Snapshot` object.
+        - An `InteractionException` will be raised to the application layer. It contains both the 
+          list of pending `Interaction` objects and the `Snapshot` object.
+        - The application layer may persist the `Snapshot` properly to resume the execution later.
+        - To resume execution, the application layer should reload the Automa state using 
+          `load_from_snapshot()` with the saved `Snapshot` object and call `arun()` again with 
+          `feedback_data` containing the user's feedback(s) to finish a complete interactions.
+
         Parameters
         ----------
         args : optional
-            Positional arguments.
+            Positional arguments to be passed.
         feedback_data : Optional[Union[InteractionFeedback, List[InteractionFeedback]]]
             Feedbacks that are received from one or multiple human interactions occurred before the
             Automa was paused. This argument may be of type `InteractionFeedback` or 
@@ -1109,26 +1143,37 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
             by one or more workers within the lastest event loop iteration, this exception will be
             raised to the application layer.
         """
-        # Wrap the internal execution logic in a task to provide isolation between multiple arun() calls.
-        task = asyncio.create_task(
-            self._arun_internal(
-                *args,
-                feedback_data=feedback_data,
-                **kwargs
-            ),
-            name=f"GraphAutoma-{self.name}-arun"
-        )
-        return await task
+        if self.is_top_level():
+            # For top-level automa, wrap in a task to ensure context isolation
+            task = asyncio.create_task(
+                self._arun_internal(*args, feedback_data=feedback_data, **kwargs),
+                name=f"GraphAutoma-{self.name}-arun"
+            )
+            return await task
+        else:
+            # For nested automa, directly call _arun_internal to avoid redundant task creation
+            return await self._arun_internal(*args, feedback_data=feedback_data, **kwargs)
 
     async def _arun_internal(
-        self, 
+        self,
         *args: Tuple[Any, ...],
         feedback_data: Optional[Union[InteractionFeedback, List[InteractionFeedback]]] = None,
         **kwargs: Dict[str, Any]
     ) -> Any:
         """
-        Internal implementation of arun. This method aims to ensure Context isolation between 
-        multiple calls of `arun()` method from the same Automa instance.
+        Internal implementation of `arun()` for `GraphAutoma`.
+
+        The scheduling behavior in `GraphAutoma` is automatically driven by:
+
+        1. **Worker dependencies**: Workers are scheduled to run only after all their necessary 
+        dependencies are satisfied. The dependencies automatically drives the execution order.
+
+        2. **Calling ferry_to**: During execution, a worker can explicitly trigger another worker 
+        with calling `ferry_to()`, which enables dynamic flow control and conditional branching.
+
+        3. **Dynamic topology changes**: When the graph topology is modified at runtime (such as adding 
+        or removing workers or dependencies), the scheduling system seamlessly updates to reflect 
+        the latest structure, ensuring that worker execution always follows the current graph.
         """
 
         def _reinit_current_kickoff_workers_if_needed():
@@ -1320,9 +1365,9 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
                 # Schedule task for each kickoff worker.
                 if worker_obj.is_automa():
                     coro = worker_obj.arun(
-                        *next_args, 
-                        feedback_data=rx_feedbacks, 
-                        **next_kwargs
+                        *next_args,
+                        feedback_data=rx_feedbacks,
+                        **next_kwargs,
                     )
                 else:
                     coro = worker_obj.arun(*next_args, **next_kwargs)
