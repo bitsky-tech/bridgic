@@ -97,6 +97,9 @@ class Automa(Worker):
     ):
         super().__init__()
 
+        # Set parent to self for top-level Automa
+        self.parent = self
+
         # Set the name of the Automa instance.
         self.name = name or f"automa-{uuid.uuid4().hex[:8]}"
 
@@ -207,17 +210,6 @@ class Automa(Worker):
         """
         ...
 
-    def is_top_level(self) -> bool:
-        """
-        Check if the current automa is the top-level automa.
-
-        Returns
-        -------
-        bool
-            True if the current automa is the top-level automa, False otherwise.
-        """
-        return self.parent is None
-
     def set_running_options(
         self,
         debug: Optional[bool] = None,
@@ -245,7 +237,7 @@ class Automa(Worker):
             self._running_options.debug = debug
 
     def _get_top_running_options(self) -> RunningOptions:
-        if self.parent is None:
+        if self.is_top_level():
             # Here we are at the top-level automa.
             return self._running_options
         return self.parent._get_top_running_options()
@@ -275,10 +267,12 @@ class Automa(Worker):
         current: Optional[Automa] = self
 
         # Traverse up the ancestor chain to collect callback builders
-        while current is not None:
-            if isinstance(current, Automa):
-                ancestor_callback_builders_reverse.append(current._running_options.callback_builders)
-            current = current.parent
+        while True:
+            ancestor_callback_builders_reverse.append(current._running_options.callback_builders)
+            if current.is_top_level():
+                break
+            else:
+                current = current.parent
 
         # Reverse to get order from top-level (first) to current (last)
         callback_builders = []
@@ -394,7 +388,7 @@ class Automa(Worker):
             var_positional_param_names = get_param_names_by_kind(handler, Parameter.VAR_POSITIONAL)
             return len(var_positional_param_names) > 0 or len(positional_param_names) > 1
 
-        if self.parent is not None:
+        if not self.is_top_level():
             # Bubble up the event to the top-level Automa.
             return self.parent.post_event(event)
 
@@ -474,7 +468,7 @@ class Automa(Worker):
         TimeoutError
             If the feedback is not received before the timeout. Note that the raised exception is the built-in `TimeoutError` exception, instead of asyncio.TimeoutError!
         """
-        if self.parent is not None:
+        if not self.is_top_level():
             # Bubble up the event to the top-level Automa.
             return await self.parent.request_feedback_async(event, timeout)
         
