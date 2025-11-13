@@ -51,9 +51,9 @@ Usage
 
 The `OpikTraceCallback` can be configured in two ways:
 
-### Method 1: Using RunningOptions (Per-Automa Configuration)
+### Method 1: Per-Automa Scope with RunningOptions
 
-Configure the callback for a specific automa instance using `RunningOptions`:
+Apply the callback only to a single automa by configuring it through `RunningOptions`. In this mode, every worker instantiated by that automa receives its own callback instance, while other automa remain unaffected.
 
 ```python
 from bridgic.core.automa import GraphAutoma, RunningOptions, worker
@@ -83,9 +83,9 @@ async def main():
 asyncio.run(main())
 ```
 
-### Method 2: Using GlobalSetting (Global Configuration)
+### Method 2: Global Scope with GlobalSetting
 
-Configure the callback globally so all automa instances use it:
+Register the callback at the global level through `GlobalSetting` to make it effective for every automa in the runtime. Each worker, regardless of which automa creates it, is instrumented with the same callback configuration.
 
 ```python
 from bridgic.core.automa import GraphAutoma, worker
@@ -95,13 +95,10 @@ from bridgic.callbacks.trace.opik import OpikTraceCallback
 import asyncio
 
 # Configure global callback
-builder = WorkerCallbackBuilder(
+GlobalSetting.set(callback_builders=[WorkerCallbackBuilder(
     OpikTraceCallback, 
     init_kwargs={"project_name": "my-project"}
-)
-current_builders = GlobalSetting.read().callback_builders.copy()
-current_builders.append(builder)
-GlobalSetting.set(callback_builders=current_builders)
+)])
 
 class MyAutoma(GraphAutoma):
     @worker(is_start=True)

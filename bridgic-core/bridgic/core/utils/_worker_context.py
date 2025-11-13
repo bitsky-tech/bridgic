@@ -1,10 +1,9 @@
-from typing import Dict
+from typing import Any, Dict
 
 from bridgic.core.automa._graph_automa import _GraphAdaptedWorker
 from bridgic.core.automa.worker import Worker
-from bridgic.core.types._worker_types import WorkerExecutionContext
 
-def get_worker_exec_context(worker: "_GraphAdaptedWorker") -> WorkerExecutionContext:
+def get_worker_exec_context(worker: "_GraphAdaptedWorker") -> Dict[str, Any]:
 	"""
 	Build execution context information for a worker for logging and tracing.
 	"""
@@ -43,9 +42,7 @@ def get_worker_exec_context(worker: "_GraphAdaptedWorker") -> WorkerExecutionCon
 	if top is not None:
 		other_report_info["top_automa_name"] = top.name
 
-	return WorkerExecutionContext(
+	return {
 		**other_report_info,
 		**report_info,
-	)
-
-
+	}

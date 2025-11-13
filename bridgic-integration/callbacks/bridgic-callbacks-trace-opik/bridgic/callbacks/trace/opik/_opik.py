@@ -188,12 +188,17 @@ class OpikTraceCallback(WorkerCallback):
         """Start a span for worker execution."""
         worker_context = get_worker_exec_context(worker)
         nested_automa = worker._decorated_worker if worker.is_automa() else None
-        actual_key = worker_context.key or key
+        actual_key = worker_context.get("key") or key
+        worker_context_info = {
+            context_key: context_value
+            for context_key, context_value in worker_context.items()
+            if context_key not in {"key", "dependencies"}
+        }
         # Build step metadata once
         step_metadata = {
             "key": actual_key,
-            "dependencies": worker_context.dependencies,
-            "worker_context_info": worker_context.to_metadata_dict(),
+            "dependencies": worker_context.get("dependencies"),
+            "worker_context_info": worker_context_info,
         }
         
         step_name = f"{actual_key}  [{nested_automa.name}]" if nested_automa else actual_key
