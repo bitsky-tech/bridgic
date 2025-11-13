@@ -1,4 +1,5 @@
 from typing import Dict, Any, Optional, List
+from bridgic.core.automa.args import ArgsMappingRule
 from pydantic import BaseModel
 
 
@@ -18,6 +19,7 @@ class WorkerExecutionContext(BaseModel):
     is_output: bool = False
     is_start: bool = False
     local_space: Optional[Dict[str, Any]] = None
+    args_mapping_rule: Optional[ArgsMappingRule] = None
 
     def to_metadata_dict(self) -> dict:
         """

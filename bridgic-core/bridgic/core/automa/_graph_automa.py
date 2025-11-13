@@ -62,7 +62,16 @@ class _GraphAdaptedWorker(Worker):
         self._decorated_worker = worker
         self._worker_callbacks = [cb.build() for cb in callback_builders]
 
-
+    @override
+    def get_report_info(self) -> Dict[str, Any]:
+        report_info = super().get_report_info()
+        report_info["key"] = self.key
+        report_info["dependencies"] = self.dependencies
+        report_info["is_start"] = self.is_start
+        report_info["is_output"] = self.is_output
+        report_info["args_mapping_rule"] = self.args_mapping_rule
+        return report_info
+    
     @override
     def dump_to_dict(self) -> Dict[str, Any]:
         state_dict = super().dump_to_dict()
