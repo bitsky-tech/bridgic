@@ -63,6 +63,16 @@ class _GraphAdaptedWorker(Worker):
         self._worker_callbacks = [cb.build() for cb in callback_builders]
 
     @override
+    def get_report_info(self) -> Dict[str, Any]:
+        report_info = super().get_report_info()
+        report_info["key"] = self.key
+        report_info["dependencies"] = self.dependencies
+        report_info["is_start"] = self.is_start
+        report_info["is_output"] = self.is_output
+        report_info["args_mapping_rule"] = self.args_mapping_rule
+        return report_info
+    
+    @override
     def dump_to_dict(self) -> Dict[str, Any]:
         state_dict = super().dump_to_dict()
         state_dict["key"] = self.key
@@ -88,7 +98,6 @@ class _GraphAdaptedWorker(Worker):
     # Delegate all the properties and methods of _GraphAdaptedWorker to the decorated worker.
     # TODO: Maybe 'Worker' should be a Protocol.
     #
-
     @override
     async def arun(self, *args, **kwargs) -> Any:
         for callback in self._worker_callbacks:

@@ -104,7 +104,12 @@ class Worker(Serializable):
         """
         Get the top-level automa instance reference.
         """
-        top_level_automa = self.parent
+        # If the current automa is the top-level automa, return itself.
+        from bridgic.core.automa._automa import Automa
+        if isinstance(self, Automa):
+            top_level_automa = self
+        else:
+            top_level_automa = self.parent
         while top_level_automa and (not top_level_automa.is_top_level()):
             top_level_automa = top_level_automa.parent
         return top_level_automa
@@ -163,6 +168,11 @@ class Worker(Serializable):
     @local_space.setter
     def local_space(self, value: Dict[str, Any]):
         self.__local_space = value
+    
+    def get_report_info(self) -> Dict[str, Any]:
+        report_info = {}
+        report_info["local_space"] = self.__local_space
+        return report_info
 
     @override
     def dump_to_dict(self) -> Dict[str, Any]:

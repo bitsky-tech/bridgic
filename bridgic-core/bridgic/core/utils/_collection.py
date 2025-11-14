@@ -1,4 +1,4 @@
-from typing import List, Dict, Any, Mapping
+from typing import List, Dict, Any, Mapping, Optional
 from collections.abc import Hashable
 
 def unique_list_in_order(ele_list: List[Any]) -> List[Any]:
@@ -69,16 +69,57 @@ def filter_dict(data: Dict[str, Any], exclude_none: bool = True, exclude_values:
     return filtered
 
 
+def merge_dicts(
+    *dicts: Optional[Mapping[str, Any]],
+    skip_none: bool = True,
+    none_if_empty: bool = False,
+) -> Optional[Dict[str, Any]]:
+    """
+    Merge multiple optional mappings into one dictionary.
+
+    Parameters
+    ----------
+    *dicts : Optional[Mapping[str, Any]]
+        Variable number of dictionaries or mapping objects to merge. Later
+        dictionaries take precedence over earlier ones.
+    skip_none : bool
+        If True, keys with None values in later dicts will NOT overwrite earlier values.
+        If False, None values are treated as normal values and will overwrite.
+    none_if_empty : bool
+        If True and all inputs are falsy/empty, returns None; otherwise returns {}.
+
+    Returns
+    -------
+    Optional[Dict[str, Any]]
+        A new dictionary containing the merged key-value pairs, or None if
+        none_if_empty is True and inputs are all empty/falsy.
+    """
+    result: Dict[str, Any] = {}
+    seen_any = False
+    for d in dicts:
+        if d is None:
+            continue
+        if not isinstance(d, Mapping):
+            raise TypeError("All parameters must be dictionaries or mapping types")
+        seen_any = True
+        if skip_none:
+            result.update({k: v for k, v in d.items() if v is not None})
+        else:
+            result.update(dict(d))
+
+    if not seen_any and none_if_empty:
+        return None
+    if not result and none_if_empty:
+        return None
+    return result
+
 
 def merge_dict(*dicts: Mapping[str, Any]) -> Dict[str, Any]:
     """
-    Merge multiple dictionaries with None-value filtering.
-    
-    This function merges multiple dictionaries into a single dictionary. The values
-    of later dictionaries will only overwrite the values of earlier dictionaries if
-    they are not None. This is useful for combining configuration dictionaries where
-    None values should be ignored.
-    
+    Merge multiple dictionaries with None-value filtering (legacy wrapper).
+
+    Delegates to merge_dicts(..., skip_none=True, none_if_empty=False).
+
     Parameters
     ----------
     *dicts : Mapping[str, Any]
@@ -112,12 +153,9 @@ def merge_dict(*dicts: Mapping[str, Any]) -> Dict[str, Any]:
     >>> merge_dict({}, {"a": 1}, {})
     {'a': 1}
     """
-    result = {}
-    for d in dicts:
-        if not isinstance(d, Mapping):
-            raise TypeError("All parameters must be dictionaries or mapping types")
-        result.update({k: v for k, v in d.items() if v is not None})
-    return result
+    merged = merge_dicts(*dicts, skip_none=True, none_if_empty=False)
+    # merged cannot be None because none_if_empty=False
+    return merged or {}
 
 
 def validate_required_params(params: Dict[str, Any], required_params: List[str]) -> None:
@@ -157,3 +195,73 @@ def validate_required_params(params: Dict[str, Any], required_params: List[str])
     missing_params = [param for param in required_params if param not in params or params[param] is None]
     if missing_params:
         raise ValueError(f"Missing required parameters: {', '.join(missing_params)}")
+
+
+def serialize_data(value: Any, depth: int = 5) -> Any:
+    """
+    Convert data into a structure that can be serialized (e.g. to JSON/msgpack).
+
+    This function:
+    - Leaves primitives as-is
+    - Recursively sanitizes mappings (dict-like) and sequences (list/tuple-like)
+    - Falls back to repr(...) for unknown/custom objects
+    - Limits recursion by depth to prevent infinite loops
+
+    Parameters
+    ----------
+    value : Any
+        The value to sanitize.
+    depth : int
+        Maximum recursive depth to avoid infinite recursion.
+
+    Returns
+    -------
+    Any
+        A sanitized value suitable for serialization.
+    """
+    if depth <= 0:
+        return repr(value)
+
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+
+    if isinstance(value, Mapping):
+        return {
+            str(key): serialize_data(val, depth - 1)
+            for key, val in value.items()
+        }
+
+    # Accept generic sequences but not bytes-likes or strings (already handled)
+    if isinstance(value, (list, tuple)):
+        return [serialize_data(item, depth - 1) for item in value]
+
+    if hasattr(value, "__iter__") and not isinstance(value, (str, bytes, bytearray)):
+        try:
+            return [serialize_data(item, depth - 1) for item in value]
+        except Exception:
+            return repr(value)
+
+    return repr(value)
+
+def merge_optional_dicts(
+    current: Optional[Mapping[str, Any]],
+    updates: Optional[Mapping[str, Any]],
+) -> Optional[Dict[str, Any]]:
+    """
+    Merge two optional mapping objects into a new dict, skipping None values (legacy wrapper).
+
+    Delegates to merge_dicts(current, updates, skip_none=True, none_if_empty=True).
+
+    Parameters
+    ----------
+    current : Optional[Mapping[str, Any]]
+        Existing mapping.
+    updates : Optional[Mapping[str, Any]]
+        Mapping to merge into current.
+
+    Returns
+    -------
+    Optional[Dict[str, Any]]
+        Merged dict or None if both inputs are empty/falsy.
+    """
+    return merge_dicts(current, updates, skip_none=True, none_if_empty=True)
