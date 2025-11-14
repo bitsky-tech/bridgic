@@ -1,4 +1,4 @@
-# Model Integration
+# Model
 
 ## Our Philosophy
 

@@ -1,4 +1,4 @@
-"""Opik tracing callback handler for Bridgic workers and automa."""
+"""Opik tracing callback handler for Bridgic."""
 
 import time
 from typing_extensions import override
@@ -18,16 +18,22 @@ from bridgic.core.automa._graph_automa import GraphAutoma, _GraphAdaptedWorker
 
 class OpikTraceCallback(WorkerCallback):
     """
-    Opik tracing callback handler for Bridgic workers and automa.
+    Opik tracing callback handler for Bridgic.
 
     This callback handler integrates Opik tracing with Bridgic framework,
     providing step-level tracing for worker execution and automa orchestration.
     It tracks worker execution, creates spans for each worker, and manages
     trace lifecycle for top-level automa instances.
 
+    **Configuration Scope**
+
+    This callback requires access to the automa context and can only be configured
+    at the **Automa level** (via `RunningOptions`) or **Global level** (via `GlobalSetting`).
+    It does not support worker-level configuration (via `@worker` decorator).
+
     Parameters
     ----------
-    project_name : Optional[str]
+    project_name : Optional[str], default=None
         The project name for Opik tracing. If None, uses default project name.
     """
 
@@ -226,11 +232,11 @@ class OpikTraceCallback(WorkerCallback):
         ----------
         key : str
             Worker identifier.
-        is_top_level : bool
-            Whether the worker is the top-level automa. When True, parent will be None.
-        parent : Optional[GraphAutoma]
-            Parent automa instance containing this worker. Will be None when is_top_level is True.
-        arguments : Optional[Dict[str, Any]]
+        is_top_level : bool, default=False
+            Whether the worker is the top-level automa. When True, parent will be the automa itself (parent is self).
+        parent : Optional[GraphAutoma], default=None
+            Parent automa instance containing this worker. For top-level automa, parent is the automa itself.
+        arguments : Optional[Dict[str, Any]], default=None
             Execution arguments with keys "args" and "kwargs".
         """
         if not self._is_ready:
@@ -316,13 +322,13 @@ class OpikTraceCallback(WorkerCallback):
         ----------
         key : str
             Worker identifier.
-        is_top_level : bool
-            Whether the worker is the top-level automa. When True, parent will be None.
-        parent : Optional[GraphAutoma]
-            Parent automa instance containing this worker. Will be None when is_top_level is True.
-        arguments : Optional[Dict[str, Any]]
+        is_top_level : bool, default=False
+            Whether the worker is the top-level automa. When True, parent will be the automa itself (parent is self).
+        parent : Optional[GraphAutoma], default=None
+            Parent automa instance containing this worker. For top-level automa, parent is the automa itself.
+        arguments : Optional[Dict[str, Any]], default=None
             Execution arguments with keys "args" and "kwargs".
-        result : Any
+        result : Any, default=None
             Worker execution result.
         """
         if not self._is_ready:
@@ -348,13 +354,13 @@ class OpikTraceCallback(WorkerCallback):
         ----------
         key : str
             Worker identifier.
-        is_top_level : bool
-            Whether the worker is the top-level automa. When True, parent will be None.
-        parent : Optional[GraphAutoma]
-            Parent automa instance containing this worker. Will be None when is_top_level is True.
-        arguments : Optional[Dict[str, Any]]
+        is_top_level : bool, default=False
+            Whether the worker is the top-level automa. When True, parent will be the automa itself (parent is self).
+        parent : Optional[GraphAutoma], default=None
+            Parent automa instance containing this worker. For top-level automa, parent is the automa itself.
+        arguments : Optional[Dict[str, Any]], default=None
             Execution arguments with keys "args" and "kwargs".
-        error : Exception
+        error : Exception, default=None
             The exception raised during worker execution.
 
         Returns
