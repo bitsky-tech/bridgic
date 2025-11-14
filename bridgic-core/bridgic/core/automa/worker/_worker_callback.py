@@ -4,6 +4,7 @@ from threading import Lock
 from typing import Any, Dict, Union, List, Optional, Type, Generic, TypeVar, TYPE_CHECKING, get_origin, get_args
 from typing_extensions import override
 from bridgic.core.types._serialization import Serializable
+from bridgic.core.utils._inspect_tools import load_qualified_class_or_func
 
 if TYPE_CHECKING:
     from bridgic.core.automa._graph_automa import GraphAutoma
@@ -51,9 +52,9 @@ class WorkerCallback(Serializable):
         key : str
             Worker identifier.
         is_top_level: bool = False
-            Whether the worker is the top-level automa. When True, parent will be None.
+            Whether the worker is the top-level automa. When True, parent will be the automa itself (parent is self).
         parent : Optional[GraphAutoma] = None
-            Parent automa instance containing this worker. Will be None when is_top_level is True.
+            Parent automa instance containing this worker. For top-level automa, parent is the automa itself.
         arguments : Dict[str, Any] = None
             Execution parameters with keys "args" and "kwargs".
         """
@@ -79,9 +80,9 @@ class WorkerCallback(Serializable):
         key : str
             Worker identifier.
         is_top_level: bool = False
-            Whether the worker is the top-level automa. When True, parent will be None.
+            Whether the worker is the top-level automa. When True, parent will be the automa itself (parent is self).
         parent : Optional[GraphAutoma] = None
-            Parent automa instance containing this worker. Will be None when is_top_level is True.
+            Parent automa instance containing this worker. For top-level automa, parent is the automa itself.
         arguments : Dict[str, Any] = None
             Execution arguments with keys "args" and "kwargs".
         result : Any = None
@@ -139,9 +140,9 @@ class WorkerCallback(Serializable):
         key : str
             Worker identifier.
         is_top_level: bool = False
-            Whether the worker is the top-level automa. When True, parent will be None.
+            Whether the worker is the top-level automa. When True, parent will be the automa itself (parent is self).
         parent : Optional[GraphAutoma] = None
-            Parent automa instance containing this worker. Will be None when is_top_level is True.
+            Parent automa instance containing this worker. For top-level automa, parent is the automa itself.
         arguments : Dict[str, Any] = None
             Execution arguments with keys "args" and "kwargs".
         error : Exception = None
@@ -274,6 +275,31 @@ class WorkerCallbackBuilder(Generic[T_WorkerCallback]):
         else:
             return self._callback_type(**self._init_kwargs)
 
+    @override
+    def dump_to_dict(self) -> Dict[str, Any]:
+        return {
+            "callback_type": self._callback_type.__module__ + "." + self._callback_type.__qualname__,
+            "init_kwargs": self._init_kwargs,
+            "is_shared": self._is_shared,
+        }
+
+    @override
+    def load_from_dict(self, state_dict: Dict[str, Any]) -> None:
+        # Load the callback type from its fully qualified name
+        callback_type_name = state_dict["callback_type"]
+        self._callback_type = load_qualified_class_or_func(callback_type_name)
+
+        # Load init_kwargs (default to empty dict if not present or None)
+        init_kwargs = state_dict.get("init_kwargs")
+        self._init_kwargs = init_kwargs if init_kwargs is not None else {}
+
+        # Load is_shared (default to True if not present for backward compatibility)
+        self._is_shared = state_dict.get("is_shared", True)
+
+        # Reset shared instance and lock (they will be recreated when needed)
+        self._shared_instance = None
+        self._shared_lock = Lock()
+
 
 def can_handle_exception(callback: WorkerCallback, error: Exception) -> bool:
     """
@@ -353,9 +379,9 @@ async def try_handle_error_with_callbacks(
     key : str
         Worker identifier.
     is_top_level : bool, optional
-        Whether the worker is the top-level automa. Default is False. When True, parent will be None.
+        Whether the worker is the top-level automa. Default is False. When True, parent will be the automa itself (parent is self).
     parent : Optional[GraphAutoma], optional
-        Parent automa instance containing this worker. Will be None when is_top_level is True.
+        Parent automa instance containing this worker. For top-level automa, parent is the automa itself.
     arguments : Dict[str, Any], optional
         Execution arguments with keys "args" and "kwargs".
     error : Exception, optional

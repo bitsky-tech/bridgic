@@ -17,6 +17,7 @@ nav:
         - Concurrency Mode: tutorials/items/core_mechanism/concurrency_mode.ipynb
         - Parameter Binding: tutorials/items/core_mechanism/parameter_binding.ipynb
         - Dynamic Routing: tutorials/items/core_mechanism/dynamic_routing.ipynb
+        - Dynamic Topology: tutorials/items/core_mechanism/dynamic_topology.ipynb
         - Human in the loop: tutorials/items/core_mechanism/human_in_the_loop.ipynb
         - Modularity: tutorials/items/core_mechanism/modularity.ipynb
       - Model Integration:

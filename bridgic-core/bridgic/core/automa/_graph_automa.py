@@ -1084,64 +1084,105 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
             worker_obj.local_space = {}
 
     async def arun(
-        self, 
+        self,
         *args: Tuple[Any, ...],
-        interaction_feedback: Optional[InteractionFeedback] = None,
-        interaction_feedbacks: Optional[List[InteractionFeedback]] = None,
+        feedback_data: Optional[Union[InteractionFeedback, List[InteractionFeedback]]] = None,
         **kwargs: Dict[str, Any]
     ) -> Any:
         """
         The entry point for running the constructed `GraphAutoma` instance.
 
+        This method serves as the entry point for both initial execution and resumption after 
+        interruption of an automa instance. It automatically drives the execution of workers 
+        based on their `dependencies` and explicit `ferry_to()` calls. Each execution will be 
+        wrapped in an `asyncio.Task` to ensure context isolation.
+
+        **Automatic Scheduling**
+
+        The scheduling behavior in `GraphAutoma` is automatically driven by:
+
+        - Worker dependencies: Workers are scheduled to run only after all their necessary 
+          dependencies are satisfied. The dependencies automatically drive the execution order.
+
+        - Calling ferry_to: During execution, a worker can explicitly trigger another worker 
+          by calling `ferry_to()`, which enables dynamic flow control and conditional branching.
+
+        - Dynamic topology changes: When the graph topology is modified at runtime (such as 
+          adding or removing workers or dependencies), the scheduling system seamlessly updates 
+          to reflect the latest structure, ensuring that worker execution always follows the 
+          current graph.
+
+        **Human Interaction Mechanism**
+
+        Workers can request human input by calling `interact_with_human()` during execution. 
+        When this occurs:
+
+        - The execution will be paused after the running workers finish their execution.
+        - The Automa's state will be serialized into a `Snapshot` object.
+        - An `InteractionException` will be raised to the application layer. It contains both the 
+          list of pending `Interaction` objects and the `Snapshot` object.
+        - The application layer may persist the `Snapshot` properly to resume the execution later.
+        - To resume execution, the application layer should reload the Automa state using 
+          `load_from_snapshot()` with the saved `Snapshot` object and call `arun()` again with 
+          `feedback_data` containing the user's feedback(s) to finish a complete interactions.
+
         Parameters
         ----------
         args : optional
             Positional arguments to be passed.
-
-        interaction_feedback : Optional[InteractionFeedback]
-            Feedback that is received from a human interaction. Only one of interaction_feedback or 
-            interaction_feedbacks should be provided at a time.
-
-        interaction_feedbacks : Optional[List[InteractionFeedback]]
-            Feedbacks that are received from multiple interactions occurred simultaneously before the Automa 
-            was paused. Only one of interaction_feedback or interaction_feedbacks should be provided at a time.
-
+        feedback_data : Optional[Union[InteractionFeedback, List[InteractionFeedback]]]
+            Feedbacks that are received from one or multiple human interactions occurred before the
+            Automa was paused. This argument may be of type `InteractionFeedback` or 
+            `List[InteractionFeedback]`. If only one interaction occurred, `feedback_data` should be
+            of type `InteractionFeedback`. If multiple interactions occurred simultaneously, 
+            `feedback_data` should be of type `List[InteractionFeedback]`.
         kwargs : optional
-            Keyword arguments to be passed.
+            Keyword arguments which may be further propagated to contained workers.
 
         Returns
         -------
         Any
-            The execution result of the output-worker that has the setting `is_output=True`, otherwise None.
+            The execution result of the output-worker that has the setting `is_output=True`,
+            otherwise None.
 
         Raises
         ------
         InteractionException
-            If the Automa is the top-level Automa and the `interact_with_human()` method is called by 
-            one or more workers within the lastest event loop iteration, this exception will be raised to the application layer.
+            If the Automa is the top-level Automa and the `interact_with_human()` method is called
+            by one or more workers within the lastest event loop iteration, this exception will be
+            raised to the application layer.
         """
-        # Wrap the internal execution logic in a task to provide isolation between multiple arun() calls.
-        task = asyncio.create_task(
-            self._arun_internal(
-                *args,
-                interaction_feedback=interaction_feedback,
-                interaction_feedbacks=interaction_feedbacks,
-                **kwargs
-            ),
-            name=f"GraphAutoma-{self.name}-arun"
-        )
-        return await task
+        if self.is_top_level():
+            # For top-level automa, wrap in a task to ensure context isolation
+            task = asyncio.create_task(
+                self._arun_internal(*args, feedback_data=feedback_data, **kwargs),
+                name=f"GraphAutoma-{self.name}-arun"
+            )
+            return await task
+        else:
+            # For nested automa, directly call _arun_internal to avoid redundant task creation
+            return await self._arun_internal(*args, feedback_data=feedback_data, **kwargs)
 
     async def _arun_internal(
-        self, 
+        self,
         *args: Tuple[Any, ...],
-        interaction_feedback: Optional[InteractionFeedback] = None,
-        interaction_feedbacks: Optional[List[InteractionFeedback]] = None,
+        feedback_data: Optional[Union[InteractionFeedback, List[InteractionFeedback]]] = None,
         **kwargs: Dict[str, Any]
     ) -> Any:
         """
-        Internal implementation of arun. This method aims to ensure Context isolation between 
-        multiple calls of `arun()` method from the same Automa instance.
+        Internal implementation of `arun()` for `GraphAutoma`.
+
+        The scheduling behavior in `GraphAutoma` is automatically driven by:
+
+        1. **Worker dependencies**: Workers are scheduled to run only after all their necessary 
+        dependencies are satisfied. The dependencies automatically drives the execution order.
+
+        2. **Calling ferry_to**: During execution, a worker can explicitly trigger another worker 
+        with calling `ferry_to()`, which enables dynamic flow control and conditional branching.
+
+        3. **Dynamic topology changes**: When the graph topology is modified at runtime (such as adding 
+        or removing workers or dependencies), the scheduling system seamlessly updates to reflect 
+        the latest structure, ensuring that worker execution always follows the current graph.
         """
 
         def _reinit_current_kickoff_workers_if_needed():
@@ -1184,9 +1225,17 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
                     break
 
         def _check_and_normalize_interaction_params(
+            feedback_data: Optional[Union[InteractionFeedback, List[InteractionFeedback]]] = None,
             interaction_feedback: Optional[InteractionFeedback] = None,
             interaction_feedbacks: Optional[List[InteractionFeedback]] = None,
         ):
+            if feedback_data:
+                if isinstance(feedback_data, list):
+                    rx_feedbacks = feedback_data
+                else:
+                    rx_feedbacks = [feedback_data]
+                return rx_feedbacks
+            # For backward compatibility with old parameter names. To be removed in the future.
             if interaction_feedback and interaction_feedbacks:
                 raise AutomaRuntimeError(
                     f"Only one of interaction_feedback or interaction_feedbacks can be used. "
@@ -1244,16 +1293,18 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
                 await callback.on_worker_start(
                     key=self.name,
                     is_top_level=True,
-                    parent=None,
+                    parent=self.parent,
                     arguments={
                         "args": self._input_buffer.args,
                         "kwargs": self._input_buffer.kwargs,
-                        "interaction_feedback": interaction_feedback,
-                        "interaction_feedbacks": interaction_feedbacks,
+                        "feedback_data": feedback_data,
                     },
                 )
 
-        rx_feedbacks = _check_and_normalize_interaction_params(interaction_feedback, interaction_feedbacks)
+        # For backward compatibility with old parameter names. To be removed in the future.
+        interaction_feedback = kwargs.get("interaction_feedback")
+        interaction_feedbacks = kwargs.get("interaction_feedbacks")
+        rx_feedbacks = _check_and_normalize_interaction_params(feedback_data, interaction_feedback, interaction_feedbacks)
         if rx_feedbacks:
             rx_feedbacks = _match_ongoing_interaction_and_feedbacks(rx_feedbacks)
 
@@ -1323,9 +1374,9 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
                 # Schedule task for each kickoff worker.
                 if worker_obj.is_automa():
                     coro = worker_obj.arun(
-                        *next_args, 
-                        interaction_feedbacks=rx_feedbacks, 
-                        **next_kwargs
+                        *next_args,
+                        feedback_data=rx_feedbacks,
+                        **next_kwargs,
                     )
                 else:
                     coro = worker_obj.arun(*next_args, **next_kwargs)
@@ -1423,12 +1474,11 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
                         callbacks=automa_callbacks,
                         key=self.name,
                         is_top_level=True,
-                        parent=None,
+                        parent=self.parent,
                         arguments={
                             "args": self._input_buffer.args,
                             "kwargs": self._input_buffer.kwargs,
-                            "interaction_feedback": interaction_feedback,
-                            "interaction_feedbacks": interaction_feedbacks,
+                            "feedback_data": feedback_data,
                         },
                         error=e,
                     )
@@ -1436,7 +1486,7 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
             # For inner interaction exceptions, collect them and throw an InteractionException as a whole.
             if len(interaction_exceptions) > 0:
                 all_interactions: List[Interaction] = [interaction for e in interaction_exceptions for interaction in e.args]
-                if self.parent is None:
+                if self.is_top_level():
                     # This is the top-level Automa. Serialize the Automa and raise InteractionException to the application layer.
                     serialized_automa = dump_bytes(self)
                     snapshot = Snapshot(
@@ -1519,12 +1569,11 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
                 await callback.on_worker_end(
                     key=self.name,
                     is_top_level=True,
-                    parent=None,
+                    parent=self.parent,
                     arguments={
                         "args": self._input_buffer.args,
                         "kwargs": self._input_buffer.kwargs,
-                        "interaction_feedback": interaction_feedback,
-                        "interaction_feedbacks": interaction_feedbacks,
+                        "feedback_data": feedback_data,
                     },
                     result=result,
                 )
