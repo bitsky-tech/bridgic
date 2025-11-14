@@ -6,8 +6,8 @@ from pydantic.fields import FieldInfo
 from typing import List, Any, Union, Callable, Tuple, Type, Optional, Dict
 
 from bridgic.core.automa.worker import Worker
-from bridgic.core.automa import Automa, GraphAutoma
-from bridgic.core.automa.args import ArgsMappingRule
+from bridgic.core.automa import GraphAutoma, RunningOptions
+from bridgic.core.automa.args import ArgsMappingRule, Distribute
 from bridgic.core.agentic import ConcurrentAutoma
 from bridgic.core.utils._inspect_tools import override_func_signature, set_method_signature
 
@@ -25,13 +25,13 @@ class Data:
         self.data = data
 
     def __rmul__(self, other: Union[Callable, Worker]):
-        if isinstance(other, Callable):
-            func_name = getattr(other, "__name__", repr(other))
-            override_func_signature(func_name, other, self.data)
-        elif isinstance(other, Worker):
+        if isinstance(other, Worker):
             worker_name = other.__class__.__name__
             override_func = other.arun if other._is_arun_overridden() else other.run
             override_func_signature(worker_name, override_func, self.data)
+        elif isinstance(other, Callable):
+            func_name = getattr(other, "__name__", repr(other))
+            override_func_signature(func_name, other, self.data)
 
         return other
 
@@ -82,7 +82,7 @@ class Settings:
 
 
 class _CanvasObject:
-    def __init__(self, key: str, worker_material: Union[Worker, Callable]) -> None:
+    def __init__(self, key: str, worker_material: Optional[Union[Worker, Callable]]) -> None:
         self.worker_material = worker_material
         self.parent_canvas = None
         self.left_canvas_obj = None
@@ -186,16 +186,39 @@ class _Canvas(_CanvasObject):
     """
     The input parameters of a graph were recorded.
     """
-    def __init__(self, automa: Automa) -> None:
-        worker_material = automa
-        super().__init__(None, worker_material)
+    def __init__(self, automa_type: str, params: Dict[str, Any]) -> None:
+        super().__init__(None, None)
+        self.automa_type = automa_type
+        self.params = params
 
-        self.elements = {}
+        self.elements: Dict[str, Union["_Element", "_Canvas"]] = {}
 
-    def register(self, key, value):
+    def register(self, key: str, value: Union["_Element", "_Canvas"]):
+        if isinstance(value, _Element) and value.is_lambda and self.automa_type == "graph":
+            raise ValueError("Lambda dynamic logic must be written under a `concurrent`, `sequential`, not `graph`.")
+            
         value.parent_canvas = self
         self.elements[key] = value
-        
+
+    def make_automa(self, running_options: RunningOptions = None):
+        if self.automa_type == "graph":
+            self.worker_material = GraphAutoma(
+                name=self.settings.key, 
+                running_options=running_options
+            )
+        elif self.automa_type == "concurrent":
+            self.worker_material = ConcurrentAutoma(
+                name=self.settings.key, 
+                running_options=running_options
+            )
+        else:
+            raise ValueError(f"Invalid automa type: {self.automa_type}")
+
+        if self.params:
+            set_method_signature(self.worker_material.arun, self.params)
+
+    def is_top_level(self) -> bool:
+        return self.parent_canvas is self
 
     def __str__(self) -> str:
         return (
@@ -223,23 +246,29 @@ class _Element(_CanvasObject):
 
 class _GraphContextManager:
     def __init__(self, automa_type: str):
-        self.automa = self._make_automa(automa_type)
-        self.arun_params = {}
+        self.automa_type = automa_type
+        self.params = {}
 
     def __call__(self, **kwargs: Dict[str, "ASLField"]) -> _Canvas:
         params = {}
         for key, value in kwargs.items():
             if not isinstance(value, ASLField):
                 raise ValueError(f"Invalid field type: {type(value)}.")
-            self.arun_params[key] = {
+            default_value = Distribute(
+                value.default 
+                if not isinstance(value.default, PydanticUndefinedType) 
+                else inspect._empty
+            ) if value.distribute else value.default
+            params[key] = {
                 "type": value.type,
-                "default": value.default if not isinstance(value.default, PydanticUndefinedType) else inspect._empty,
+                "default": default_value
             }
-        set_method_signature(self.automa.arun, self.arun_params)
+        self.params = params
         return self
 
     def __enter__(self) -> _Canvas:
-        ctx = _Canvas(automa=self.automa)
+        ctx = _Canvas(automa_type=self.automa_type, params=self.params)
+
         stack = list(graph_stack.get())
         stack.append(ctx)
         graph_stack.set(stack)
@@ -249,14 +278,6 @@ class _GraphContextManager:
         stack = list(graph_stack.get())
         stack.pop()
         graph_stack.set(stack)
-
-    def _make_automa(self, automa_type: str) -> Automa:
-        if automa_type == "graph":
-            return GraphAutoma()
-        elif automa_type == "concurrent":
-            return ConcurrentAutoma()
-        else:
-            raise ValueError(f"Invalid automa type: {automa_type}")
         
 
 # Create module-level instances (not global variables, but singleton objects)
@@ -275,7 +296,9 @@ class ASLField(FieldInfo):
     def __init__(
         self,
         type: Type[Any] = Any,
+        *,
         default: Any = ...,
+        distribute: bool = False,
         **kwargs: Any
     ):
         """
@@ -287,8 +310,11 @@ class ASLField(FieldInfo):
             Explicit default value. Must be provided if you want a default value.
         type : Type[Any]
             Type information stored as metadata. Does not automatically generate default values.
+        distribute : bool
+            Whether to distribute the data to multiple workers.
         **kwargs : Any
             Other Field parameters (description, ge, le, etc.)
         """
         super().__init__(default=default, **kwargs)
         self.type = type
+        self.distribute = distribute

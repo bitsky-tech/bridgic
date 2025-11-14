@@ -12,19 +12,18 @@ from types import MethodType
 from dataclasses import dataclass
 from pydantic import BaseModel, Field, ConfigDict
 
+from bridgic.core.config import GlobalSetting
 from bridgic.core.utils._console import printer
 from bridgic.core.utils._msgpackx import dump_bytes
 from bridgic.core.types._error import *
 from bridgic.core.types._common import AutomaType, ArgsMappingRule
-from bridgic.core.utils._args_map import safely_map_args
 from bridgic.core.automa import Automa, Snapshot
 from bridgic.core.automa.worker import CallableWorker, Worker
 from bridgic.core.automa.interaction import Interaction, InteractionFeedback, InteractionException
 from bridgic.core.automa._automa import _InteractionAndFeedback, _InteractionEventException, RunningOptions
 from bridgic.core.automa.worker._worker_callback import WorkerCallback, WorkerCallbackBuilder, try_handle_error_with_callbacks
-from bridgic.core.config import GlobalSetting
 from bridgic.core.automa._graph_meta import GraphMeta
-from bridgic.core.automa.args._args_binding import ArgsManager
+from bridgic.core.automa.args._args_binding import ArgsManager, safely_map_args
 
 class _GraphAdaptedWorker(Worker):
     """
@@ -102,6 +101,10 @@ class _GraphAdaptedWorker(Worker):
         try:
             result = await self._decorated_worker.arun(*args, **kwargs)
         except Exception as e:
+            if isinstance(e, TypeError):
+                print(f'current worker: {self.key}, ==> args: {args}, kwargs: {kwargs}')
+                print(f'signature: {self._decorated_worker.get_input_param_names()}')
+
             # Try to handle the exception with callbacks
             handled = await try_handle_error_with_callbacks(
                 callbacks=self._worker_callbacks,
@@ -1353,7 +1356,7 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
                 next_args, next_kwargs = safely_map_args(
                     (*binding_args, *ferry_args), 
                     {**propagation_kwargs, **binding_kwargs, **injection_kwargs, **ferry_kwargs}, 
-                    self._workers[kickoff_info.worker_key].get_input_param_names()
+                    self._workers[kickoff_info.worker_key],
                 )
                 
                 # Collect the output worker keys.

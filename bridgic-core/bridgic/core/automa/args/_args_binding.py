@@ -8,6 +8,7 @@ from typing_extensions import TYPE_CHECKING
 from bridgic.core.types._common import ArgsMappingRule
 from bridgic.core.types._error import WorkerArgsMappingError
 from bridgic.core.automa.args._args_descriptor import WorkerInjector
+from bridgic.core.automa.worker import CallableWorker, Worker
 
 if TYPE_CHECKING:
     from bridgic.core.automa._graph_automa import (
@@ -164,6 +165,7 @@ class ArgsManager:
             dependencies = deepcopy(worker.dependencies)
             if worker.is_start:
                 dependencies.append("__automa__")
+
             self._worker_rule_dict[key] = {
                 "dependencies": dependencies,
                 "param_names": worker.get_input_param_names(),
@@ -559,3 +561,109 @@ class ArgsManager:
                 # update the _worker_rule_dict according to the "add_dependency" interface
                 self._worker_rule_dict[key]["dependencies"].append(dependency)
             
+
+def safely_map_args(
+    in_args: Tuple[Any, ...], 
+    in_kwargs: Dict[str, Any],
+    worker: Union[Worker, CallableWorker],
+) -> Tuple[Tuple[Any, ...], Dict[str, Any]]:
+    """
+    Safely map input arguments to match a target function's parameter signature.
+
+    This function filters and adjusts positional and keyword arguments to ensure they
+    can be safely passed to a target function. It handles conflicts between positional
+    and keyword arguments, and filters out invalid keyword arguments when the target
+    function doesn't accept **kwargs.
+
+    The mapping follows Python's argument binding rules:
+    - Positional arguments take priority over keyword arguments
+    - If a parameter is filled by a positional argument, any keyword argument with
+      the same name will be ignored
+    - POSITIONAL_ONLY parameters can only be filled by positional arguments
+    - KEYWORD_ONLY parameters can only be filled by keyword arguments
+
+    Parameters
+    ----------
+    in_args : Tuple[Any, ...]
+        Input positional arguments to be mapped.
+    in_kwargs : Dict[str, Any]
+        Input keyword arguments to be mapped.
+    worker : Union[Worker, CallableWorker]
+        The worker whose input parameters will be used for mapping.
+
+    Returns
+    -------
+    Tuple[Tuple[Any, ...], Dict[str, Any]]
+        Mapped positional and keyword arguments that can be safely passed to the target function.
+    """
+    
+    # Step 1: Extract function parameter information
+    rx_param_names_dict = worker.get_input_param_names()
+    positional_only_param_names = [name for name, _ in rx_param_names_dict.get(Parameter.POSITIONAL_ONLY, [])]
+    positional_or_keyword_param_names = [name for name, _ in rx_param_names_dict.get(Parameter.POSITIONAL_OR_KEYWORD, [])]
+    keyword_only_param_names = [name for name, _ in rx_param_names_dict.get(Parameter.KEYWORD_ONLY, [])]
+    var_positional_param_names = [name for name, _ in rx_param_names_dict.get(Parameter.VAR_POSITIONAL, [])]
+    var_keyword_param_names = [name for name, _ in rx_param_names_dict.get(Parameter.VAR_KEYWORD, [])]
+
+    # Step 2: Handle self/cls parameter for bound methods
+    # For bound methods, the first POSITIONAL_OR_KEYWORD parameter is typically
+    # 'self' or 'cls', which is already bound at call time. Therefore, positional
+    # arguments should be mapped starting from the second parameter.
+    skip_first_param = (
+        positional_or_keyword_param_names 
+        and positional_or_keyword_param_names[0] in ('self', 'cls')
+    )
+    
+    # Step 3: Calculate positional argument binding
+    # Python's argument binding rule: positional arguments fill parameters in order.
+    # Binding order: POSITIONAL_ONLY first, then POSITIONAL_OR_KEYWORD (skipping self/cls)
+    # 
+    # 3.1 Calculate how many positional arguments fill POSITIONAL_ONLY parameters
+    num_pos_only_filled = min(len(in_args), len(positional_only_param_names))
+    remaining_pos_args = max(0, len(in_args) - num_pos_only_filled)
+    
+    # 3.2 Calculate effective POSITIONAL_OR_KEYWORD parameters (excluding self/cls)
+    effective_pos_or_kw = (
+        positional_or_keyword_param_names[1:] if skip_first_param 
+        else positional_or_keyword_param_names
+    )
+    # 3.3 Calculate how many positional arguments fill POSITIONAL_OR_KEYWORD parameters
+    num_pos_or_kw_filled = min(remaining_pos_args, len(effective_pos_or_kw))
+    
+    # Step 4: Identify parameters filled by positional arguments
+    # Record the set of POSITIONAL_OR_KEYWORD parameter names that are filled by
+    # positional arguments. These parameters must be removed from kwargs to avoid
+    # conflicts.
+    param_start_idx = 1 if skip_first_param else 0
+    filled_pos_or_kw_params = set(
+        positional_or_keyword_param_names[param_start_idx:param_start_idx + num_pos_or_kw_filled]
+    )
+    
+    # Step 5: Filter conflicting keyword arguments
+    # Core principle: positional arguments take precedence over keyword arguments.
+    # If a parameter is already filled by a positional argument, the corresponding
+    # keyword argument in kwargs must be removed to avoid "got multiple values
+    # for argument" errors.
+    rx_kwargs = {k: v for k, v in in_kwargs.items() if k not in filled_pos_or_kw_params}
+    
+    # Step 6: Filter invalid keyword arguments
+    # If the function doesn't accept **kwargs, filter out keyword arguments that
+    # are not in the function signature. Only allow:
+    # - KEYWORD_ONLY parameters (e.g., g, h)
+    # - Unfilled POSITIONAL_OR_KEYWORD parameters
+    if not var_keyword_param_names:
+        allowed_kw_params = set(keyword_only_param_names)
+        unfilled_pos_or_kw_params = set(
+            positional_or_keyword_param_names[param_start_idx + num_pos_or_kw_filled:]
+        )
+        allowed_kw_params.update(unfilled_pos_or_kw_params)
+        rx_kwargs = {k: v for k, v in rx_kwargs.items() if k in allowed_kw_params}
+    
+    # Step 7: Handle special cases
+    # When a predecessor worker returns None and the successor worker accepts no
+    # arguments, return empty arguments.
+    total_fixed_params = len(positional_only_param_names) + len(effective_pos_or_kw)
+    if len(in_args) == 1 and in_args[0] is None and total_fixed_params == 0 and not var_positional_param_names:
+        return (), {}
+    
+    return in_args, rx_kwargs

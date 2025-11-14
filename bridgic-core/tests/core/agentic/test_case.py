@@ -28,11 +28,7 @@ async def common_worker(task_input: int) -> int:
 
 
 class MyGraph(ASLAutoma):
-
-    with graph(
-        user_input = ASLField(int)
-    ) as g:
-    # with graph as g:
+    with graph as g:
         a = worker1
         b = worker2
         c = Worker3(y=1)
@@ -40,7 +36,27 @@ class MyGraph(ASLAutoma):
         +a >> b >> ~c
 
 
+class MyGraph1(ASLAutoma):
+    user_input: int = None
+
+    with graph as g1:
+        a = worker1 
+        with graph as g2:
+            c = worker2
+            d = Worker3(y=1)
+            +c >> ~d
+        b = worker2
+
+        +a >> g2 >> ~b
+
+
 if __name__ == "__main__":
     my_graph = MyGraph()
     result = asyncio.run(my_graph.arun(user_input=1))
     print(result)
+
+    my_graph = MyGraph1()
+    result = asyncio.run(my_graph.arun(user_input=1))
+    print(result)
+    
+    pass

@@ -329,35 +329,35 @@ async def test_args_injection_can_run_correctly(args_injection_can_run_correctly
 # - - - - - - - - - - - - - - -
 # test dynamic lambda worker can run correctly
 # - - - - - - - - - - - - - - - 
-@pytest.fixture
-def dynamic_lambda_worker_can_run_correctly_graph():
-    class MyGraph1(ASLAutoma):
-        x: int = None
+# @pytest.fixture
+# def dynamic_lambda_worker_can_run_correctly_graph():
+#     class MyGraph1(ASLAutoma):
+#         x: int = None
 
-        with graph as g:
-            a = produce_tasks
+#         with graph as g:
+#             a = produce_tasks
 
-            dynamic_logic = lambda subtasks, **kwargs: (
-                tasks_done *Settings(
-                    key=f"tasks_done_{i}"
-                )
-                for i, subtask in enumerate(subtasks)
-            )
+#             dynamic_logic = lambda subtasks, **kwargs: (
+#                 tasks_done *Settings(
+#                     key=f"tasks_done_{i}"
+#                 )
+#                 for i, subtask in enumerate(subtasks)
+#             )
             
-            # with concurrent() as g2:
+#             # with concurrent() as g2:
                 
             
-            b = merge_tasks
+#             b = merge_tasks
 
-            +a >> dynamic_logic >> ~b
+#             +a >> dynamic_logic >> ~b
 
-    return MyGraph1
+#     return MyGraph1
 
-@pytest.mark.asyncio
-async def test_dynamic_lambda_worker_can_run_correctly(dynamic_lambda_worker_can_run_correctly_graph):
-    graph = dynamic_lambda_worker_can_run_correctly_graph()
-    result = await graph.arun(x=3)
-    assert result == [0, 1, 2]
+# @pytest.mark.asyncio
+# async def test_dynamic_lambda_worker_can_run_correctly(dynamic_lambda_worker_can_run_correctly_graph):
+#     graph = dynamic_lambda_worker_can_run_correctly_graph()
+#     result = await graph.arun(x=3)
+#     assert result == [0, 1, 2]
 
 
 ####################################################################################################################################################

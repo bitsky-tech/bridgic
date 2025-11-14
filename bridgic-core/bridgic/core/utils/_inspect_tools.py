@@ -1,9 +1,10 @@
 import inspect
 import importlib
 import enum
+from inspect import Parameter
 
 from types import MethodType
-from typing import Callable, List, Dict, Any, Tuple
+from typing import Callable, List, Dict, Any, Tuple, Union
 from typing_extensions import get_overloads, overload
 from bridgic.core.utils._collection import deep_hash
 
@@ -60,6 +61,10 @@ def get_param_names_by_kind(
     List[str]
         A list of parameter names.
     """
+    # Handle bound methods by using __func__ to get the unbound method
+    if isinstance(func, MethodType):
+        func = func.__func__
+    
     sig = inspect.signature(func)
     param_names = []
     for name, param in sig.parameters.items():
@@ -94,6 +99,9 @@ def get_param_names_all_kinds(
         - inspect.Parameter.KEYWORD_ONLY
         - inspect.Parameter.VAR_KEYWORD
     """
+    # Handle bound methods by using __func__ to get the unbound method
+    if isinstance(func, MethodType):
+        func = func.__func__
     sig = inspect.signature(func)
     param_names_dict = {}
     for name, param in sig.parameters.items():
@@ -155,9 +163,11 @@ def load_qualified_class_or_func(full_qualified_name: str):
 
 def override_func_signature(
     name: str,
-    func: Callable,
+    func: Union[Callable, MethodType],
     data: Dict[str, Any],
 ) -> None:
+    if isinstance(func, MethodType):
+        func = func.__func__
     sig = inspect.signature(func)
 
     # validate the parameters: only allow overriding existing non-varargs names
@@ -228,7 +238,16 @@ def set_method_signature(
     method: MethodType,
     data: Dict[str, Any],
 ) -> None:
-    # Build a new signature purely based on provided spec (no 'self' for bound methods)
+    # Get the original signature to preserve 'self' parameter
+    original_sig = inspect.signature(method.__func__)
+    original_params = list(original_sig.parameters.values())
+    
+    # Extract 'self' parameter if it exists (should be the first parameter for instance methods)
+    self_param = None
+    if original_params and original_params[0].name == 'self':
+        self_param = original_params[0]
+    
+    # Build new parameters from provided spec
     required_params = []
     optional_params = []
     for param_name, spec in data.items():
@@ -248,7 +267,13 @@ def set_method_signature(
         else:
             optional_params.append(param)
 
-    params = required_params + optional_params
+    # Combine: self (if exists) + required_params + optional_params
+    params = []
+    if self_param is not None:
+        params.append(self_param)
+    params.extend(required_params)
+    params.extend(optional_params)
+    
     new_signature = inspect.Signature(parameters=params)
     
     # For bound methods, set signature on the underlying function object

@@ -1,10 +1,11 @@
 import copy
 import inspect
 import functools
-from typing import Callable, List, Any, Dict, Tuple, Union
+from re import L
+from typing import Callable, List, Any, Dict, Tuple, Union, Optional
 
-from bridgic.core.automa import GraphAutoma
-from bridgic.core.automa.worker import Worker
+from bridgic.core.automa import GraphAutoma, RunningOptions
+from bridgic.core.automa.worker import Worker, WorkerCallback, WorkerCallbackBuilder
 from bridgic.core.automa.args import ArgsMappingRule, System
 from bridgic.core.automa._graph_automa import GraphMeta
 from bridgic.core.agentic import ConcurrentAutoma
@@ -62,9 +63,14 @@ class TrackingNamespace(dict):
                 # register to the parent canvas, the parent canvas is the root canvas.
                 parent_canvas.register(value.settings.key, value)
             elif isinstance(value, _Element):
+                # if the stack is empty, indicates that the element is not under any canvas.
                 if len(stack) == 0:
                     raise ValueError("All workers must be written under one graph.")
+
+                # get the current canvas
                 current_canvas: _Canvas = stack[-1]
+
+                # register to the current canvas
                 current_canvas.register(value.settings.key, value)
 
 
@@ -75,85 +81,28 @@ class ASLAutomaMeta(GraphMeta):
 
     def __new__(mcls, name, bases, namespace):
         cls = super().__new__(mcls, name, bases, namespace)
+        canvases = cls._collect_canvases(namespace)
+        setattr(cls, "_canvases", canvases)
         return cls
 
-
-class ASLAutoma(GraphAutoma, metaclass=ASLAutomaMeta):
-    def __init__(self, name: str = None):
-        super().__init__(name=name)
-        self._dynamic_workers = {}
-        self._collect_canvases()
-        self._build_graph()
-
-    def _build_graph(self) -> None:
-        # build the graph
-        for canvas in self._canvases:
-            automa = canvas.worker_material
-            elements = canvas.elements
-            self._inner_build_logic_flow(automa, elements)
-            
-    def _inner_build_logic_flow(self, automa: GraphAutoma, elements: Dict[str, "_Element"]) -> None:
-        exit_keys = []
-        for _, element in elements.items():
-            if element.settings.key in exit_keys:
-                continue
-
-            key = element.settings.key
-            worker_material = element.worker_material
-            is_start = element.settings.is_start
-            is_output = element.settings.is_output
-            dependencies = element.settings.dependencies
-            args_mapping_rule = element.settings.args_mapping_rule
-
-            if element.is_lambda:
-                bound_element_start = functools.partial(
-                    dynamic_lambda_worker_start,
-                    __dynamic_lambda_worker__=element,
-                    __dynamic_workers__=self._dynamic_workers,
-                )
-                worker_material = bound_element_start
-
-            new_dependencies = []
-            for dependency in dependencies:
-                if dependency in self._dynamic_workers.keys():
-                    new_dependencies.extend(self._dynamic_workers[dependency])
-                else:
-                    new_dependencies.append(dependency)
-            
-            if isinstance(automa, ConcurrentAutoma):
-                build_concurrent(
-                    automa=automa,
-                    key=key,
-                    worker_material=worker_material,
-                )
-            elif isinstance(automa, GraphAutoma):
-                build_graph(
-                    automa=automa,
-                    key=key,
-                    worker_material=worker_material,
-                    is_start=is_start,
-                    is_output=is_output,
-                    dependencies=new_dependencies,
-                    args_mapping_rule=args_mapping_rule,
-                )
-            else:
-                raise ValueError(f"Invalid automa type: {type(automa)}.")
-
-            exit_keys.append(key)
-
-    def _collect_canvases(self):
+    @classmethod
+    def _collect_canvases(mcls, dct: Dict[str, Any]) -> List[_Canvas]:
         # collect all canvases and elements
         root = None
         canvases_dict: Dict[str, _Canvas] = {}
-        # 访问类属性，需要使用 type(self).__dict__ 而不是 self.__dict__
-        cls = type(self)
-        for name, value in cls.__dict__.items():  # find the root canvas
+
+        for _, value in dct.items():
             if isinstance(value, _Canvas):
+
+                # find the root canvas and set its parent canvas to itself
                 if not value.parent_canvas:
                     if not root:
                         root = value
+                        value.parent_canvas = value
                     else:
                         raise ValueError("Multiple root canvases are not allowed.")
+
+                # record the canvas to the canvases dictionary
                 canvases_dict[value.settings.key] = value
 
         # bottom up order traversal to get the canvases
@@ -164,18 +113,147 @@ class ASLAutoma(GraphAutoma, metaclass=ASLAutomaMeta):
             canvas_map = {canvas.settings.key: canvas for canvas in canvases}
             all_parents = {canvas.parent_canvas.settings.key for canvas in canvases if canvas.parent_canvas}
             leaves = [canvas for canvas in canvases if canvas.settings.key not in all_parents]
-            return leaves + [
+            result = leaves + [
                         element 
                         for canvas in leaves 
                         for element in bottom_up_order_traversal(
                             [canvas_map[canvas.parent_canvas.settings.key]]
                         )
                     ]
+            return result
 
         canvases_list = list(canvases_dict.values())
         bottom_up_order = bottom_up_order_traversal(canvases_list)
-        bottom_up_order[-1].worker_material = self  # the root graph is self
-        self._canvases = bottom_up_order
+        return bottom_up_order
+
+
+class ASLAutoma(GraphAutoma, metaclass=ASLAutomaMeta):
+    # The canvases of the automa.
+    _canvases: List[_Canvas] = []
+
+    def __init__(self, name: str = None):
+        super().__init__(name=name)
+        self._dynamic_workers = {}
+        self._build_graph()
+
+    def _build_graph(self) -> None:
+        for canvas in self._canvases:
+            static_elements = {key: value for key, value in canvas.elements.items() if not value.is_lambda}
+            dynamic_elements = {key: value for key, value in canvas.elements.items() if value.is_lambda}            
+            self._inner_build_graph(canvas, static_elements, dynamic_elements)
+            
+    def _inner_build_graph(
+        self, 
+        canvas: _Canvas, 
+        static_elements: Dict[str, "_Element"],
+        dynamic_elements: Dict[str, "_Element"]
+    ) -> None:
+        automa = None
+        current_canvas_key = canvas.settings.key
+
+        # if the element is already built, skip it, `exit_keys_set` is to deal with such situations:
+        #   ...
+        #   with graph as g:
+        #       a = worker1
+        #       b = worker2
+        #       c = worker3
+        # 
+        #       arrangement1 = +a >> b
+        #       arrangement2 = ~c
+        # 
+        #       arrangement1 >> arrangement2
+        #   ...
+        #   In the end, the `arrangement1` is still `b`, but by this time, `b` has already been built.
+        exit_keys_set = set()
+
+
+        ###############################
+        # build the dynamic logic flow
+        ###############################
+        running_options_callback = []
+        for _, element in dynamic_elements.items():
+            if element.settings.key in exit_keys_set:
+                continue
+            
+            # if the canvas is top level, should use `RunningOptions` to add callback.
+            if canvas.is_top_level():
+                running_options_callback.append(
+                    WorkerCallbackBuilder(
+                        DynamicLambdaWorkerCallback, 
+                        init_kwargs={"__dynamic_lambda_worker__": element},
+                        is_shared=False
+                    )
+                )
+
+            # else should delegate parent automa add callback during using `add_worker`.
+            else:
+                parent_key = canvas.parent_canvas.settings.key
+                if parent_key not in self._dynamic_workers:
+                    self._dynamic_workers[parent_key] = {}
+                if current_canvas_key not in self._dynamic_workers[parent_key]:
+                    self._dynamic_workers[parent_key][current_canvas_key] = []
+                self._dynamic_workers[parent_key][current_canvas_key].append(element)
+            
+            # add the key to the exit keys set
+            exit_keys_set.add(element.settings.key)
+
+        # make the automa
+        canvas.make_automa(running_options=RunningOptions(callback_builders=running_options_callback))
+        automa = canvas.worker_material if not canvas.is_top_level() else self
+
+        
+        ###############################
+        # build the static logic flow
+        ###############################
+        for _, element in static_elements.items():
+            if element.settings.key in exit_keys_set:
+                continue
+
+            key = element.settings.key
+            worker_material = element.worker_material
+            is_start = element.settings.is_start
+            is_output = element.settings.is_output
+            dependencies = element.settings.dependencies
+            args_mapping_rule = element.settings.args_mapping_rule
+
+            # prepare the callback builders
+            callback_builders = []
+            # if current element delegated dynamic workers to be added in current canvas
+            if current_canvas_key in self._dynamic_workers and key in self._dynamic_workers[current_canvas_key]:
+                delegated_dynamic_workers = self._dynamic_workers[current_canvas_key][key]
+                for delegated_dynamic_element in delegated_dynamic_workers:
+                    callback_builders.append(WorkerCallbackBuilder(
+                        DynamicLambdaWorkerCallback,
+                        init_kwargs={"__dynamic_lambda_worker__": delegated_dynamic_element},
+                        is_shared=False
+                    ))
+
+            if isinstance(automa, ConcurrentAutoma):
+                build_concurrent(
+                    automa=automa,
+                    key=key,
+                    worker_material=worker_material,
+                    callback_builders=callback_builders
+                )
+            elif isinstance(automa, GraphAutoma):
+                build_graph(
+                    automa=automa,
+                    key=key,
+                    worker_material=worker_material,
+                    is_start=is_start,
+                    is_output=is_output,
+                    dependencies=dependencies,
+                    args_mapping_rule=args_mapping_rule,
+                    callback_builders=callback_builders
+                )
+            else:
+                raise ValueError(f"Invalid automa type: {type(automa)}.")
+
+            # add the key to the exit keys set
+            exit_keys_set.add(key)
+
+    def _inner_build_static_graph(self):
+        pass
 
     async def arun(self, *args: Tuple[Any, ...], **kwargs: Dict[str, Any]) -> Any:
         return await super().arun(*args, **kwargs)
@@ -185,16 +263,19 @@ def build_concurrent(
     automa: ConcurrentAutoma,
     key: str,
     worker_material: Union[Worker, Callable],
+    callback_builders: List[WorkerCallbackBuilder] = [],
 ) -> None:
     if isinstance(worker_material, Worker):
         automa.add_worker(
             key=key,
             worker=worker_material,
+            callback_builders=callback_builders,
         )
     elif isinstance(worker_material, Callable):
         automa.add_func_as_worker(
             key=key,
             func=worker_material,
+            callback_builders=callback_builders,
         )
 
 def build_graph(
@@ -205,6 +286,7 @@ def build_graph(
     is_output: bool,
     dependencies: List[str],
     args_mapping_rule: ArgsMappingRule,
+    callback_builders: List[WorkerCallbackBuilder] = [],
 ) -> None:
     if isinstance(worker_material, Worker):
         automa.add_worker(
@@ -214,6 +296,7 @@ def build_graph(
             is_output=is_output,
             dependencies=dependencies,
             args_mapping_rule=args_mapping_rule,
+            callback_builders=callback_builders
         )
     elif isinstance(worker_material, Callable):
         automa.add_func_as_worker(
@@ -223,7 +306,42 @@ def build_graph(
             is_output=is_output,
             dependencies=dependencies,
             args_mapping_rule=args_mapping_rule,
+            callback_builders=callback_builders
         )
+
+
+class DynamicLambdaWorkerCallback(WorkerCallback):
+    def __init__(self, __dynamic_lambda_worker__: _Element):
+        self.__dynamic_lambda_worker__ = __dynamic_lambda_worker__
+
+    async def on_worker_start(
+        self,
+        key: str,
+        is_top_level: bool = False,
+        parent: GraphAutoma = None,
+        arguments: Dict[str, Any] = None,
+    ) -> None:
+        # if the worker is not the top-level worker, skip it
+        if not is_top_level:
+            return
+
+        
+
+        if is_top_level:
+            specific_automa = parent
+        else:
+            specific_automa = parent._get_worker_instance(key)
+
+    async def on_worker_end(
+        self,
+        key: str,
+        is_top_level: bool = False,
+        parent: GraphAutoma = None,
+        arguments: Dict[str, Any] = None,
+        result: Any = None,
+    ) -> None:
+        pass
+
 
 async def dynamic_lambda_worker_start(
     *args,
