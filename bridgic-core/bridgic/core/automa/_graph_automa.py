@@ -1284,7 +1284,7 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
                 await callback.on_worker_start(
                     key=self.name,
                     is_top_level=True,
-                    parent=None,
+                    parent=self.parent,
                     arguments={
                         "args": self._input_buffer.args,
                         "kwargs": self._input_buffer.kwargs,
@@ -1465,7 +1465,7 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
                         callbacks=automa_callbacks,
                         key=self.name,
                         is_top_level=True,
-                        parent=None,
+                        parent=self.parent,
                         arguments={
                             "args": self._input_buffer.args,
                             "kwargs": self._input_buffer.kwargs,
@@ -1477,7 +1477,7 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
             # For inner interaction exceptions, collect them and throw an InteractionException as a whole.
             if len(interaction_exceptions) > 0:
                 all_interactions: List[Interaction] = [interaction for e in interaction_exceptions for interaction in e.args]
-                if self.parent is None:
+                if self.is_top_level():
                     # This is the top-level Automa. Serialize the Automa and raise InteractionException to the application layer.
                     serialized_automa = dump_bytes(self)
                     snapshot = Snapshot(
@@ -1560,7 +1560,7 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
                 await callback.on_worker_end(
                     key=self.name,
                     is_top_level=True,
-                    parent=None,
+                    parent=self.parent,
                     arguments={
                         "args": self._input_buffer.args,
                         "kwargs": self._input_buffer.kwargs,
