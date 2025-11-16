@@ -25,14 +25,7 @@ class Data:
         self.data = data
 
     def __rmul__(self, other: Union[Callable, Worker]):
-        if isinstance(other, Worker):
-            worker_name = other.__class__.__name__
-            override_func = other.arun if other._is_arun_overridden() else other.run
-            override_func_signature(worker_name, override_func, self.data)
-        elif isinstance(other, Callable):
-            func_name = getattr(other, "__name__", repr(other))
-            override_func_signature(func_name, other, self.data)
-
+        setattr(other, "__data__", self)
         return other
 
 
@@ -101,6 +94,15 @@ class _CanvasObject:
     def update_settings(self, settings: Settings) -> None:
         self.settings.update(settings)
         return self
+
+    def update_data(self, data: Data) -> None:
+        if isinstance(self.worker_material, Worker):
+            worker_name = self.worker_material.__class__.__name__
+            override_func = self.worker_material.arun if self.worker_material._is_arun_overridden() else self.worker_material.run
+            override_func_signature(worker_name, override_func, data.data)
+        elif isinstance(self.worker_material, Callable):
+            func_name = getattr(self.worker_material, "__name__", repr(self.worker_material))
+            override_func_signature(func_name, self.worker_material, data.data)
 
     def __rshift__(self, other: Union["_CanvasObject", Tuple["_CanvasObject"]]) -> None:
         """
@@ -255,10 +257,14 @@ class _GraphContextManager:
             if not isinstance(value, ASLField):
                 raise ValueError(f"Invalid field type: {type(value)}.")
             default_value = Distribute(
+                value.default
+                if not isinstance(value.default, PydanticUndefinedType) 
+                else inspect._empty
+            ) if value.distribute else (
                 value.default 
                 if not isinstance(value.default, PydanticUndefinedType) 
                 else inspect._empty
-            ) if value.distribute else value.default
+            )
             params[key] = {
                 "type": value.type,
                 "default": default_value

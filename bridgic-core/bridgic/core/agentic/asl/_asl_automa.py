@@ -1,23 +1,25 @@
 import copy
-import inspect
-import functools
-from re import L
-from typing import Callable, List, Any, Dict, Tuple, Union, Optional
+import uuid
+from typing import Callable, List, Any, Dict, Tuple, Union
 
 from bridgic.core.automa import GraphAutoma, RunningOptions
 from bridgic.core.automa.worker import Worker, WorkerCallback, WorkerCallbackBuilder
-from bridgic.core.automa.args import ArgsMappingRule, System
+from bridgic.core.automa.args import ArgsMappingRule, System, Distribute
 from bridgic.core.automa._graph_automa import GraphMeta
 from bridgic.core.agentic import ConcurrentAutoma
-from bridgic.core.agentic.asl._canvas_object import _Canvas, _Element, _CanvasObject, graph_stack
+from bridgic.core.agentic.asl._canvas_object import _Canvas, _Element, _CanvasObject, graph_stack, Settings, Data
+from bridgic.core.utils._inspect_tools import get_func_signature_data, set_method_signature, override_func_signature
 
 
 class TrackingNamespace(dict):
     def __setitem__(self, key: str, value: Any):
-        # get the settings from the value and clear the settings of the value
+        # get the settings and data from the value and clear the settings and data of the value
         settings = copy.deepcopy(getattr(value, "__settings__", None))
         if settings:
             setattr(value, "__settings__", None)
+        data = copy.deepcopy(getattr(value, "__data__", None))
+        if data:
+            setattr(value, "__data__", None)
 
         # track the _Element values
         if not key.startswith('_') and (isinstance(value, Worker) or isinstance(value, Callable)):
@@ -28,6 +30,10 @@ class TrackingNamespace(dict):
                 # update the settings of the element
                 if settings:
                     element.update_settings(settings)
+
+                # update the data of the element
+                if data:
+                    element.update_data(data)
 
                 # judge if the value is a lambda function
                 if isinstance(value, Callable) and getattr(value.__code__, "co_name", None) == '<lambda>':
@@ -52,6 +58,10 @@ class TrackingNamespace(dict):
                 # update the settings of the nested canvas
                 if settings:
                     value.update_settings(settings)
+
+                # update the data of the nested canvas
+                if data:
+                    value.update_data(data)
                 
                 # if the stack is only one, the current canvas is the root canvas.
                 if len(stack) == 1:
@@ -147,7 +157,7 @@ class ASLAutoma(GraphAutoma, metaclass=ASLAutomaMeta):
         canvas: _Canvas, 
         static_elements: Dict[str, "_Element"],
         dynamic_elements: Dict[str, "_Element"]
-    ) -> None:
+    ) -> GraphAutoma:
         automa = None
         current_canvas_key = canvas.settings.key
 
@@ -179,7 +189,7 @@ class ASLAutoma(GraphAutoma, metaclass=ASLAutomaMeta):
             if canvas.is_top_level():
                 running_options_callback.append(
                     WorkerCallbackBuilder(
-                        DynamicLambdaWorkerCallback, 
+                        AsTopLevelDynamicCallback, 
                         init_kwargs={"__dynamic_lambda_worker__": element},
                         is_shared=False
                     )
@@ -199,7 +209,12 @@ class ASLAutoma(GraphAutoma, metaclass=ASLAutomaMeta):
 
         # make the automa
         canvas.make_automa(running_options=RunningOptions(callback_builders=running_options_callback))
-        automa = canvas.worker_material if not canvas.is_top_level() else self
+        if canvas.is_top_level():
+            automa = self
+            params_data = get_func_signature_data(canvas.worker_material.arun)
+            set_method_signature(self.arun, params_data)
+        else:
+            automa = canvas.worker_material
 
         
         ###############################
@@ -223,7 +238,7 @@ class ASLAutoma(GraphAutoma, metaclass=ASLAutomaMeta):
                 delegated_dynamic_workers = self._dynamic_workers[current_canvas_key][key]
                 for delegated_dynamic_element in delegated_dynamic_workers:
                     callback_builders.append(WorkerCallbackBuilder(
-                        DynamicLambdaWorkerCallback,
+                        AsWorkerDynamicCallback,
                         init_kwargs={"__dynamic_lambda_worker__": delegated_dynamic_element},
                         is_shared=False
                     ))
@@ -252,9 +267,6 @@ class ASLAutoma(GraphAutoma, metaclass=ASLAutomaMeta):
             # add the key to the exit keys set
             exit_keys_set.add(key)
 
-    def _inner_build_static_graph(self):
-        pass
-
     async def arun(self, *args: Tuple[Any, ...], **kwargs: Dict[str, Any]) -> Any:
         return await super().arun(*args, **kwargs)
 
@@ -265,17 +277,18 @@ def build_concurrent(
     worker_material: Union[Worker, Callable],
     callback_builders: List[WorkerCallbackBuilder] = [],
 ) -> None:
+    # TODO: need to add callback builders of ConcurrentAutoma
     if isinstance(worker_material, Worker):
         automa.add_worker(
             key=key,
             worker=worker_material,
-            callback_builders=callback_builders,
+            # callback_builders=callback_builders,
         )
     elif isinstance(worker_material, Callable):
         automa.add_func_as_worker(
             key=key,
             func=worker_material,
-            callback_builders=callback_builders,
+            # callback_builders=callback_builders,
         )
 
 def build_graph(
@@ -310,9 +323,76 @@ def build_graph(
         )
 
 
-class DynamicLambdaWorkerCallback(WorkerCallback):
+class DynamicCallback(WorkerCallback):
     def __init__(self, __dynamic_lambda_worker__: _Element):
         self.__dynamic_lambda_worker__ = __dynamic_lambda_worker__
+        self.__dynamic_worker_keys__ = []
+
+    def get_dynamic_worker_settings(self, worker_material: Union[Worker, Callable]) -> Settings:
+        settings = getattr(worker_material, "__settings__", Settings())
+        return settings
+
+    def get_dynamic_worker_data(self, worker_material: Union[Worker, Callable]) -> Data:
+        data = getattr(worker_material, "__data__", Data())
+        return data
+
+    def _generate_dynamic_worker_key(self, automa_name: str) -> str:
+        return f"{automa_name}-dynamic-worker-{uuid.uuid4().hex[:8]}"
+
+    def _update_dynamic_worker_params(self, worker_material: Union[Worker, Callable], data: Data) -> None:
+        if isinstance(worker_material, Worker):
+            worker_name = worker_material.__class__.__name__
+            override_func = worker_material.arun if worker_material._is_arun_overridden() else worker_material.run
+            override_func_signature(worker_name, override_func, data.data)
+        elif isinstance(worker_material, Callable):
+            func_name = getattr(worker_material, "__name__", repr(worker_material))
+            override_func_signature(func_name, worker_material, data.data)
+
+
+    def build_dynamic_workers(
+        self, 
+        lambda_func: Callable,
+        in_args: Tuple[Any, ...],
+        in_kwargs: Dict[str, Any],
+        automa: GraphAutoma,
+    ) -> None:
+        args = [
+            item 
+            if not isinstance(item, Distribute) 
+            else item.data 
+            for item in in_args
+        ]
+        kwargs = {
+            key: item 
+            if not isinstance(item, Distribute) 
+            else item.data 
+            for key, item in in_kwargs.items()
+        }
+        dynamic_worker_materials = lambda_func(*args, **kwargs)
+        for worker_material in dynamic_worker_materials:
+            # get the settings and data of the dynamic worker
+            dynamic_worker_settings = self.get_dynamic_worker_settings(worker_material)
+            dynamic_worker_data = self.get_dynamic_worker_data(worker_material)
+            dynamic_worker_key = (
+                dynamic_worker_settings.key 
+                if dynamic_worker_settings.key 
+                else self._generate_dynamic_worker_key(automa.name)
+            )
+            self._update_dynamic_worker_params(worker_material, dynamic_worker_data)
+
+            # build the dynamic worker
+            # TODO: need to add callback builders to the dynamic worker
+            build_concurrent(
+                automa=automa,
+                key=dynamic_worker_key,
+                worker_material=worker_material,
+            )
+            self.__dynamic_worker_keys__.append(dynamic_worker_key)
+
+
+class AsTopLevelDynamicCallback(DynamicCallback):
+    def __init__(self, __dynamic_lambda_worker__: _Element):
+        super().__init__(__dynamic_lambda_worker__)
 
     async def on_worker_start(
         self,
@@ -325,12 +405,16 @@ class DynamicLambdaWorkerCallback(WorkerCallback):
         if not is_top_level:
             return
 
-        
+        # get the specific automa to add dynamic workers
+        specific_automa = parent
 
-        if is_top_level:
-            specific_automa = parent
-        else:
-            specific_automa = parent._get_worker_instance(key)
+        # build the dynamic workers
+        self.build_dynamic_workers(
+            lambda_func=self.__dynamic_lambda_worker__.worker_material,
+            in_args=arguments["args"],
+            in_kwargs=arguments["kwargs"],
+            automa=specific_automa
+        )
 
     async def on_worker_end(
         self,
@@ -340,71 +424,50 @@ class DynamicLambdaWorkerCallback(WorkerCallback):
         arguments: Dict[str, Any] = None,
         result: Any = None,
     ) -> None:
-        pass
+        if not is_top_level:
+            return
 
+        # get the specific automa to remove dynamic workers
+        specific_automa = parent
 
-async def dynamic_lambda_worker_start(
-    *args,
-    __dynamic_lambda_worker__: _Element,
-    __dynamic_workers__: Dict[str, _Element],
-    **kwargs,
-) -> Any:
-    print(args, kwargs)
-    automa = __dynamic_lambda_worker__.parent_canvas.worker_material
-    key = __dynamic_lambda_worker__.settings.key  
-    lambda_func = __dynamic_lambda_worker__.worker_material
-    is_output = __dynamic_lambda_worker__.settings.is_output
-    args_mapping_rule = __dynamic_lambda_worker__.settings.args_mapping_rule
+        # remove the dynamic workers from the specific automa
+        for dynamic_worker_key in self.__dynamic_worker_keys__:
+            specific_automa.remove_worker(dynamic_worker_key)
+        
 
-    # run the lambda function to get the dynamic workers
-    dynamic_worker_materials = lambda_func(*args, **kwargs)
-    print(dynamic_worker_materials)
+class AsWorkerDynamicCallback(DynamicCallback):
+    def __init__(self, __dynamic_lambda_worker__: _Element):
+        super().__init__(__dynamic_lambda_worker__)
 
-    # collect the dynamic workers and build the graph or concurrent
-    dynamic_workers_keys = []
-    for worker_material in dynamic_worker_materials:
-        settings = copy.deepcopy(getattr(worker_material, "__settings__", None))
-        print(settings)
-        if settings:
-            setattr(worker_material, "__settings__", None)
-        dynamic_workers_key = settings.key
-        dynamic_workers_is_output = settings.is_output
-        dynamic_workers_args_mapping_rule = settings.args_mapping_rule
-        dynamic_workers_keys.append(dynamic_workers_key)
+    async def on_worker_start(
+        self,
+        key: str,
+        is_top_level: bool = False,
+        parent: GraphAutoma = None,
+        arguments: Dict[str, Any] = None,
+    ) -> None:
+        # get the specific automa to add dynamic workers
+        specific_automa = parent._get_worker_instance(key).get_decorated_worker()
 
-        if isinstance(automa, GraphAutoma):
-            build_graph(
-                automa=automa,
-                key=dynamic_workers_key,
-                worker_material=worker_material,
-                is_start=False,
-                is_output=is_output or dynamic_workers_is_output,
-                dependencies=[key],
-                args_mapping_rule = ArgsMappingRule.UNPACK,
-            )
-        elif isinstance(automa, ConcurrentAutoma):
-            pass
-    __dynamic_workers__[key] = dynamic_workers_keys
-    
-    bound_element_end = functools.partial(
-        dynamic_lambda_worker_end,
-        __dynamic_workers_keys__=dynamic_workers_keys,
-    )
-    automa.add_func_as_worker(
-        key=f"__del_{key}__",
-        func=bound_element_end,
-        is_start=False,
-        is_output=False,
-        dependencies=dynamic_workers_keys,
-    )
-    return args[0]
+        # build the dynamic workers
+        self.build_dynamic_workers(
+            lambda_func=self.__dynamic_lambda_worker__.worker_material,
+            in_args=arguments["args"],
+            in_kwargs=arguments["kwargs"],
+            automa=specific_automa
+        )
+            
+    async def on_worker_end(
+        self,
+        key: str,
+        is_top_level: bool = False,
+        parent: GraphAutoma = None,
+        arguments: Dict[str, Any] = None,
+        result: Any = None,
+    ) -> None:
+        # get the specific automa to remove dynamic workers
+        specific_automa = parent._get_worker_instance(key).get_decorated_worker()
 
-
-async def dynamic_lambda_worker_end(
-    *args, 
-    __dynamic_workers_keys__: List[str],
-    __automa__ = System("automa"),
-    **kwargs,
-) -> Any:
-    for dynamic_worker_key in __dynamic_workers_keys__:
-        __automa__.remove_worker(dynamic_worker_key)
+        # remove the dynamic workers from the specific automa
+        for dynamic_worker_key in self.__dynamic_worker_keys__:
+            specific_automa.remove_worker(dynamic_worker_key)

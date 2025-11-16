@@ -1,8 +1,8 @@
 import json
 from copy import deepcopy
-from inspect import Parameter
+from inspect import Parameter, _empty
 from dataclasses import dataclass
-from typing import Literal, Tuple, Any, List, Dict, Mapping, Union
+from typing import Literal, Tuple, Any, List, Dict, Mapping, Union, Optional
 from typing_extensions import TYPE_CHECKING
 
 from bridgic.core.types._common import ArgsMappingRule
@@ -47,11 +47,11 @@ class Distribute:
     ValueError
         If the data is not a list or tuple.
     """
-    data: Union[List, Tuple]
+    data: Union[List[Any], Tuple[Any], _empty] = None
 
-    def __post_init__(self):
-        if not isinstance(self.data, (list, tuple)):
-            raise ValueError(f"The data must be a list or tuple, but got {type(self.data)}")
+    def check_data(self) -> None:
+        if not isinstance(self.data, (List, Tuple)):
+            raise ValueError(f"The data of the Distribute must be `List` or `Tuple`, but got Type `{type(self.data)}`.")
 
 
 def parse_args_mapping_rule(args_mapping_rule: ArgsMappingRule) -> Tuple[RECEIVER_RULES, SENDER_RULES]:
@@ -223,15 +223,19 @@ class ArgsManager:
         kickoff_single = "start" if last_worker_key == "__automa__" else "dependency"
         worker_dependencies = self._worker_rule_dict[current_worker_key]["dependencies"]
         worker_receiver_rule = self._worker_rule_dict[current_worker_key]["receiver_rule"]
+        worker_param_names = self._worker_rule_dict[current_worker_key]["param_names"]
 
         # If the last worker is not a dependency of the current worker, then return empty arguments.
         if not last_worker_key in worker_dependencies:
             return (), {}
     
-        def _start_args_binding(worker_receiver_rule: RECEIVER_RULES) -> Tuple[Tuple[Any, ...], Dict[str, Any]]:
+        def _start_args_binding() -> Tuple[Tuple[Any, ...], Dict[str, Any]]:
             data_mode_list = []
             for key, value in self._start_arguments.items():
                 sender_rule = self._worker_rule_dict[key]["sender_rule"]
+                if isinstance(value, Distribute) and value.data is None:
+                    raise ValueError(f"The data of the Distribute must be `List` or `Tuple`, but got Type `{type(value.data)}`.")
+
                 data_mode_list.append({
                     'worker_key': key,
                     'data': value.data if isinstance(value, Distribute) else value,
@@ -250,7 +254,10 @@ class ArgsManager:
             }
             return next_args, next_kwargs
 
-        def _dependency_args_binding(worker_dependencies: List[str], worker_receiver_rule: RECEIVER_RULES) -> Tuple[Tuple[Any, ...], Dict[str, Any]]:
+        def _dependency_args_binding(
+            worker_dependencies: List[str], 
+            worker_receiver_rule: RECEIVER_RULES, 
+        ) -> Tuple[Tuple[Any, ...], Dict[str, Any]]:
             data_mode_list = []
             for dependency_worker_key in worker_dependencies:
                 dependency_worker_output = self._worker_outputs[dependency_worker_key]
@@ -264,9 +271,31 @@ class ArgsManager:
             return self._args_receive(last_worker_key, current_worker_key, worker_receiver_rule, data)
 
         if kickoff_single == "start":
-            next_args, next_kwargs = _start_args_binding(worker_receiver_rule)
+            next_args, next_kwargs = _start_args_binding()
         elif kickoff_single == "dependency":
             next_args, next_kwargs = _dependency_args_binding(worker_dependencies, worker_receiver_rule)
+
+        # There is a situation where the next worker is automa, and the parameters it receives sometimes 
+        # need to be distributed. In this case, this information is contained in the parameter declaration 
+        # of automa rather than in the result of the previous worker. So we need to deal with this situation.
+        params_name = self._worker_rule_dict[current_worker_key]["param_names"]
+        params_filled_arguments = get_filled_params(next_args, next_kwargs, params_name)
+        for _, params in params_name.items():
+            for param in params:
+                param_name, param_type = param
+                if isinstance(param_type, Distribute):
+                    param_info = params_filled_arguments[param_name]
+                    if param_info['source'] == 'args':
+                        next_args_list = list(next_args)
+                        distribute_data = Distribute(data=param_info['value'])
+                        distribute_data.check_data()
+                        next_args_list[param_info['index']] = distribute_data
+                        next_args = tuple(next_args_list)
+                    elif param_info['source'] == 'kwargs':
+                        distribute_data = Distribute(data=param_info['value'])
+                        distribute_data.check_data()
+                        next_kwargs[param_info['key']] = distribute_data
+        
         return next_args, next_kwargs
 
     def _args_send(self, data_mode_list: List[Dict[str, Any]]) -> List[Any]:
@@ -667,3 +696,105 @@ def safely_map_args(
         return (), {}
     
     return in_args, rx_kwargs
+
+
+def get_filled_params(
+    final_args: Tuple[Any, ...], 
+    final_kwargs: Dict[str, Any],
+    param_names: List[Tuple[str, Any]],
+) -> Dict[str, Dict[str, Any]]:
+    """
+    Map parameter names to their argument sources and values.
+    
+    Returns a dictionary mapping each parameter name to a dictionary containing:
+    - 'source': 'args' or 'kwargs' indicating where the argument comes from
+    - 'index': int (if from args) - the index in final_args
+    - 'key': str (if from kwargs) - the key name in final_kwargs
+    - 'value': the actual argument value
+    
+    Parameters
+    ----------
+    final_args : Tuple[Any, ...]
+        Final positional arguments to be analyzed.
+    final_kwargs : Dict[str, Any]
+        Final keyword arguments to be analyzed.
+    param_names : List[Tuple[str, Any]]
+        The parameter names to be analyzed.
+    
+    Returns
+    -------
+    Dict[str, Dict[str, Any]]
+        A dictionary mapping parameter names to their argument source information.
+        Each value is a dict with keys: 'source', 'index' (optional), 'key' (optional), 'value'
+        
+    Examples
+    --------
+    >>> # Function: func(self, x, y=2, *, z=3)
+    >>> # Input: final_args = (1,), final_kwargs = {'y': 5, 'z': 10}
+    >>> result = get_filled_params((1,), {'y': 5, 'z': 10}, worker)
+    >>> # Result: {
+    >>> #     'x': {'source': 'args', 'index': 0, 'value': 1},
+    >>> #     'y': {'source': 'kwargs', 'key': 'y', 'value': 5},
+    >>> #     'z': {'source': 'kwargs', 'key': 'z', 'value': 10}
+    >>> # }
+    """
+    positional_only_param_names = [name for name, _ in param_names.get(Parameter.POSITIONAL_ONLY, [])]
+    positional_or_keyword_param_names = [name for name, _ in param_names.get(Parameter.POSITIONAL_OR_KEYWORD, [])]
+    keyword_only_param_names = [name for name, _ in param_names.get(Parameter.KEYWORD_ONLY, [])]
+    
+    # Handle self/cls parameter for bound methods
+    skip_first_param = (
+        positional_or_keyword_param_names 
+        and positional_or_keyword_param_names[0] in ('self', 'cls')
+    )
+    
+    # Calculate positional argument binding
+    num_pos_only_filled = min(len(final_args), len(positional_only_param_names))
+    remaining_pos_args = max(0, len(final_args) - num_pos_only_filled)
+    
+    effective_pos_or_kw = (
+        positional_or_keyword_param_names[1:] if skip_first_param 
+        else positional_or_keyword_param_names
+    )
+    num_pos_or_kw_filled = min(remaining_pos_args, len(effective_pos_or_kw))
+    
+    result = {}
+    param_start_idx = 1 if skip_first_param else 0
+    
+    # Map POSITIONAL_ONLY parameters filled by positional args
+    for i, param_name in enumerate(positional_only_param_names[:num_pos_only_filled]):
+        result[param_name] = {
+            'source': 'args',
+            'index': i,
+            'value': final_args[i]
+        }
+    
+    # Map POSITIONAL_OR_KEYWORD parameters filled by positional args
+    for i, param_name in enumerate(
+        positional_or_keyword_param_names[param_start_idx:param_start_idx + num_pos_or_kw_filled]
+    ):
+        arg_index = num_pos_only_filled + i
+        result[param_name] = {
+            'source': 'args',
+            'index': arg_index,
+            'value': final_args[arg_index]
+        }
+    
+    # Map parameters filled by keyword arguments (only if not already filled by positional)
+    for param_name in keyword_only_param_names:
+        if param_name in final_kwargs:
+            result[param_name] = {
+                'source': 'kwargs',
+                'key': param_name,
+                'value': final_kwargs[param_name]
+            }
+    
+    for param_name in positional_or_keyword_param_names[param_start_idx:]:
+        if param_name in final_kwargs and param_name not in result:
+            result[param_name] = {
+                'source': 'kwargs',
+                'key': param_name,
+                'value': final_kwargs[param_name]
+            }
+
+    return result

@@ -101,10 +101,6 @@ class _GraphAdaptedWorker(Worker):
         try:
             result = await self._decorated_worker.arun(*args, **kwargs)
         except Exception as e:
-            if isinstance(e, TypeError):
-                print(f'current worker: {self.key}, ==> args: {args}, kwargs: {kwargs}')
-                print(f'signature: {self._decorated_worker.get_input_param_names()}')
-
             # Try to handle the exception with callbacks
             handled = await try_handle_error_with_callbacks(
                 callbacks=self._worker_callbacks,

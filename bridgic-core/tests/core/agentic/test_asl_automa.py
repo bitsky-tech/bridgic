@@ -3,7 +3,7 @@ import pytest
 from typing import List
 from bridgic.core.automa.worker import Worker
 from bridgic.core.automa.args import System, ArgsMappingRule, From
-from bridgic.core.agentic.asl import graph, ASLAutoma, Settings, Data
+from bridgic.core.agentic.asl import graph, concurrent, ASLAutoma, Settings, Data, ASLField
 
 
 def worker1(user_input: int = None):
@@ -56,20 +56,6 @@ async def ferry_to_worker(user_input: int, automa: GraphAutoma = System("automa"
         automa.ferry_to("worker2", user_input)
     else:
         automa.ferry_to("worker3", user_input)
-
-async def produce_tasks(x: int):
-    res = [i for i in range(x)]
-    return res
-
-
-async def tasks_done(x = None, y = None, z = None):
-    if x:
-        return x + 1
-    elif y:
-        return y + 1
-    elif z:
-        return z + 1
-
 
 async def merge_tasks(tasks_res: List[int]):
     return tasks_res
@@ -329,35 +315,38 @@ async def test_args_injection_can_run_correctly(args_injection_can_run_correctly
 # - - - - - - - - - - - - - - -
 # test dynamic lambda worker can run correctly
 # - - - - - - - - - - - - - - - 
-# @pytest.fixture
-# def dynamic_lambda_worker_can_run_correctly_graph():
-#     class MyGraph1(ASLAutoma):
-#         x: int = None
+@pytest.fixture
+def dynamic_lambda_worker_can_run_correctly_graph():
+    async def produce_tasks(user_input: int) -> list:
+        return [user_input + 1, user_input + 2, user_input + 3] # [2, 3, 4]
 
-#         with graph as g:
-#             a = produce_tasks
+    async def tasks_done(task_input: int) -> int:
+        return task_input + 3
 
-#             dynamic_logic = lambda subtasks, **kwargs: (
-#                 tasks_done *Settings(
-#                     key=f"tasks_done_{i}"
-#                 )
-#                 for i, subtask in enumerate(subtasks)
-#             )
-            
-#             # with concurrent() as g2:
-                
-            
-#             b = merge_tasks
+    # define the graph
+    class MyGraph1(ASLAutoma):
+        with graph as g1:
+            a = produce_tasks 
 
-#             +a >> dynamic_logic >> ~b
+            # define the concurrent worker
+            with concurrent(subtasks = ASLField(list, distribute=True)) as c1:
+                dynamic_logic = lambda subtasks, **kwargs: (
+                    tasks_done *Settings(
+                        key=f"tasks_done_{i}"
+                    )
+                    for i, subtask in enumerate(subtasks)
+                )
 
-#     return MyGraph1
+            # define the arrangement logic
+            +a >> ~c1
+    
+    return MyGraph1
 
-# @pytest.mark.asyncio
-# async def test_dynamic_lambda_worker_can_run_correctly(dynamic_lambda_worker_can_run_correctly_graph):
-#     graph = dynamic_lambda_worker_can_run_correctly_graph()
-#     result = await graph.arun(x=3)
-#     assert result == [0, 1, 2]
+@pytest.mark.asyncio
+async def test_dynamic_lambda_worker_can_run_correctly(dynamic_lambda_worker_can_run_correctly_graph):
+    graph = dynamic_lambda_worker_can_run_correctly_graph()
+    result = await graph.arun(user_input=1)
+    assert result == [5, 6, 7]
 
 
 ####################################################################################################################################################
