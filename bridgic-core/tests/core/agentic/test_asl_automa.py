@@ -4,6 +4,7 @@ from typing import List
 from bridgic.core.automa.worker import Worker
 from bridgic.core.automa.args import System, ArgsMappingRule, From
 from bridgic.core.agentic.asl import graph, concurrent, ASLAutoma, Settings, Data, ASLField
+from bridgic.core.automa import ASLCompilationError
 
 
 def worker1(user_input: int = None, automa: GraphAutoma = System("automa")):
@@ -182,7 +183,7 @@ async def test_asl_run_correctly(asl_run_correctly_graph):
 # - - - - - - - - - - - - - - - 
 @pytest.mark.asyncio
 async def test_raise_duplicate_dependency_error_correctly():
-    with pytest.raises(ValueError, match="Duplicate dependency"):
+    with pytest.raises(ASLCompilationError, match="Duplicate dependency"):
         class MyGraph1(ASLAutoma):
             with graph as g:
                 a = worker1 * Settings(
@@ -199,7 +200,7 @@ async def test_raise_duplicate_dependency_error_correctly():
                 
                 +a >> b >> ~c
 
-    with pytest.raises(ValueError, match="Duplicate dependency"):
+    with pytest.raises(ASLCompilationError, match="Duplicate dependency"):
         class MyGraph2(ASLAutoma):
             with graph as g:
                 a = worker1 * Settings(
