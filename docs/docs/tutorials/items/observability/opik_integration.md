@@ -1,34 +1,31 @@
 # Opik Integration
 
-> Learn how to use Comet Opik to trace and monitor your Bridgic applications with comprehensive worker-level tracing and observability.
 
-## Opik Overview
+## Overview
 
-[Comet Opik](https://www.comet.com/docs/opik/) is a comprehensive observability platform for LLM applications, RAG systems, and agentic workflows. The `OpikTraceCallback` integrates Opik tracing with the Bridgic framework, providing worker-level tracing for debugging and monitoring your Bridgic applications.
+[Comet Opik](https://www.comet.com/docs/opik/) is a comprehensive observability platform designed for agentic systems. The `bridgic-callbacks-trace-opik` package enables seamless integration of Opik into your Bridgic-based agentic workflows.
 
-The `OpikTraceCallback` is a [Bridgic callback](../../../../extras/callbacks/) that instruments worker execution with Opik tracing. It automatically tracks:
+This integration is primarily supported by `OpikTraceCallback`, a [WorkerCallback](../core_mechanism/worker_callback.ipynb) implementation that automatically instruments the worker execution with Opik tracing, which provides comprehensive observability by:
 
-* **Worker Execution Traces**: Creates traces for top-level automa execution and spans for each worker execution
-* **Execution Metadata**: Records worker inputs, outputs, execution duration, and dependencies
-* **Error Tracking**: Captures exceptions and error information for debugging
-* **Nested Automa Support**: Properly handles nested automa instances with hierarchical tracing
+* **Worker Execution Traces Tracking**: Record the execution of each worker as a span in Opik, allowing to visualize start/end time, duration.
+* **Worker Execution Data Reporting**: Capture the input, output and other necessary information and then log to the opik platform.
+* **Hierarchical Trace Structure**: Organize execution traces in a hierarchy that reflects the nesting between automa layers, making it straightforward to see how top-level automa is composed of the execution of multiple nested workers.
 
-**Note**: The `OpikTraceCallback` focuses on tracing worker execution. For LLM-specific tracing, evaluation metrics, and CI/CD testing features, please refer to the [Opik documentation](https://www.comet.com/docs/opik/) for additional integrations and capabilities.
 
-## Setup
+## Prerequisites
 
 Comet provides a hosted version of the Opik platform, or you can run the platform locally.
 
-To use the hosted version, simply [create a free Comet account](https://www.comet.com/signup?utm_medium=github&utm_source=bridgic_docs) and grab your API Key.
+- To use the hosted version, you need to [create a Comet account](https://www.comet.com/signup?utm_medium=github) and grab your API Key.
+- To run the Opik platform locally, see the [installation guide](https://www.comet.com/docs/opik/self-host/overview/) for more information.
 
-To run the Opik platform locally, see the [installation guide](https://www.comet.com/docs/opik/self-host/overview/) for more information.
 
-For this guide we will use a simple Bridgic example to demonstrate the integration.
+## Using Opik in Bridgic
 
-### Step 1: Install required packages
+### Step 1: Install package
 
 ```shell
-pip install bridgic bridgic-callbacks-trace-opik --upgrade # opik will be installed automatically
+pip install bridgic-callbacks-trace-opik
 ```
 
 ### Step 2: Configure Opik
@@ -39,14 +36,22 @@ import opik
 opik.configure(use_local=False)
 ```
 
-### Step 3: Using Bridgic with Opik
+### Step 3: Register the callback
 
-The first step is to create your automa. We will use a simple example:
+Just build your application using normal Bridgic-style orchestration and register the callback at the scope that you need. The below example shows how to register `OpikTraceCallback` to apply opik tracing for all workers application wide.
 
 ```python
+from bridgic.core.config import GlobalSetting
 from bridgic.core.automa import GraphAutoma, RunningOptions, worker
 from bridgic.core.automa.worker import WorkerCallbackBuilder
 from bridgic.callbacks.trace.opik import OpikTraceCallback
+
+GlobalSetting.set(callback_builders=[
+    WorkerCallbackBuilder(
+        OpikTraceCallback, 
+        init_kwargs={"project_name": "bridgic-integration-demo"}
+    )
+])
 
 class DataAnalysisAutoma(GraphAutoma):
     @worker(is_start=True)
@@ -73,127 +78,9 @@ class DataAnalysisAutoma(GraphAutoma):
     async def generate_report(self, analysis: dict) -> str:
         """Generate a final report."""
         return f"Report: Found {len(analysis['trends'])} trends with {analysis['confidence']} confidence."
-```
 
-Now we can configure Opik's callback and run our automa:
-
-```python
-# Configure Opik callback at Automa level
-builder = WorkerCallbackBuilder(
-    OpikTraceCallback, 
-    init_kwargs={"project_name": "bridgic-integration-demo"}
-)
-running_options = RunningOptions(callback_builders=[builder])
-
-automa = DataAnalysisAutoma(running_options=running_options)
-result = await automa.arun(topic="market analysis")
-print(result)
-```
-
-Alternatively, you can configure Opik at the global level:
-
-```python
-from bridgic.core.config import GlobalSetting
-
-# Configure Opik callback globally
-GlobalSetting.set(callback_builders=[
-    WorkerCallbackBuilder(
-        OpikTraceCallback, 
-        init_kwargs={"project_name": "bridgic-integration-demo"}
-    )
-])
-
-# All automa instances will automatically use Opik tracing
 automa = DataAnalysisAutoma()
-result = await automa.arun(topic="market analysis")
-print(result)
+await automa.arun(topic="market analysis")
 ```
 
-After running your Bridgic application, visit the Opik app to view:
-
-* Worker execution traces and spans with their metadata
-* Worker execution flow and dependencies
-* Performance metrics like execution duration
-* Error tracking and debugging information
-
-## Configuration Scope
-
-The `OpikTraceCallback` is a Bridgic callback that requires access to the automa context. As such, it can only be configured at the **Automa level** (via `RunningOptions`) or **Global level** (via `GlobalSetting`). It does not support worker-level configuration.
-
-For more information about Bridgic's callback system and configuration scopes, see the [Callback Integrations documentation](../../../../extras/callbacks/).
-
-### Automa-Level Configuration
-
-Configure Opik tracing for a specific automa instance:
-
-```python
-from bridgic.core.automa import GraphAutoma, RunningOptions, worker
-from bridgic.core.automa.worker import WorkerCallbackBuilder
-from bridgic.callbacks.trace.opik import OpikTraceCallback
-
-class MyAutoma(GraphAutoma):
-    @worker(is_start=True)
-    async def step1(self):
-        return "hello"
-
-# Configure callback for this automa instance
-builder = WorkerCallbackBuilder(
-    OpikTraceCallback, 
-    init_kwargs={"project_name": "my-project"}
-)
-running_options = RunningOptions(callback_builders=[builder])
-automa = MyAutoma(running_options=running_options)
-```
-
-### Global-Level Configuration
-
-Configure Opik tracing for all automa instances:
-
-```python
-from bridgic.core.automa import GraphAutoma, worker
-from bridgic.core.automa.worker import WorkerCallbackBuilder
-from bridgic.core.config import GlobalSetting
-from bridgic.callbacks.trace.opik import OpikTraceCallback
-
-# Configure global callback
-GlobalSetting.set(callback_builders=[
-    WorkerCallbackBuilder(
-        OpikTraceCallback, 
-        init_kwargs={"project_name": "my-project"}
-    )
-])
-
-class MyAutoma(GraphAutoma):
-    @worker(is_start=True)
-    async def step1(self):
-        return "hello"
-
-# All automa instances automatically use the global callback
-automa = MyAutoma()
-```
-
-## What Gets Traced
-
-The `OpikTraceCallback` automatically tracks the following during worker execution:
-
-* **Top-level Automa Execution**: Creates a trace for the entire automa execution, including:
-  * Automa inputs (arguments passed to `arun()`)
-  * Automa outputs (final result)
-  * Execution duration
-  * Execution status (completed or failed)
-
-* **Worker Execution**: Creates spans for each worker execution, including:
-  * Worker inputs (serialized arguments)
-  * Worker outputs (serialized results)
-  * Execution duration
-  * Dependencies between workers
-  * Worker context information (key, dependencies, etc.)
-
-* **Nested Automa**: Handles nested automa instances as workers, maintaining proper trace hierarchy with parent-child relationships
-
-* **Error Tracking**: Captures exceptions and error information (error type, error message) for debugging when worker execution fails
-
-## Resources
-
-* [🦉 Opik Documentation](https://www.comet.com/docs/opik/)
-* [📚 Bridgic Callbacks Documentation](../../../../extras/callbacks/)
+Once your Bridgic application has finished running, dive into the Opik app to explore rich visual insights and detailed traces of your workflow.
