@@ -19,7 +19,7 @@ nav:
         - Dynamic Routing: tutorials/items/core_mechanism/dynamic_routing.ipynb
         - Dynamic Topology: tutorials/items/core_mechanism/dynamic_topology.ipynb
         - Human in the loop: tutorials/items/core_mechanism/human_in_the_loop.ipynb
-        - Worker Callback: tutorials/items/core_mechanism/worker_callback.md
+        - Worker Callback: tutorials/items/core_mechanism/worker_callback.ipynb
         - Modularity: tutorials/items/core_mechanism/modularity.ipynb
       - Model:
         - Model: tutorials/items/model_integration/index.md

@@ -14,7 +14,7 @@ from opik.types import ErrorInfoDict
 
 from bridgic.core.automa.worker import WorkerCallback
 from bridgic.core.utils._collection import serialize_data, merge_optional_dicts
-from bridgic.core.utils._worker_context import get_worker_exec_context
+from bridgic.core.utils._worker_tracing import build_worker_tracing_dict
 from bridgic.core.automa._graph_automa import GraphAutoma, _GraphAdaptedWorker
 
 class OpikTraceCallback(WorkerCallback):
@@ -193,14 +193,14 @@ class OpikTraceCallback(WorkerCallback):
 
     def _start_worker_span(self, key: str, worker: "_GraphAdaptedWorker", parent: "Automa", arguments: Optional[Dict[str, Any]]) -> None:
         """Start a span for worker execution."""
-        worker_context = get_worker_exec_context(worker, parent)
+        worker_tracing_dict = build_worker_tracing_dict(worker, parent)
         nested_automa = worker._decorated_worker if worker.is_automa() else None
-        
+
         step_name = f"{key}  [{nested_automa.name}]" if nested_automa else key
         self._start_span(
             step_name=step_name,
             inputs=serialize_data(arguments),
-            metadata=worker_context,
+            metadata=worker_tracing_dict,
         )
 
     async def on_worker_start(

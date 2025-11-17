@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 2
 requires-python = ">=3.9"
 resolution-markers = [
     "python_full_version >= '3.10'",
@@ -215,7 +215,7 @@ wheels = [
 
 [[package]]
 name = "bridgic-callbacks-trace-opik"
-version = "0.1.0"
+version = "0.1.0.dev8"
 source = { editable = "." }
 dependencies = [
     { name = "bridgic-core" },
@@ -244,7 +244,7 @@ dev = [
 
 [[package]]
 name = "bridgic-core"
-version = "0.1.1"
+version = "0.1.2.dev4"
 source = { editable = "../../../bridgic-core" }
 dependencies = [
     { name = "docstring-parser" },
