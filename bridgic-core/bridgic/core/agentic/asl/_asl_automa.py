@@ -97,6 +97,8 @@ class TrackingNamespace(dict):
                 parent_canvas: _Canvas = stack[-1]
 
                 # register to the current canvas
+                if isinstance(value.settings.key, KeyUnDifined):
+                    value.settings.key = key
                 parent_canvas.register(value.settings.key, value)
 
                 # register to the tracking namespace
