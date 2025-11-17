@@ -28,7 +28,7 @@ For this guide we will use a simple Bridgic example to demonstrate the integrati
 ### Step 1: Install required packages
 
 ```shell
-pip install bridgic bridgic-callbacks-trace-opik opik --upgrade
+pip install bridgic bridgic-callbacks-trace-opik --upgrade # opik will be installed automatically
 ```
 
 ### Step 2: Configure Opik

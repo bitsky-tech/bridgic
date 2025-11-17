@@ -1,6 +1,7 @@
 """Opik tracing callback handler for Bridgic."""
 
 import time
+from bridgic.core.automa import Automa
 from typing_extensions import override
 import warnings
 from typing import Any, Dict, Optional
@@ -190,28 +191,16 @@ class OpikTraceCallback(WorkerCallback):
         if serialized_args:
             trace_data.input = serialized_args
 
-    def _start_worker_span(self, key: str, worker: "_GraphAdaptedWorker", arguments: Optional[Dict[str, Any]]) -> None:
+    def _start_worker_span(self, key: str, worker: "_GraphAdaptedWorker", parent: "Automa", arguments: Optional[Dict[str, Any]]) -> None:
         """Start a span for worker execution."""
-        worker_context = get_worker_exec_context(worker)
+        worker_context = get_worker_exec_context(worker, parent)
         nested_automa = worker._decorated_worker if worker.is_automa() else None
-        actual_key = worker_context.get("key") or key
-        worker_context_info = {
-            context_key: context_value
-            for context_key, context_value in worker_context.items()
-            if context_key not in {"key", "dependencies"}
-        }
-        # Build step metadata once
-        step_metadata = {
-            "key": actual_key,
-            "dependencies": worker_context.get("dependencies"),
-            "worker_context_info": worker_context_info,
-        }
         
-        step_name = f"{actual_key}  [{nested_automa.name}]" if nested_automa else actual_key
+        step_name = f"{key}  [{nested_automa.name}]" if nested_automa else key
         self._start_span(
             step_name=step_name,
             inputs=serialize_data(arguments),
-            metadata=step_metadata,
+            metadata=worker_context,
         )
 
     async def on_worker_start(
@@ -251,7 +240,7 @@ class OpikTraceCallback(WorkerCallback):
             warnings.warn(f"Failed to get worker instance for key '{key}': {e}")
             return
 
-        self._start_worker_span(key, worker, arguments)
+        self._start_worker_span(key, worker, parent, arguments)
 
     def _finish_current_span(self, output: Dict[str, Any], error: Optional[Exception] = None) -> None:
         """Finish the current span and pop it from context."""
