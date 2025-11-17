@@ -11,19 +11,19 @@ from bridgic.core.automa.worker._worker_callback import WorkerCallbackBuilder
 
 class GlobalSetting(BaseModel):
     """
-    Global settings for the Bridgic framework.
-    
-    This class uses a singleton pattern. The singleton instance is accessed via 
-    `GlobalSetting.get()` and can be configured via `GlobalSetting.set()`.
-    
-    These settings apply to all Automa instances and are merged with Automa-level 
-    and Worker-level settings. Global settings are not overridden by other levels; 
-    instead, they are combined in the order: Global -> Automa -> Worker.
-    
+    Global configuration settings for the Bridgic framework.
+
+    This class implements a singleton pattern to provide centralized configuration
+    that applies across all Automa instances. The main methods are:
+
+    - `GlobalSetting.read()`: Get the singleton global setting instance.
+    - `GlobalSetting.set()`: Set the specific fields of the global setting instance.
+
     Attributes
     ----------
     callback_builders : List[WorkerCallbackBuilder]
-        Global callback builders that will be applied to all workers.
+        Callback builders that will be automatically applied to all workers
+        across all Automa instances.
     """
     model_config = {"arbitrary_types_allowed": True}
 
