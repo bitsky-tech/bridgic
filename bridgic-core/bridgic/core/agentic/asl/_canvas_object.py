@@ -29,6 +29,9 @@ class Data:
         return other
 
 
+class KeyUnDifined: ...
+
+
 @dataclass
 class Settings:
     key: str = None
@@ -40,7 +43,7 @@ class Settings:
 
     def __post_init__(self):
         if not self.key:
-            self.key = ""
+            self.key = KeyUnDifined()
         if not self.is_start:
             self.is_start = False
         if not self.is_output:
@@ -53,7 +56,7 @@ class Settings:
             self.destroy_timely = False
 
     def update(self, other: "Settings") -> None:
-        if other.key != self.key:
+        if other.key != self.key and not isinstance(other.key, KeyUnDifined):
             self.key = other.key
         if other.is_start != self.is_start:
             self.is_start = other.is_start
@@ -182,6 +185,14 @@ class _CanvasObject:
 
     def __repr__(self) -> str:
         return self.__str__()
+
+    def __hash__(self) -> int:
+        return hash(self.settings.key)
+
+    def __eq__(self, other: Any) -> bool:
+        if isinstance(other, _CanvasObject):
+            return self.settings.key == other.settings.key
+        return False
 
 
 class _Canvas(_CanvasObject):

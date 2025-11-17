@@ -99,10 +99,29 @@ def get_param_names_all_kinds(
         - inspect.Parameter.KEYWORD_ONLY
         - inspect.Parameter.VAR_KEYWORD
     """
-    # Handle bound methods by using __func__ to get the unbound method
+    # Handle bound methods: check if instance has a custom signature first
+    # This allows per-instance signatures set by set_method_signature to take precedence
+    # over the class method signature, preventing signature pollution between instances
     if isinstance(func, MethodType):
-        func = func.__func__
-    sig = inspect.signature(func)
+        instance = func.__self__
+        method_name = func.__func__.__name__
+        signature_attr = f"__{method_name}_signature__"
+        # Check if the instance has a custom signature stored by set_method_signature
+        if hasattr(instance, signature_attr):
+            sig = getattr(instance, signature_attr)
+        else:
+            # If instance doesn't have custom signature, check if class method signature was modified
+            # If modified, use the original signature to avoid pollution
+            func_obj = func.__func__
+            original_sig_attr = f"__{method_name}_original_signature__"
+            if hasattr(func_obj, original_sig_attr):
+                # Use original signature to avoid pollution from other instances
+                sig = getattr(func_obj, original_sig_attr)
+            else:
+                # Fall back to the class method signature (backward compatible)
+                sig = inspect.signature(func_obj)
+    else:
+        sig = inspect.signature(func)
     param_names_dict = {}
     for name, param in sig.parameters.items():
         if exclude_default and param.default is not inspect.Parameter.empty:
@@ -242,6 +261,13 @@ def set_method_signature(
     original_sig = inspect.signature(method.__func__)
     original_params = list(original_sig.parameters.values())
     
+    # Store the original signature on the class if not already stored
+    # This allows us to restore it for instances that don't have custom signatures
+    func = method.__func__
+    original_sig_attr = f"__{func.__name__}_original_signature__"
+    if not hasattr(func, original_sig_attr):
+        setattr(func, original_sig_attr, original_sig)
+    
     # Extract 'self' parameter if it exists (should be the first parameter for instance methods)
     self_param = None
     if original_params and original_params[0].name == 'self':
@@ -278,15 +304,54 @@ def set_method_signature(
     
     # For bound methods, set signature on the underlying function object
     # Bound method objects are read-only, so we need to modify __func__.__signature__
+    # This maintains backward compatibility for code that reads from the class method
     setattr(method.__func__, "__signature__", new_signature)
+    
+    # Additionally, store the signature on the instance to allow per-instance signatures
+    # This prevents signature pollution between instances when set_method_signature is called
+    # The instance signature takes precedence in get_param_names_all_kinds
+    instance = method.__self__
+    method_name = method.__func__.__name__
+    signature_attr = f"__{method_name}_signature__"
+    setattr(instance, signature_attr, new_signature)
 
 
 def get_func_signature_data(func: Callable) -> Dict[str, Any]:
-    sig = inspect.signature(func)
-    return {
-        param_name: {
+    # Handle bound methods: check if instance has a custom signature first
+    # This matches the behavior of get_param_names_all_kinds
+    if isinstance(func, MethodType):
+        instance = func.__self__
+        method_name = func.__func__.__name__
+        signature_attr = f"__{method_name}_signature__"
+        # Check if the instance has a custom signature stored by set_method_signature
+        if hasattr(instance, signature_attr):
+            sig = getattr(instance, signature_attr)
+        else:
+            # If instance doesn't have custom signature, check if class method signature was modified
+            # If modified, use the original signature to avoid pollution
+            func_obj = func.__func__
+            original_sig_attr = f"__{method_name}_original_signature__"
+            if hasattr(func_obj, original_sig_attr):
+                # Use original signature to avoid pollution from other instances
+                sig = getattr(func_obj, original_sig_attr)
+            else:
+                # Fall back to the class method signature (backward compatible)
+                sig = inspect.signature(func_obj)
+    else:
+        sig = inspect.signature(func)
+    
+    # Exclude 'self' parameter and handle Distribute types
+    from bridgic.core.automa.args import Distribute
+    result = {}
+    for param_name, param in sig.parameters.items():
+        if param_name == 'self':
+            continue
+        default_value = param.default
+        # If the default value is a Distribute object, extract its data
+        if isinstance(default_value, Distribute):
+            default_value = default_value.data
+        result[param_name] = {
             "type": param.annotation,
-            "default": param.default,
+            "default": default_value,
         }
-        for param_name, param in sig.parameters.items()
-    }
+    return result

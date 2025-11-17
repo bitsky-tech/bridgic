@@ -6,7 +6,7 @@ from bridgic.core.automa.args import System, ArgsMappingRule, From
 from bridgic.core.agentic.asl import graph, concurrent, ASLAutoma, Settings, Data, ASLField
 
 
-def worker1(user_input: int = None):
+def worker1(user_input: int = None, automa: GraphAutoma = System("automa")):
     res = user_input + 1
     return res
 
@@ -52,7 +52,8 @@ async def merge(x: int, y: int):
     return x, y
 
 async def ferry_to_worker(user_input: int, automa: GraphAutoma = System("automa")):
-    if user_input == 1:
+    print(f"user_input: {user_input}")
+    if user_input == 11:
         automa.ferry_to("worker2", user_input)
     else:
         automa.ferry_to("worker3", user_input)
@@ -60,293 +61,116 @@ async def ferry_to_worker(user_input: int, automa: GraphAutoma = System("automa"
 async def merge_tasks(tasks_res: List[int]):
     return tasks_res
 
+async def produce_tasks(user_input: int) -> list:
+        return [
+            user_input + 1,
+            user_input + 2,
+            user_input + 3,
+            user_input + 4,
+            user_input + 5,
+        ]
+
+async def tasks_done(task_input: int) -> int:
+    return task_input + 3
+
 
 ####################################################################################################################################################
 # test ASL-python code work correctly
 ####################################################################################################################################################
 
 # - - - - - - - - - - - - - - -
-# test kinds of worker can run correctly written by python-asl
+# All features of ASL-python can run correctly
+#   1. Kinds of worker can run correctly written by python-asl
+#   2. The combination of arrangement logic
+#   3. Component-based reuse
+#   4. Group workers can run correctly
+#   5. Nested graphs can run correctly
+#   6. Ferry_to graph with no dependency
+#   7. Settings can be set correctly
+#   8. Args Injection can run correctly
+#   9. Dynamic lambda worker can run correctly
 # - - - - - - - - - - - - - - -
 @pytest.fixture
-def kinds_of_worker_graph():
+def asl_run_correctly_graph():
+    class SubGraph(ASLAutoma):
+        with graph as g:  # input: 5
+            a = worker1  # 6
+            b = worker2  # 8
+            c = Worker3(y=1)  # 9
+            d = produce_tasks  # [10, 11, 12, 13, 14]
+            
+            +a >> b >> c >> ~d
+
     class MyGraph(ASLAutoma):
-        user_input: int = None
+        with graph as g:  # input: 1
+            a = worker1   # 2
+            b = worker2   # 4
+            c = Worker3(y=1) # 5
+            d = SubGraph() *Settings(args_mapping_rule=ArgsMappingRule.DISTRIBUTE)  # [10, 11, 12, 13, 14]
 
-        with graph as g:
-            a = worker1
-            b = worker2
-            c = Worker3(y=1)
+            arrangement_1 = +a >> b >> c  # 5
+            arrangement_2 = arrangement_1 >> d  # [10, 11, 12, 13, 14]
 
-            +a >> b >> ~c
+            with graph as sub_graph_1:  # input: 10 -> res: (34, 35)
+                a = worker1 # 11
+                b = worker11 # 12
+                c = worker12 # 11
+                d = worker5 # 34
+                e = worker6 # 35
+                merge = merge # (34, 35)
 
-    return MyGraph
+                +(a & b & c) >> (d & e) >> ~merge # (34, 35)
 
-@pytest.mark.asyncio
-async def test_kinds_of_worker_can_run_correctly(kinds_of_worker_graph):
-    graph = kinds_of_worker_graph()
-    result = await graph.arun(user_input=1)
-    assert result == 5
+            with graph as sub_graph_2:  # input: 11 -> res: 13
+                ferry_to_worker = ferry_to_worker
+                worker2 = worker2
+                worker3 = Worker3(y=1)
 
+                +ferry_to_worker, ~worker2, ~worker3  # 13
 
-# - - - - - - - - - - - - - - -
-# test the combination of arrangement logic
-# - - - - - - - - - - - - - - -
-@pytest.fixture
-def combine_of_arrangement_logic_graph():
-    class MyGraph(ASLAutoma):
-        user_input: int = None
+            with graph as sub_graph_3:  # input: 12 -> res: 16
+                a = worker1 * Settings( 
+                    is_start=True, 
+                )  # 13
+                b = worker2 * Settings(
+                    dependencies=["a"], 
+                    args_mapping_rule=ArgsMappingRule.AS_IS
+                )  # 15
+                c = Worker3(y=1) * Settings(
+                    is_output=True, 
+                    dependencies=["b"], 
+                )  # 16
+        
+            with graph as sub_graph_4:  # input: 13 -> res: (16, 14)
+                a = worker1  # 14
+                b = worker2  # 16
+                c = merge * Data(y=From("a"))
 
-        with graph as g:
-            a = worker1
-            b = worker2
-            c = Worker3(y=1)
+                +a >> b >> ~c
 
-            arrangement_1 = +a >> b
-            arrangement_2 = ~c
-
-            arrangement_1 >> arrangement_2
-
-    return MyGraph
-
-@pytest.mark.asyncio
-async def test_combine_of_arrangement_logic_can_run_correctly(combine_of_arrangement_logic_graph):
-    graph = combine_of_arrangement_logic_graph()
-    result = await graph.arun(user_input=1)
-    assert result == 5
-
-
-# - - - - - - - - - - - - - - -
-# test Component-based reuse
-# - - - - - - - - - - - - - - -
-@pytest.fixture
-def component_based_reuse_graph():
-    class MyGraph1(ASLAutoma):
-        user_input: int = None
-
-        with graph as g:
-            a = worker1
-            b = worker2
-            c = Worker3(y=1)
-
-            +a >> b >> ~c
-
-    class MyGraph2(ASLAutoma):
-        user_input: int = None
-
-        with graph as g:
-            a = worker1
-            b = MyGraph1()
-            c = Worker3(y=1)
-
-            +a >> b >> ~c
-
-    return MyGraph2
-
-@pytest.mark.asyncio
-async def test_component_based_reuse(component_based_reuse_graph):
-    graph = component_based_reuse_graph()
-    result = await graph.arun(user_input=1)
-    assert result == 7
-
-
-# - - - - - - - - - - - - - - -
-# test group workers can run correctly
-# - - - - - - - - - - - - - - -
-@pytest.fixture
-def group_workers_can_run_correctly_graph():
-    class MyGraph1(ASLAutoma):
-        user_input: int = None
-
-        with graph as g:
-            a = worker1
-            b = worker2
-            c = Worker3(y=1)
-            d = worker4
-
-            +a >> (b & c) >> ~d
-
-    return MyGraph1
-
-@pytest.mark.asyncio
-async def test_group_workers_can_run_correctly(group_workers_can_run_correctly_graph):
-    graph = group_workers_can_run_correctly_graph()
-    result = await graph.arun(user_input=1)
-    assert result == 7
-
-
-@pytest.fixture
-def groups_workers_can_run_correctly_graph():
-    class MyGraph1(ASLAutoma):
-        x: int = None
-
-        with graph as g:
-            a = worker1
-            b = worker11
-            c = worker12
-            d = worker5
-            e = worker6
-            merge = merge
-
-            +(a & b & c) >> (d & e) >> ~merge
-
-    return MyGraph1
-
-@pytest.mark.asyncio
-async def test_groups_workers_can_run_correctly(groups_workers_can_run_correctly_graph):
-    graph = groups_workers_can_run_correctly_graph()
-    result = await graph.arun(user_input=1)
-    assert result == (7, 8)
-
-
-# - - - - - - - - - - - - - - -
-# test nested graphs can run correctly
-# - - - - - - - - - - - - - - -
-@pytest.fixture
-def nested_graphs_can_run_correctly_graph():
-    class MyGraph1(ASLAutoma):
-        user_input: int = None
-
-        with graph as g1:
-            a = worker1 
-            with graph as g2:
-                c = worker2
-                d = Worker3(y=1)
-                +c >> ~d
-            b = worker2
-
-            +a >> g2 >> ~b
-
-    return MyGraph1
-
-@pytest.mark.asyncio
-async def test_nested_graphs_can_run_correctly(nested_graphs_can_run_correctly_graph):
-    graph = nested_graphs_can_run_correctly_graph()
-    result = await graph.arun(user_input=1)
-    assert result == 7
-
-
-# - - - - - - - - - - - - - - -
-# test ferry_to graph with no dependency
-# - - - - - - - - - - - - - - - 
-@pytest.fixture
-def ferry_to_with_no_dependency_graph():
-    class MyGraph1(ASLAutoma):
-        user_input: int = None
-
-        with graph as g1:
-            ferry_to_worker = ferry_to_worker
-            worker2 = worker2
-            worker3 = Worker3(y=1)
-
-            +ferry_to_worker, ~worker2, ~worker3
-
-    return MyGraph1
-
-@pytest.mark.asyncio
-async def test_no_dependency_can_run_correctly(ferry_to_with_no_dependency_graph):
-    graph = ferry_to_with_no_dependency_graph()
-    result = await graph.arun(user_input=1)
-    assert result == 3
-
-    result = await graph.arun(user_input=2)
-    assert result == 3
-
-
-# - - - - - - - - - - - - - - -
-# test Settings can be set correctly
-# - - - - - - - - - - - - - - - 
-@pytest.fixture
-def settings_can_be_set_correctly_graph():
-    class MyGraph1(ASLAutoma):
-        user_input: int = None
-
-        with graph as g:
-            a = worker1 * Settings(
-                key="worker_1", 
-                is_start=True, 
-            )
-            b = worker2 * Settings(
-                key="worker_2", 
-                dependencies=["worker_1"], 
-                args_mapping_rule=ArgsMappingRule.AS_IS
-            )
-            c = Worker3(y=1) * Settings(
-                key="worker_3", 
-                is_output=True, 
-                dependencies=["worker_2"], 
-            )
-
-    return MyGraph1
-
-@pytest.mark.asyncio
-async def test_settings_can_be_set_correctly(settings_can_be_set_correctly_graph):
-    graph = settings_can_be_set_correctly_graph()
-    print(graph)
-    result = await graph.arun(user_input=1)
-    assert result == 5
-
-
-# - - - - - - - - - - - - - - -
-# test Args Injection can run correctly
-# - - - - - - - - - - - - - - - 
-@pytest.fixture
-def args_injection_can_run_correctly_graph():
-    class MyGraph1(ASLAutoma):
-        user_input: int = None
-
-        with graph as g:
-            a = worker1
-            b = worker2
-            c = merge * Data(y=From("a"))
-
-            +a >> b >> ~c
-
-    return MyGraph1
-
-@pytest.mark.asyncio
-async def test_args_injection_can_run_correctly(args_injection_can_run_correctly_graph):
-    graph = args_injection_can_run_correctly_graph()
-    print(graph)
-    result = await graph.arun(user_input=1)
-    assert result == (4, 2)
-
-
-# - - - - - - - - - - - - - - -
-# test dynamic lambda worker can run correctly
-# - - - - - - - - - - - - - - - 
-@pytest.fixture
-def dynamic_lambda_worker_can_run_correctly_graph():
-    async def produce_tasks(user_input: int) -> list:
-        return [user_input + 1, user_input + 2, user_input + 3] # [2, 3, 4]
-
-    async def tasks_done(task_input: int) -> int:
-        return task_input + 3
-
-    # define the graph
-    class MyGraph1(ASLAutoma):
-        with graph as g1:
-            a = produce_tasks 
-
-            # define the concurrent worker
-            with concurrent(subtasks = ASLField(list, distribute=True)) as c1:
-                dynamic_logic = lambda subtasks, **kwargs: (
-                    tasks_done *Settings(
-                        key=f"tasks_done_{i}"
+            with graph as sub_graph_5:  # input: 14 -> res: [18, 19, 20, 21, 22]
+                a = produce_tasks  # [15, 16, 17, 18, 19]
+                with concurrent(subtasks = ASLField(list, distribute=True)) as sub_concurrent:
+                    dynamic_logic = lambda subtasks, **kwargs: (
+                        tasks_done *Settings(
+                            key=f"tasks_done_{i}"
+                        )
+                        for i, subtask in enumerate(subtasks)
                     )
-                    for i, subtask in enumerate(subtasks)
-                )
+                
+                +a >> ~sub_concurrent  # [18, 19, 20, 21, 22]
 
-            # define the arrangement logic
-            +a >> ~c1
-    
-    return MyGraph1
+            merger = merge_tasks *Settings(args_mapping_rule=ArgsMappingRule.MERGE)
+
+            arrangement_2 >> (sub_graph_1 & sub_graph_2 & sub_graph_3 & sub_graph_4 & sub_graph_5) >> ~merger
+
+    return MyGraph
 
 @pytest.mark.asyncio
-async def test_dynamic_lambda_worker_can_run_correctly(dynamic_lambda_worker_can_run_correctly_graph):
-    graph = dynamic_lambda_worker_can_run_correctly_graph()
+async def test_asl_run_correctly(asl_run_correctly_graph):
+    graph = asl_run_correctly_graph()
     result = await graph.arun(user_input=1)
-    assert result == [5, 6, 7]
+    assert result == [(34, 35), 13, 16, (16, 14), [18, 19, 20, 21, 22]]
 
 
 ####################################################################################################################################################
@@ -360,30 +184,23 @@ async def test_dynamic_lambda_worker_can_run_correctly(dynamic_lambda_worker_can
 async def test_raise_duplicate_dependency_error_correctly():
     with pytest.raises(ValueError, match="Duplicate dependency"):
         class MyGraph1(ASLAutoma):
-            user_input: int = None
-
             with graph as g:
                 a = worker1 * Settings(
-                    key="worker_1", 
                     is_start=True, 
                 )
                 b = worker2 * Settings(
-                    key="worker_2", 
-                    dependencies=["worker_1"], 
+                    dependencies=["a"], 
                     args_mapping_rule=ArgsMappingRule.AS_IS
                 )
                 c = Worker3(y=1) * Settings(
-                    key="worker_3", 
                     is_output=True, 
-                    dependencies=["worker_2"], 
+                    dependencies=["b"], 
                 )
                 
                 +a >> b >> ~c
 
     with pytest.raises(ValueError, match="Duplicate dependency"):
         class MyGraph2(ASLAutoma):
-            user_input: int = None
-
             with graph as g:
                 a = worker1 * Settings(
                     dependencies=["worker_1", "worker_1"]

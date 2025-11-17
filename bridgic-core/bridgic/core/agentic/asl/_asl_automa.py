@@ -7,12 +7,19 @@ from bridgic.core.automa.worker import Worker, WorkerCallback, WorkerCallbackBui
 from bridgic.core.automa.args import ArgsMappingRule, System, Distribute
 from bridgic.core.automa._graph_automa import GraphMeta
 from bridgic.core.agentic import ConcurrentAutoma
-from bridgic.core.agentic.asl._canvas_object import _Canvas, _Element, _CanvasObject, graph_stack, Settings, Data
+from bridgic.core.agentic.asl._canvas_object import _Canvas, _Element, _CanvasObject, graph_stack, Settings, Data, KeyUnDifined
 from bridgic.core.utils._inspect_tools import get_func_signature_data, set_method_signature, override_func_signature
 
 
 class TrackingNamespace(dict):
     def __setitem__(self, key: str, value: Any):
+        # if the value is a _Element, It indicates that the corresponding Worker object or 
+        # callable has already been declared. Declaring it again is likely to be a fragment.
+        # So skip the registration process.
+        if isinstance(value, _Element):
+            super().__setitem__(key, value)
+            return
+
         # get the settings and data from the value and clear the settings and data of the value
         settings = copy.deepcopy(getattr(value, "__settings__", None))
         if settings:
@@ -41,18 +48,19 @@ class TrackingNamespace(dict):
 
                 # cover the value with the element
                 value = element
-        
-        # record the key-value pair in the tracking namespace
-        super().__setitem__(key, value)
 
         # register the _CanvasObject to the current canvas
         if isinstance(value, _CanvasObject):
-            stack = graph_stack.get()
+            stack = list[_Canvas](graph_stack.get())
             
             # if is a nested canvas, register to the parent canvas.
             if isinstance(value, _Canvas):
+                # if the canvas is already in the tracking namespace, raise error.
+                if super().__contains__(key):
+                    raise ValueError(f"Duplicate key: {key}, every key must be unique.")
+
                 # set the key of the nested canvas
-                if not value.settings.key:
+                if isinstance(value.settings.key, KeyUnDifined):
                     value.settings.key = key
 
                 # update the settings of the nested canvas
@@ -62,26 +70,63 @@ class TrackingNamespace(dict):
                 # update the data of the nested canvas
                 if data:
                     value.update_data(data)
-                
-                # if the stack is only one, the current canvas is the root canvas.
-                if len(stack) == 1:
-                    return
-                
-                # get the parent canvas
-                parent_canvas: _Canvas = stack[-2]
 
-                # register to the parent canvas, the parent canvas is the root canvas.
-                parent_canvas.register(value.settings.key, value)
+                # register current canvas to the tracking namespace
+                super().__setitem__(key, {})
+                current_canvas_namespace = super().__getitem__(key)
+                current_canvas_namespace["__self__"] = value
+                
+                # if the stack is only one, the current canvas is the root canvas, skip the registration.
+                if len(stack) > 1:
+                    # get the parent canvas
+                    parent_canvas: _Canvas = stack[-2]
+
+                    # register to the parent canvas
+                    parent_canvas.register(key, value)
+
+                    # register to the tracking namespace
+                    parent_canvas_namespace = super().__getitem__(parent_canvas.settings.key)
+                    parent_canvas_namespace[value.settings.key] = value
+
             elif isinstance(value, _Element):
                 # if the stack is empty, indicates that the element is not under any canvas.
                 if len(stack) == 0:
                     raise ValueError("All workers must be written under one graph.")
 
                 # get the current canvas
-                current_canvas: _Canvas = stack[-1]
+                parent_canvas: _Canvas = stack[-1]
 
                 # register to the current canvas
-                current_canvas.register(value.settings.key, value)
+                parent_canvas.register(value.settings.key, value)
+
+                # register to the tracking namespace
+                parent_canvas_namespace = super().__getitem__(parent_canvas.settings.key)
+                parent_canvas_namespace[value.settings.key] = value
+        else:
+            # record the normal key-value pair in the tracking namespace
+            super().__setitem__(key, value)
+
+    def __getitem__(self, key: str) -> Dict[str, Any]:
+        # get the current canvas
+        stack = list[_Canvas](graph_stack.get())
+
+        # if the stack is empty, indicates that the element may be a normal object.
+        if not stack:
+            return super().__getitem__(key)
+
+        # get the current canvas and its namespace
+        current_canvas: _Canvas = stack[-1]
+        current_canvas_key = current_canvas.settings.key
+        current_canvas_namespace = super().__getitem__(current_canvas_key)
+        if key == current_canvas_key:
+            raise ValueError(f"Invalid canvas: {key}, cannot use the canvas itself.")
+
+        # if the key is in the current canvas namespace, return the element.
+        if key in current_canvas_namespace:
+            res = current_canvas_namespace[key]
+            return res
+
+        return super().__getitem__(key)
 
 
 class ASLAutomaMeta(GraphMeta):
@@ -102,13 +147,14 @@ class ASLAutomaMeta(GraphMeta):
         canvases_dict: Dict[str, _Canvas] = {}
 
         for _, value in dct.items():
-            if isinstance(value, _Canvas):
+            if isinstance(value, Dict) and "__self__" in value:
+                value = value["__self__"]
 
                 # find the root canvas and set its parent canvas to itself
                 if not value.parent_canvas:
+                    value.parent_canvas = value
                     if not root:
                         root = value
-                        value.parent_canvas = value
                     else:
                         raise ValueError("Multiple root canvases are not allowed.")
 
@@ -117,19 +163,45 @@ class ASLAutomaMeta(GraphMeta):
 
         # bottom up order traversal to get the canvases
         def bottom_up_order_traversal(canvases: List[_Canvas]) -> List[_Canvas]:
+            if len(canvases) == 0:
+                return []
             if len(canvases) == 1:
                 return canvases
             
-            canvas_map = {canvas.settings.key: canvas for canvas in canvases}
-            all_parents = {canvas.parent_canvas.settings.key for canvas in canvases if canvas.parent_canvas}
-            leaves = [canvas for canvas in canvases if canvas.settings.key not in all_parents]
-            result = leaves + [
-                        element 
-                        for canvas in leaves 
-                        for element in bottom_up_order_traversal(
-                            [canvas_map[canvas.parent_canvas.settings.key]]
-                        )
+            result: List[_Canvas] = []
+            remaining = {canvas.settings.key: canvas for canvas in canvases}
+            
+            while remaining:
+                remaining_keys = set(remaining.keys())
+                all_parents = {
+                    canvas.parent_canvas.settings.key 
+                    for canvas in remaining.values() 
+                    if canvas.parent_canvas 
+                    and canvas.parent_canvas.settings.key in remaining_keys
+                    and canvas.parent_canvas.settings.key != canvas.settings.key
+                }
+                leaves = [
+                    canvas for canvas in remaining.values() 
+                    if canvas.settings.key not in all_parents
+                ]
+                
+                if not leaves:
+                    root_nodes = [
+                        canvas for canvas in remaining.values()
+                        if canvas.parent_canvas 
+                        and canvas.parent_canvas.settings.key == canvas.settings.key
                     ]
+                    if root_nodes:
+                        result.extend(root_nodes)
+                        break
+                    else:
+                        raise ValueError("Circular dependency detected in canvas hierarchy")
+                
+                result.extend(leaves)
+                
+                for leaf in leaves:
+                    del remaining[leaf.settings.key]
+            
             return result
 
         canvases_list = list(canvases_dict.values())
