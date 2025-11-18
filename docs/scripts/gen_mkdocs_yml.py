@@ -23,7 +23,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 LLM_OVERVIEW_PATH = "extras/llms/index.md"
-CALLBACKS_OVERVIEW_PATH = "extras/callbacks/index.md"
+TRACES_OVERVIEW_PATH = "extras/traces/index.md"
 
 class DocumentationConfig:
     """Documentation generation configuration class"""
@@ -427,24 +427,24 @@ class SafeMkDocsConfigUpdater:
                 section_entries.extend(integration_entries)
                 integration_sections["llms"] = section_entries
 
-            callbacks_entries: List[Tuple[str, str]] = []
+            traces_entries: List[Tuple[str, str]] = []
             for pkg_name in nav_structure.keys():
-                if pkg_name.startswith('bridgic-callbacks-'):
-                    suffix = pkg_name.replace('bridgic-callbacks-', '')
+                if pkg_name.startswith('bridgic-traces-'):
+                    suffix = pkg_name.replace('bridgic-traces-', '')
                     dotted_suffix = suffix.replace('-', '.')
-                    dotted = f"bridgic.callbacks.{dotted_suffix}"
+                    dotted = f"bridgic.traces.{dotted_suffix}"
                     index_rel_path = dotted_suffix.replace('.', '/')
-                    index_path = f"reference/{pkg_name}/bridgic/callbacks/{index_rel_path}/index.md"
-                    callbacks_entries.append((dotted, index_path))
+                    index_path = f"reference/{pkg_name}/bridgic/traces/{index_rel_path}/index.md"
+                    traces_entries.append((dotted, index_path))
 
-            if callbacks_entries:
-                section_entries = [("callbacks", CALLBACKS_OVERVIEW_PATH)]
-                section_entries.extend(callbacks_entries)
-                integration_sections["callbacks"] = section_entries
+            if traces_entries:
+                section_entries = [("traces", TRACES_OVERVIEW_PATH)]
+                section_entries.extend(traces_entries)
+                integration_sections["traces"] = section_entries
 
             if integration_sections:
                 lines.append("    - Bridgic-Integration:")
-                section_order = ["llms", "callbacks"]
+                section_order = ["llms", "traces"]
                 processed_sections: Set[str] = set()
                 for section_name in section_order:
                     if section_name in integration_sections:

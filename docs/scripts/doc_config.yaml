@@ -37,9 +37,9 @@ packages:
   - name: "bridgic-llms-vllm"
     path: "bridgic-integration/llms/bridgic-llms-vllm"
     description: "vLLM Integration"
-  - name: "bridgic-callbacks-trace-opik"
-    path: "bridgic-integration/callbacks/bridgic-callbacks-trace-opik"
-    description: "Opik Tracing Callback Integration"
+  - name: "bridgic-traces-opik"
+    path: "bridgic-integration/traces/bridgic-traces-opik"
+    description: "Opik Observability Integration"
 
 # Documentation generation options
 generation_options:
