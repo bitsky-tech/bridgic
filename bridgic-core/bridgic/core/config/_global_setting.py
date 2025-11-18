@@ -2,11 +2,12 @@
 Global settings for the Bridgic framework.
 """
 
-from typing import List, Optional, ClassVar
+from typing import List, Optional, ClassVar, TYPE_CHECKING
 from pydantic import BaseModel
 from threading import Lock
 
-from bridgic.core.automa.worker._worker_callback import WorkerCallbackBuilder
+if TYPE_CHECKING:
+    from bridgic.core.automa.worker._worker_callback import WorkerCallbackBuilder
 
 
 class GlobalSetting(BaseModel):
@@ -27,7 +28,7 @@ class GlobalSetting(BaseModel):
     """
     model_config = {"arbitrary_types_allowed": True}
 
-    callback_builders: List[WorkerCallbackBuilder] = []
+    callback_builders: List["WorkerCallbackBuilder"] = []
     """Global callback builders that will be applied to all workers."""
 
     # Singleton instance
@@ -53,7 +54,7 @@ class GlobalSetting(BaseModel):
     @classmethod
     def set(
         cls,
-        callback_builders: Optional[List[WorkerCallbackBuilder]] = None,
+        callback_builders: Optional[List["WorkerCallbackBuilder"]] = None,
     ) -> None:
         """
         Set global setting fields.

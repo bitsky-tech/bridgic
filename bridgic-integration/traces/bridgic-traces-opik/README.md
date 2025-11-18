@@ -1,5 +1,5 @@
-Bridgic Opik Tracing Callback
-=============================
+Opik Observability Integration
+==============================
 
 This package integrates Opik tracing with the Bridgic framework, providing worker granularity tracing implementation.
 
@@ -7,7 +7,8 @@ Installation
 -----
 
 ```shell
-pip install bridgic-callbacks-trace-opik
+# Automatically install the Opik package
+pip install bridgic-traces-opik
 ```
 
 Prerequisites
@@ -15,34 +16,46 @@ Prerequisites
 
 Before using `OpikTraceCallback`, you need to configure Opik. You can choose between two options:
 
-### Option 1: Self-hosted Opik Service
+- To use the hosted version, you need to [create a Comet account](https://www.comet.com/signup) and [grab your API Key](https://www.comet.com/account-settings/apiKeys).
+- To run the Opik platform locally, see the [installation guide](https://www.comet.com/docs/opik/self-host/overview/) for more information.
 
-If you want to self-host Opik on your own infrastructure:
 
-1. Follow the [self-hosting guide](https://www.comet.com/docs/opik/self-host/overview) to set up your local Opik service
-2. Install the Opik Python SDK:
-   ```shell
-   pip install opik
-   ```
-3. Run the Opik configuration command and select option `2` (Local service):
-   ```shell
-   opik configure
-   ```
+The recommended way to configure the Python SDK is to run the `opik configure` command. It prompts you to enter your API key and, if applicable, the Opik instance URL so requests are routed and authenticated correctly. All details are saved to a configuration file.
 
-### Option 2: Opik Cloud Service
+If you are using the Cloud version of the platform, you can configure the SDK by running:
 
-If you want to use Comet's managed Opik Cloud:
+```python
+import opik
 
-1. Visit the [Opik quickstart guide](https://www.comet.com/docs/opik/quickstart) to sign up and create an account
-2. Install the Opik Python SDK:
-   ```shell
-   pip install opik
-   ```
-3. Run the Opik configuration command and select option `1` (Cloud service):
-   ```shell
-   opik configure
-   ```
-4. Enter your API key when prompted
+opik.configure(use_local=False)
+```
+
+You can also configure the SDK by calling [`configure`](https://www.comet.com/docs/opik/python-sdk-reference/cli.html) from the command line:
+
+```bash
+opik configure
+``` 
+
+If you are self-hosting the platform, you can configure the SDK by running:
+
+```python
+import opik
+
+opik.configure(use_local=True)
+```
+
+or from the command line:
+
+```bash
+opik configure --use_local
+```
+
+Both variants of `configure` prompt you for the required information and save it to `~/.opik.config`. When using the command-line version, you can pass the `-y` or `--yes` flag to automatically approve any confirmation prompts:
+
+```bash
+opik configure --yes
+```
+
 
 Once configured, you can start using `OpikTraceCallback` in your Bridgic applications.
 
@@ -58,7 +71,7 @@ Apply the callback only to a single automa by configuring it through `RunningOpt
 ```python
 from bridgic.core.automa import GraphAutoma, RunningOptions, worker
 from bridgic.core.automa.worker import WorkerCallbackBuilder
-from bridgic.callbacks.trace.opik import OpikTraceCallback
+from bridgic.traces.opik import OpikTraceCallback
 import asyncio
 
 class MyAutoma(GraphAutoma):
@@ -91,7 +104,7 @@ Register the callback at the global level through `GlobalSetting` to make it eff
 from bridgic.core.automa import GraphAutoma, worker
 from bridgic.core.automa.worker import WorkerCallbackBuilder
 from bridgic.core.config import GlobalSetting
-from bridgic.callbacks.trace.opik import OpikTraceCallback
+from bridgic.traces.opik import OpikTraceCallback
 import asyncio
 
 # Configure global callback

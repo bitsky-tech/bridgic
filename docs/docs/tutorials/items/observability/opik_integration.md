@@ -16,7 +16,7 @@ This integration is primarily supported by `OpikTraceCallback`, a [WorkerCallbac
 
 Comet provides a hosted version of the Opik platform, or you can run the platform locally.
 
-- To use the hosted version, you need to [create a Comet account](https://www.comet.com/signup) and grab your API Key.
+- To use the hosted version, you need to [create a Comet account](https://www.comet.com/signup) and [grab your API Key](https://www.comet.com/account-settings/apiKeys).
 - To run the Opik platform locally, see the [installation guide](https://www.comet.com/docs/opik/self-host/overview/) for more information.
 
 
@@ -26,14 +26,49 @@ Comet provides a hosted version of the Opik platform, or you can run the platfor
 
 ```shell
 # Automatically install the Opik package
-pip install bridgic-callbacks-trace-opik
+pip install bridgic-traces-opik
 ```
 
 ### Step 2: Configure Opik
 
-```python
-# Configure Opik to use the cloud service, if you want to use the local service, set use_local=True.
-python -c "import opik; opik.configure(use_local=False)"
+
+The recommended approach to configuring the Python SDK is to use the opik configure command. This will prompt you to set up your API key and Opik instance URL (if applicable) to ensure proper routing and authentication. All details will be saved to a configuration file.
+
+=== "Opik Cloud"
+
+    If you are using the Cloud version of the platform, you can configure the SDK by running:
+
+    ```python
+    import opik
+
+    opik.configure(use_local=False)
+    ```
+
+    You can also configure the SDK by calling [`configure`](https://www.comet.com/docs/opik/python-sdk-reference/cli.html) from the Command line:
+
+    ```bash
+    opik configure
+    ``` 
+=== "Self-hosting"
+
+    If you are self-hosting the platform, you can configure the SDK by running:
+
+    ```python
+    import opik
+
+    opik.configure(use_local=True)
+    ```
+
+    or from the Command line:
+
+    ```bash
+    opik configure --use_local
+    ```
+
+The `configure` methods will prompt you for the necessary information and save it to a configuration file (`~/.opik.config`). When using the command line version, you can use the `-y` or `--yes` flag to automatically approve any confirmation prompts:
+
+```bash
+opik configure --yes
 ```
 
 ### Step 3: Register the callback
@@ -44,7 +79,7 @@ Just build your application using normal Bridgic-style orchestration and registe
 from bridgic.core.config import GlobalSetting
 from bridgic.core.automa import GraphAutoma, RunningOptions, worker
 from bridgic.core.automa.worker import WorkerCallbackBuilder
-from bridgic.callbacks.trace.opik import OpikTraceCallback
+from bridgic.traces.opik import OpikTraceCallback
 
 GlobalSetting.set(callback_builders=[
     WorkerCallbackBuilder(
@@ -79,11 +114,25 @@ class DataAnalysisAutoma(GraphAutoma):
         """Generate a final report."""
         return f"Report: Found {len(analysis['trends'])} trends with {analysis['confidence']} confidence."
 
-automa = DataAnalysisAutoma()
-await automa.arun(topic="market analysis")
+async def automa_arun():
+    automa = DataAnalysisAutoma()
+    result = await automa.arun(topic="market analysis")
+    print(result)
+
+if __name__ == "__main__":
+    import asyncio
+    asyncio.run(automa_arun())
 ```
 
-Once your Bridgic application has finished running,the trace URL will be generated in the terminal, dive into the Opik app to explore rich visual insights and detailed traces of your workflow.
+Once your Bridgic application has finished running, your terminal might display the following message:
+
+```shell
+$ python bridgic-demo/demo.py 
+OPIK: Started logging traces to the "bridgic-integration-demo" project at http://localhost:5173/api/v1/session/redirect/projects/?trace_id=019a9709-e437-7b30-861e-76006b75e969&path=aHR0cDovL2xvY2FsaG9zdDo1MTczL2FwaS8=
+Report: Found 2 trends with 0.85 confidence.
+```
+
+You can dive into the Opik app to explore rich visual insights and detailed traces of your workflow.
 
 <div style="text-align: center;">
 <img src="../../../imgs/bridgic-integration-demo.png" alt="bridgic integration demo" width="auto">
