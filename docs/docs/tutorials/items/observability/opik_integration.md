@@ -124,7 +124,7 @@ if __name__ == "__main__":
     asyncio.run(automa_arun())
 ```
 
-Once your Bridgic application has finished running,the trace URL will be generated in the terminal.
+Once your Bridgic application has finished running, the trace URL will be generated in the terminal.
 <div style="text-align: center;">
 <img src="../../../imgs/bridgic-integration-demo-result.png" alt="bridgic integration demo result" width="auto">
 </div>
