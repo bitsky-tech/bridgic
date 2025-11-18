@@ -16,7 +16,7 @@ This integration is primarily supported by `OpikTraceCallback`, a [WorkerCallbac
 
 Comet provides a hosted version of the Opik platform, or you can run the platform locally.
 
-- To use the hosted version, you need to [create a Comet account](https://www.comet.com/signup) and grab your API Key.
+- To use the hosted version, you need to [create a Comet account](https://www.comet.com/signup) and [grab your API Key](https://www.comet.com/account-settings/apiKeys).
 - To run the Opik platform locally, see the [installation guide](https://www.comet.com/docs/opik/self-host/overview/) for more information.
 
 
@@ -26,7 +26,7 @@ Comet provides a hosted version of the Opik platform, or you can run the platfor
 
 ```shell
 # Automatically install the Opik package
-pip install bridgic-callbacks-trace-opik
+pip install bridgic-traces-opik
 ```
 
 ### Step 2: Configure Opik
@@ -44,7 +44,7 @@ Just build your application using normal Bridgic-style orchestration and registe
 from bridgic.core.config import GlobalSetting
 from bridgic.core.automa import GraphAutoma, RunningOptions, worker
 from bridgic.core.automa.worker import WorkerCallbackBuilder
-from bridgic.callbacks.trace.opik import OpikTraceCallback
+from bridgic.traces.opik import OpikTraceCallback
 
 GlobalSetting.set(callback_builders=[
     WorkerCallbackBuilder(
