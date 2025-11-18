@@ -124,10 +124,13 @@ if __name__ == "__main__":
     asyncio.run(automa_arun())
 ```
 
-Once your Bridgic application has finished running, the trace URL will be generated in the terminal.
-<div style="text-align: center;">
-<img src="../../../imgs/bridgic-integration-demo-result.png" alt="bridgic integration demo result" width="auto">
-</div>
+Once your Bridgic application has finished running, your terminal might display the following message:
+
+```shell
+$ python bridgic-demo/demo.py 
+OPIK: Started logging traces to the "bridgic-integration-demo" project at http://localhost:5173/api/v1/session/redirect/projects/?trace_id=019a9709-e437-7b30-861e-76006b75e969&path=aHR0cDovL2xvY2FsaG9zdDo1MTczL2FwaS8=
+Report: Found 2 trends with 0.85 confidence.
+```
 
 You can dive into the Opik app to explore rich visual insights and detailed traces of your workflow.
 
