@@ -1,12 +1,12 @@
 [project]
-name = "bridgic-callbacks-trace-opik"
-version = "0.1.0.dev9"
+name = "bridgic-traces-opik"
+version = "0.1.0.dev1"
 license = {text = "MIT"}
 classifiers = [
     # "Private :: Do Not Upload",
     "Programming Language :: Python :: 3",
 ]
-description = "Opik tracing callbacks for Bridgic."
+description = "Opik observability integration for Bridgic."
 readme = "README.md"
 requires-python = ">=3.9"
 authors = [

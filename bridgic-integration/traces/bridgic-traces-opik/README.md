@@ -1,5 +1,5 @@
-Bridgic Opik Tracing Callback
-=============================
+Opik Observability Integration
+==============================
 
 This package integrates Opik tracing with the Bridgic framework, providing worker granularity tracing implementation.
 
