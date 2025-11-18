@@ -19,12 +19,43 @@ Before using `OpikTraceCallback`, you need to configure Opik. You can choose bet
 - To use the hosted version, you need to [create a Comet account](https://www.comet.com/signup) and [grab your API Key](https://www.comet.com/account-settings/apiKeys).
 - To run the Opik platform locally, see the [installation guide](https://www.comet.com/docs/opik/self-host/overview/) for more information.
 
-Then configure the Opik
+
+The recommended way to configure the Python SDK is to run the `opik configure` command. It prompts you to enter your API key and, if applicable, the Opik instance URL so requests are routed and authenticated correctly. All details are saved to a configuration file.
+
+If you are using the Cloud version of the platform, you can configure the SDK by running:
 
 ```python
-# Configure Opik to use the cloud service, if you want to use the local service, set use_local=True.
-python -c "import opik; opik.configure(use_local=False)"
+import opik
+
+opik.configure(use_local=False)
 ```
+
+You can also configure the SDK by calling [`configure`](https://www.comet.com/docs/opik/python-sdk-reference/cli.html) from the command line:
+
+```bash
+opik configure
+``` 
+
+If you are self-hosting the platform, you can configure the SDK by running:
+
+```python
+import opik
+
+opik.configure(use_local=True)
+```
+
+or from the command line:
+
+```bash
+opik configure --use_local
+```
+
+Both variants of `configure` prompt you for the required information and save it to `~/.opik.config`. When using the command-line version, you can pass the `-y` or `--yes` flag to automatically approve any confirmation prompts:
+
+```bash
+opik configure --yes
+```
+
 
 Once configured, you can start using `OpikTraceCallback` in your Bridgic applications.
 
