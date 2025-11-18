@@ -36,3 +36,7 @@ include = ["/meta/bridgic/"]
 
 [tool.hatch.build.targets.wheel.sources]
 "/meta/bridgic" = "bridgic"
+
+[tool.uv.sources]
+bridgic-core = { path = "./bridgic-core", editable = true }
+bridgic-llms-openai-like = { path = "./bridgic-integration/llms/bridgic-llms-openai-like", editable = true }
