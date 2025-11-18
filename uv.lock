@@ -184,7 +184,7 @@ wheels = [
 
 [[package]]
 name = "bridgic"
-version = "0.1.2.dev1"
+version = "0.1.2"
 source = { editable = "." }
 dependencies = [
     { name = "bridgic-core" },
@@ -217,7 +217,7 @@ publish = [{ name = "tomli", specifier = ">=2.0.0" }]
 
 [[package]]
 name = "bridgic-core"
-version = "0.1.2.dev4"
+version = "0.1.2"
 source = { editable = "bridgic-core" }
 dependencies = [
     { name = "docstring-parser" },
