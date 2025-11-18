@@ -1,22 +1,22 @@
 [project]
-name = "bridgic-llms-openai-like"
-version = "0.1.1"
+name = "bridgic-callbacks-trace-opik"
+version = "0.1.0.dev8"
 license = {text = "MIT"}
 classifiers = [
     # "Private :: Do Not Upload",
     "Programming Language :: Python :: 3",
 ]
-description = "OpenAI-like LLM adapters for Bridgic, enabling connectivity with external LLM providers."
+description = "Opik tracing callbacks for Bridgic."
 readme = "README.md"
 requires-python = ">=3.9"
 authors = [
     { name = "Tielei Zhang", email = "zhangtl04@gmail.com" },
 ]
+
 dependencies = [
-    "bridgic-core>=0.1.1",
-    "openai>=1.60.0",
-    "httpx>=0.28.1",
-    "httpx-aiohttp>=0.1.8",
+    "bridgic-core>=0.1.2.dev2",
+    "opik>=1.8.97",
+    "urllib3<2.0", # for fixing urllib3 warning in python 3.9, see https://github.com/urllib3/urllib3/issues/3020
 ]
 
 [dependency-groups]

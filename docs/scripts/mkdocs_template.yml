@@ -19,10 +19,14 @@ nav:
         - Dynamic Routing: tutorials/items/core_mechanism/dynamic_routing.ipynb
         - Dynamic Topology: tutorials/items/core_mechanism/dynamic_topology.ipynb
         - Human in the loop: tutorials/items/core_mechanism/human_in_the_loop.ipynb
+        - Worker Callback: tutorials/items/core_mechanism/worker_callback.ipynb
         - Modularity: tutorials/items/core_mechanism/modularity.ipynb
-      - Model Integration:
-        - Model Integration: tutorials/items/model_integration/index.md
+      - Model:
+        - Model: tutorials/items/model_integration/index.md
         - LLM Integration: tutorials/items/model_integration/llm_integration.ipynb
+      - Observability:
+        - Observability: tutorials/items/observability/index.md
+        - Opik Integration: tutorials/items/observability/opik_integration.md
   - Understanding:
     - Introduction: home/introduction.md
     - Basics: home/basics.md
@@ -154,6 +158,7 @@ plugins:
             - ../bridgic-integration/llms/bridgic-llms-openai
             - ../bridgic-integration/llms/bridgic-llms-openai-like
             - ../bridgic-integration/llms/bridgic-llms-vllm
+            - ../bridgic-integration/callbacks/bridgic-callbacks-trace-opik
   - mike
 
 markdown_extensions:

@@ -23,6 +23,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 LLM_OVERVIEW_PATH = "extras/llms/index.md"
+CALLBACKS_OVERVIEW_PATH = "extras/callbacks/index.md"
 
 class DocumentationConfig:
     """Documentation generation configuration class"""
@@ -404,6 +405,8 @@ class SafeMkDocsConfigUpdater:
 
             # 2) Bridgic-Integration > llms
             # Derive entries from known integration packages present in nav_structure
+            integration_sections: Dict[str, List[Tuple[str, str]]] = {}
+
             integration_entries: List[Tuple[str, str]] = []
             # Map of package name prefix to dotted module suffix
             # We look for packages that start with 'bridgic-llms-'
@@ -418,15 +421,44 @@ class SafeMkDocsConfigUpdater:
                     integration_entries.append((dotted, index_path))
 
             if integration_entries:
-                # 4 spaces for first level under API Reference
-                lines.append("    - Bridgic-Integration:")
-                # 6 spaces for second level
-                lines.append("      - llms:")
+                section_entries: List[Tuple[str, str]] = []
                 # Insert overview as first entry to avoid promotion of first LLM package
-                lines.append(f"        - llms: {LLM_OVERVIEW_PATH}")
-                # 8 spaces for entries
-                for dotted, path in integration_entries:
-                    lines.append(f"        - {dotted}: {path}")
+                section_entries.append(("llms", LLM_OVERVIEW_PATH))
+                section_entries.extend(integration_entries)
+                integration_sections["llms"] = section_entries
+
+            callbacks_entries: List[Tuple[str, str]] = []
+            for pkg_name in nav_structure.keys():
+                if pkg_name.startswith('bridgic-callbacks-'):
+                    suffix = pkg_name.replace('bridgic-callbacks-', '')
+                    dotted_suffix = suffix.replace('-', '.')
+                    dotted = f"bridgic.callbacks.{dotted_suffix}"
+                    index_rel_path = dotted_suffix.replace('.', '/')
+                    index_path = f"reference/{pkg_name}/bridgic/callbacks/{index_rel_path}/index.md"
+                    callbacks_entries.append((dotted, index_path))
+
+            if callbacks_entries:
+                section_entries = [("callbacks", CALLBACKS_OVERVIEW_PATH)]
+                section_entries.extend(callbacks_entries)
+                integration_sections["callbacks"] = section_entries
+
+            if integration_sections:
+                lines.append("    - Bridgic-Integration:")
+                section_order = ["llms", "callbacks"]
+                processed_sections: Set[str] = set()
+                for section_name in section_order:
+                    if section_name in integration_sections:
+                        processed_sections.add(section_name)
+                        entries = integration_sections[section_name]
+                        lines.append(f"      - {section_name}:")
+                        for dotted, path in entries:
+                            lines.append(f"        - {dotted}: {path}")
+                remaining_sections = sorted(set(integration_sections.keys()) - processed_sections)
+                for section_name in remaining_sections:
+                    entries = integration_sections[section_name]
+                    lines.append(f"      - {section_name}:")
+                    for dotted, path in entries:
+                        lines.append(f"        - {dotted}: {path}")
 
             return '\n'.join(lines)
             
