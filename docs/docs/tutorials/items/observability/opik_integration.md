@@ -16,7 +16,7 @@ This integration is primarily supported by `OpikTraceCallback`, a [WorkerCallbac
 
 Comet provides a hosted version of the Opik platform, or you can run the platform locally.
 
-- To use the hosted version, you need to [create a Comet account](https://www.comet.com/signup?utm_medium=github) and grab your API Key.
+- To use the hosted version, you need to [create a Comet account](https://www.comet.com/signup) and grab your API Key.
 - To run the Opik platform locally, see the [installation guide](https://www.comet.com/docs/opik/self-host/overview/) for more information.
 
 
@@ -25,15 +25,15 @@ Comet provides a hosted version of the Opik platform, or you can run the platfor
 ### Step 1: Install package
 
 ```shell
+# Automatically install the Opik package
 pip install bridgic-callbacks-trace-opik
 ```
 
 ### Step 2: Configure Opik
 
 ```python
-import opik
-
-opik.configure(use_local=False)
+# Configure Opik to use the cloud service, if you want to use the local service, set use_local=True.
+python -c "import opik; opik.configure(use_local=False)"
 ```
 
 ### Step 3: Register the callback
@@ -83,4 +83,8 @@ automa = DataAnalysisAutoma()
 await automa.arun(topic="market analysis")
 ```
 
-Once your Bridgic application has finished running, dive into the Opik app to explore rich visual insights and detailed traces of your workflow.
+Once your Bridgic application has finished running,the trace URL will be generated in the terminal, dive into the Opik app to explore rich visual insights and detailed traces of your workflow.
+
+<div style="text-align: center;">
+<img src="../../../imgs/bridgic-integration-demo.png" alt="bridgic integration demo" width="auto">
+</div>
