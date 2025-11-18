@@ -7,15 +7,14 @@ import warnings
 from typing import Any, Dict, Optional
 
 import opik.decorator.tracing_runtime_config as tracing_runtime_config
-from opik import context_storage as opik_context_storage, id_helpers
+from opik import context_storage as opik_context_storage
 from opik.api_objects import helpers, opik_client, span, trace
 from opik.decorator import error_info_collector
 from opik.types import ErrorInfoDict
 
-from bridgic.core.automa.worker import WorkerCallback
+from bridgic.core.automa.worker import WorkerCallback, Worker
 from bridgic.core.utils._collection import serialize_data, merge_optional_dicts
-from bridgic.core.utils._worker_tracing import build_worker_tracing_dict
-from bridgic.core.automa._graph_automa import GraphAutoma, _GraphAdaptedWorker
+from bridgic.core.utils._worker_tracing import build_worker_tracing_dict, get_worker_tracing_step_name
 
 class OpikTraceCallback(WorkerCallback):
     """
@@ -65,7 +64,15 @@ class OpikTraceCallback(WorkerCallback):
         else:
             self._is_ready = True
     
-    def _get_worker_instance(self, key: str, parent: Optional["GraphAutoma"]) -> "_GraphAdaptedWorker":
+    def _get_worker_instance(self, key: str, parent: Optional["Automa"]) -> Worker:
+        """
+        Get worker instance from parent automa.
+        
+        Returns
+        -------
+        Worker
+            The worker instance.
+        """
         if parent is None:
             raise ValueError("Parent automa is required to get worker instance")
         return parent._get_worker_instance(key)
@@ -191,12 +198,10 @@ class OpikTraceCallback(WorkerCallback):
         if serialized_args:
             trace_data.input = serialized_args
 
-    def _start_worker_span(self, key: str, worker: "_GraphAdaptedWorker", parent: "Automa", arguments: Optional[Dict[str, Any]]) -> None:
+    def _start_worker_span(self, key: str, worker: Worker, parent: "Automa", arguments: Optional[Dict[str, Any]]) -> None:
         """Start a span for worker execution."""
+        step_name = get_worker_tracing_step_name(key, worker)
         worker_tracing_dict = build_worker_tracing_dict(worker, parent)
-        nested_automa = worker._decorated_worker if worker.is_automa() else None
-
-        step_name = f"{key}  [{nested_automa.name}]" if nested_automa else key
         self._start_span(
             step_name=step_name,
             inputs=serialize_data(arguments),
@@ -207,7 +212,7 @@ class OpikTraceCallback(WorkerCallback):
         self,
         key: str,
         is_top_level: bool = False,
-        parent: Optional["GraphAutoma"] = None,
+        parent: Optional["Automa"] = None,
         arguments: Optional[Dict[str, Any]] = None,
     ) -> None:
         """
@@ -223,7 +228,7 @@ class OpikTraceCallback(WorkerCallback):
             Worker identifier.
         is_top_level : bool, default=False
             Whether the worker is the top-level automa. When True, parent will be the automa itself (parent is self).
-        parent : Optional[GraphAutoma], default=None
+        parent : Optional[Automa], default=None
             Parent automa instance containing this worker. For top-level automa, parent is the automa itself.
         arguments : Optional[Dict[str, Any]], default=None
             Execution arguments with keys "args" and "kwargs".
@@ -297,7 +302,7 @@ class OpikTraceCallback(WorkerCallback):
         self,
         key: str,
         is_top_level: bool = False,
-        parent: Optional["GraphAutoma"] = None,
+        parent: Optional["Automa"] = None,
         arguments: Optional[Dict[str, Any]] = None,
         result: Any = None,
     ) -> None:
@@ -313,7 +318,7 @@ class OpikTraceCallback(WorkerCallback):
             Worker identifier.
         is_top_level : bool, default=False
             Whether the worker is the top-level automa. When True, parent will be the automa itself (parent is self).
-        parent : Optional[GraphAutoma], default=None
+        parent : Optional[Automa], default=None
             Parent automa instance containing this worker. For top-level automa, parent is the automa itself.
         arguments : Optional[Dict[str, Any]], default=None
             Execution arguments with keys "args" and "kwargs".
@@ -329,7 +334,7 @@ class OpikTraceCallback(WorkerCallback):
         self,
         key: str,
         is_top_level: bool = False,
-        parent: Optional["GraphAutoma"] = None,
+        parent: Optional["Automa"] = None,
         arguments: Optional[Dict[str, Any]] = None,
         error: Exception = None,
     ) -> bool:
@@ -345,7 +350,7 @@ class OpikTraceCallback(WorkerCallback):
             Worker identifier.
         is_top_level : bool, default=False
             Whether the worker is the top-level automa. When True, parent will be the automa itself (parent is self).
-        parent : Optional[GraphAutoma], default=None
+        parent : Optional[Automa], default=None
             Parent automa instance containing this worker. For top-level automa, parent is the automa itself.
         arguments : Optional[Dict[str, Any]], default=None
             Execution arguments with keys "args" and "kwargs".
