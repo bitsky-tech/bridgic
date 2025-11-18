@@ -12,19 +12,18 @@ from types import MethodType
 from dataclasses import dataclass
 from pydantic import BaseModel, Field, ConfigDict
 
+from bridgic.core.config import GlobalSetting
 from bridgic.core.utils._console import printer
 from bridgic.core.utils._msgpackx import dump_bytes
 from bridgic.core.types._error import *
 from bridgic.core.types._common import AutomaType, ArgsMappingRule
-from bridgic.core.utils._args_map import safely_map_args
 from bridgic.core.automa import Automa, Snapshot
 from bridgic.core.automa.worker import CallableWorker, Worker
 from bridgic.core.automa.interaction import Interaction, InteractionFeedback, InteractionException
 from bridgic.core.automa._automa import _InteractionAndFeedback, _InteractionEventException, RunningOptions
 from bridgic.core.automa.worker._worker_callback import WorkerCallback, WorkerCallbackBuilder, try_handle_error_with_callbacks
-from bridgic.core.config import GlobalSetting
 from bridgic.core.automa._graph_meta import GraphMeta
-from bridgic.core.automa.args._args_descriptor import injector
+from bridgic.core.automa.args._args_binding import ArgsManager, safely_map_args
 
 class _GraphAdaptedWorker(Worker):
     """
@@ -1202,6 +1201,7 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
                 self._input_buffer.kwargs = kwargs
 
         def _execute_topology_change_deferred_tasks(tc_tasks: List[Union[_AddWorkerDeferredTask, _RemoveWorkerDeferredTask, _AddDependencyDeferredTask]]):
+            # update the control flow topology
             for topology_task in tc_tasks:
                 if topology_task.task_type == "add_worker":
                     self._add_worker_incrementally(
@@ -1217,6 +1217,9 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
                     self._remove_worker_incrementally(topology_task.worker_key)
                 elif topology_task.task_type == "add_dependency":
                     self._add_dependency_incrementally(topology_task.worker_key, topology_task.dependency)
+
+            # update the data flow topology
+            args_manager.update_data_flow_topology(dynamic_tasks=tc_tasks)
 
         def _set_worker_run_finished(worker_key: str):
             for kickoff_info in self._current_kickoff_workers:
@@ -1312,6 +1315,13 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
             printer.print(f"\n{type(self).__name__}-[{self.name}] is getting started.", color="green")
 
         # Task loop divided into many dynamic steps (DS).
+        args_manager = ArgsManager(
+            input_args=self._input_buffer.args,
+            input_kwargs=self._input_buffer.kwargs,
+            worker_outputs=self._worker_output,
+            worker_forwards=self._worker_forwards,
+            worker_dict=self._workers
+        )
         is_output_worker_keys = set()
         while self._current_kickoff_workers:
             # A new DS started.
@@ -1332,33 +1342,28 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
                         kickoff_name = f"{kickoff_name}:({self.name})"
                     printer.print(f"[{kickoff_name}] will kick off [{kickoff_info.worker_key}]", color="cyan")
 
-                # First, Arguments Mapping:
-                if kickoff_info.last_kickoff == "__automa__":
-                    next_args, next_kwargs = self._input_buffer.args, {}
-                elif kickoff_info.from_ferry:
-                    next_args, next_kwargs = kickoff_info.args, kickoff_info.kwargs
-                else:
-                    next_args, next_kwargs = self._mapping_args(
-                        kickoff_worker_key=kickoff_info.last_kickoff,
-                        current_worker_key=kickoff_info.worker_key,
-                    )
-                # Second, Inputs Propagation:
-                next_args, next_kwargs = self._propagate_inputs(
-                    current_worker_key=kickoff_info.worker_key,
-                    next_args=next_args,
-                    next_kwargs=next_kwargs,
-                    input_kwargs=self._input_buffer.kwargs,
-                )
-                # Third, Resolve data injection.
-                worker_obj = self._workers[kickoff_info.worker_key]
-                next_args, next_kwargs = injector.inject(
+                # Arguments Mapping:
+                binding_args, binding_kwargs = args_manager.args_binding(
+                    last_worker_key=kickoff_info.last_kickoff,
+                    current_worker_key=kickoff_info.worker_key
+                ) if not kickoff_info.from_ferry else ((), {})
+                # Inputs Propagation
+                _, propagation_kwargs = args_manager.inputs_propagation(current_worker_key=kickoff_info.worker_key)
+                # Data injection.
+                _, injection_kwargs = args_manager.args_injection(
                     current_worker_key=kickoff_info.worker_key, 
-                    current_worker_sig=worker_obj.get_input_param_names(), 
-                    current_automa=self,
-                    next_args=next_args, 
-                    next_kwargs=next_kwargs
+                    current_automa=self
                 )
-
+                # Ferry arguments.
+                ferry_args, ferry_kwargs = kickoff_info.args, kickoff_info.kwargs
+                # combine the arguments from the three steps.
+                # kwargs will cover priority follows: propagation_kwargs < binding_kwargs < injection_kwargs < ferry_kwargs
+                next_args, next_kwargs = safely_map_args(
+                    (*binding_args, *ferry_args), 
+                    {**propagation_kwargs, **binding_kwargs, **injection_kwargs, **ferry_kwargs}, 
+                    self._workers[kickoff_info.worker_key],
+                )
+                
                 # Collect the output worker keys.
                 if self._workers[kickoff_info.worker_key].is_output:
                     is_output_worker_keys.add(kickoff_info.worker_key)
@@ -1372,6 +1377,7 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
                         )
 
                 # Schedule task for each kickoff worker.
+                worker_obj = self._workers[kickoff_info.worker_key]
                 if worker_obj.is_automa():
                     coro = worker_obj.arun(
                         *next_args,
@@ -1646,104 +1652,6 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
                 if isinstance(self_obj, Worker) and (not isinstance(self_obj, Automa)) and (frame_info.function == "arun" or frame_info.function == "run"):
                     return self_obj
         return None
-
-    def _mapping_args(
-        self, 
-        kickoff_worker_key: str,
-        current_worker_key: str,
-    ) -> Tuple[Tuple[Any, ...], Dict[str, Any]]:
-        """
-        Resolve arguments mapping between workers that have dependency relationships.
-
-        Parameters
-        ----------
-        kickoff_worker_key : str
-            The key of the kickoff worker.
-        current_worker_key : str
-            The key of the current worker.
-        
-        Returns
-        -------
-        Tuple[Tuple[Any, ...], Dict[str, Any]]
-            The mapped positional arguments and keyword arguments.
-        """
-        current_worker_obj = self._workers[current_worker_key]
-        args_mapping_rule = current_worker_obj.args_mapping_rule
-        dep_workers_keys = self._get_worker_dependencies(current_worker_key)
-        assert kickoff_worker_key in dep_workers_keys
-
-        def as_is_return_values(results: List[Any]) -> Tuple[Tuple, Dict[str, Any]]:
-            next_args, next_kwargs = tuple(results), {}
-            return next_args, next_kwargs
-
-        def unpack_return_value(result: Any) -> Tuple[Tuple, Dict[str, Any]]:
-            if dep_workers_keys != [kickoff_worker_key]:
-                raise WorkerArgsMappingError(
-                    f"The worker \"{current_worker_key}\" must has exactly one dependency for the args_mapping_rule=\"{ArgsMappingRule.UNPACK}\", "
-                    f"but got {len(dep_workers_keys)} dependencies: {dep_workers_keys}"
-                )
-            # result is not allowed to be None, since None can not be unpacked.
-            if isinstance(result, (List, Tuple)):
-                # Similar args mapping logic to as_is_return_values()
-                next_args, next_kwargs = tuple(result), {}
-            elif isinstance(result, Mapping):
-                next_args, next_kwargs = (), {**result}
-
-            else:
-                # Other types, including None, are not unpackable.
-                raise WorkerArgsMappingError(
-                    f"args_mapping_rule=\"{ArgsMappingRule.UNPACK}\" is only valid for "
-                    f"tuple/list, or dict. But the worker \"{current_worker_key}\" got type \"{type(result)}\" from the kickoff worker \"{kickoff_worker_key}\"."
-                )
-            return next_args, next_kwargs
-
-        def merge_return_values(results: List[Any]) -> Tuple[Tuple, Dict[str, Any]]:
-            next_args, next_kwargs = tuple([results]), {}
-            return next_args, next_kwargs
-
-        if args_mapping_rule == ArgsMappingRule.AS_IS:
-            next_args, next_kwargs = as_is_return_values([self._worker_output[dep_worker_key] for dep_worker_key in dep_workers_keys])
-        elif args_mapping_rule == ArgsMappingRule.UNPACK:
-            next_args, next_kwargs = unpack_return_value(self._worker_output[kickoff_worker_key])
-        elif args_mapping_rule == ArgsMappingRule.MERGE:
-            next_args, next_kwargs = merge_return_values([self._worker_output[dep_worker_key] for dep_worker_key in dep_workers_keys])
-        elif args_mapping_rule == ArgsMappingRule.SUPPRESSED:
-            next_args, next_kwargs = (), {}
-
-        return next_args, next_kwargs
-
-    def _propagate_inputs(
-        self, 
-        current_worker_key: str,
-        next_args: Tuple[Any, ...],
-        next_kwargs: Dict[str, Any],
-        input_kwargs: Dict[str, Any],
-    ) -> Tuple[Tuple[Any, ...], Dict[str, Any]]:
-        """
-        Resolve inputs propagation from the input buffer of the container Automa to every worker within the Automa.
-
-        Parameters
-        ----------
-        current_worker_key : str
-            The key of the current worker.
-        next_args : Tuple[Any, ...]
-            The positional arguments to be mapped.
-        next_kwargs : Dict[str, Any]
-            The keyword arguments to be mapped.
-        input_kwargs : Dict[str, Any]
-            The keyword arguments to be propagated from the input buffer of the container Automa.
-
-        Returns
-        -------
-        Tuple[Tuple[Any, ...], Dict[str, Any]]
-            The mapped positional arguments and keyword arguments.
-        """
-        current_worker_obj = self._workers[current_worker_key]
-        input_kwargs = {k:v for k,v in input_kwargs.items() if k not in next_kwargs}
-        next_kwargs = {**next_kwargs, **input_kwargs}
-        rx_param_names_dict = current_worker_obj.get_input_param_names()
-        next_args, next_kwargs = safely_map_args(next_args, next_kwargs, rx_param_names_dict)
-        return next_args, next_kwargs
 
     def __repr__(self) -> str:
         # TODO : It's good to make __repr__() of Automa compatible with eval().

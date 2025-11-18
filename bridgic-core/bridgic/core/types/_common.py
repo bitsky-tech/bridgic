@@ -19,18 +19,24 @@ class ArgsMappingRule(Enum):
 
     Attributes
     ----------
-    AS_IS: Enum
-        Preserves the exact order and types of return values from predecessor workers.
-        No unpacking or merging is performed.
+    AS_IS: Enum (default)
+        Map the results of the previous workers to the corresponding parameters 
+        in the order of dependency.
+    MERGE: Enum
+        Merges all results from previous workers into a single tuple as the 
+        only argument of the current worker.
     UNPACK: Enum
-        Unpacks the return value from the predecessor worker and passes as individual 
+        Unpacks the result from the previous worker and passes as individual 
         arguments. Only valid when the current worker has exactly one dependency and 
         the return value is a list/tuple or dict.
-    MERGE: Enum
-        Merges all return values from predecessor workers into a single tuple as the 
-        only argument of the current worker.
+    GATHER: Enum (default)
+        Gathers all results of current worker into a single tuple as the 
+        only result to the next workers.
+    DISTRIBUTE: Enum
+        Distribute the current worker's results to the after workers in the order 
+        they are added.
     SUPPRESSED: Enum
-        Suppresses all return values from predecessor workers. No arguments are passed 
+        Suppress all results from previous workers. No arguments are passed 
         to the current worker from its dependencies.
 
     Examples
@@ -69,7 +75,14 @@ class ArgsMappingRule(Enum):
     3. MERGE combines all predecessor outputs into a single tuple argument
     4. SUPPRESSED allows workers to ignore dependency outputs completely
     """
+    # how to map the result from previous workers.
     AS_IS = "as_is"
-    UNPACK = "unpack"
     MERGE = "merge"
+    UNPACK = "unpack"
+
+    # how to send the result to the post workers.
+    GATHER = "gather"
+    DISTRIBUTE = "distribute"
+
+    # do nothing
     SUPPRESSED = "suppressed"
