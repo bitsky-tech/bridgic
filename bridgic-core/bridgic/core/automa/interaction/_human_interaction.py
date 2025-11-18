@@ -22,9 +22,9 @@ user-facing interfaces through appropriate communication channels to collect hum
 Receiving the necessary feedbacks from the application layer, the Automa object can reload 
 itself by calling `load_from_snapshot` with the pre-generated `Snapshot` object. Then the 
 execution can be resumed by calling the `arun` method. When resuming, feedback is passed through 
-the `interaction_feedback` parameter (containing the data provided by the user and the 
-`interaction_id`). In cases with multiple simultaneous interactions, the `interaction_feedbacks` 
-parameter is used instead.
+the `feedback_data` parameter (containing the data provided by the user and the 
+`interaction_id`). In cases with multiple simultaneous interactions, the `feedback_data` 
+parameter is also used as a list of `InteractionFeedback` objects.
 
 The execution of the Automa instance will resume from the worker where the interruption 
 occurred. The entire worker function will re-execute from the top; all code prior to 

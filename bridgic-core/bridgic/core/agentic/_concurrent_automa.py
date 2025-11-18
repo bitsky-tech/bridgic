@@ -1,9 +1,9 @@
 from typing import Optional, ClassVar
 from concurrent.futures import ThreadPoolExecutor
-from typing import List, Any, Callable, Final, cast, Tuple, Dict
+from typing import List, Any, Callable, Final, cast, Tuple, Dict, Union
 from typing_extensions import override
 
-from bridgic.core.automa import GraphAutoma
+from bridgic.core.automa import GraphAutoma, RunningOptions
 from bridgic.core.automa.worker import Worker
 from bridgic.core.types._error import AutomaRuntimeError
 from bridgic.core.types._common import AutomaType, ArgsMappingRule
@@ -37,8 +37,9 @@ class ConcurrentAutoma(GraphAutoma):
         self,
         name: Optional[str] = None,
         thread_pool: Optional[ThreadPoolExecutor] = None,
+        running_options: Optional[RunningOptions] = None,
     ):
-        super().__init__(name=name, thread_pool=thread_pool)
+        super().__init__(name=name, thread_pool=thread_pool, running_options=running_options)
 
         # Implementation notes:
         # There are two types of workers in the concurrent automa:
@@ -180,14 +181,12 @@ class ConcurrentAutoma(GraphAutoma):
     async def arun(
         self, 
         *args: Tuple[Any, ...],
-        interaction_feedback: Optional[InteractionFeedback] = None,
-        interaction_feedbacks: Optional[List[InteractionFeedback]] = None,
+        feedback_data: Optional[Union[InteractionFeedback, List[InteractionFeedback]]] = None,
         **kwargs: Dict[str, Any]
     ) -> List[Any]:
         result = await super().arun(
             *args,
-            interaction_feedback=interaction_feedback,
-            interaction_feedbacks=interaction_feedbacks,
+            feedback_data=feedback_data,
             **kwargs
         )
         return cast(List[Any], result)

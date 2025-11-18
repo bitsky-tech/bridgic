@@ -449,7 +449,7 @@ def interaction_feedback_1_yes(request):
 async def test_adder_automa_1_interact_with_yes_feedback(interaction_feedback_1_yes, deserialized_adder_automa1):
     # Note: no need to pass the original argument x=100, because the deserialized_adder_automa1 is restored from the snapshot.
     result = await deserialized_adder_automa1.arun(
-        interaction_feedback=interaction_feedback_1_yes
+        feedback_data=interaction_feedback_1_yes
     )
     assert result == 303
 
@@ -471,7 +471,7 @@ def interaction_feedback_1_no(request):
 async def test_adder_automa_1_interact_with_no_feedback(interaction_feedback_1_no, deserialized_adder_automa1, request, db_base_path):
     try:
         result = await deserialized_adder_automa1.arun(
-            interaction_feedback=interaction_feedback_1_no
+            feedback_data=interaction_feedback_1_no
         )
     except InteractionException as e:
         assert e.interactions[0].event.event_type == "if_add"
@@ -516,7 +516,7 @@ def interaction_feedback_2_yes(request):
 @pytest.mark.asyncio
 async def test_adder_automa_1_interact_with_2_yes_feedback(interaction_feedback_2_yes, deserialized_adder_automa1_no):
     result = await deserialized_adder_automa1_no.arun(
-        interaction_feedback=interaction_feedback_2_yes
+        feedback_data=interaction_feedback_2_yes
     )
     assert result == 304
 

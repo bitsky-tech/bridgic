@@ -5,7 +5,7 @@ from typing_extensions import override
 from concurrent.futures import ThreadPoolExecutor
 from jinja2 import Environment, PackageLoader, Template
 
-from bridgic.core.automa import Automa, GraphAutoma, worker
+from bridgic.core.automa import Automa, GraphAutoma, worker, RunningOptions
 from bridgic.core.automa.args import From, ArgsMappingRule, System
 from bridgic.core.model.protocols import ToolSelection
 from bridgic.core.model.types import Tool, ToolCall
@@ -45,10 +45,11 @@ class ReActAutoma(GraphAutoma):
         tools: Optional[List[Union[Callable, Automa, ToolSpec]]] = None,
         name: Optional[str] = None,
         thread_pool: Optional[ThreadPoolExecutor] = None,
+        running_options: Optional[RunningOptions] = None,
         max_iterations: int = DEFAULT_MAX_ITERATIONS,
         prompt_template: str = DEFAULT_TEMPLATE_FILE,
     ):
-        super().__init__(name=name, thread_pool=thread_pool)
+        super().__init__(name=name, thread_pool=thread_pool, running_options=running_options)
 
         self._llm = llm
         if system_prompt:
@@ -120,16 +121,14 @@ class ReActAutoma(GraphAutoma):
         chat_history: Optional[List[Union[UserTextMessage, AssistantTextMessage, ToolMessage]]] = None,
         messages: Optional[List[ChatMessage]] = None,
         tools: Optional[List[Union[Callable, Automa, ToolSpec]]] = None,
-        interaction_feedback: Optional[InteractionFeedback] = None,
-        interaction_feedbacks: Optional[List[InteractionFeedback]] = None,
+        feedback_data: Optional[Union[InteractionFeedback, List[InteractionFeedback]]] = None,
     ) -> Any:
         return await super().arun(
             user_msg=user_msg,
             chat_history=chat_history,
             messages=messages,
             tools=tools,
-            interaction_feedback=interaction_feedback,
-            interaction_feedbacks=interaction_feedbacks,
+            feedback_data=feedback_data,
         )
 
     @worker(is_start=True)

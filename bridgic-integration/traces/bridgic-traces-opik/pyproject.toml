@@ -1,0 +1,39 @@
+[project]
+name = "bridgic-traces-opik"
+version = "0.1.0"
+license = {text = "MIT"}
+classifiers = [
+    # "Private :: Do Not Upload",
+    "Programming Language :: Python :: 3",
+]
+description = "Opik observability integration for Bridgic."
+readme = "README.md"
+requires-python = ">=3.9"
+authors = [
+    { name = "Tielei Zhang", email = "zhangtl04@gmail.com" },
+]
+
+dependencies = [
+    "bridgic-core>=0.1.2",
+    "opik>=1.8.97",
+    "urllib3<2.0", # for fixing urllib3 warning in python 3.9, see https://github.com/urllib3/urllib3/issues/3020
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.4.0",
+    "pytest-asyncio>=1.0.0",
+]
+
+[tool.pytest.ini_options]
+addopts = ["--tb=short", "--verbose"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build]
+include = ["bridgic/"]
+
+[tool.uv.sources]
+bridgic-core = { path = "../../../bridgic-core", editable = true }
