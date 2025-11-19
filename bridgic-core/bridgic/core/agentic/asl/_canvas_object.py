@@ -1,4 +1,5 @@
 import inspect
+from inspect import Parameter
 from contextvars import ContextVar
 from dataclasses import dataclass
 from pydantic_core import PydanticUndefinedType
@@ -7,9 +8,8 @@ from typing import List, Any, Union, Callable, Tuple, Type, Optional, Dict
 
 from bridgic.core.automa.worker import Worker
 from bridgic.core.automa import GraphAutoma, RunningOptions
-from bridgic.core.automa.args import ArgsMappingRule, Distribute
+from bridgic.core.automa.args import ArgsMappingRule, Distribute, override_func_signature, set_method_signature
 from bridgic.core.agentic import ConcurrentAutoma
-from bridgic.core.utils._inspect_tools import override_func_signature, set_method_signature
 from bridgic.core.types._error import ASLCompilationError
 
 graph_stack: ContextVar[List["_Canvas"]] = ContextVar("graph_stack", default=[])
@@ -33,12 +33,11 @@ class Data:
             Keyword arguments where each key is a parameter name and each value
             is the default value for that parameter. The type is set to Any by default.
         """
-        data = {}
+        data = {
+            Parameter.POSITIONAL_OR_KEYWORD: [],
+        }
         for key, value in kwargs.items():
-            data[key] = {
-                "type": Any,
-                "default": value,
-            }
+            data[Parameter.POSITIONAL_OR_KEYWORD].append((key, value))
         self.data = data
 
     def __rmul__(self, other: Union[Callable, Worker]):
@@ -483,6 +482,7 @@ class _Canvas(_CanvasObject):
 
         if self.params:
             set_method_signature(self.worker_material.arun, self.params)
+            print(f"self.worker_material.arun.__signature__: {self.worker_material.get_input_param_names()}")
 
     def is_top_level(self) -> bool:
         """
@@ -582,7 +582,10 @@ class _GraphContextManager:
         ASLCompilationError
             If any value is not an ASLField instance.
         """
-        params = {}
+        # All parameters are POSITIONAL_OR_KEYWORD type
+        params = {
+            Parameter.POSITIONAL_OR_KEYWORD: []
+        }
         for key, value in kwargs.items():
             if not isinstance(value, ASLField):
                 raise ASLCompilationError(f"Invalid field type: {type(value)}.")
@@ -595,10 +598,7 @@ class _GraphContextManager:
                 if not isinstance(value.default, PydanticUndefinedType) 
                 else inspect._empty
             )
-            params[key] = {
-                "type": value.type,
-                "default": default_value
-            }
+            params[Parameter.POSITIONAL_OR_KEYWORD].append((key, default_value))
         self.params = params
         return self
 
