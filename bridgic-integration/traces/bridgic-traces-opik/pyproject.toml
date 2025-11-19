@@ -1,6 +1,6 @@
 [project]
 name = "bridgic-traces-opik"
-version = "0.1.0"
+version = "0.1.1.dev1"
 license = {text = "MIT"}
 classifiers = [
     # "Private :: Do Not Upload",
@@ -8,13 +8,13 @@ classifiers = [
 ]
 description = "Opik observability integration for Bridgic."
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 authors = [
     { name = "Tielei Zhang", email = "zhangtl04@gmail.com" },
 ]
 
 dependencies = [
-    "bridgic-core>=0.1.2",
+    "bridgic-core>=0.1.3.dev1",
     "opik>=1.8.97",
     "urllib3<2.0", # for fixing urllib3 warning in python 3.9, see https://github.com/urllib3/urllib3/issues/3020
 ]
