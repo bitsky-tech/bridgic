@@ -81,7 +81,7 @@ def resolve_from(dep: From, worker_output: Dict[str, Any]) -> Any:
     inject_res = worker_output.get(dep.key, dep.default)
     if isinstance(inject_res, InjectorNone):
         raise WorkerArgsInjectionError(
-            f"the worker: `{dep.key}` is not found in the worker dictionary. "
+            f"the worker: `{dep.key}` is not found in the automa or `{dep.key}` is already removed. "
             "You may need to set the default value of the parameter to a `From` instance with the key of the worker."
         )
     return inject_res
@@ -178,9 +178,10 @@ class System(ArgsDescriptor):
         
         if not any(re.match(pattern, self.key) for pattern in allowed_patterns):
             raise WorkerArgsInjectionError(
-                f"Key '{self.key}' is not supported. Supported keys: "
-                f"`runtime_context`: a context for data persistence of the current worker."
-                f"`automa:.*`: a sub-automa in current automa."
+                f"Key '{self.key}' is not supported. Supported keys: \n"
+                f"- `runtime_context`: a context for data persistence of the current worker.\n"
+                f"- `automa:<worker_key>`: a sub-automa in current automa.\n"
+                f"- `automa`: the current automa instance.\n"
             )
 
 JSON_SCHEMA_IGNORE_ARG_TYPES = (System, From)
