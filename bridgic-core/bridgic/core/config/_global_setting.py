@@ -2,32 +2,33 @@
 Global settings for the Bridgic framework.
 """
 
-from typing import List, Optional, ClassVar
+from typing import List, Optional, ClassVar, TYPE_CHECKING
 from pydantic import BaseModel
 from threading import Lock
 
-from bridgic.core.automa.worker._worker_callback import WorkerCallbackBuilder
+if TYPE_CHECKING:
+    from bridgic.core.automa.worker._worker_callback import WorkerCallbackBuilder
 
 
 class GlobalSetting(BaseModel):
     """
-    Global settings for the Bridgic framework.
-    
-    This class uses a singleton pattern. The singleton instance is accessed via 
-    `GlobalSetting.get()` and can be configured via `GlobalSetting.set()`.
-    
-    These settings apply to all Automa instances and are merged with Automa-level 
-    and Worker-level settings. Global settings are not overridden by other levels; 
-    instead, they are combined in the order: Global -> Automa -> Worker.
-    
+    Global configuration settings for the Bridgic framework.
+
+    This class implements a singleton pattern to provide centralized configuration
+    that applies across all Automa instances. The main methods are:
+
+    - `GlobalSetting.read()`: Get the singleton global setting instance.
+    - `GlobalSetting.set()`: Set the specific fields of the global setting instance.
+
     Attributes
     ----------
     callback_builders : List[WorkerCallbackBuilder]
-        Global callback builders that will be applied to all workers.
+        Callback builders that will be automatically applied to all workers
+        across all Automa instances.
     """
     model_config = {"arbitrary_types_allowed": True}
 
-    callback_builders: List[WorkerCallbackBuilder] = []
+    callback_builders: List["WorkerCallbackBuilder"] = []
     """Global callback builders that will be applied to all workers."""
 
     # Singleton instance
@@ -53,7 +54,7 @@ class GlobalSetting(BaseModel):
     @classmethod
     def set(
         cls,
-        callback_builders: Optional[List[WorkerCallbackBuilder]] = None,
+        callback_builders: Optional[List["WorkerCallbackBuilder"]] = None,
     ) -> None:
         """
         Set global setting fields.

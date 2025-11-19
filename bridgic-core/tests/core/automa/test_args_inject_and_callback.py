@@ -1,7 +1,7 @@
 import pytest
 from typing import Tuple, Dict, Any, Optional
 
-from bridgic.core.automa import GraphAutoma, Snapshot, worker, AutomaRuntimeError
+from bridgic.core.automa import GraphAutoma, Snapshot, worker, Automa
 from bridgic.core.automa.args import From, ArgsMappingRule, System
 from bridgic.core.automa.interaction import Event, InteractionFeedback, InteractionException
 from bridgic.core.automa.worker import Worker, WorkerCallback, WorkerCallbackBuilder
@@ -25,7 +25,7 @@ def args_inject_and_callback_graph():
             self, 
             key: str,
             is_top_level: bool = False,
-            parent: Optional[GraphAutoma] = None,
+            parent: Optional[Automa] = None,
             arguments: Dict[str, Any] = None,
         ) -> None:
             print(f"Pre callback for worker {key}")
@@ -34,7 +34,7 @@ def args_inject_and_callback_graph():
             self, 
             key: str,
             is_top_level: bool = False,
-            parent: Optional[GraphAutoma] = None,
+            parent: Optional[Automa] = None,
             arguments: Dict[str, Any] = None,
             result: Any = None,
         ) -> None:

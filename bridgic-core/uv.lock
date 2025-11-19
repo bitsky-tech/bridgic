@@ -214,7 +214,7 @@ wheels = [
 
 [[package]]
 name = "bridgic-core"
-version = "0.1.1"
+version = "0.1.2"
 source = { editable = "." }
 dependencies = [
     { name = "docstring-parser" },
@@ -242,9 +242,9 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "bridgic-llms-openai", directory = "../bridgic-integration/llms/bridgic-llms-openai" },
-    { name = "bridgic-llms-openai-like", directory = "../bridgic-integration/llms/bridgic-llms-openai-like" },
-    { name = "bridgic-llms-vllm", directory = "../bridgic-integration/llms/bridgic-llms-vllm" },
+    { name = "bridgic-llms-openai", editable = "../bridgic-integration/llms/bridgic-llms-openai" },
+    { name = "bridgic-llms-openai-like", editable = "../bridgic-integration/llms/bridgic-llms-openai-like" },
+    { name = "bridgic-llms-vllm", editable = "../bridgic-integration/llms/bridgic-llms-vllm" },
     { name = "pytest", specifier = ">=8.4.0" },
     { name = "pytest-asyncio", specifier = ">=1.0.0" },
 ]
@@ -252,7 +252,7 @@ dev = [
 [[package]]
 name = "bridgic-llms-openai"
 version = "0.1.1"
-source = { directory = "../bridgic-integration/llms/bridgic-llms-openai" }
+source = { editable = "../bridgic-integration/llms/bridgic-llms-openai" }
 dependencies = [
     { name = "bridgic-core" },
     { name = "bridgic-llms-openai-like" },
@@ -263,8 +263,8 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "bridgic-core", directory = "." },
-    { name = "bridgic-llms-openai-like", directory = "../bridgic-integration/llms/bridgic-llms-openai-like" },
+    { name = "bridgic-core", editable = "." },
+    { name = "bridgic-llms-openai-like", editable = "../bridgic-integration/llms/bridgic-llms-openai-like" },
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "httpx-aiohttp", specifier = ">=0.1.8" },
     { name = "openai", specifier = ">=1.60.0" },
@@ -279,7 +279,7 @@ dev = [
 [[package]]
 name = "bridgic-llms-openai-like"
 version = "0.1.1"
-source = { directory = "../bridgic-integration/llms/bridgic-llms-openai-like" }
+source = { editable = "../bridgic-integration/llms/bridgic-llms-openai-like" }
 dependencies = [
     { name = "bridgic-core" },
     { name = "httpx" },
@@ -289,7 +289,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "bridgic-core", directory = "." },
+    { name = "bridgic-core", editable = "." },
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "httpx-aiohttp", specifier = ">=0.1.8" },
     { name = "openai", specifier = ">=1.60.0" },
@@ -304,7 +304,7 @@ dev = [
 [[package]]
 name = "bridgic-llms-vllm"
 version = "0.1.1"
-source = { directory = "../bridgic-integration/llms/bridgic-llms-vllm" }
+source = { editable = "../bridgic-integration/llms/bridgic-llms-vllm" }
 dependencies = [
     { name = "bridgic-core" },
     { name = "bridgic-llms-openai-like" },
@@ -312,8 +312,8 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "bridgic-core", directory = "." },
-    { name = "bridgic-llms-openai-like", directory = "../bridgic-integration/llms/bridgic-llms-openai-like" },
+    { name = "bridgic-core", editable = "." },
+    { name = "bridgic-llms-openai-like", editable = "../bridgic-integration/llms/bridgic-llms-openai-like" },
 ]
 
 [package.metadata.requires-dev]
