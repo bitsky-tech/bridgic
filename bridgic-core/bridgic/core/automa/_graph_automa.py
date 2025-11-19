@@ -1124,7 +1124,7 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
         - The application layer may persist the `Snapshot` properly to resume the execution later.
         - To resume execution, the application layer should reload the Automa state using 
           `load_from_snapshot()` with the saved `Snapshot` object and call `arun()` again with 
-          `feedback_data` containing the user's feedback(s) to finish a complete interactions.
+          `feedback_data` containing the user's feedback(s) to finish a complete interaction.
 
         Parameters
         ----------
