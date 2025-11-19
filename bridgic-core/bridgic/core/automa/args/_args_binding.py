@@ -1,8 +1,10 @@
-import json
+import enum
+import inspect
+from inspect import Parameter
 from copy import deepcopy
-from inspect import Parameter, _empty
 from dataclasses import dataclass
-from typing import Literal, Tuple, Any, List, Dict, Mapping, Union, Optional
+from typing import Literal, Tuple, Any, List, Dict, Mapping, Union, Callable
+from types import MethodType
 from typing_extensions import TYPE_CHECKING
 
 from bridgic.core.types._common import ArgsMappingRule
@@ -47,7 +49,7 @@ class Distribute:
     ValueError
         If the data is not a list or tuple.
     """
-    data: Union[List[Any], Tuple[Any], _empty] = None
+    data: Union[List[Any], Tuple[Any], inspect._empty] = None
 
     def check_data(self) -> None:
         if not isinstance(self.data, (List, Tuple)):
@@ -798,3 +800,227 @@ def get_filled_params(
             }
 
     return result
+
+
+def override_func_signature(
+    name: str,
+    func: Union[Callable, MethodType],
+    data: Dict[enum.IntEnum, List[Tuple[str, Any]]],
+) -> None:
+    """
+    Override the signature of a function or method, updating only parameters present in data.
+    
+    This function preserves the original parameter order and keeps VAR_POSITIONAL and VAR_KEYWORD
+    parameters unchanged. It only updates parameters that exist in both the original signature
+    and the provided data.
+    
+    Parameters
+    ----------
+    name : str
+        The name of the function (used for error messages).
+    func : Union[Callable, MethodType]
+        The function or method to override the signature for.
+    data : Dict[enum.IntEnum, List[Tuple[str, Any]]]
+        Parameter data from get_param_names_all_kinds, where key is Parameter kind,
+        value is list of (param_name, default_value) tuples.
+    """
+    if isinstance(func, MethodType):
+        func = func.__func__
+    original_sig = inspect.signature(func)
+    original_params_dict = {p.name: p for p in original_sig.parameters.values()}
+    
+    # Build a mapping of param_name -> (param_kind, default_value) from data
+    data_params_map = {}
+    for param_kind, param_list in data.items():
+        for param_name, default_value in param_list:
+            if param_name in data_params_map:
+                raise ValueError(f"Duplicate parameter '{param_name}' in data")
+            data_params_map[param_name] = (param_kind, default_value)
+    
+    # Validate: only allow overriding existing non-varargs names
+    existing_param_names = set(original_params_dict.keys())
+    extra_keys = set(data_params_map.keys()) - existing_param_names
+    if extra_keys:
+        raise TypeError(f"{name} has unsupported parameters: {sorted(extra_keys)}")
+    
+    # Override the function signature (preserve original order and VAR_POSITIONAL/VAR_KEYWORD)
+    new_params = []
+    for param_name, original_param in original_sig.parameters.items():
+        if original_param.kind in (Parameter.VAR_POSITIONAL, Parameter.VAR_KEYWORD):
+            # Keep VAR_POSITIONAL and VAR_KEYWORD unchanged
+            new_params.append(original_param)
+            continue
+        
+        if param_name in data_params_map:
+            # Update this parameter from data
+            param_kind, default_value = data_params_map[param_name]
+            
+            # Convert inspect._empty to Parameter.empty for consistency
+            if default_value is inspect._empty:
+                default_value = Parameter.empty
+            
+            # Preserve original annotation if available
+            annotation = original_param.annotation
+            
+            new_param = Parameter(
+                name=param_name,
+                kind=param_kind,
+                default=default_value,
+                annotation=annotation,
+            )
+            new_params.append(new_param)
+        else:
+            # Keep original parameter unchanged
+            new_params.append(original_param)
+    
+    new_signature = original_sig.replace(parameters=new_params)
+    setattr(func, "__signature__", new_signature)
+
+
+def set_func_signature(
+    func: Callable,
+    data: Dict[enum.IntEnum, List[Tuple[str, Any]]],
+) -> None:
+    """
+    Set the signature of a function based on provided data from get_param_names_all_kinds.
+    
+    Parameters
+    ----------
+    func : Callable
+        The function to set the signature for.
+    data : Dict[enum.IntEnum, List[Tuple[str, Any]]]
+        Parameter data from get_param_names_all_kinds, where key is Parameter kind,
+        value is list of (param_name, default_value) tuples.
+    """
+    # Get original signature to extract type annotations
+    original_sig = inspect.signature(func)
+    original_params_dict = {p.name: p for p in original_sig.parameters.values()}
+    
+    # Process parameters in the correct order: POSITIONAL_ONLY -> POSITIONAL_OR_KEYWORD -> VAR_POSITIONAL -> KEYWORD_ONLY -> VAR_KEYWORD
+    param_kinds_order = [
+        Parameter.POSITIONAL_ONLY,
+        Parameter.POSITIONAL_OR_KEYWORD,
+        Parameter.VAR_POSITIONAL,
+        Parameter.KEYWORD_ONLY,
+        Parameter.VAR_KEYWORD,
+    ]
+    
+    params = []
+    for param_kind in param_kinds_order:
+        if param_kind not in data:
+            continue
+        
+        param_list = data[param_kind]
+        for param_name, default_value in param_list:
+            # Get annotation from original signature if available
+            annotation = inspect._empty
+            if param_name in original_params_dict:
+                annotation = original_params_dict[param_name].annotation
+            
+            # Convert inspect._empty to Parameter.empty if needed
+            # (they are the same object, but we use Parameter.empty for consistency)
+            if default_value is inspect._empty:
+                default_value = Parameter.empty
+            
+            param = Parameter(
+                name=param_name,
+                kind=param_kind,
+                default=default_value,
+                annotation=annotation,
+            )
+            params.append(param)
+    
+    new_signature = inspect.Signature(parameters=params)
+    setattr(func, "__signature__", new_signature)
+
+
+def set_method_signature(
+    method: MethodType,
+    data: Dict[enum.IntEnum, List[Tuple[str, Any]]],
+) -> None:
+    """
+    Set the signature of a method based on provided data from get_param_names_all_kinds.
+    
+    Parameters
+    ----------
+    method : MethodType
+        The bound method to set the signature for.
+    data : Dict[enum.IntEnum, List[Tuple[str, Any]]]
+        Parameter data from get_param_names_all_kinds, where key is Parameter kind,
+        value is list of (param_name, default_value) tuples.
+    """
+    # Get the original signature to preserve 'self' parameter
+    original_sig = inspect.signature(method.__func__)
+    original_params = list(original_sig.parameters.values())
+    original_params_dict = {p.name: p for p in original_params}
+    
+    # Store the original signature on the class if not already stored
+    # This allows us to restore it for instances that don't have custom signatures
+    func = method.__func__
+    original_sig_attr = f"__{func.__name__}_original_signature__"
+    if not hasattr(func, original_sig_attr):
+        setattr(func, original_sig_attr, original_sig)
+    
+    # Extract 'self' parameter if it exists (should be the first parameter for instance methods)
+    self_param = None
+    if original_params and original_params[0].name == 'self':
+        self_param = original_params[0]
+    
+    # Process parameters in the correct order: POSITIONAL_ONLY -> POSITIONAL_OR_KEYWORD -> VAR_POSITIONAL -> KEYWORD_ONLY -> VAR_KEYWORD
+    param_kinds_order = [
+        Parameter.POSITIONAL_ONLY,
+        Parameter.POSITIONAL_OR_KEYWORD,
+        Parameter.VAR_POSITIONAL,
+        Parameter.KEYWORD_ONLY,
+        Parameter.VAR_KEYWORD,
+    ]
+    
+    params = []
+    for param_kind in param_kinds_order:
+        if param_kind not in data:
+            continue
+        
+        param_list = data[param_kind]
+        for param_name, default_value in param_list:
+            # Skip 'self' parameter as it will be added separately
+            if param_name == 'self':
+                continue
+            
+            # Get annotation from original signature if available
+            annotation = inspect._empty
+            if param_name in original_params_dict:
+                annotation = original_params_dict[param_name].annotation
+            
+            # Convert inspect._empty to Parameter.empty if needed
+            # (they are the same object, but we use Parameter.empty for consistency)
+            if default_value is inspect._empty:
+                default_value = Parameter.empty
+            
+            param = Parameter(
+                name=param_name,
+                kind=param_kind,
+                default=default_value,
+                annotation=annotation,
+            )
+            params.append(param)
+    
+    # Combine: self (if exists) + params
+    final_params = []
+    if self_param is not None:
+        final_params.append(self_param)
+    final_params.extend(params)
+    
+    new_signature = inspect.Signature(parameters=final_params)
+    
+    # For bound methods, set signature on the underlying function object
+    # Bound method objects are read-only, so we need to modify __func__.__signature__
+    # This maintains backward compatibility for code that reads from the class method
+    setattr(method.__func__, "__signature__", new_signature)
+    
+    # Additionally, store the signature on the instance to allow per-instance signatures
+    # This prevents signature pollution between instances when set_method_signature is called
+    # The instance signature takes precedence in get_param_names_all_kinds
+    instance = method.__self__
+    method_name = method.__func__.__name__
+    signature_attr = f"__{method_name}_signature__"
+    setattr(instance, signature_attr, new_signature)

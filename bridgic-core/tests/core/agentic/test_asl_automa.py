@@ -102,9 +102,15 @@ def asl_run_correctly_graph():
             
             +a >> b >> c >> ~d
 
+    class SubGraph2(ASLAutoma):
+        with graph as g:
+            a = worker1
+
+            ~(+a)
+
     class MyGraph(ASLAutoma):
         with graph as g:  # input: 1
-            a = worker1   # 2
+            a = SubGraph2()   # 2
             b = worker2   # 4
             c = Worker3(y=1) # 5
             d = SubGraph() *Settings(args_mapping_rule=ArgsMappingRule.DISTRIBUTE)  # [10, 11, 12, 13, 14]

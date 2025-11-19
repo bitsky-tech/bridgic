@@ -1,15 +1,16 @@
 import copy
 import uuid
-from typing import Callable, List, Any, Dict, Tuple, Union
+from typing import Callable, List, Any, Dict, Tuple, Union, Optional
 
 from bridgic.core.automa import GraphAutoma, RunningOptions
 from bridgic.core.automa.worker import Worker, WorkerCallback, WorkerCallbackBuilder
-from bridgic.core.automa.args import ArgsMappingRule, Distribute
+from bridgic.core.automa.args import ArgsMappingRule, Distribute, override_func_signature, set_method_signature
 from bridgic.core.automa._graph_automa import GraphMeta
+from bridgic.core.automa.interaction import InteractionFeedback
 from bridgic.core.agentic import ConcurrentAutoma
 from bridgic.core.agentic.asl._canvas_object import _Canvas, _Element, _CanvasObject, graph_stack, Settings, Data, KeyUnDifined
-from bridgic.core.utils._inspect_tools import get_func_signature_data, set_method_signature, override_func_signature
 from bridgic.core.types._error import ASLCompilationError
+
 
 
 class TrackingNamespace(dict):
@@ -403,7 +404,7 @@ class ASLAutoma(GraphAutoma, metaclass=ASLAutomaMeta):
         canvas.make_automa(running_options=RunningOptions(callback_builders=running_options_callback))
         if canvas.is_top_level():
             automa = self
-            params_data = get_func_signature_data(canvas.worker_material.arun)
+            params_data = canvas.worker_material.get_input_param_names()
             set_method_signature(self.arun, params_data)
         else:
             automa = canvas.worker_material
@@ -452,27 +453,6 @@ class ASLAutoma(GraphAutoma, metaclass=ASLAutomaMeta):
                 )
             else:
                 raise ValueError(f"Invalid automa type: {type(automa)}.")
-
-    async def arun(self, *args: Tuple[Any, ...], **kwargs: Dict[str, Any]) -> Any:
-        """
-        Execute the automaton asynchronously.
-        
-        This method runs the graph workflow with the provided arguments. The signature
-        of this method is dynamically set based on the root canvas's parameter definitions.
-        
-        Parameters
-        ----------
-        *args : Tuple[Any, ...]
-            Positional arguments to pass to the automaton.
-        **kwargs : Dict[str, Any]
-            Keyword arguments to pass to the automaton.
-            
-        Returns
-        -------
-        Any
-            The result of executing the automaton workflow.
-        """
-        return await super().arun(*args, **kwargs)
 
 
 def build_concurrent(
