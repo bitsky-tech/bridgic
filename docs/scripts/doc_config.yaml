@@ -40,6 +40,9 @@ packages:
   - name: "bridgic-traces-opik"
     path: "bridgic-integration/traces/bridgic-traces-opik"
     description: "Opik Observability Integration"
+  - name: "bridgic-traces-langwatch"
+    path: "bridgic-integration/traces/bridgic-traces-langwatch"
+    description: "LangWatch Observability Integration"
 
 # Documentation generation options
 generation_options:

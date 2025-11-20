@@ -2,12 +2,13 @@
 
 import time
 from bridgic.core.automa import Automa
+import opik
 from typing_extensions import override
 import warnings
 from typing import Any, Dict, Optional
 
 import opik.decorator.tracing_runtime_config as tracing_runtime_config
-from opik import context_storage as opik_context_storage
+from opik import context_storage as opik_context_storage, id_helpers
 from opik.api_objects import helpers, opik_client, span, trace
 from opik.decorator import error_info_collector
 from opik.types import ErrorInfoDict
@@ -34,29 +35,46 @@ class OpikTraceCallback(WorkerCallback):
     Parameters
     ----------
     project_name : Optional[str], default=None
-        The project name for Opik tracing. If None, uses default project name.
-    service_name : Optional[str], default=None
-        The service name for Opik tracing. If None, uses default service name.
+        The name of the project. If None, uses `Default Project` project name.
+    workspace : Optional[str], default=None
+        The name of the workspace. If None, uses `default` workspace name.
+    host : Optional[str], default=None
+        The host URL for the Opik server. If None, it will default to `https://www.comet.com/opik/api`.
+    api_key : Optional[str], default=None
+        The API key for Opik. This parameter is ignored for local installations.
+    use_local : bool, default=False
+        Whether to use local Opik server.
     """
 
     _project_name: Optional[str]
-    _service_name: Optional[str]
+    _workspace: Optional[str]
     _is_ready: bool
+    _api_key: Optional[str]
+    _host: Optional[str]
+    _use_local: bool
     _opik_client: opik_client.Opik
 
     def __init__(
         self,
-        project_name: Optional[str] = "default_project_name",
-        service_name: Optional[str] = "default_service_name",
+        project_name: Optional[str] = None,
+        workspace: Optional[str] = None,
+        host: Optional[str] = None,
+        api_key: Optional[str] = None,
+        use_local: bool = False,
     ):
         super().__init__()
         self._project_name = project_name
-        self._service_name = service_name
+        self._workspace = workspace
+        self._api_key = api_key
+        self._host = host
+        self._use_local = use_local
         self._is_ready = False
         self._setup_opik()
 
     def _setup_opik(self) -> None:
-        self._opik_client = opik_client.Opik(_use_batching=True, project_name=self._project_name)
+        if self._use_local:
+            opik.configure(use_local=True)
+        self._opik_client = opik_client.Opik(_use_batching=True, project_name=self._project_name, workspace=self._workspace, api_key=self._api_key, host=self._host)
         missing_configuration, _ = self._opik_client._config.get_misconfiguration_detection_results()
         if missing_configuration:
             self._is_ready = False # for serialization compatibility
@@ -88,7 +106,7 @@ class OpikTraceCallback(WorkerCallback):
     def _create_trace_data(self, trace_name: Optional[str] = None) -> trace.TraceData:
         return trace.TraceData(
             name=trace_name, 
-            metadata={"created_from": "bridgic", "service_name": self._service_name}, 
+            metadata={"created_from": "bridgic"}, 
             project_name=self._project_name
         )
 
@@ -390,7 +408,10 @@ class OpikTraceCallback(WorkerCallback):
     def dump_to_dict(self) -> Dict[str, Any]:
         state_dict = super().dump_to_dict()
         state_dict["project_name"] = self._project_name
-        state_dict["service_name"] = self._service_name
+        state_dict["workspace"] = self._workspace
+        state_dict["api_key"] = self._api_key
+        state_dict["host"] = self._host
+        state_dict["use_local"] = self._use_local
         state_dict["is_ready"] = self._is_ready
         return state_dict
 
@@ -398,6 +419,10 @@ class OpikTraceCallback(WorkerCallback):
     def load_from_dict(self, state_dict: Dict[str, Any]) -> None:
         super().load_from_dict(state_dict)
         self._project_name = state_dict["project_name"]
-        self._service_name = state_dict["service_name"]
+        self._workspace = state_dict["workspace"]
+        self._api_key = state_dict["api_key"]
+        self._host = state_dict["host"]
+        self._use_local = state_dict["use_local"]
         self._is_ready = state_dict["is_ready"]
         self._setup_opik() # if opik is not ready, it will be set to False
+

@@ -3,11 +3,16 @@
 import json
 import warnings
 from contextvars import ContextVar
-from typing import Any, Dict, Optional, Sequence, Tuple, TYPE_CHECKING
+from typing import Any, Dict, List, Optional, Sequence, Tuple, TYPE_CHECKING
 
 import langwatch
+from langwatch.state import get_instance
+from langwatch.types import BaseAttributes
 from langwatch.telemetry.span import LangWatchSpan
 from langwatch.telemetry.tracing import LangWatchTrace
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.instrumentation.instrumentor import BaseInstrumentor
+from langwatch.domain import BaseAttributes, SpanProcessingExcludeRule
 
 from bridgic.core.automa.worker import Worker, WorkerCallback
 from bridgic.core.utils._collection import serialize_data
@@ -15,6 +20,10 @@ from bridgic.core.utils._worker_tracing import (
     build_worker_tracing_dict,
     get_worker_tracing_step_name,
 )
+
+import logging
+
+logging.getLogger("langwatch.client").setLevel(logging.WARNING)
 
 
 if TYPE_CHECKING:
@@ -24,25 +33,45 @@ class LangWatchTraceCallback(WorkerCallback):
     """
     LangWatch tracing callback handler for Bridgic.
 
-    Mirrors the Opik integration but uses LangWatch traces/spans to
-    capture worker execution with structured inputs/outputs.
+    This callback handler integrates LangWatch tracing with Bridgic framework,
+    providing step-level tracing for worker execution and automa orchestration.
+    It tracks worker execution, creates spans for each worker, and manages
+    trace lifecycle for top-level automa instances.
+
+    **Configuration Scope**
+
+    This callback requires access to the automa context and can only be configured
+    at the **Automa level** (via `RunningOptions`) or **Global level** (via `GlobalSetting`).
+    It does not support worker-level configuration (via `@worker` decorator).
+
+    Parameters
+    ----------
+    api_key : Optional[str], default=None
+        The API key for the LangWatch tracing service, if none is provided, the `LANGWATCH_API_KEY` environment variable will be used.
+    endpoint_url : Optional[str], default=None
+        The URL of the LangWatch tracing service, if none is provided, the `LANGWATCH_ENDPOINT` environment variable will be used. If that is not provided, the default value will be `https://app.langwatch.ai`.
+    base_attributes : Optional[BaseAttributes], default=None
+        The base attributes to use for the LangWatch tracing client.
     """
 
-    _project_name: Optional[str]
-    _service_name: Optional[str]
+    _api_key: Optional[str]
+    _endpoint_url: Optional[str]
+    _base_attributes: BaseAttributes
     _is_ready: bool
     _current_trace: ContextVar[Optional[LangWatchTrace]]
     _current_span_stack: ContextVar[Tuple[LangWatchSpan, ...]]
 
     def __init__(
         self,
-        project_name: Optional[str] = "default_project_name",
-        service_name: Optional[str] = "default_service_name",
+        api_key: Optional[str] = None,
+        endpoint_url: Optional[str] = None,
+        base_attributes: Optional[BaseAttributes] = None,
     ):
         super().__init__()
-        self._project_name = project_name
-        self._service_name = service_name
         self._is_ready = False
+        self._api_key = api_key
+        self._endpoint_url = endpoint_url
+        self._base_attributes = base_attributes
         self._current_trace = ContextVar(
             "langwatch_current_trace", default=None
         )
@@ -56,7 +85,8 @@ class LangWatchTraceCallback(WorkerCallback):
         Initialize LangWatch and mark the callback as ready if configuration succeeds.
         """
         try:
-            langwatch.ensure_setup()
+            if get_instance() is None or self._api_key != get_instance().api_key:
+                langwatch.setup(api_key=self._api_key, endpoint_url=self._endpoint_url, base_attributes=self._base_attributes)
         except Exception as exc:
             self._is_ready = False
             warnings.warn(f"LangWatch setup failed, callback disabled: {exc}")
@@ -199,8 +229,6 @@ class LangWatchTraceCallback(WorkerCallback):
             "created_from": "bridgic", 
             "key": key, 
             "nesting_level": "0",
-            "service.name": self._service_name,
-            "project_name": self._project_name,
         }
         trace_data = langwatch.trace(
             name=key or "top_level_automa",
@@ -347,15 +375,17 @@ class LangWatchTraceCallback(WorkerCallback):
 
     def dump_to_dict(self) -> Dict[str, Any]:
         state_dict = super().dump_to_dict()
-        state_dict["project_name"] = self._project_name
-        state_dict["service_name"] = self._service_name
+        state_dict["api_key"] = self._api_key
+        state_dict["endpoint_url"] = self._endpoint_url
+        state_dict["base_attributes"] = self._base_attributes
         state_dict["is_ready"] = self._is_ready
         return state_dict
 
     def load_from_dict(self, state_dict: Dict[str, Any]) -> None:
         super().load_from_dict(state_dict)
-        self._project_name = state_dict.get("project_name")
-        self._service_name = state_dict.get("service_name")
+        self._api_key = state_dict.get("api_key")
+        self._endpoint_url = state_dict.get("endpoint_url")
+        self._base_attributes = state_dict.get("base_attributes")
         self._is_ready = state_dict.get("is_ready", False)
         self._current_trace = ContextVar(
             "langwatch_current_trace", default=None
