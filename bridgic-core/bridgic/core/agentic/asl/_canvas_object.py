@@ -482,7 +482,6 @@ class _Canvas(_CanvasObject):
 
         if self.params:
             set_method_signature(self.worker_material.arun, self.params)
-            print(f"self.worker_material.arun.__signature__: {self.worker_material.get_input_param_names()}")
 
     def is_top_level(self) -> bool:
         """
