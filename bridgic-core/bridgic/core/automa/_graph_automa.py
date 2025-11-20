@@ -1352,7 +1352,7 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
                 next_args, next_kwargs = safely_map_args(
                     (*binding_args, *ferry_args), 
                     {**propagation_kwargs, **binding_kwargs, **injection_kwargs, **ferry_kwargs}, 
-                    self._workers[kickoff_info.worker_key],
+                    self._workers[kickoff_info.worker_key].get_input_param_names(),
                 )
                 
                 # Collect the output worker keys.

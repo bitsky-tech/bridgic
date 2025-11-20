@@ -206,7 +206,6 @@ class _CanvasObject:
         self.parent_canvas = None
         self.left_canvas_obj = None
         self.right_canvas_obj = None
-        self.is_lambda = False
 
         # settings initialization
         self.settings = Settings(
@@ -424,7 +423,6 @@ class _Canvas(_CanvasObject):
         super().__init__(None, None)
         self.automa_type = automa_type
         self.params = params
-
         self.elements: Dict[str, Union["_Element", "_Canvas"]] = {}
 
     def register(self, key: str, value: Union["_Element", "_Canvas"]):
@@ -527,7 +525,8 @@ class _Element(_CanvasObject):
             The worker or callable function that this element wraps.
         """
         super().__init__(key, worker_material)
-        self.parent_canvas = None
+        self.is_lambda: bool = False
+        self.cached_param_names: Dict[_ParameterKind, List[str]] = None
 
     def __str__(self) -> str:
         return (

@@ -1,7 +1,6 @@
 import inspect
 import importlib
 import enum
-from inspect import Parameter
 
 from types import MethodType
 from typing import Callable, List, Dict, Any, Tuple, Union
