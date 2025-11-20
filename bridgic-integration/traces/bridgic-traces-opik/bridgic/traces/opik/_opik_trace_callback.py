@@ -35,15 +35,23 @@ class OpikTraceCallback(WorkerCallback):
     ----------
     project_name : Optional[str], default=None
         The project name for Opik tracing. If None, uses default project name.
+    service_name : Optional[str], default=None
+        The service name for Opik tracing. If None, uses default service name.
     """
 
     _project_name: Optional[str]
+    _service_name: Optional[str]
     _is_ready: bool
     _opik_client: opik_client.Opik
 
-    def __init__(self, project_name: Optional[str] = None):
+    def __init__(
+        self,
+        project_name: Optional[str] = "default_project_name",
+        service_name: Optional[str] = "default_service_name",
+    ):
         super().__init__()
         self._project_name = project_name
+        self._service_name = service_name
         self._is_ready = False
         self._setup_opik()
 
@@ -80,7 +88,7 @@ class OpikTraceCallback(WorkerCallback):
     def _create_trace_data(self, trace_name: Optional[str] = None) -> trace.TraceData:
         return trace.TraceData(
             name=trace_name, 
-            metadata={"created_from": "bridgic"}, 
+            metadata={"created_from": "bridgic", "service_name": self._service_name}, 
             project_name=self._project_name
         )
 
@@ -382,6 +390,7 @@ class OpikTraceCallback(WorkerCallback):
     def dump_to_dict(self) -> Dict[str, Any]:
         state_dict = super().dump_to_dict()
         state_dict["project_name"] = self._project_name
+        state_dict["service_name"] = self._service_name
         state_dict["is_ready"] = self._is_ready
         return state_dict
 
@@ -389,5 +398,6 @@ class OpikTraceCallback(WorkerCallback):
     def load_from_dict(self, state_dict: Dict[str, Any]) -> None:
         super().load_from_dict(state_dict)
         self._project_name = state_dict["project_name"]
+        self._service_name = state_dict["service_name"]
         self._is_ready = state_dict["is_ready"]
         self._setup_opik() # if opik is not ready, it will be set to False

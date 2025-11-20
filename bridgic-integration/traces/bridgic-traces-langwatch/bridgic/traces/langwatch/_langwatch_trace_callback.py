@@ -2,14 +2,14 @@
 
 import json
 import warnings
-from typing import Any, Dict, Optional, Sequence, TYPE_CHECKING
+from contextvars import ContextVar
+from typing import Any, Dict, Optional, Sequence, Tuple, TYPE_CHECKING
 
 import langwatch
 from langwatch.telemetry.span import LangWatchSpan
 from langwatch.telemetry.tracing import LangWatchTrace
 
 from bridgic.core.automa.worker import Worker, WorkerCallback
-from bridgic.core.tracing import ContextStack
 from bridgic.core.utils._collection import serialize_data
 from bridgic.core.utils._worker_tracing import (
     build_worker_tracing_dict,
@@ -20,11 +20,6 @@ from bridgic.core.utils._worker_tracing import (
 if TYPE_CHECKING:
     from bridgic.core.automa import Automa
 
-_WORKER_SPAN_STACK: ContextStack[LangWatchSpan] = ContextStack(
-    "langwatch_worker_span_stack"
-)
-_TRACE_STACK: ContextStack[LangWatchTrace] = ContextStack("langwatch_trace_stack")
-
 class LangWatchTraceCallback(WorkerCallback):
     """
     LangWatch tracing callback handler for Bridgic.
@@ -34,15 +29,26 @@ class LangWatchTraceCallback(WorkerCallback):
     """
 
     _project_name: Optional[str]
+    _service_name: Optional[str]
     _is_ready: bool
+    _current_trace: ContextVar[Optional[LangWatchTrace]]
+    _current_span_stack: ContextVar[Tuple[LangWatchSpan, ...]]
 
     def __init__(
         self,
-        project_name: Optional[str] = None,
+        project_name: Optional[str] = "default_project_name",
+        service_name: Optional[str] = "default_service_name",
     ):
         super().__init__()
         self._project_name = project_name
+        self._service_name = service_name
         self._is_ready = False
+        self._current_trace = ContextVar(
+            "langwatch_current_trace", default=None
+        )
+        self._current_span_stack = ContextVar(
+            "langwatch_current_span_stack", default=()
+        )
         self._setup_langwatch()
 
     def _setup_langwatch(self) -> None:
@@ -103,10 +109,10 @@ class LangWatchTraceCallback(WorkerCallback):
         error: Optional[Exception] = None,
     ) -> None:
         """Finalize the active trace context with output and optional error."""
-        trace_entry = _TRACE_STACK.pop()
-        if trace_entry is None:
+        trace_data = self._current_trace.get()
+        if trace_data is None:
             return
-        trace_data = trace_entry
+        self._current_trace.set(None)
         try:
             trace_data.update(output=output, error=error)
         finally:
@@ -122,13 +128,14 @@ class LangWatchTraceCallback(WorkerCallback):
         error: Optional[Exception] = None,
     ) -> None:
         """Finalize the current worker span and propagate outputs/errors."""
-        span_entry = _WORKER_SPAN_STACK.pop()
-        if span_entry is None:
+        stack = self._current_span_stack.get()
+        if not stack:
             warnings.warn(
                 "No active LangWatch span context found when finishing worker span"
             )
             return
-        span_data = span_entry
+        span_data = stack[-1]
+        self._current_span_stack.set(stack[:-1])
 
         try:
             span_data.update(output=output, error=error)
@@ -183,7 +190,8 @@ class LangWatchTraceCallback(WorkerCallback):
             },
         )
         await span.__aenter__()
-        _WORKER_SPAN_STACK.push(span)
+        stack = self._current_span_stack.get()
+        self._current_span_stack.set((*stack, span))
 
     async def _start_top_level_trace(self, key: str, arguments: Optional[Dict[str, Any]]) -> None:
         serialized_args = serialize_data(arguments)
@@ -191,7 +199,7 @@ class LangWatchTraceCallback(WorkerCallback):
             "created_from": "bridgic", 
             "key": key, 
             "nesting_level": "0",
-            "service.name": "bridgic-traces-langwatch",
+            "service.name": self._service_name,
             "project_name": self._project_name,
         }
         trace_data = langwatch.trace(
@@ -201,7 +209,7 @@ class LangWatchTraceCallback(WorkerCallback):
             type="agent",
         )
         await trace_data.__aenter__()
-        _TRACE_STACK.push(trace_data)
+        self._current_trace.set(trace_data)
 
     def _get_worker_instance(self, key: str, parent: Optional["Automa"]) -> Worker:
         """
@@ -340,13 +348,21 @@ class LangWatchTraceCallback(WorkerCallback):
     def dump_to_dict(self) -> Dict[str, Any]:
         state_dict = super().dump_to_dict()
         state_dict["project_name"] = self._project_name
+        state_dict["service_name"] = self._service_name
         state_dict["is_ready"] = self._is_ready
         return state_dict
 
     def load_from_dict(self, state_dict: Dict[str, Any]) -> None:
         super().load_from_dict(state_dict)
         self._project_name = state_dict.get("project_name")
+        self._service_name = state_dict.get("service_name")
         self._is_ready = state_dict.get("is_ready", False)
+        self._current_trace = ContextVar(
+            "langwatch_current_trace", default=None
+        )
+        self._current_span_stack = ContextVar(
+            "langwatch_current_span_stack", default=()
+        )
         if not self._is_ready:
             self._setup_langwatch()
 
