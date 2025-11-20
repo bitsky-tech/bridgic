@@ -1,15 +1,16 @@
 import copy
 import uuid
-from typing import Callable, List, Any, Dict, Tuple, Union, Optional
+import enum
+from typing import Callable, List, Any, Dict, Tuple, Union
 
 from bridgic.core.automa import GraphAutoma, RunningOptions
 from bridgic.core.automa.worker import Worker, WorkerCallback, WorkerCallbackBuilder
-from bridgic.core.automa.args import ArgsMappingRule, Distribute, override_func_signature, set_method_signature
+from bridgic.core.automa.args import ArgsMappingRule, Distribute, override_func_signature, set_method_signature, safely_map_args
 from bridgic.core.automa._graph_automa import GraphMeta
-from bridgic.core.automa.interaction import InteractionFeedback
 from bridgic.core.agentic import ConcurrentAutoma
 from bridgic.core.agentic.asl._canvas_object import _Canvas, _Element, _CanvasObject, graph_stack, Settings, Data, KeyUnDifined
 from bridgic.core.types._error import ASLCompilationError
+from bridgic.core.utils._inspect_tools import get_param_names_all_kinds
 
 
 
@@ -86,6 +87,7 @@ class TrackingNamespace(dict):
                 # judge if the value is a lambda function
                 if isinstance(value, Callable) and getattr(value.__code__, "co_name", None) == '<lambda>':
                     element.is_lambda = True
+                    element.cached_param_names = get_param_names_all_kinds(value)
 
                 # cover the value with the element
                 value = element
@@ -345,8 +347,16 @@ class ASLAutoma(GraphAutoma, metaclass=ASLAutomaMeta):
         the actual building to _inner_build_graph.
         """
         for canvas in self._canvases:
-            static_elements = {key: value for key, value in canvas.elements.items() if not value.is_lambda}
-            dynamic_elements = {key: value for key, value in canvas.elements.items() if value.is_lambda}            
+            static_elements = {
+                key: value 
+                for key, value in canvas.elements.items() 
+                if (isinstance(value, _Element) and not value.is_lambda) or isinstance(value, _Canvas)
+            }
+            dynamic_elements = {
+                key: value 
+                for key, value in canvas.elements.items() 
+                if (isinstance(value, _Element) and value.is_lambda)
+            }
             self._inner_build_graph(canvas, static_elements, dynamic_elements)
             
     def _inner_build_graph(
@@ -386,8 +396,7 @@ class ASLAutoma(GraphAutoma, metaclass=ASLAutomaMeta):
                 running_options_callback.append(
                     WorkerCallbackBuilder(
                         AsTopLevelDynamicCallback, 
-                        init_kwargs={"__dynamic_lambda_worker__": element},
-                        is_shared=False
+                        init_kwargs={"__dynamic_lambda_worker__": element}
                     )
                 )
 
@@ -429,8 +438,7 @@ class ASLAutoma(GraphAutoma, metaclass=ASLAutomaMeta):
                 for delegated_dynamic_element in delegated_dynamic_workers:
                     callback_builders.append(WorkerCallbackBuilder(
                         AsWorkerDynamicCallback,
-                        init_kwargs={"__dynamic_lambda_worker__": delegated_dynamic_element},
-                        is_shared=False
+                        init_kwargs={"__dynamic_lambda_worker__": delegated_dynamic_element}
                     ))
 
             if isinstance(automa, ConcurrentAutoma):
@@ -658,6 +666,7 @@ class DynamicCallback(WorkerCallback):
     def build_dynamic_workers(
         self, 
         lambda_func: Callable,
+        rx_param_names_dict: Dict[enum.IntEnum, List[str]],
         in_args: Tuple[Any, ...],
         in_kwargs: Dict[str, Any],
         automa: GraphAutoma,
@@ -697,7 +706,8 @@ class DynamicCallback(WorkerCallback):
             else item.data 
             for key, item in in_kwargs.items()
         }
-        dynamic_worker_materials = lambda_func(*args, **kwargs)
+        rx_args, rx_kwargs = safely_map_args(args, kwargs, rx_param_names_dict)
+        dynamic_worker_materials = lambda_func(*rx_args, **rx_kwargs)
         for worker_material in dynamic_worker_materials:
             # get the settings and data of the dynamic worker
             dynamic_worker_settings = self.get_dynamic_worker_settings(worker_material)
@@ -764,6 +774,7 @@ class AsTopLevelDynamicCallback(DynamicCallback):
         # build the dynamic workers
         self.build_dynamic_workers(
             lambda_func=self.__dynamic_lambda_worker__.worker_material,
+            rx_param_names_dict=self.__dynamic_lambda_worker__.cached_param_names,
             in_args=arguments["args"],
             in_kwargs=arguments["kwargs"],
             automa=specific_automa
@@ -848,6 +859,7 @@ class AsWorkerDynamicCallback(DynamicCallback):
         # build the dynamic workers
         self.build_dynamic_workers(
             lambda_func=self.__dynamic_lambda_worker__.worker_material,
+            rx_param_names_dict=self.__dynamic_lambda_worker__.cached_param_names,
             in_args=arguments["args"],
             in_kwargs=arguments["kwargs"],
             automa=specific_automa

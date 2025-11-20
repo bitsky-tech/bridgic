@@ -10,7 +10,6 @@ from typing_extensions import TYPE_CHECKING
 from bridgic.core.types._common import ArgsMappingRule
 from bridgic.core.types._error import WorkerArgsMappingError
 from bridgic.core.automa.args._args_descriptor import WorkerInjector
-from bridgic.core.automa.worker import CallableWorker, Worker
 
 if TYPE_CHECKING:
     from bridgic.core.automa._graph_automa import (
@@ -596,7 +595,7 @@ class ArgsManager:
 def safely_map_args(
     in_args: Tuple[Any, ...], 
     in_kwargs: Dict[str, Any],
-    worker: Union[Worker, CallableWorker],
+    rx_param_names_dict: Dict[enum.IntEnum, List[str]],
 ) -> Tuple[Tuple[Any, ...], Dict[str, Any]]:
     """
     Safely map input arguments to match a target function's parameter signature.
@@ -619,8 +618,8 @@ def safely_map_args(
         Input positional arguments to be mapped.
     in_kwargs : Dict[str, Any]
         Input keyword arguments to be mapped.
-    worker : Union[Worker, CallableWorker]
-        The worker whose input parameters will be used for mapping.
+    rx_param_names_dict : Dict[_ParameterKind, List[str]]
+        The parameter names dictionary of the receiver worker.
 
     Returns
     -------
@@ -629,7 +628,6 @@ def safely_map_args(
     """
     
     # Step 1: Extract function parameter information
-    rx_param_names_dict = worker.get_input_param_names()
     positional_only_param_names = [name for name, _ in rx_param_names_dict.get(Parameter.POSITIONAL_ONLY, [])]
     positional_or_keyword_param_names = [name for name, _ in rx_param_names_dict.get(Parameter.POSITIONAL_OR_KEYWORD, [])]
     keyword_only_param_names = [name for name, _ in rx_param_names_dict.get(Parameter.KEYWORD_ONLY, [])]

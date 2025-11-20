@@ -158,7 +158,7 @@ def asl_run_correctly_graph():
             with graph as sub_graph_5:  # input: 14 -> res: [18, 19, 20, 21, 22]
                 a = produce_tasks  # [15, 16, 17, 18, 19]
                 with concurrent(subtasks = ASLField(list, distribute=True)) as sub_concurrent:
-                    dynamic_logic = lambda subtasks, **kwargs: (
+                    dynamic_logic = lambda subtasks: (
                         tasks_done *Settings(
                             key=f"tasks_done_{i}"
                         )
