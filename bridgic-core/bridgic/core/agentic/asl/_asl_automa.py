@@ -308,19 +308,30 @@ class ASLAutomaMeta(GraphMeta):
 
 class ASLAutoma(GraphAutoma, metaclass=ASLAutomaMeta):
     """
-    An automaton that builds graph structures from ASL (Agent Structured Language) definitions.
+    An automaton that builds agent structures from ASL (Agent Structured Language) definitions.
     
-    This class extends GraphAutoma and uses a declarative syntax to define workflows. It
-    automatically builds the graph structure from graph definitions during initialization,
-    handling both static and dynamic worker registration.
-    
-    Attributes
-    ----------
-    _canvases : List[_Canvas]
-        The list of canvases that define the graph structure, ordered bottom-up.
-    _dynamic_workers : Dict[str, Dict[str, List[_Element]]]
-        A nested dictionary tracking dynamic workers delegated to parent canvases.
-        Structure: {parent_key: {canvas_key: [elements]}}
+    This class extends `GraphAutoma` and uses a declarative syntax to define workflows. It
+    automatically builds the graph structure from definitions during initialization, handling 
+    both static and dynamic worker registration.
+
+    Examples
+    --------
+    >>> from bridgic.core.agentic.asl import graph, ASLAutoma
+    >>> 
+    >>> def add_one(x: int):
+    ...     return x + 1
+    >>> 
+    >>> def add_two(x: int):
+    ...     return x + 2
+    >>> 
+    >>> class MyGraph(ASLAutoma):
+    ...     with graph as g:
+    ...         a = add_one
+    ...         b = add_two
+    ...         +a >> b  # a is the start node, b depends on a
+    >>> 
+    >>> graph = MyGraph()
+    >>> result = await graph.arun(x=1)  # result: 4 (1+1+2)
     """
     # The canvases of the automa.
     _canvases: List[_Canvas] = []
