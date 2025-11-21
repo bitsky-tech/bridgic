@@ -28,9 +28,9 @@ class OpikTraceCallback(WorkerCallback):
 
     **Configuration Scope**
 
-    This callback requires access to the automa context and can only be configured
-    at the **Automa level** (via `RunningOptions`) or **Global level** (via `GlobalSetting`).
-    It does not support worker-level configuration (via `@worker` decorator).
+    Since tracing requires the execution within an automa to establish the corresponding record root,
+    only global configurations (via `GlobalSetting`) and automa-level configurations (via `RunningOptions`) will take effect. 
+    In other words, if you set the callback by using `@worker` or `add_worker`, it will not work.
 
     Parameters
     ----------
