@@ -38,12 +38,6 @@ class LangWatchTraceCallback(WorkerCallback):
     It tracks worker execution, creates spans for each worker, and manages
     trace lifecycle for top-level automa instances.
 
-    **Configuration Scope**
-
-    Since tracing requires the execution within an automa to establish the corresponding record root,
-    only global configurations (via `GlobalSetting`) and automa-level configurations (via `RunningOptions`) will take effect. 
-    In other words, if you set the callback by using `@worker` or `add_worker`, it will not work.
-
     Parameters
     ----------
     api_key : Optional[str], default=None
@@ -52,6 +46,12 @@ class LangWatchTraceCallback(WorkerCallback):
         The URL of the LangWatch tracing service, if none is provided, the `LANGWATCH_ENDPOINT` environment variable will be used. If that is not provided, the default value will be `https://app.langwatch.ai`.
     base_attributes : Optional[BaseAttributes], default=None
         The base attributes to use for the LangWatch tracing client.
+    
+    Note:
+    ------
+    Since tracing requires the execution within an automa to establish the corresponding record root,
+    only global configurations (via `GlobalSetting`) and automa-level configurations (via `RunningOptions`) will take effect. 
+    In other words, if you set the callback by using `@worker` or `add_worker`, it will not work.
     """
 
     _api_key: Optional[str]

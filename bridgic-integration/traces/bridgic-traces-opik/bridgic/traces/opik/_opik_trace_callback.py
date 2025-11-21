@@ -26,12 +26,6 @@ class OpikTraceCallback(WorkerCallback):
     It tracks worker execution, creates spans for each worker, and manages
     trace lifecycle for top-level automa instances.
 
-    **Configuration Scope**
-
-    Since tracing requires the execution within an automa to establish the corresponding record root,
-    only global configurations (via `GlobalSetting`) and automa-level configurations (via `RunningOptions`) will take effect. 
-    In other words, if you set the callback by using `@worker` or `add_worker`, it will not work.
-
     Parameters
     ----------
     project_name : Optional[str], default=None
@@ -44,6 +38,12 @@ class OpikTraceCallback(WorkerCallback):
         The API key for Opik. This parameter is ignored for local installations.
     use_local : bool, default=False
         Whether to use local Opik server.
+    
+    Note:
+    ------
+    Since tracing requires the execution within an automa to establish the corresponding record root,
+    only global configurations (via `GlobalSetting`) and automa-level configurations (via `RunningOptions`) will take effect. 
+    In other words, if you set the callback by using `@worker` or `add_worker`, it will not work.
     """
 
     _project_name: Optional[str]
