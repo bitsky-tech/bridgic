@@ -73,20 +73,14 @@ opik configure --yes
 
 ### Step 3: Register the callback
 
-Just build your application using normal Bridgic-style orchestration and register the callback at the scope that you need. The below example shows how to register `OpikTraceCallback` to apply opik tracing for all workers application wide.
+Just build your application using normal Bridgic-style orchestration and register the callback at the scope that you need. The `start_opik_trace` function provides a convenient way to register Opik tracing for all workers application wide. The below example shows how to use it:
 
 ```python
-from bridgic.core.config import GlobalSetting
 from bridgic.core.automa import GraphAutoma, RunningOptions, worker
-from bridgic.core.automa.worker import WorkerCallbackBuilder
-from bridgic.traces.opik import OpikTraceCallback
+from bridgic.traces.opik import start_opik_trace
 
-GlobalSetting.set(callback_builders=[
-    WorkerCallbackBuilder(
-        OpikTraceCallback, 
-        init_kwargs={"project_name": "bridgic-integration-demo"}
-    )
-])
+# Register Opik trace callback
+start_opik_trace(project_name="bridgic-integration-demo")
 
 class DataAnalysisAutoma(GraphAutoma):
     @worker(is_start=True)
@@ -135,5 +129,5 @@ Report: Found 2 trends with 0.85 confidence.
 You can dive into the Opik app to explore rich visual insights and detailed traces of your workflow.
 
 <div style="text-align: center;">
-<img src="../../../imgs/bridgic-integration-demo.png" alt="bridgic integration demo" width="auto">
+<img src="../../../imgs/bridgic-integration-opik-demo.png" alt="bridgic integration opik demo" width="auto">
 </div>

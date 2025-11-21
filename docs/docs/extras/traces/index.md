@@ -18,3 +18,4 @@ Bridgic fully supports passive tracing based on [Worker Callback Mechanism](../.
 | Package               | Description                                             |
 |:----------------------|:--------------------------------------------------------|
 | `bridgic-traces-opik` | Opik-powered observability and runtime tracing adapter. |
+| `bridgic-traces-langwatch` | LangWatch-powered observability and runtime tracing adapter. |
