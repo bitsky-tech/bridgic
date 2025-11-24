@@ -69,7 +69,7 @@ Choose whichever snippet fits your setup—they produce the same effect.
     ```python
     from bridgic.core.automa.worker import WorkerCallbackBuilder
     from bridgic.core.config import GlobalSetting
-    from bridgic.callbacks.trace.langwatch import LangWatchTraceCallback
+    from bridgic.trace.langwatch import LangWatchTraceCallback
 
     GlobalSetting.set(callback_builders=[WorkerCallbackBuilder(
         LangWatchTraceCallback,
@@ -136,7 +136,7 @@ When only a specific automa needs LangWatch tracing, configure the callback thro
 ```python
 from bridgic.core.automa import GraphAutoma, RunningOptions, worker
 from bridgic.core.automa.worker import WorkerCallbackBuilder
-from bridgic.callbacks.trace.langwatch import LangWatchTraceCallback
+from bridgic.trace.langwatch import LangWatchTraceCallback
 
 class DataAnalysisAutoma(GraphAutoma):
     @worker(is_start=True)

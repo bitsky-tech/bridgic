@@ -91,7 +91,7 @@ Pick one of the two options below—they produce the exact same runtime behavior
     ```python
     from bridgic.core.automa.worker import WorkerCallbackBuilder
     from bridgic.core.config import GlobalSetting
-    from bridgic.callbacks.trace.opik import OpikTraceCallback
+    from bridgic.trace.opik import OpikTraceCallback
 
     GlobalSetting.set(callback_builders=[WorkerCallbackBuilder(
         OpikTraceCallback,
@@ -148,7 +148,7 @@ When only a specific automa needs tracing, configure the callback through `Runni
 ```python
 from bridgic.core.automa import GraphAutoma, RunningOptions, worker
 from bridgic.core.automa.worker import WorkerCallbackBuilder
-from bridgic.callbacks.trace.opik import OpikTraceCallback
+from bridgic.trace.opik import OpikTraceCallback
 
 class DataAnalysisAutoma(GraphAutoma):
     @worker(is_start=True)
