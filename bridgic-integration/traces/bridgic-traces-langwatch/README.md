@@ -70,10 +70,7 @@ asyncio.run(main())
 
 ### Method 2: Global Scope with GlobalSetting
 
-You can choose between two options:
-
-1. Register the callback at the global level through `GlobalSetting` to make it effective for every automa in the runtime. Each worker, regardless of which automa creates it, is instrumented with the same callback configuration.
-2. Use the `start_langwatch_trace` helper to register LangWatch tracing for every worker application-wide. This is the simplest and most recommended approach.
+You can register the callback at the global level through `GlobalSetting` to make it effective for every automa in the runtime. Each worker, regardless of which automa creates it, is instrumented with the same callback configuration.
 
 ```python
 from bridgic.core.automa import GraphAutoma, worker
@@ -124,7 +121,7 @@ if __name__ == "__main__":
     asyncio.run(main())
 ```
 
-Alternatively, configure tracing in a single call with `start_langwatch_trace`. When parameters are omitted, the helper reads the values from the `LANGWATCH_API_KEY` and `LANGWATCH_ENDPOINT` environment variables.
+From the perspective of tracking worker execution, the following approach is equivalent to the above one:
 
 ```python
 from bridgic.traces.langwatch import start_langwatch_trace
@@ -132,5 +129,4 @@ from bridgic.traces.langwatch import start_langwatch_trace
 start_langwatch_trace(base_attributes={"app": "demo"})
 ```
 
-Once your Bridgic application has finished running, traces will be automatically sent to LangWatch. You can view them in the LangWatch dashboard to explore rich visual insights and detailed traces of your workflow execution.
-
+However, `start_langwatch_trace` is a higher-level function that encapsulates the functionality of the first approach. As the framework may add tracking for more important phases in the future, `start_langwatch_trace` will provide a unified interface for all tracking capabilities, making it the recommended approach for most use cases. When parameters are omitted, the helper reads the values from the `LANGWATCH_API_KEY` and `LANGWATCH_ENDPOINT` environment variables.
