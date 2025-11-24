@@ -682,11 +682,18 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
                     f"but got {dependencies} for worker {key}"
                 )
 
-            if args_mapping_rule not in ArgsMappingRule:
-                raise ValueError(
-                    f"args_mapping_rule must be one of the following: {[e for e in ArgsMappingRule]}, "
-                    f"but got {args_mapping_rule} for worker {key}"
-                )
+            if isinstance(args_mapping_rule, tuple):
+                if any([args_mapping_rule not in ArgsMappingRule for args_mapping_rule in args_mapping_rule]):
+                    raise ValueError(
+                        f"args_mapping_rule must be one of the following: {[e for e in ArgsMappingRule]}, "
+                        f"but got {args_mapping_rule} for worker {key}"
+                    )
+            else:
+                if args_mapping_rule not in ArgsMappingRule:
+                    raise ValueError(
+                        f"args_mapping_rule must be one of the following: {[e for e in ArgsMappingRule]}, "
+                        f"but got {args_mapping_rule} for worker {key}"
+                    )
 
         # Ensure the parameters are valid.
         _basic_worker_params_check(key, worker)

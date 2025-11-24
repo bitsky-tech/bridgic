@@ -176,6 +176,7 @@ def automa_with_args_mapping_and_from():
 
         @worker(is_start=True)
         async def start_1(self, user_input: int) -> int:
+            assert user_input == 2
             return user_input + 1
 
         @worker(dependencies=["start"])
@@ -240,15 +241,21 @@ def automa_with_args_mapping_and_from():
             assert sub_automa is my_graph_1
             return z + 1  # 2
 
-        @worker(dependencies=["worker_41"], args_mapping_rule=ArgsMappingRule.DISTRIBUTE)
+        @worker(dependencies=["worker_31"], args_mapping_rule=ArgsMappingRule.SUPPRESSED)
+        async def worker_42(self, z: int = From("start")) -> int:
+            return z + 2  # 3
+
+        @worker(dependencies=["worker_41", "worker_42"], args_mapping_rule=(ArgsMappingRule.DISTRIBUTE, ArgsMappingRule.MERGE))
         async def worker_51(
-            self, x: int, z: int = From("no_exist_worker", 1), 
+            self, x: Tuple[int, int], z: int = From("no_exist_worker", 1), 
             automa: GraphAutoma = System("automa"), 
             sub_automa: GraphAutoma = System("automa:my_graph_1"),
         ) -> int:
+            x1, x2 = x
+            assert x2 == 3
             assert automa is self
             assert sub_automa is my_graph_1
-            return x + z, x  # (3, 2)
+            return x1 + z, x1  # (3, 2)
 
         @worker(dependencies=["worker_51"])
         async def worker_61(self, x: int) -> int:
@@ -271,7 +278,7 @@ def automa_with_args_mapping_and_from():
 
 @pytest.mark.asyncio
 async def test_automa_with_args_mapping_and_from(automa_with_args_mapping_and_from: GraphAutoma):
-    result = await automa_with_args_mapping_and_from.arun(user_input=1)
+    result = await automa_with_args_mapping_and_from.arun(user_input=Distribute([1, 2]))
     assert result == 5
 
 

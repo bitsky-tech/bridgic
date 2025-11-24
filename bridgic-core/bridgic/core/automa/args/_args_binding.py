@@ -95,8 +95,11 @@ def parse_args_mapping_rule(args_mapping_rule: ArgsMappingRule) -> Tuple[RECEIVE
             return parse_single_mode(args_mapping_rule[0])
         elif len(args_mapping_rule) == 2:
             rule_1, rule_2 = args_mapping_rule
-            if type(rule_1) == type(rule_2):
-                raise ValueError(f"The two elements of the args_mapping_rule tuple must be different, not {type(rule_1)}")
+            if (
+                all([rule_1 in _RECEIVER_RULES_SET, rule_2 in _RECEIVER_RULES_SET]) or
+                all([rule_1 in _SENDER_RULES_SET, rule_2 in _SENDER_RULES_SET])
+            ):
+                raise ValueError(f"The two elements of the args_mapping_rule tuple must be different, not be both sender and receiver rules.")
             if rule_1 in _SENDER_RULES_SET and rule_2 in _RECEIVER_RULES_SET:
                 return rule_2, rule_1
             return rule_1, rule_2
