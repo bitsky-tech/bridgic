@@ -1,5 +1,5 @@
 import inspect
-from inspect import Parameter
+from inspect import Parameter, _ParameterKind
 from contextvars import ContextVar
 from dataclasses import dataclass
 from pydantic_core import PydanticUndefinedType
@@ -526,7 +526,7 @@ class _Element(_CanvasObject):
         """
         super().__init__(key, worker_material)
         self.is_lambda: bool = False
-        self.cached_param_names: Dict[_ParameterKind, List[str]] = None
+        self.cached_param_names: Dict[_ParameterKind, List[Tuple[str, Any]]] = None
 
     def __str__(self) -> str:
         return (
