@@ -97,10 +97,7 @@ asyncio.run(main())
 
 ### Method 2: Global Scope with GlobalSetting
 
-You can choose between two options:
-
-1. Register the callback at the global level through `GlobalSetting` to make it effective for every automa in the runtime. Each worker, regardless of which automa creates it, is instrumented with the same callback configuration.
-2. Use the `start_opik_trace` helper to register Opik tracing for every worker application-wide. This is the simplest and most recommended approach.
+You can register the callback at the global level through `GlobalSetting` to make it effective for every automa in the runtime. Each worker, regardless of which automa creates it, is instrumented with the same callback configuration.
 
 ```python
 from bridgic.core.automa import GraphAutoma, worker
@@ -132,10 +129,12 @@ async def main():
 asyncio.run(main())
 ```
 
-Alternatively, use `start_opik_trace` to configure tracing in a single call:
+From the perspective of tracking worker execution, the following approach is equivalent to the above one:
 
 ```python
 from bridgic.callbacks.trace.opik import start_opik_trace
 
 start_opik_trace(project_name="my-project")
 ```
+
+However, `start_opik_trace` is a higher-level function that encapsulates the functionality of the first approach. As the framework may add tracking for more important phases in the future, `start_opik_trace` will provide a unified interface for all tracking capabilities, making it the recommended approach for most use cases.
