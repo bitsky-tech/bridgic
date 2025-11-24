@@ -328,7 +328,7 @@ class ASLAutoma(GraphAutoma, metaclass=ASLAutomaMeta):
     ...     with graph as g:
     ...         a = add_one
     ...         b = add_two
-    ...         +a >> b  # a is the start node, b depends on a
+    ...         +a >> b  # a is the start node, b depends on a and is the output node.
     >>> 
     >>> graph = MyGraph()
     >>> result = await graph.arun(x=1)  # result: 4 (1+1+2)
