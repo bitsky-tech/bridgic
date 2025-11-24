@@ -73,20 +73,35 @@ opik configure --yes
 
 ### Step 3: Register the callback
 
-Just build your application using normal Bridgic-style orchestration and register the callback at the scope that you need. The below example shows how to register `OpikTraceCallback` to apply opik tracing for all workers application wide.
+You can register Opik tracing at the scope that best fits your application. `start_opik_trace` is the fastest path (a single line that configures global tracing via `GlobalSetting`). When you want to customize the same global setup or target only a specific automa, Bridgic exposes direct hooks for both use cases.
+
+#### Method 1: Application-wide registration (helper or manual)
+
+Pick one of the two options below—they produce the exact same runtime behavior:
+
+=== "start_opik_trace"
+
+    ```python
+    from bridgic.traces.opik import start_opik_trace
+    start_opik_trace(project_name="bridgic-integration-demo")
+    ```
+
+=== "GlobalSetting"
+
+    ```python
+    from bridgic.core.automa.worker import WorkerCallbackBuilder
+    from bridgic.core.config import GlobalSetting
+    from bridgic.traces.opik import OpikTraceCallback
+
+    GlobalSetting.set(callback_builders=[WorkerCallbackBuilder(
+        OpikTraceCallback,
+        init_kwargs={"project_name": "bridgic-integration-demo"}
+    )])
+    ```
 
 ```python
-from bridgic.core.config import GlobalSetting
-from bridgic.core.automa import GraphAutoma, RunningOptions, worker
-from bridgic.core.automa.worker import WorkerCallbackBuilder
-from bridgic.traces.opik import OpikTraceCallback
-
-GlobalSetting.set(callback_builders=[
-    WorkerCallbackBuilder(
-        OpikTraceCallback, 
-        init_kwargs={"project_name": "bridgic-integration-demo"}
-    )
-])
+from bridgic.core.automa import GraphAutoma, worker
+from bridgic.traces.opik import start_opik_trace
 
 class DataAnalysisAutoma(GraphAutoma):
     @worker(is_start=True)
@@ -115,7 +130,56 @@ class DataAnalysisAutoma(GraphAutoma):
         return f"Report: Found {len(analysis['trends'])} trends with {analysis['confidence']} confidence."
 
 async def automa_arun():
+    # Call either start_opik_trace(...) or GlobalSetting.set(...) once at startup
+    start_opik_trace(project_name="bridgic-integration-demo")
     automa = DataAnalysisAutoma()
+    result = await automa.arun(topic="market analysis")
+    print(result)
+
+if __name__ == "__main__":
+    import asyncio
+    asyncio.run(automa_arun())
+```
+
+#### Method 2: Per-automa scope with `RunningOptions`
+
+When only a specific automa needs tracing, configure the callback through `RunningOptions`. Each automa gets its own callback instance, leaving other automa untouched.
+
+```python
+from bridgic.core.automa import GraphAutoma, RunningOptions, worker
+from bridgic.core.automa.worker import WorkerCallbackBuilder
+from bridgic.traces.opik import OpikTraceCallback
+
+class DataAnalysisAutoma(GraphAutoma):
+    @worker(is_start=True)
+    async def collect_data(self, topic: str) -> dict:
+        """Collect data for the given topic."""
+        # Simulate data collection
+        return {
+            "topic": topic,
+            "data_points": ["point1", "point2", "point3"],
+            "timestamp": "2024-01-01"
+        }
+
+    @worker(dependencies=["collect_data"])
+    async def analyze_trends(self, data: dict) -> dict:
+        """Analyze trends in the collected data."""
+        # Simulate trend analysis
+        return {
+            "trends": ["trend1", "trend2"],
+            "confidence": 0.85,
+            "source_data": data
+        }
+
+    @worker(dependencies=["analyze_trends"], is_output=True)
+    async def generate_report(self, analysis: dict) -> str:
+        """Generate a final report."""
+        return f"Report: Found {len(analysis['trends'])} trends with {analysis['confidence']} confidence."
+
+async def automa_arun():
+    builder = WorkerCallbackBuilder(OpikTraceCallback, init_kwargs={"project_name": "bridgic-demo"})
+    running_options = RunningOptions(callback_builders=[builder])
+    automa = DataAnalysisAutoma(running_options=running_options)
     result = await automa.arun(topic="market analysis")
     print(result)
 
@@ -135,5 +199,5 @@ Report: Found 2 trends with 0.85 confidence.
 You can dive into the Opik app to explore rich visual insights and detailed traces of your workflow.
 
 <div style="text-align: center;">
-<img src="../../../imgs/bridgic-integration-demo.png" alt="bridgic integration demo" width="auto">
+<img src="../../../imgs/bridgic-integration-opik-demo.png" alt="bridgic integration opik demo" width="auto">
 </div>
