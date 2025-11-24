@@ -76,16 +76,12 @@ class GlobalSetting(BaseModel):
     @classmethod
     def add(cls, callback_builder: "WorkerCallbackBuilder") -> None:
         """
-        Append a single callback builder to the global list in a thread-safe way.
-
-        This helper ensures that concurrent callers do not corrupt the shared
-        `callback_builders` collection by guarding modifications with the same
-        lock that protects the singleton instance.
+        Add a setting field to the global setting.
 
         Parameters
         ----------
         callback_builder : WorkerCallbackBuilder
-            The callback builder instance to register globally.
+            The callback builder to add to the global setting callback builders.
         """
         instance = cls.read()
         with cls._lock:

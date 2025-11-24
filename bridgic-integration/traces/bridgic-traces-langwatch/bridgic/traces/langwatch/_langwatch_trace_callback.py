@@ -21,9 +21,9 @@ from bridgic.core.utils._worker_tracing import (
     get_worker_tracing_step_name,
 )
 
-import logging
+# import logging
 
-logging.getLogger("langwatch.client").setLevel(logging.WARNING)
+# logging.getLogger("langwatch.client").setLevel(logging.WARNING)
 
 
 if TYPE_CHECKING:
@@ -41,9 +41,11 @@ class LangWatchTraceCallback(WorkerCallback):
     Parameters
     ----------
     api_key : Optional[str], default=None
-        The API key for the LangWatch tracing service, if none is provided, the `LANGWATCH_API_KEY` environment variable will be used.
+        The API key for the LangWatch tracing service, if none is provided, 
+        the `LANGWATCH_API_KEY` environment variable will be used.
     endpoint_url : Optional[str], default=None
-        The URL of the LangWatch tracing service, if none is provided, the `LANGWATCH_ENDPOINT` environment variable will be used. If that is not provided, the default value will be `https://app.langwatch.ai`.
+        The URL of the LangWatch tracing service, if none is provided, 
+        the `LANGWATCH_ENDPOINT` environment variable will be used. If that is not provided, the default value will be https://app.langwatch.ai.
     base_attributes : Optional[BaseAttributes], default=None
         The base attributes to use for the LangWatch tracing client.
     
