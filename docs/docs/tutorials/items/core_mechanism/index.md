@@ -7,8 +7,7 @@ Bridgic introduces clear abstractions for structuring flows, passing data betwee
 Key features include:
 
 1. [Concurrency Mode](../core_mechanism/concurrency_mode): Organize your concurrent execution units systematically and conveniently.
-2. [Parameter Binding](../core_mechanism/parameter_binding): Explore three ways for passing data between execution units, including Arguments Mapping, Arguments Injection, and Inputs Propagation.
-3. [Result Dispatch](../core_mechanism/result_dispatch.ipynb): Explore the way for dispataching result between execution units, including Inputs Dispatching, Result Dispatching.
+2. [Parameter Resolving](../core_mechanism/parameter_binding): Explore three ways for passing data and two ways for dispatching data between execution units, including Arguments Mapping, Arguments Injection, and Inputs Propagation about parameter binding; including Input Dispatching and Result Dispatching.
 3. [Dynamic Routing](../core_mechanism/dynamic_routing): Enable conditional branching and decision-making through an easy-to-use `ferry_to()` API.
 4. [Dynamic Topology](../core_mechanism/dynamic_topology): Change the underlying
  graph topology at runtime to support highly autonomous AI applications..

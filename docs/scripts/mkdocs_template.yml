@@ -15,8 +15,7 @@ nav:
       - Core Mechanism: 
         - Core Mechanism: tutorials/items/core_mechanism/index.md
         - Concurrency Mode: tutorials/items/core_mechanism/concurrency_mode.ipynb
-        - Parameter Binding: tutorials/items/core_mechanism/parameter_binding.ipynb
-        - Result Dispatch: tutorials/items/core_mechanism/result_dispatch.ipynb
+        - Parameter Resolving: tutorials/items/core_mechanism/parameter_resolving.ipynb
         - Dynamic Routing: tutorials/items/core_mechanism/dynamic_routing.ipynb
         - Dynamic Topology: tutorials/items/core_mechanism/dynamic_topology.ipynb
         - Human in the loop: tutorials/items/core_mechanism/human_in_the_loop.ipynb
