@@ -1,7 +1,7 @@
 import pytest
 from typing import Tuple, Dict, Any, Optional
 
-from bridgic.core.automa import GraphAutoma, Snapshot, worker, AutomaRuntimeError
+from bridgic.core.automa import Automa, GraphAutoma, Snapshot, worker, AutomaRuntimeError
 from bridgic.core.automa.args import From, ArgsMappingRule, System, Distribute, ResultDispatchRule
 from bridgic.core.automa.interaction import Event, InteractionFeedback, InteractionException
 from bridgic.core.automa.worker import Worker, WorkerCallback, WorkerCallbackBuilder
