@@ -37,5 +37,5 @@ build-backend = "hatchling.build"
 include = ["bridgic/"]
 
 [tool.uv.sources]
-bridgic-core = { path = "../../../bridgic-core" }
-bridgic-llms-openai-like = { path = "../bridgic-llms-openai-like" }
+bridgic-core = { path = "../../../bridgic-core", editable = true }
+bridgic-llms-openai-like = { path = "../bridgic-llms-openai-like", editable = true }

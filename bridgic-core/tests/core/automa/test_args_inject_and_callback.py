@@ -25,7 +25,7 @@ def args_inject_and_callback_graph():
             self, 
             key: str,
             is_top_level: bool = False,
-            parent: Optional[GraphAutoma] = None,
+            parent: Optional[Automa] = None,
             arguments: Dict[str, Any] = None,
         ) -> None:
             print(f"Pre callback for worker {key}")
@@ -34,7 +34,7 @@ def args_inject_and_callback_graph():
             self, 
             key: str,
             is_top_level: bool = False,
-            parent: Optional[GraphAutoma] = None,
+            parent: Optional[Automa] = None,
             arguments: Dict[str, Any] = None,
             result: Any = None,
         ) -> None:

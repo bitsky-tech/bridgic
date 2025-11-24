@@ -57,7 +57,7 @@ class Worker(Serializable):
     __cached_param_names_of_run: Dict[_ParameterKind, List[Tuple[str, Any]]]
 
     def __init__(self):
-        self.__parent = None
+        self.__parent = self
         self.__local_space = {}
 
         # Cached method signatures, with no need for serialization.
@@ -89,11 +89,27 @@ class Worker(Serializable):
         """
         raise NotImplementedError(f"run() is not implemented in {type(self)}")
 
+    def is_top_level(self) -> bool:
+        """
+        Check if the current worker is the top-level worker.
+
+        Returns
+        -------
+        bool
+            True if the current worker is the top-level worker (parent is self), False otherwise.
+        """
+        return self.parent is self
+
     def _get_top_level_automa(self) -> Optional["Automa"]:
         """
         Get the top-level automa instance reference.
         """
-        top_level_automa = self.parent
+        # If the current automa is the top-level automa, return itself.
+        from bridgic.core.automa._automa import Automa
+        if isinstance(self, Automa):
+            top_level_automa = self
+        else:
+            top_level_automa = self.parent
         while top_level_automa and (not top_level_automa.is_top_level()):
             top_level_automa = top_level_automa.parent
         return top_level_automa
@@ -144,14 +160,19 @@ class Worker(Serializable):
     @parent.setter
     def parent(self, value: "Automa"):
         self.__parent = value
-    
+
     @property
     def local_space(self) -> Dict[str, Any]:
         return self.__local_space
-    
+
     @local_space.setter
     def local_space(self, value: Dict[str, Any]):
         self.__local_space = value
+    
+    def get_report_info(self) -> Dict[str, Any]:
+        report_info = {}
+        report_info["local_space"] = self.__local_space
+        return report_info
 
     @override
     def dump_to_dict(self) -> Dict[str, Any]:
@@ -161,8 +182,7 @@ class Worker(Serializable):
 
     @override
     def load_from_dict(self, state_dict: Dict[str, Any]) -> None:
-        # Initialize parent to None - it will be set by the containing Automa
-        self.__parent = None
+        self.__parent = self
         self.__local_space = state_dict["local_space"]
         
         # Cached method signatures, with no need for serialization.
@@ -183,7 +203,7 @@ class Worker(Serializable):
         kwargs : optional
             Keyword arguments to be passed.
         """
-        if self.parent is None:
+        if self.is_top_level():
             raise WorkerRuntimeError(f"`ferry_to` method can only be called by a worker inside an Automa")
         self.parent.ferry_to(key, *args, **kwargs)
 
@@ -202,7 +222,7 @@ class Worker(Serializable):
         event: Event
             The event to be posted.
         """
-        if self.parent is None:
+        if self.is_top_level():
             raise WorkerRuntimeError(f"`post_event` method can only be called by a worker inside an Automa")
         self.parent.post_event(event)
 
@@ -233,7 +253,7 @@ class Worker(Serializable):
         TimeoutError
             If the feedback is not received before the timeout. Note that the raised exception is the built-in `TimeoutError` exception, instead of asyncio.TimeoutError or concurrent.futures.TimeoutError!
         """
-        if self.parent is None:
+        if self.is_top_level():
             raise WorkerRuntimeError(f"`request_feedback` method can only be called by a worker inside an Automa")
         return self.parent.request_feedback(event, timeout)
 
@@ -266,11 +286,11 @@ class Worker(Serializable):
         TimeoutError
             If the feedback is not received before the timeout. Note that the raised exception is the built-in `TimeoutError` exception, instead of asyncio.TimeoutError!
         """
-        if self.parent is None:
+        if self.is_top_level():
             raise WorkerRuntimeError(f"`request_feedback_async` method can only be called by a worker inside an Automa")
         return await self.parent.request_feedback_async(event, timeout)
 
     def interact_with_human(self, event: Event) -> InteractionFeedback:
-        if self.parent is None:
+        if self.is_top_level():
             raise WorkerRuntimeError(f"`interact_with_human` method can only be called by a worker inside an Automa")
         return self.parent.interact_with_human(event, self)

@@ -29,7 +29,7 @@ Each Provider declares its capabilities by implementing predefined protocols:
 - **Progressive Enhancement**: Providers can implement partial protocols to support incremental enhancement
 - **Extensibility**: New Providers can be seamlessly integrated by implementing the appropriate protocols
 
-## Available Model Integrations
+## Available Integrations
 
 | Provider |        Package              | Description                                                          |
 |:--------:|:---------------------------:|:---------------------------------------------------------------------|

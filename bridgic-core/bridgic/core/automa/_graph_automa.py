@@ -66,6 +66,16 @@ class _GraphAdaptedWorker(Worker):
         self._worker_callbacks = [cb.build() for cb in callback_builders]
 
     @override
+    def get_report_info(self) -> Dict[str, Any]:
+        report_info = super().get_report_info()
+        report_info["key"] = self.key
+        report_info["dependencies"] = self.dependencies
+        report_info["is_start"] = self.is_start
+        report_info["is_output"] = self.is_output
+        report_info["args_mapping_rule"] = self.args_mapping_rule
+        return report_info
+    
+    @override
     def dump_to_dict(self) -> Dict[str, Any]:
         state_dict = super().dump_to_dict()
         state_dict["key"] = self.key
@@ -93,7 +103,6 @@ class _GraphAdaptedWorker(Worker):
     # Delegate all the properties and methods of _GraphAdaptedWorker to the decorated worker.
     # TODO: Maybe 'Worker' should be a Protocol.
     #
-
     @override
     async def arun(self, *args, **kwargs) -> Any:
         for callback in self._worker_callbacks:
@@ -1322,7 +1331,7 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
                 await callback.on_worker_start(
                     key=self.name,
                     is_top_level=True,
-                    parent=None,
+                    parent=self.parent,
                     arguments={
                         "args": self._input_buffer.args,
                         "kwargs": self._input_buffer.kwargs,
@@ -1506,7 +1515,7 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
                         callbacks=automa_callbacks,
                         key=self.name,
                         is_top_level=True,
-                        parent=None,
+                        parent=self.parent,
                         arguments={
                             "args": self._input_buffer.args,
                             "kwargs": self._input_buffer.kwargs,
@@ -1518,7 +1527,7 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
             # For inner interaction exceptions, collect them and throw an InteractionException as a whole.
             if len(interaction_exceptions) > 0:
                 all_interactions: List[Interaction] = [interaction for e in interaction_exceptions for interaction in e.args]
-                if self.parent is None:
+                if self.is_top_level():
                     # This is the top-level Automa. Serialize the Automa and raise InteractionException to the application layer.
                     serialized_automa = dump_bytes(self)
                     snapshot = Snapshot(
@@ -1601,7 +1610,7 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
                 await callback.on_worker_end(
                     key=self.name,
                     is_top_level=True,
-                    parent=None,
+                    parent=self.parent,
                     arguments={
                         "args": self._input_buffer.args,
                         "kwargs": self._input_buffer.kwargs,
