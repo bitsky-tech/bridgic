@@ -39,7 +39,7 @@ class OpikTraceCallback(WorkerCallback):
     use_local : bool, default=False
         Whether to use local Opik server.
     
-    Note:
+    Notes
     ------
     Since tracing requires the execution within an automa to establish the corresponding record root,
     only global configurations (via `GlobalSetting`) and automa-level configurations (via `RunningOptions`) will take effect. 
