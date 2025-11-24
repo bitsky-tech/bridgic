@@ -38,7 +38,7 @@ class GraphMeta(_ProtocolMeta):
                 setattr(func, "__is_start__", complete_args.get("is_start", default_paramap["is_start"]))
                 setattr(func, "__is_output__", complete_args.get("is_output", default_paramap["is_output"]))
                 setattr(func, "__args_mapping_rule__", complete_args.get("args_mapping_rule", default_paramap["args_mapping_rule"]))
-                setattr(func, "__result_dispatch_rule__", complete_args.get("result_dispatch_rule", default_paramap["result_dispatch_rule"]))
+                setattr(func, "__result_dispatching_rule__", complete_args.get("result_dispatching_rule", default_paramap["result_dispatching_rule"]))
                 
                 callback_builders = complete_args.get("callback_builders", default_paramap["callback_builders"])
                 if not callback_builders:

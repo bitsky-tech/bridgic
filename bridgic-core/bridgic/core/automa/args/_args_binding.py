@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from typing import Literal, Tuple, Any, List, Dict, Mapping, Union
 from typing_extensions import TYPE_CHECKING
 
-from bridgic.core.types._common import ArgsMappingRule, ResultDispatchRule
+from bridgic.core.types._common import ArgsMappingRule, ResultDispatchingRule
 from bridgic.core.types._error import WorkerArgsMappingError
 from bridgic.core.automa.args._args_descriptor import WorkerInjector
 
@@ -19,12 +19,14 @@ if TYPE_CHECKING:
     )
 
 @dataclass
-class Distribute:
+class IN_ORDER:
     """
-    A descriptor to indicate that data should be distributed to multiple workers.
+    A descriptor to indicate that data should be distributed to multiple workers. 
 
     When is used to input arguments or worker with this class, the data will be distributed
-    element-wise to downstream workers instead of being gathered as a single value.
+    to downstream workers instead of being gathered as a single value. Split the returned 
+    Sequence object and dispatching them in-order and element-wise to the downstream workers 
+    as their actual input.
 
     Parameters
     ----------
@@ -98,7 +100,7 @@ class ArgsManager:
         # record the receiver and sender rules of the workers
         self._worker_rule_dict = {}
         for key, worker in worker_dict.items():
-            receiver_rule, sender_rule = worker.args_mapping_rule, worker.result_dispatch_rule
+            receiver_rule, sender_rule = worker.args_mapping_rule, worker.result_dispatching_rule
             dependencies = deepcopy(worker.dependencies)
             if worker.is_start:
                 dependencies.append("__automa__")
@@ -109,10 +111,10 @@ class ArgsManager:
                 "sender_rule": sender_rule,
             }
         for key, value in self._start_arguments.items():
-            if isinstance(value, Distribute):
-                sender_rule = ResultDispatchRule.DISTRIBUTE
+            if isinstance(value, IN_ORDER):
+                sender_rule = ResultDispatchingRule.IN_ORDER
             else:
-                sender_rule = ResultDispatchRule.AS_IS
+                sender_rule = ResultDispatchingRule.AS_IS
             self._worker_rule_dict[key] = {
                 "dependencies": [],
                 "param_names": [],
@@ -170,7 +172,7 @@ class ArgsManager:
                 sender_rule = self._worker_rule_dict[key]["sender_rule"]
                 data_mode_list.append({
                     'worker_key': key,
-                    'data': value.data if isinstance(value, Distribute) else value,
+                    'data': value.data if isinstance(value, IN_ORDER) else value,
                     'send_rule': sender_rule,
                 })
             data = self._args_send(data_mode_list)
@@ -238,9 +240,9 @@ class ArgsManager:
             worker_key = data_mode['worker_key']
             data = data_mode['data']
             send_rule = data_mode['send_rule']
-            if send_rule == ResultDispatchRule.AS_IS:
+            if send_rule == ResultDispatchingRule.AS_IS:
                 send_data.append(data)
-            elif send_rule == ResultDispatchRule.DISTRIBUTE:
+            elif send_rule == ResultDispatchingRule.IN_ORDER:
                 # if the worker output is not iterable -- tuple or list, then raise error
                 if not isinstance(data, (tuple, list)):
                     raise WorkerArgsMappingError(
@@ -447,7 +449,7 @@ class ArgsManager:
                 dependencies: List[str] = deepcopy(dynamic_task.dependencies)
                 is_start: bool = dynamic_task.is_start
                 args_mapping_rule: ArgsMappingRule = dynamic_task.args_mapping_rule
-                result_dispatch_rule: ResultDispatchRule = dynamic_task.result_dispatch_rule
+                result_dispatching_rule: ResultDispatchingRule = dynamic_task.result_dispatching_rule
                 
                 # update the _worker_forward_count according to the "add_worker" interface
                 for trigger in dependencies:
@@ -459,7 +461,7 @@ class ArgsManager:
                     self._worker_forward_count[trigger]["forward_count"] += 1
 
                 # update the _worker_rule_dict according to the "add_worker" interface
-                receiver_rule, sender_rule = args_mapping_rule, result_dispatch_rule
+                receiver_rule, sender_rule = args_mapping_rule, result_dispatching_rule
                 dependencies = deepcopy(dependencies)  # Make sure do not affect the original worker's dependencies.
                 if is_start:
                     dependencies.append("__automa__")

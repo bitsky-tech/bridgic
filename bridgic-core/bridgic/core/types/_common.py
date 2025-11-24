@@ -30,7 +30,7 @@ class ArgsMappingRule(Enum):
         arguments. Only valid when the current worker has exactly one dependency and 
         the return value is a list/tuple or dict.
     SUPPRESSED: Enum
-        Suppress all results from previous workers. No arguments are passed 
+        Suppresses all results from previous workers. No arguments are passed 
         to the current worker from its dependencies.
 
     Examples
@@ -75,19 +75,19 @@ class ArgsMappingRule(Enum):
     SUPPRESSED = "suppressed"
 
 
-class ResultDispatchRule(Enum):
+class ResultDispatchingRule(Enum):
     """
     Enumeration of Result Dispatch rules for worker result passing.
 
-    ResultDispatchRule defines how the result from the current worker is dispatched to the next workers.
+    ResultDispatchingRule defines how the result from the current worker is dispatched to the next workers.
     This controls the data flow between workers in an automa execution graph.
 
     AS_IS: Enum (default)
         Gathers all results of current worker into a single tuple as the 
         only result to the next workers.
-    DISTRIBUTE: Enum
-        Distribute the current worker's results to the after workers in the order 
+    IN_ORDER: Enum
+        Distribute the current worker's results to the downstream workers in the order 
         they are added.
     """
     AS_IS = "as_is"
-    DISTRIBUTE = "distribute"
+    IN_ORDER = "in_order"
