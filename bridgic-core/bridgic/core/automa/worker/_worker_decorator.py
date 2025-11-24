@@ -9,7 +9,7 @@ from bridgic.core.utils._inspect_tools import (
     get_mark_by_func,
 )
 from bridgic.core.types._error import WorkerSignatureError
-from bridgic.core.types._common import AutomaType, ArgsMappingRule
+from bridgic.core.types._common import AutomaType, ArgsMappingRule, ResultDispatchingRule
 from bridgic.core.automa.worker._worker_callback import WorkerCallbackBuilder
 
 @mark_overload("__automa_type__", AutomaType.Graph)
@@ -20,6 +20,7 @@ def worker(
     is_start: bool = False,
     is_output: bool = False,
     args_mapping_rule: ArgsMappingRule = ArgsMappingRule.AS_IS,
+    result_dispatching_rule: ResultDispatchingRule = ResultDispatchingRule.AS_IS,
     callback_builders: List[WorkerCallbackBuilder] = [],
 ) -> Callable:
     """
@@ -37,6 +38,8 @@ def worker(
         Whether the decorated callable is an output worker. True means it is, while False means it is not.
     args_mapping_rule : ArgsMappingRule
         The rule of arguments mapping.
+    result_dispatch_rule: ResultDispatchingRule
+        The rule of result dispatch.
     callback_builders: List[WorkerCallbackBuilder]
         A list of worker callback builders to be registered.
         Callback instances will be created from builders when the worker is instantiated.
