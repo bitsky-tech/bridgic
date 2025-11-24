@@ -134,21 +134,3 @@ start_langwatch_trace(base_attributes={"app": "demo"})
 
 Once your Bridgic application has finished running, traces will be automatically sent to LangWatch. You can view them in the LangWatch dashboard to explore rich visual insights and detailed traces of your workflow execution.
 
-
-Parameters
-----------
-
-The `start_langwatch_trace` helper and `LangWatchTraceCallback` class accept the following parameters:
-
-- `api_key` (Optional[str]): The API key for the LangWatch tracing service. If `None`, the `LANGWATCH_API_KEY` environment variable will be used.
-- `endpoint_url` (Optional[str]): The URL of the LangWatch tracing service. If `None`, the `LANGWATCH_ENDPOINT` environment variable will be used. If that is also not provided, the default value will be `https://app.langwatch.ai`.
-- `base_attributes` (Optional[BaseAttributes]): The base attributes to use for the LangWatch tracing client. These attributes will be included in all traces and spans.
-
-Features
---------
-
-- **Worker-level tracing**: Each worker execution is traced as a separate LangWatch span
-- **Nested automa support**: Properly handles nested automa instances with hierarchical tracing
-- **Error tracking**: Captures and reports errors during worker execution
-- **Execution metadata**: Tracks execution duration, start/end times, and other metadata
-- **Concurrent execution**: Supports tracing multiple concurrent automa executions

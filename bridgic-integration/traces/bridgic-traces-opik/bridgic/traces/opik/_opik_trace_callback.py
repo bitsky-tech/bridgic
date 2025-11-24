@@ -44,6 +44,18 @@ class OpikTraceCallback(WorkerCallback):
     Since tracing requires the execution within an automa to establish the corresponding record root,
     only global configurations (via `GlobalSetting`) and automa-level configurations (via `RunningOptions`) will take effect. 
     In other words, if you set the callback by using `@worker` or `add_worker`, it will not work.
+
+    Examples
+    ------
+    If you want to report tracking information to the self-hosted Opik service, you can initialize the callback instance like this:
+    ```python
+    OpikTraceCallback(project_name="my-project", use_local=True)
+    ```
+
+    If you want to report tracking information to the Opik Cloud service, you can initialize the callback instance like this:
+    ```python
+    OpikTraceCallback(project_name="my-project", api_key="my-api-key")
+    ```
     """
 
     _project_name: Optional[str]

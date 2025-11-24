@@ -139,23 +139,3 @@ from bridgic.callbacks.trace.opik import start_opik_trace
 
 start_opik_trace(project_name="my-project")
 ```
-
-Parameters
-----------
-
-The `start_opik_trace` helper and `OpikTraceCallback` class accept the following parameters:
-
-- `project_name` (Optional[str]): The name of the project. If None, uses the `Default Project` project name.
-- `workspace` (Optional[str]): The name of the workspace. If None, uses the `default` workspace name.
-- `host` (Optional[str]): The host URL for the Opik server. If None, defaults to `https://www.comet.com/opik/api`.
-- `api_key` (Optional[str]): The API key for Opik. This parameter is ignored for local installations.
-- `use_local` (bool): Whether to use a local Opik server. Default is False.
-
-Features
---------
-
-- **Worker-level tracing**: Each worker execution is traced as a separate span
-- **Nested automa support**: Properly handles nested automa instances with hierarchical tracing
-- **Error tracking**: Captures and reports errors during worker execution
-- **Execution metadata**: Tracks execution duration, start/end times, and other metadata
-- **Concurrent execution**: Supports tracing multiple concurrent automa executions
