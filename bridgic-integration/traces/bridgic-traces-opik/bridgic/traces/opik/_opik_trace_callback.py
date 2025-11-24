@@ -8,7 +8,7 @@ import warnings
 from typing import Any, Dict, Optional
 
 import opik.decorator.tracing_runtime_config as tracing_runtime_config
-from opik import context_storage as opik_context_storage, id_helpers
+from opik import context_storage as opik_context_storage
 from opik.api_objects import helpers, opik_client, span, trace
 from opik.decorator import error_info_collector
 from opik.types import ErrorInfoDict
@@ -412,7 +412,6 @@ class OpikTraceCallback(WorkerCallback):
         state_dict["api_key"] = self._api_key
         state_dict["host"] = self._host
         state_dict["use_local"] = self._use_local
-        state_dict["is_ready"] = self._is_ready
         return state_dict
 
     @override
@@ -423,6 +422,5 @@ class OpikTraceCallback(WorkerCallback):
         self._api_key = state_dict["api_key"]
         self._host = state_dict["host"]
         self._use_local = state_dict["use_local"]
-        self._is_ready = state_dict["is_ready"]
         self._setup_opik() # if opik is not ready, it will be set to False
 

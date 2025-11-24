@@ -34,19 +34,59 @@ export LANGWATCH_ENDPOINT="https://app.langwatch.ai"  # Optional, defaults to ht
 Usage
 -----
 
-The `start_langwatch_trace` function provides a convenient way to register LangWatch tracing for all workers application-wide. This is the simplest way to get started:
+The `LangWatchTraceCallback` can be configured in two ways:
+
+### Method 1: Per-Automa Scope with RunningOptions
+
+Apply the callback only to a single automa by configuring it through `RunningOptions`. In this mode, every worker instantiated by that automa receives its own callback instance, while other automa remain unaffected.
+
+```python
+from bridgic.core.automa import GraphAutoma, RunningOptions, worker
+from bridgic.core.automa.worker import WorkerCallbackBuilder
+from bridgic.traces.langwatch import LangWatchTraceCallback
+import asyncio
+
+class MyAutoma(GraphAutoma):
+    @worker(is_start=True)
+    async def step1(self):
+        return "hello"
+
+    @worker(dependencies=["step1"], is_output=True)
+    async def step2(self, step1: str):
+        return f"{step1} world"
+
+async def main():
+    builder = WorkerCallbackBuilder(
+        LangWatchTraceCallback,
+        init_kwargs={"base_attributes": {"app": "demo"}}
+    )
+    running_options = RunningOptions(callback_builders=[builder])
+    automa = MyAutoma(running_options=running_options)
+    result = await automa.arun()
+    print(result)
+
+asyncio.run(main())
+```
+
+### Method 2: Global Scope with GlobalSetting
+
+You can choose between two options:
+
+1. Register the callback at the global level through `GlobalSetting` to make it effective for every automa in the runtime. Each worker, regardless of which automa creates it, is instrumented with the same callback configuration.
+2. Use the `start_langwatch_trace` helper to register LangWatch tracing for every worker application-wide. This is the simplest and most recommended approach.
 
 ```python
 from bridgic.core.automa import GraphAutoma, worker
-from bridgic.traces.langwatch import start_langwatch_trace
+from bridgic.core.automa.worker import WorkerCallbackBuilder
+from bridgic.core.config import GlobalSetting
+from bridgic.traces.langwatch import LangWatchTraceCallback
+import asyncio
 
-# Register LangWatch trace callback
-# If api_key and endpoint_url are not provided, they will be read from environment variables
-start_langwatch_trace(
-    api_key=None,  # Optional: defaults to LANGWATCH_API_KEY env var
-    endpoint_url=None,  # Optional: defaults to LANGWATCH_ENDPOINT env var or https://app.langwatch.ai
-    base_attributes=None  # Optional: base attributes for LangWatch tracing
-)
+# Configure global callback
+GlobalSetting.set(callback_builders=[WorkerCallbackBuilder(
+    LangWatchTraceCallback,
+    init_kwargs={"base_attributes": {"app": "demo"}}
+)])
 
 class DataAnalysisAutoma(GraphAutoma):
     @worker(is_start=True)
@@ -84,13 +124,21 @@ if __name__ == "__main__":
     asyncio.run(main())
 ```
 
+Alternatively, configure tracing in a single call with `start_langwatch_trace`. When parameters are omitted, the helper reads the values from the `LANGWATCH_API_KEY` and `LANGWATCH_ENDPOINT` environment variables.
+
+```python
+from bridgic.traces.langwatch import start_langwatch_trace
+
+start_langwatch_trace(base_attributes={"app": "demo"})
+```
+
 Once your Bridgic application has finished running, traces will be automatically sent to LangWatch. You can view them in the LangWatch dashboard to explore rich visual insights and detailed traces of your workflow execution.
 
 
 Parameters
 ----------
 
-The `start_langwatch_trace` function accepts the following parameters:
+The `start_langwatch_trace` helper and `LangWatchTraceCallback` class accept the following parameters:
 
 - `api_key` (Optional[str]): The API key for the LangWatch tracing service. If `None`, the `LANGWATCH_API_KEY` environment variable will be used.
 - `endpoint_url` (Optional[str]): The URL of the LangWatch tracing service. If `None`, the `LANGWATCH_ENDPOINT` environment variable will be used. If that is also not provided, the default value will be `https://app.langwatch.ai`.

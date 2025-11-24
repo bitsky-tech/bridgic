@@ -1,6 +1,8 @@
 Opik Observability Integration
 ==============================
 
+This package integrates Opik tracing with the Bridgic framework, providing worker granularity tracing implementation.
+
 Installation
 -----
 
@@ -59,18 +61,59 @@ Once configured, you can start using `OpikTraceCallback` in your Bridgic applica
 Usage
 -----
 
-The `OpikTraceCallback` can be configured using the `start_opik_trace` function, which provides a convenient way to register Opik tracing for all workers application-wide.
+The `OpikTraceCallback` can be configured in two ways:
 
+### Method 1: Per-Automa Scope with RunningOptions
 
-The `start_opik_trace` function provides a convenient way to register Opik tracing for all workers application wide. This is the simplest and most recommended approach:
+Apply the callback only to a single automa by configuring it through `RunningOptions`. In this mode, every worker instantiated by that automa receives its own callback instance, while other automa remain unaffected.
+
+```python
+from bridgic.core.automa import GraphAutoma, RunningOptions, worker
+from bridgic.core.automa.worker import WorkerCallbackBuilder
+from bridgic.callbacks.trace.opik import OpikTraceCallback
+import asyncio
+
+class MyAutoma(GraphAutoma):
+    @worker(is_start=True)
+    async def step1(self):
+        return "hello"
+    
+    @worker(dependencies=["step1"], is_output=True)
+    async def step2(self, step1: str):
+        return f"{step1} world"
+
+async def main():
+    builder = WorkerCallbackBuilder(
+        OpikTraceCallback, 
+        init_kwargs={"project_name": "my-project"}
+    )
+    running_options = RunningOptions(callback_builders=[builder])
+    automa = MyAutoma(running_options=running_options)
+    result = await automa.arun()
+    print(result)
+
+asyncio.run(main())
+```
+
+### Method 2: Global Scope with GlobalSetting
+
+You can choose between two options:
+
+1. Register the callback at the global level through `GlobalSetting` to make it effective for every automa in the runtime. Each worker, regardless of which automa creates it, is instrumented with the same callback configuration.
+2. Use the `start_opik_trace` helper to register Opik tracing for every worker application-wide. This is the simplest and most recommended approach.
 
 ```python
 from bridgic.core.automa import GraphAutoma, worker
-from bridgic.traces.opik import start_opik_trace
+from bridgic.core.automa.worker import WorkerCallbackBuilder
+from bridgic.core.config import GlobalSetting
+from bridgic.callbacks.trace.opik import OpikTraceCallback
 import asyncio
 
-# Register Opik trace callback
-start_opik_trace(project_name="my-project")
+# Configure global callback
+GlobalSetting.set(callback_builders=[WorkerCallbackBuilder(
+    OpikTraceCallback, 
+    init_kwargs={"project_name": "my-project"}
+)])
 
 class MyAutoma(GraphAutoma):
     @worker(is_start=True)
@@ -89,10 +132,18 @@ async def main():
 asyncio.run(main())
 ```
 
+Alternatively, use `start_opik_trace` to configure tracing in a single call:
+
+```python
+from bridgic.callbacks.trace.opik import start_opik_trace
+
+start_opik_trace(project_name="my-project")
+```
+
 Parameters
 ----------
 
-### `start_opik_trace` Parameters
+The `start_opik_trace` helper and `OpikTraceCallback` class accept the following parameters:
 
 - `project_name` (Optional[str]): The name of the project. If None, uses the `Default Project` project name.
 - `workspace` (Optional[str]): The name of the workspace. If None, uses the `default` workspace name.

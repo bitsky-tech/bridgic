@@ -49,7 +49,7 @@ class LangWatchTraceCallback(WorkerCallback):
     base_attributes : Optional[BaseAttributes], default=None
         The base attributes to use for the LangWatch tracing client.
     
-    Note:
+    Notes
     ------
     Since tracing requires the execution within an automa to establish the corresponding record root,
     only global configurations (via `GlobalSetting`) and automa-level configurations (via `RunningOptions`) will take effect. 
@@ -380,7 +380,6 @@ class LangWatchTraceCallback(WorkerCallback):
         state_dict["api_key"] = self._api_key
         state_dict["endpoint_url"] = self._endpoint_url
         state_dict["base_attributes"] = self._base_attributes
-        state_dict["is_ready"] = self._is_ready
         return state_dict
 
     def load_from_dict(self, state_dict: Dict[str, Any]) -> None:
@@ -388,13 +387,11 @@ class LangWatchTraceCallback(WorkerCallback):
         self._api_key = state_dict.get("api_key")
         self._endpoint_url = state_dict.get("endpoint_url")
         self._base_attributes = state_dict.get("base_attributes")
-        self._is_ready = state_dict.get("is_ready", False)
         self._current_trace = ContextVar(
             "langwatch_current_trace", default=None
         )
         self._current_span_stack = ContextVar(
             "langwatch_current_span_stack", default=()
         )
-        if not self._is_ready:
-            self._setup_langwatch()
+        self._setup_langwatch()
 

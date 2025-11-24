@@ -7,7 +7,7 @@ def start_langwatch_trace(
     api_key: Optional[str] = None,
     endpoint_url: Optional[str] = None,
     base_attributes: Optional[BaseAttributes] = None,
-) -> WorkerCallbackBuilder[LangWatchTraceCallback]:
+) -> None:
     """Start a LangWatch trace for a given project and service.
 
     Parameters
@@ -21,8 +21,7 @@ def start_langwatch_trace(
     
     Returns
     -------
-    WorkerCallbackBuilder[LangWatchTraceCallback]
-        A callback builder for LangWatch tracing.
+    None
     """
     from bridgic.core.config import GlobalSetting
     builder = WorkerCallbackBuilder(
@@ -30,4 +29,3 @@ def start_langwatch_trace(
         init_kwargs={"api_key": api_key, "endpoint_url": endpoint_url, "base_attributes": base_attributes}
     )
     GlobalSetting.add(callback_builder=builder)
-    return builder

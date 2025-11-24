@@ -74,15 +74,16 @@ class GlobalSetting(BaseModel):
                 instance.callback_builders = callback_builders
 
     @classmethod
-    def add(cls, callback_builder: "WorkerCallbackBuilder") -> None:
+    def add(cls, callback_builder: Optional["WorkerCallbackBuilder"] = None) -> None:
         """
-        Add a setting field to the global setting.
+        Add new element to the existing field(s) of the `GlobalSetting`.
 
         Parameters
         ----------
-        callback_builder : WorkerCallbackBuilder
-            The callback builder to add to the global setting callback builders.
+        callback_builder : Optional[WorkerCallbackBuilder]
+            The callback builder to add to the global setting callback builders. If None is passed in, nothing will be done.
         """
         instance = cls.read()
         with cls._lock:
-            instance.callback_builders.append(callback_builder)
+            if callback_builder is not None:
+                instance.callback_builders.append(callback_builder)

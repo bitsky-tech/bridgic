@@ -8,7 +8,7 @@ def start_opik_trace(
     host: Optional[str] = None,
     api_key: Optional[str] = None,
     use_local: bool = False,
-) -> WorkerCallbackBuilder[OpikTraceCallback]:
+) -> None:
     """Start a Opik trace for a given project and service.
 
     Parameters
@@ -26,8 +26,7 @@ def start_opik_trace(
 
     Returns
     -------
-    WorkerCallbackBuilder[OpikTraceCallback]
-        A callback builder for Opik tracing.
+    None
     """
     from bridgic.core.config import GlobalSetting
     builder = WorkerCallbackBuilder(
@@ -35,4 +34,3 @@ def start_opik_trace(
         init_kwargs={"project_name": project_name, "workspace": workspace, "host": host, "api_key": api_key, "use_local": use_local}
     )
     GlobalSetting.add(callback_builder=builder)
-    return builder
