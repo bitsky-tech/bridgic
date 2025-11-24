@@ -70,7 +70,7 @@ Apply the callback only to a single automa by configuring it through `RunningOpt
 ```python
 from bridgic.core.automa import GraphAutoma, RunningOptions, worker
 from bridgic.core.automa.worker import WorkerCallbackBuilder
-from bridgic.trace.opik import OpikTraceCallback
+from bridgic.traces.opik import OpikTraceCallback
 import asyncio
 
 class MyAutoma(GraphAutoma):
@@ -103,7 +103,7 @@ You can register the callback at the global level through `GlobalSetting` to mak
 from bridgic.core.automa import GraphAutoma, worker
 from bridgic.core.automa.worker import WorkerCallbackBuilder
 from bridgic.core.config import GlobalSetting
-from bridgic.trace.opik import OpikTraceCallback
+from bridgic.traces.opik import OpikTraceCallback
 import asyncio
 
 # Configure global callback
@@ -132,7 +132,7 @@ asyncio.run(main())
 From the perspective of tracking worker execution, the following approach is equivalent to the above one:
 
 ```python
-from bridgic.trace.opik import start_opik_trace
+from bridgic.traces.opik import start_opik_trace
 
 start_opik_trace(project_name="my-project")
 ```
