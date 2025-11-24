@@ -2,7 +2,7 @@ import pytest
 from typing import Tuple, Dict, Any, Optional
 
 from bridgic.core.automa import GraphAutoma, Snapshot, worker, AutomaRuntimeError
-from bridgic.core.automa.args import From, ArgsMappingRule, System, Distribute
+from bridgic.core.automa.args import From, ArgsMappingRule, System, Distribute, ResultDispatchRule
 from bridgic.core.automa.interaction import Event, InteractionFeedback, InteractionException
 from bridgic.core.automa.worker import Worker, WorkerCallback, WorkerCallbackBuilder
 from bridgic.core.types._error import WorkerArgsInjectionError
@@ -239,13 +239,9 @@ def automa_with_args_mapping_and_from():
         ) -> int:
             assert automa is self
             assert sub_automa is my_graph_1
-            return z + 1  # 2
+            return z + 1, z + 2  # 2
 
-        @worker(dependencies=["worker_31"], args_mapping_rule=ArgsMappingRule.SUPPRESSED)
-        async def worker_42(self, z: int = From("start")) -> int:
-            return z + 2  # 3
-
-        @worker(dependencies=["worker_41", "worker_42"], args_mapping_rule=(ArgsMappingRule.DISTRIBUTE, ArgsMappingRule.MERGE))
+        @worker(dependencies=["worker_41"], result_dispatch_rule=ResultDispatchRule.DISTRIBUTE)
         async def worker_51(
             self, x: Tuple[int, int], z: int = From("no_exist_worker", 1), 
             automa: GraphAutoma = System("automa"), 

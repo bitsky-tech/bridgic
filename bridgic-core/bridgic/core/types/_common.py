@@ -29,12 +29,6 @@ class ArgsMappingRule(Enum):
         Unpacks the result from the previous worker and passes as individual 
         arguments. Only valid when the current worker has exactly one dependency and 
         the return value is a list/tuple or dict.
-    GATHER: Enum (default)
-        Gathers all results of current worker into a single tuple as the 
-        only result to the next workers.
-    DISTRIBUTE: Enum
-        Distribute the current worker's results to the after workers in the order 
-        they are added.
     SUPPRESSED: Enum
         Suppress all results from previous workers. No arguments are passed 
         to the current worker from its dependencies.
@@ -75,14 +69,25 @@ class ArgsMappingRule(Enum):
     3. MERGE combines all predecessor outputs into a single tuple argument
     4. SUPPRESSED allows workers to ignore dependency outputs completely
     """
-    # how to map the result from previous workers.
     AS_IS = "as_is"
     MERGE = "merge"
     UNPACK = "unpack"
-
-    # how to send the result to the post workers.
-    GATHER = "gather"
-    DISTRIBUTE = "distribute"
-
-    # do nothing
     SUPPRESSED = "suppressed"
+
+
+class ResultDispatchRule(Enum):
+    """
+    Enumeration of Result Dispatch rules for worker result passing.
+
+    ResultDispatchRule defines how the result from the current worker is dispatched to the next workers.
+    This controls the data flow between workers in an automa execution graph.
+
+    AS_IS: Enum (default)
+        Gathers all results of current worker into a single tuple as the 
+        only result to the next workers.
+    DISTRIBUTE: Enum
+        Distribute the current worker's results to the after workers in the order 
+        they are added.
+    """
+    AS_IS = "as_is"
+    DISTRIBUTE = "distribute"
