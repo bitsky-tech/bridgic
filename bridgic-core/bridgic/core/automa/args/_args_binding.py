@@ -19,11 +19,11 @@ if TYPE_CHECKING:
     )
 
 @dataclass
-class IN_ORDER:
+class InOrder:
     """
     A descriptor to indicate that data should be distributed to multiple workers. 
 
-    When is used to input arguments or worker with this class, the data will be distributed
+    When is used to input arguments or worker with this descriptor, the data will be distributed
     to downstream workers instead of being gathered as a single value. Split the returned 
     Sequence object and dispatching them in-order and element-wise to the downstream workers 
     as their actual input.
@@ -111,7 +111,7 @@ class ArgsManager:
                 "sender_rule": sender_rule,
             }
         for key, value in self._start_arguments.items():
-            if isinstance(value, IN_ORDER):
+            if isinstance(value, InOrder):
                 sender_rule = ResultDispatchingRule.IN_ORDER
             else:
                 sender_rule = ResultDispatchingRule.AS_IS
@@ -172,7 +172,7 @@ class ArgsManager:
                 sender_rule = self._worker_rule_dict[key]["sender_rule"]
                 data_mode_list.append({
                     'worker_key': key,
-                    'data': value.data if isinstance(value, IN_ORDER) else value,
+                    'data': value.data if isinstance(value, InOrder) else value,
                     'send_rule': sender_rule,
                 })
             data = self._args_send(data_mode_list)
