@@ -79,7 +79,6 @@ class ArgsMappingRule(Enum):
     """
     AS_IS = "as_is"
     MERGE = "merge"
-    MERGE = "merge"
     UNPACK = "unpack"
     SUPPRESSED = "suppressed"
 
