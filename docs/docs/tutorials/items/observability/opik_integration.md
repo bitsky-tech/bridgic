@@ -3,7 +3,7 @@
 
 ## Overview
 
-[Comet Opik](https://www.comet.com/docs/opik/) is a comprehensive observability platform designed for agentic systems. The `bridgic-callbacks-trace-opik` package enables seamless integration of Opik into your Bridgic-based agentic workflows.
+[Comet Opik](https://www.comet.com/docs/opik/) is a comprehensive observability platform designed for agentic systems. The `bridgic-traces-opik` package enables seamless integration of Opik into your Bridgic-based agentic workflows.
 
 This integration is primarily supported by `OpikTraceCallback`, a [WorkerCallback](../core_mechanism/worker_callback.ipynb) implementation that automatically instruments the worker execution with Opik tracing, which provides comprehensive observability by:
 
@@ -177,7 +177,7 @@ class DataAnalysisAutoma(GraphAutoma):
         return f"Report: Found {len(analysis['trends'])} trends with {analysis['confidence']} confidence."
 
 async def automa_arun():
-    builder = WorkerCallbackBuilder(OpikTraceCallback, init_kwargs={"project_name": "bridgic-demo"})
+    builder = WorkerCallbackBuilder(OpikTraceCallback, init_kwargs={"project_name": "bridgic-integration-demo"})
     running_options = RunningOptions(callback_builders=[builder])
     automa = DataAnalysisAutoma(running_options=running_options)
     result = await automa.arun(topic="market analysis")
