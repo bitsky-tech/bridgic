@@ -814,7 +814,7 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
 
         The dependencies can be added together with a worker. However, you can add a worker without any dependencies.
 
-        Note: args_mapping_rule and result_dispatch_rule could only be set when using worker-adding API. Even if the worker has no any dependencies.
+        Note: args_mapping_rule and result_dispatching_rule could only be set when using worker-adding API. Even if the worker has no any dependencies.
 
         Parameters
         ----------
