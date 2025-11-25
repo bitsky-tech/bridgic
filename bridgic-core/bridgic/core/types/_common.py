@@ -88,8 +88,8 @@ class ResultDispatchingRule(Enum):
         Gathers all results of current worker into a single tuple as the 
         only result to the next workers.
     IN_ORDER: Enum
-        Distribute the current worker's results to the downstream workers in the order 
-        they are added.
+        Dispatch the current worker's results to the corresponding downstream 
+        workers one by one according to the order they are declared or added.
     """
     AS_IS = "as_is"
     IN_ORDER = "in_order"
