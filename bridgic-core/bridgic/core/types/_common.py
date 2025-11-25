@@ -25,12 +25,6 @@ class ArgsMappingRule(Enum):
     MERGE: Enum
         Merges all results from previous workers into a single tuple as the 
         only argument of the current worker.
-    AS_IS: Enum (default)
-        Map the results of the previous workers to the corresponding parameters 
-        in the order of dependency.
-    MERGE: Enum
-        Merges all results from previous workers into a single tuple as the 
-        only argument of the current worker.
     UNPACK: Enum
         Unpacks the result from the previous worker and passes as individual 
         Unpacks the result from the previous worker and passes as individual 
