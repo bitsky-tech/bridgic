@@ -19,18 +19,18 @@ class ArgsMappingRule(Enum):
 
     Attributes
     ----------
-    AS_IS: Enum
-        Preserves the exact order and types of return values from predecessor workers.
-        No unpacking or merging is performed.
+    AS_IS: Enum (default)
+        Map the results of the previous workers to the corresponding parameters 
+        in the order of dependency.
+    MERGE: Enum
+        Merges all results from previous workers into a single tuple as the 
+        only argument of the current worker.
     UNPACK: Enum
-        Unpacks the return value from the predecessor worker and passes as individual 
+        Unpacks the result from the previous worker and passes as individual 
         arguments. Only valid when the current worker has exactly one dependency and 
         the return value is a list/tuple or dict.
-    MERGE: Enum
-        Merges all return values from predecessor workers into a single tuple as the 
-        only argument of the current worker.
     SUPPRESSED: Enum
-        Suppresses all return values from predecessor workers. No arguments are passed 
+        Suppresses all results from previous workers. No arguments are passed 
         to the current worker from its dependencies.
 
     Examples
@@ -70,6 +70,26 @@ class ArgsMappingRule(Enum):
     4. SUPPRESSED allows workers to ignore dependency outputs completely
     """
     AS_IS = "as_is"
-    UNPACK = "unpack"
     MERGE = "merge"
+    UNPACK = "unpack"
     SUPPRESSED = "suppressed"
+
+
+class ResultDispatchingRule(Enum):
+    """
+    Enumeration of Result Dispatch rules for worker result passing.
+
+    ResultDispatchingRule defines how the result from the current worker is dispatched to the next workers.
+    This controls the data flow between workers in an automa execution graph.
+
+    Attributes
+    ----------
+    AS_IS: Enum (default)
+        Gathers all results of current worker into a single tuple as the 
+        only result to the next workers.
+    IN_ORDER: Enum
+        Distribute the current worker's results to the downstream workers in the order 
+        they are added.
+    """
+    AS_IS = "as_is"
+    IN_ORDER = "in_order"

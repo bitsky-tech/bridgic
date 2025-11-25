@@ -29,3 +29,4 @@ Bridgic provides a flexible callback mechanism that hooks into worker execution 
 Bridgic currently provides integrations with the following observability platforms:
 
 - [Opik Integration](opik_integration)
+- [LangWatch Integration](lang_watch_integration)

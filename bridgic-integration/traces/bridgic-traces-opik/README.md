@@ -56,7 +56,6 @@ Both variants of `configure` prompt you for the required information and save it
 opik configure --yes
 ```
 
-
 Once configured, you can start using `OpikTraceCallback` in your Bridgic applications.
 
 Usage
@@ -98,7 +97,7 @@ asyncio.run(main())
 
 ### Method 2: Global Scope with GlobalSetting
 
-Register the callback at the global level through `GlobalSetting` to make it effective for every automa in the runtime. Each worker, regardless of which automa creates it, is instrumented with the same callback configuration.
+You can register the callback at the global level through `GlobalSetting` to make it effective for every automa in the runtime. Each worker, regardless of which automa creates it, is instrumented with the same callback configuration.
 
 ```python
 from bridgic.core.automa import GraphAutoma, worker
@@ -130,16 +129,12 @@ async def main():
 asyncio.run(main())
 ```
 
-Parameters
-----------
+From the perspective of tracking worker execution, the following approach is equivalent to the above one:
 
-- `project_name` (Optional[str]): The project name for Opik tracing. If None, uses the default project name configured in Opik.
+```python
+from bridgic.traces.opik import start_opik_trace
 
-Features
---------
+start_opik_trace(project_name="my-project")
+```
 
-- **Worker-level tracing**: Each worker execution is traced as a separate span
-- **Nested automa support**: Properly handles nested automa instances with hierarchical tracing
-- **Error tracking**: Captures and reports errors during worker execution
-- **Execution metadata**: Tracks execution duration, start/end times, and other metadata
-- **Concurrent execution**: Supports tracing multiple concurrent automa executions
+However, `start_opik_trace` is a higher-level function that encapsulates the functionality of the first approach. As the framework may add tracking for more important phases in the future, `start_opik_trace` will provide a unified interface for all tracking capabilities, making it the recommended approach for most use cases.
