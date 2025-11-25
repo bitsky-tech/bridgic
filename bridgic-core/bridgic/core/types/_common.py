@@ -27,11 +27,9 @@ class ArgsMappingRule(Enum):
         only argument of the current worker.
     UNPACK: Enum
         Unpacks the result from the previous worker and passes as individual 
-        Unpacks the result from the previous worker and passes as individual 
         arguments. Only valid when the current worker has exactly one dependency and 
         the return value is a list/tuple or dict.
     SUPPRESSED: Enum
-        Suppresses all results from previous workers. No arguments are passed 
         Suppresses all results from previous workers. No arguments are passed 
         to the current worker from its dependencies.
 
