@@ -1,12 +1,12 @@
 [project]
-name = "bridgic-traces-opik"
-version = "0.1.1"
+name = "bridgic-traces-langwatch"
+version = "0.1.0"
 license = {text = "MIT"}
 classifiers = [
     # "Private :: Do Not Upload",
     "Programming Language :: Python :: 3",
 ]
-description = "Opik observability integration for Bridgic."
+description = "LangWatch observability integration for Bridgic."
 readme = "README.md"
 requires-python = ">=3.9"
 authors = [
@@ -15,8 +15,7 @@ authors = [
 
 dependencies = [
     "bridgic-core>=0.1.3",
-    "opik>=1.8.97",
-    "urllib3<2.0", # for fixing urllib3 warning in python 3.9, see https://github.com/urllib3/urllib3/issues/3020
+    "langwatch>=0.2.10",
 ]
 
 [dependency-groups]

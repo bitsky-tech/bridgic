@@ -2,6 +2,7 @@
 
 import time
 from bridgic.core.automa import Automa
+import opik
 from typing_extensions import override
 import warnings
 from typing import Any, Dict, Optional
@@ -25,30 +26,67 @@ class OpikTraceCallback(WorkerCallback):
     It tracks worker execution, creates spans for each worker, and manages
     trace lifecycle for top-level automa instances.
 
-    **Configuration Scope**
-
-    This callback requires access to the automa context and can only be configured
-    at the **Automa level** (via `RunningOptions`) or **Global level** (via `GlobalSetting`).
-    It does not support worker-level configuration (via `@worker` decorator).
-
     Parameters
     ----------
     project_name : Optional[str], default=None
-        The project name for Opik tracing. If None, uses default project name.
+        The name of the project. If None, uses `Default Project` project name.
+    workspace : Optional[str], default=None
+        The name of the workspace. If None, uses `default` workspace name.
+    host : Optional[str], default=None
+        The host URL for the Opik server. If None, it will default to `https://www.comet.com/opik/api`.
+    api_key : Optional[str], default=None
+        The API key for Opik. This parameter is ignored for local installations.
+    use_local : bool, default=False
+        Whether to use local Opik server.
+    
+    Notes
+    ------
+    Since tracing requires the execution within an automa to establish the corresponding record root,
+    only global configurations (via `GlobalSetting`) and automa-level configurations (via `RunningOptions`) will take effect. 
+    In other words, if you set the callback by using `@worker` or `add_worker`, it will not work.
+
+    Examples
+    ------
+    If you want to report tracking information to the self-hosted Opik service, you can initialize the callback instance like this:
+    ```python
+    OpikTraceCallback(project_name="my-project", use_local=True)
+    ```
+
+    If you want to report tracking information to the Opik Cloud service, you can initialize the callback instance like this:
+    ```python
+    OpikTraceCallback(project_name="my-project", api_key="my-api-key")
+    ```
     """
 
     _project_name: Optional[str]
+    _workspace: Optional[str]
     _is_ready: bool
+    _api_key: Optional[str]
+    _host: Optional[str]
+    _use_local: bool
     _opik_client: opik_client.Opik
 
-    def __init__(self, project_name: Optional[str] = None):
+    def __init__(
+        self,
+        project_name: Optional[str] = None,
+        workspace: Optional[str] = None,
+        host: Optional[str] = None,
+        api_key: Optional[str] = None,
+        use_local: bool = False,
+    ):
         super().__init__()
         self._project_name = project_name
+        self._workspace = workspace
+        self._api_key = api_key
+        self._host = host
+        self._use_local = use_local
         self._is_ready = False
         self._setup_opik()
 
     def _setup_opik(self) -> None:
-        self._opik_client = opik_client.Opik(_use_batching=True, project_name=self._project_name)
+        if self._use_local:
+            opik.configure(use_local=True)
+        self._opik_client = opik_client.Opik(_use_batching=True, project_name=self._project_name, workspace=self._workspace, api_key=self._api_key, host=self._host)
         missing_configuration, _ = self._opik_client._config.get_misconfiguration_detection_results()
         if missing_configuration:
             self._is_ready = False # for serialization compatibility
@@ -382,12 +420,19 @@ class OpikTraceCallback(WorkerCallback):
     def dump_to_dict(self) -> Dict[str, Any]:
         state_dict = super().dump_to_dict()
         state_dict["project_name"] = self._project_name
-        state_dict["is_ready"] = self._is_ready
+        state_dict["workspace"] = self._workspace
+        state_dict["api_key"] = self._api_key
+        state_dict["host"] = self._host
+        state_dict["use_local"] = self._use_local
         return state_dict
 
     @override
     def load_from_dict(self, state_dict: Dict[str, Any]) -> None:
         super().load_from_dict(state_dict)
         self._project_name = state_dict["project_name"]
-        self._is_ready = state_dict["is_ready"]
+        self._workspace = state_dict["workspace"]
+        self._api_key = state_dict["api_key"]
+        self._host = state_dict["host"]
+        self._use_local = state_dict["use_local"]
         self._setup_opik() # if opik is not ready, it will be set to False
+

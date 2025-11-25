@@ -1,7 +1,7 @@
-import inspect
+import warnings
 
 from threading import Lock
-from typing import Any, Dict, Union, List, Optional, Type, Generic, TypeVar, TYPE_CHECKING, get_origin, get_args
+from typing import Any, Dict, Union, List, Optional, Type, Generic, TypeVar, TYPE_CHECKING, get_origin, get_args, get_type_hints
 from typing_extensions import override
 from bridgic.core.types._serialization import Serializable
 from bridgic.core.utils._inspect_tools import load_qualified_class_or_func
@@ -323,27 +323,28 @@ def can_handle_exception(callback: WorkerCallback, error: Exception) -> bool:
         False otherwise.
     """
     try:
-        sig = inspect.signature(callback.on_worker_error)
-        error_param = sig.parameters.get('error')
-        if error_param and error_param.annotation != inspect.Parameter.empty:
-            error_type = error_param.annotation
-            # Resolve forward references and get the actual type
-            if isinstance(error_type, str):
-                # Forward reference, skip for now
-                return False
-            
-            # Handle Union types (e.g., Union[ValueError, TypeError])
-            origin = get_origin(error_type)
-            if origin is Union:
-                union_args = get_args(error_type)
-                # Check if exception is instance of any type in the Union
-                return any(isinstance(error, t) for t in union_args if isinstance(t, type) and issubclass(t, Exception))
-            
-            # Handle single type annotation (including base Exception class)
-            elif isinstance(error_type, type) and issubclass(error_type, Exception):
-                # Match based on inheritance relationship using isinstance
-                return isinstance(error, error_type)
-    except (ValueError, TypeError, AttributeError):
+        annotations = get_type_hints(callback.on_worker_error)
+        error_type = annotations.get("error")
+        if error_type is None:
+            warnings.warn(
+                f"No type annotation found for the `error` parametor of "
+                f"`{callback.__class__.__name__}.on_worker_error`."
+            )
+            return False
+
+        origin = get_origin(error_type)
+
+        # Handle Union types (e.g., Union[ValueError, TypeError])
+        if origin is Union:
+            union_args = get_args(error_type)
+            # Check if exception is instance of any type in the Union
+            return any(isinstance(error, t) for t in union_args if isinstance(t, type) and issubclass(t, Exception))
+
+        # Handle single type annotation (including base Exception class)
+        if isinstance(error_type, type) and issubclass(error_type, Exception):
+            # Match based on inheritance relationship using isinstance
+            return isinstance(error, error_type)
+    except (ValueError, TypeError, AttributeError, NameError):
         # If we can't determine the type, skip this callback
         pass
     
