@@ -38,7 +38,7 @@ def worker(
         Whether the decorated callable is an output worker. True means it is, while False means it is not.
     args_mapping_rule : ArgsMappingRule
         The rule of arguments mapping.
-    result_dispatch_rule: ResultDispatchingRule
+    result_dispatching_rule: ResultDispatchingRule
         The rule of result dispatch.
     callback_builders: List[WorkerCallbackBuilder]
         A list of worker callback builders to be registered.
