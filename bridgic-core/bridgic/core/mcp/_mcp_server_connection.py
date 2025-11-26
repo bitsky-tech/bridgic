@@ -7,7 +7,6 @@ from mcp.client.session import ClientSession
 from mcp.client.stdio import stdio_client, StdioServerParameters
 from mcp.client.streamable_http import streamablehttp_client
 from mcp.client.websocket import websocket_client
-
 from bridgic.core.types._error import McpServerConnectionError
 
 class McpServerConnection(ABC):
@@ -55,6 +54,8 @@ class McpServerConnection(ABC):
         self.client_kwargs = kwargs
 
         self.session = None
+        self.is_connected = False
+
         self._exit_stack = AsyncExitStack()
 
     async def connect(self):
@@ -77,6 +78,7 @@ class McpServerConnection(ABC):
                     )
                 )
                 await session.initialize()
+                self.is_connected = True
             except Exception as ex:
                 await self._exit_stack.aclose()
                 raise McpServerConnectionError(f"Failed to create session to MCP server: name={self.name}, error={ex}") from ex
@@ -84,6 +86,15 @@ class McpServerConnection(ABC):
             self.session = session
         elif self.session._request_id == 0:
             await self.session.initialize()
+            self.is_connected = True
+
+    async def close(self):
+        """
+        Close the connection to the MCP server.
+        """
+        await self._exit_stack.aclose()
+        self.session = None
+        self.is_connected = False
 
     @abstractmethod
     def get_mcp_client(self) -> _AsyncGeneratorContextManager[Any, None]:
