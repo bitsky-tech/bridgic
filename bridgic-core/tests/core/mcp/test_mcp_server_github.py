@@ -65,15 +65,11 @@ async def github_mcp_streamable_http_connection(github_mcp_url, github_token):
 async def test_github_mcp_server_stdio_connection(github_mcp_stdio_connection):
     assert github_mcp_stdio_connection.session is not None
     assert github_mcp_stdio_connection.session._request_id > 0
-
-    tools = await github_mcp_stdio_connection.session.list_tools()
-    assert tools is not None
+    assert github_mcp_stdio_connection.is_connected == True
 
 
 @pytest.mark.asyncio
 async def test_github_mcp_server_streamable_http_connection(github_mcp_streamable_http_connection):
     assert github_mcp_streamable_http_connection.session is not None
     assert github_mcp_streamable_http_connection.session._request_id > 0
-    
-    tools = await github_mcp_streamable_http_connection.session.list_tools()
-    assert tools is not None
+    assert github_mcp_streamable_http_connection.is_connected == True

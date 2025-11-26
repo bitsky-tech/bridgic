@@ -56,8 +56,6 @@ class McpServerConnection(ABC):
         self.session = None
         self.is_connected = False
 
-        self._exit_stack = AsyncExitStack()
-
     async def connect(self):
         """
         Establish a connection to the MCP server.
@@ -65,6 +63,7 @@ class McpServerConnection(ABC):
         if not self.session:
             # Try to establish a connection to the specified server.
             try:
+                self._exit_stack = AsyncExitStack()
                 transport = await self._exit_stack.enter_async_context(self.get_mcp_client())
                 session = await self._exit_stack.enter_async_context(
                     ClientSession(
@@ -78,12 +77,12 @@ class McpServerConnection(ABC):
                     )
                 )
                 await session.initialize()
-                self.is_connected = True
             except Exception as ex:
                 await self._exit_stack.aclose()
                 raise McpServerConnectionError(f"Failed to create session to MCP server: name={self.name}, error={ex}") from ex
             # Hold the connected session for later use.
             self.session = session
+            self.is_connected = True
         elif self.session._request_id == 0:
             await self.session.initialize()
             self.is_connected = True
