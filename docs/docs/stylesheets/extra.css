@@ -27,6 +27,11 @@
   max-width: 68rem;
 }
 
+/* remove the shadow of the navigation */
+.md-nav--lifted>.md-nav__list>.md-nav__item--active>.md-nav__link, .md-nav--secondary .md-nav__title {
+  box-shadow: none;
+}
+
 /* ========================================== */
 /* HERO SECTION STYLES */
 /* ========================================== */
