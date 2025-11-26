@@ -11,19 +11,19 @@ nav:
     - Installation: tutorials/installation.md
     - Tutorials:
       - Tutorials: tutorials/index.md
-      - Quick Start: tutorials/items/quick_start/quick_start.ipynb
+      - tutorials/items/quick_start/quick_start.ipynb
       - Core Mechanism: 
         - Core Mechanism: tutorials/items/core_mechanism/index.md
-        - Concurrency Mode: tutorials/items/core_mechanism/concurrency_mode.ipynb
-        - Parameter Resolving: tutorials/items/core_mechanism/parameter_resolving.ipynb
-        - Dynamic Routing: tutorials/items/core_mechanism/dynamic_routing.ipynb
-        - Dynamic Topology: tutorials/items/core_mechanism/dynamic_topology.ipynb
-        - Human in the loop: tutorials/items/core_mechanism/human_in_the_loop.ipynb
-        - Worker Callback: tutorials/items/core_mechanism/worker_callback.ipynb
-        - Modularity: tutorials/items/core_mechanism/modularity.ipynb
+        - tutorials/items/core_mechanism/concurrency_mode.ipynb
+        - tutorials/items/core_mechanism/parameter_resolving.ipynb
+        - tutorials/items/core_mechanism/dynamic_routing.ipynb
+        - tutorials/items/core_mechanism/dynamic_topology.ipynb
+        - tutorials/items/core_mechanism/human_in_the_loop.ipynb
+        - tutorials/items/core_mechanism/worker_callback.ipynb
+        - tutorials/items/core_mechanism/modularity.ipynb
       - Model:
         - Model: tutorials/items/model_integration/index.md
-        - LLM Integration: tutorials/items/model_integration/llm_integration.ipynb
+        - tutorials/items/model_integration/llm_integration.ipynb
       - Observability:
         - Observability: tutorials/items/observability/index.md
         - Opik Integration: tutorials/items/observability/opik_integration.md
@@ -40,14 +40,11 @@ theme:
   logo: assets/logo.png
   favicon: assets/favicon.ico
   custom_dir: overrides
+  language: en
   features:
     # Navigation
-    # navigation.instant enables client-side navigation for faster page transitions.
-    - navigation.instant
-    # navigation.instant.prefetch preloads likely next pages to reduce perceived latency.
-    - navigation.instant.prefetch
-    # navigation.instant.progress shows a top progress bar on page loads (user feedback).
-    - navigation.instant.progress
+    # navigation.instant* features are disabled because mkdocs-static-i18n's
+    # Material language switcher hooks are incompatible with instant navigation.
     # - navigation.prune  # Keep disabled for now; pruning reduces DOM for huge pages but may complicate anchors.
     - navigation.tabs
     # - navigation.tabs.sticky
@@ -162,6 +159,79 @@ plugins:
             - ../bridgic-integration/traces/bridgic-traces-opik
             - ../bridgic-integration/traces/bridgic-traces-langwatch
   - mike
+  - i18n:
+      docs_structure: suffix
+      fallback_to_default: true
+      reconfigure_material: true
+      reconfigure_search: true
+      build_only_locale: !ENV [BUILD_ONLY_LOCALE, null]
+      languages:
+        - locale: en
+          default: true
+          name: English
+          build: true
+          site_name: Bridgic
+          site_description: Bridge logic and magic together with autonomous AI capabilities
+        - locale: zh
+          name: 中文
+          build: true
+          site_name: Bridgic 桥接逻辑与魔法
+          site_description: 将桥梁逻辑、魔法与AI功能相结合
+          copyright: >
+            版权所有 &copy; 2025 BitSky Inc. | 基于 <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">Material for MkDocs</a> 构建。
+          nav_translations:
+            Home: 首页
+            Get Started: 快速上手
+            Installation: 安装指南
+            Tutorials: 教程
+            # Quick Start: 快速开始
+            Core Mechanism: 核心机制
+            # Concurrency Mode: 并发模式
+            # Parameter Binding: 参数绑定
+            # Parameter Resolving: 参数解析
+            # Dynamic Routing: 动态路由
+            # Dynamic Topology: 动态拓扑
+            # Human in the loop: 人在回路
+            # Human-in-the-loop: 人在回路
+            # Worker Callback: Worker 回调
+            # Modularity: 模块化
+            Model: 模型
+            # LLM Integration: LLM 集成
+            Observability: 可观测性
+            Opik Integration: Opik 集成
+            LangWatch Integration: LangWatch 集成
+            Understanding: 深入理解
+            Introduction: 介绍
+            Basics: 基础
+            API Reference: API 参考
+            # Bridgic-Core: Bridgic 核心
+            # agentic: 自治代理
+            # tool_specs: 工具规格
+            # types: 类型
+            # workers: Worker 列表
+            # bridgic.core.automa: Automa
+            # automa: 自动机
+            # args: 参数
+            # interaction: 交互
+            # worker: Worker
+            # bridgic.core.config: 配置
+            # config: 配置
+            # bridgic.core.model: 模型
+            # protocols: 协议
+            # bridgic.core.prompt: 提示
+            # bridgic.core.types: 类型
+            # Bridgic-Integration: Bridgic 集成
+            # llms: 大语言模型
+            # traces: 追踪
+            # bridgic.llms.openai_like: OpenAI Like
+            # bridgic.llms.openai: OpenAI
+            # bridgic.llms.vllm: vLLM
+            # bridgic.traces.opik: Opik 追踪
+            # bridgic.traces.langwatch: LangWatch 追踪
+
+
+hooks:
+  - hooks/i18n_ipynb_fix.py
 
 markdown_extensions:
   # Python Markdown
@@ -174,7 +244,7 @@ markdown_extensions:
   # Table of contents with link icons for easy sharing
   - toc:
       permalink: true
-      title: Outline
+      # title: Outline
   # Python Markdown Extensions
   - pymdownx.arithmatex:
       generic: true
@@ -215,6 +285,13 @@ markdown_extensions:
   - pymdownx.tilde
 
 extra:
+  alternate:
+    - name: English
+      link: /
+      lang: en
+    - name: 中文
+      link: /zh/
+      lang: zh
   # analytics:
   #   provider: google
   #   property: !ENV GOOGLE_ANALYTICS_KEY
@@ -244,7 +321,8 @@ copyright: >
   Copyright &copy; 2025 BitSky Inc. | Built with <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">Material for MkDocs</a>.
 
 extra_javascript:
-  - javascripts/mathjax.js
-  - javascripts/polyfill.min.js
-  - javascripts/tex-mml-chtml.js
-  - javascripts/clipboard.js
+  - javascripts/mathjax.js?v=1.0.0
+  - javascripts/polyfill.min.js?v=1.0.0
+  - javascripts/tex-mml-chtml.js?v=1.0.0
+  - javascripts/clipboard.js?v=1.0.0
+  - javascripts/lang-switcher.js?v=1.0.0
