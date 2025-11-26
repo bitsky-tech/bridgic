@@ -5,7 +5,7 @@ from typing import Callable, List, Any, Dict, Tuple, Union
 
 from bridgic.core.automa import GraphAutoma, RunningOptions
 from bridgic.core.automa.worker import Worker, WorkerCallback, WorkerCallbackBuilder
-from bridgic.core.automa.args import ArgsMappingRule, Distribute, override_func_signature, set_method_signature, safely_map_args
+from bridgic.core.automa.args import ArgsMappingRule, ResultDispatchingRule, InOrder, override_func_signature, set_method_signature, safely_map_args
 from bridgic.core.automa._graph_automa import GraphMeta
 from bridgic.core.agentic import ConcurrentAutoma
 from bridgic.core.agentic.asl._canvas_object import _Canvas, _Element, _CanvasObject, graph_stack, Settings, Data, KeyUnDifined
@@ -440,6 +440,7 @@ class ASLAutoma(GraphAutoma, metaclass=ASLAutomaMeta):
             is_output = element.settings.is_output
             dependencies = element.settings.dependencies
             args_mapping_rule = element.settings.args_mapping_rule
+            result_dispatching_rule = element.settings.result_dispatching_rule
 
             # prepare the callback builders
             callback_builders = []
@@ -468,6 +469,7 @@ class ASLAutoma(GraphAutoma, metaclass=ASLAutomaMeta):
                     is_output=is_output,
                     dependencies=dependencies,
                     args_mapping_rule=args_mapping_rule,
+                    result_dispatching_rule=result_dispatching_rule,
                     callback_builders=callback_builders
                 )
             else:
@@ -524,6 +526,7 @@ def build_graph(
     is_output: bool,
     dependencies: List[str],
     args_mapping_rule: ArgsMappingRule,
+    result_dispatching_rule: ResultDispatchingRule,
     callback_builders: List[WorkerCallbackBuilder] = [],
 ) -> None:
     """
@@ -549,6 +552,8 @@ def build_graph(
         List of worker keys that this worker depends on.
     args_mapping_rule : ArgsMappingRule
         The rule for mapping arguments to this worker.
+    result_dispatching_rule : ResultDispatchingRule
+        The rule for dispatching results to this worker.
     callback_builders : List[WorkerCallbackBuilder], optional
         List of callback builders to attach to this worker.
     """
@@ -560,6 +565,7 @@ def build_graph(
             is_output=is_output,
             dependencies=dependencies,
             args_mapping_rule=args_mapping_rule,
+            result_dispatching_rule=result_dispatching_rule,
             callback_builders=callback_builders
         )
     elif isinstance(worker_material, Callable):
@@ -570,6 +576,7 @@ def build_graph(
             is_output=is_output,
             dependencies=dependencies,
             args_mapping_rule=args_mapping_rule,
+            result_dispatching_rule=result_dispatching_rule,
             callback_builders=callback_builders
         )
 
@@ -685,7 +692,7 @@ class DynamicCallback(WorkerCallback):
         """
         Execute a lambda function to generate dynamic workers and add them to the automaton.
         
-        This method processes the input arguments (extracting Distribute objects), executes
+        This method processes the input arguments (extracting dispatching objects), executes
         the lambda function, and then adds each returned worker material to the automaton
         as a dynamic worker. The generated worker keys are tracked for cleanup.
         
@@ -702,18 +709,18 @@ class DynamicCallback(WorkerCallback):
             
         Notes
         -----
-        Distribute objects in the arguments are automatically unwrapped before passing
+        Dispatching objects in the arguments are automatically unwrapped before passing
         to the lambda function.
         """
         args = [
             item 
-            if not isinstance(item, Distribute) 
+            if not isinstance(item, InOrder) 
             else item.data 
             for item in in_args
         ]
         kwargs = {
             key: item 
-            if not isinstance(item, Distribute) 
+            if not isinstance(item, InOrder) 
             else item.data 
             for key, item in in_kwargs.items()
         }

@@ -1,8 +1,8 @@
 import pytest
 from typing import Tuple, Dict, Any, Optional
 
-from bridgic.core.automa import GraphAutoma, Snapshot, worker, AutomaRuntimeError
-from bridgic.core.automa.args import From, ArgsMappingRule, System, Distribute
+from bridgic.core.automa import Automa, GraphAutoma, Snapshot, worker, AutomaRuntimeError
+from bridgic.core.automa.args import From, ArgsMappingRule, System, InOrder, ResultDispatchingRule
 from bridgic.core.automa.interaction import Event, InteractionFeedback, InteractionException
 from bridgic.core.automa.worker import Worker, WorkerCallback, WorkerCallbackBuilder
 from bridgic.core.types._error import WorkerArgsInjectionError
@@ -25,7 +25,7 @@ def args_inject_and_callback_graph():
             self, 
             key: str,
             is_top_level: bool = False,
-            parent: Optional[GraphAutoma] = None,
+            parent: Optional[Automa] = None,
             arguments: Dict[str, Any] = None,
         ) -> None:
             print(f"Pre callback for worker {key}")
@@ -34,7 +34,7 @@ def args_inject_and_callback_graph():
             self, 
             key: str,
             is_top_level: bool = False,
-            parent: Optional[GraphAutoma] = None,
+            parent: Optional[Automa] = None,
             arguments: Dict[str, Any] = None,
             result: Any = None,
         ) -> None:
@@ -144,7 +144,7 @@ def args_inject_and_callback_graph():
 
 @pytest.mark.asyncio
 async def test_args_inject_and_callback(args_inject_and_callback_graph: GraphAutoma, capsys):
-    result = await args_inject_and_callback_graph.arun(user_input=Distribute([1, 2]))
+    result = await args_inject_and_callback_graph.arun(user_input=InOrder([1, 2]))
     assert result == 13
 
     outputs = capsys.readouterr()
@@ -176,6 +176,7 @@ def automa_with_args_mapping_and_from():
 
         @worker(is_start=True)
         async def start_1(self, user_input: int) -> int:
+            assert user_input == 2
             return user_input + 1
 
         @worker(dependencies=["start"])
@@ -238,17 +239,19 @@ def automa_with_args_mapping_and_from():
         ) -> int:
             assert automa is self
             assert sub_automa is my_graph_1
-            return z + 1  # 2
+            return z + 1, z + 2  # 2
 
-        @worker(dependencies=["worker_41"], args_mapping_rule=ArgsMappingRule.DISTRIBUTE)
+        @worker(dependencies=["worker_41"], result_dispatching_rule=ResultDispatchingRule.IN_ORDER)
         async def worker_51(
-            self, x: int, z: int = From("no_exist_worker", 1), 
+            self, x: Tuple[int, int], z: int = From("no_exist_worker", 1), 
             automa: GraphAutoma = System("automa"), 
             sub_automa: GraphAutoma = System("automa:my_graph_1"),
         ) -> int:
+            x1, x2 = x
+            assert x2 == 3
             assert automa is self
             assert sub_automa is my_graph_1
-            return x + z, x  # (3, 2)
+            return x1 + z, x1  # (3, 2)
 
         @worker(dependencies=["worker_51"])
         async def worker_61(self, x: int) -> int:
@@ -271,7 +274,7 @@ def automa_with_args_mapping_and_from():
 
 @pytest.mark.asyncio
 async def test_automa_with_args_mapping_and_from(automa_with_args_mapping_and_from: GraphAutoma):
-    result = await automa_with_args_mapping_and_from.arun(user_input=1)
+    result = await automa_with_args_mapping_and_from.arun(user_input=InOrder([1, 2]))
     assert result == 5
 
 
