@@ -3,11 +3,11 @@ import inspect
 from inspect import Parameter
 from copy import deepcopy
 from dataclasses import dataclass
-from typing import Literal, Tuple, Any, List, Dict, Mapping, Union, Callable
+from typing import Tuple, Any, List, Dict, Mapping, Union, Callable
 from types import MethodType
 from typing_extensions import TYPE_CHECKING
 
-from bridgic.core.types._common import ArgsMappingRule
+from bridgic.core.types._common import ArgsMappingRule, ResultDispatchingRule
 from bridgic.core.types._error import WorkerArgsMappingError
 from bridgic.core.automa.args._args_descriptor import WorkerInjector
 
@@ -20,22 +20,15 @@ if TYPE_CHECKING:
         _AddDependencyDeferredTask,
     )
 
-# type aliases
-SENDER_RULES = Literal[ArgsMappingRule.GATHER, ArgsMappingRule.DISTRIBUTE]
-RECEIVER_RULES = Literal[ArgsMappingRule.AS_IS, ArgsMappingRule.UNPACK, ArgsMappingRule.MERGE, ArgsMappingRule.SUPPRESSED]
-
-# runtime type checking set
-_SENDER_RULES_SET = {ArgsMappingRule.GATHER, ArgsMappingRule.DISTRIBUTE}
-_RECEIVER_RULES_SET = {ArgsMappingRule.AS_IS, ArgsMappingRule.UNPACK, ArgsMappingRule.MERGE, ArgsMappingRule.SUPPRESSED}
-
-
 @dataclass
-class Distribute:
+class InOrder:
     """
-    A descriptor to indicate that data should be distributed to multiple workers.
+    A descriptor to indicate that data should be distributed to multiple workers. 
 
-    When is used to input arguments or worker with this class, the data will be distributed
-    element-wise to downstream workers instead of being gathered as a single value.
+    When is used to input arguments or worker with this descriptor, the data will be distributed
+    to downstream workers instead of being gathered as a single value. Split the returned 
+    Sequence object and dispatching them in-order and element-wise to the downstream workers 
+    as their actual input.
 
     Parameters
     ----------
@@ -53,59 +46,6 @@ class Distribute:
     def check_data(self) -> None:
         if not isinstance(self.data, (List, Tuple)):
             raise ValueError(f"The data of the Distribute must be `List` or `Tuple`, but got Type `{type(self.data)}`.")
-
-
-def parse_args_mapping_rule(args_mapping_rule: ArgsMappingRule) -> Tuple[RECEIVER_RULES, SENDER_RULES]:
-    """
-    Parse an args mapping rule into receiver and sender modes.
-
-    This function interprets the args_mapping_rule, which can be either a single
-    rule or a tuple of two rules. It returns a tuple where the first element is
-    the receiver rule (how the worker receives arguments) and the second is the
-    sender rule (how the worker sends its output).
-
-    Parameters
-    ----------
-    args_mapping_rule : ArgsMappingRule
-        The mapping rule(s) to parse. Can be a single rule or a tuple of two rules.
-        If a single receiver rule is provided, GATHER is used as the default sender rule.
-        If a single sender rule is provided, AS_IS is used as the default receiver rule.
-
-    Returns
-    -------
-    Tuple[RECEIVER_RULES, SENDER_RULES]
-        A tuple containing (receiver_rule, sender_rule).
-
-    Raises
-    ------
-    ValueError
-        If the args_mapping_rule doesn't match any supported mode.
-        If the args_mapping_rule tuple has more than two elements.
-        If both elements of the tuple are the same type.
-    """
-    def parse_single_mode(mode: ArgsMappingRule) -> Tuple[RECEIVER_RULES, SENDER_RULES]:
-        # if the args_mapping_rule is a single mode, return the mode and the default mode.
-        if mode in _RECEIVER_RULES_SET:
-            return mode, ArgsMappingRule.GATHER
-        elif mode in _SENDER_RULES_SET:
-            return ArgsMappingRule.AS_IS, mode
-        else:
-            raise ValueError(f"The args_mapping_rule does not match any of the supported modes.")
-
-    if isinstance(args_mapping_rule, Tuple):
-        if len(args_mapping_rule) == 1:
-            return parse_single_mode(args_mapping_rule[0])
-        elif len(args_mapping_rule) == 2:
-            rule_1, rule_2 = args_mapping_rule
-            if type(rule_1) == type(rule_2):
-                raise ValueError(f"The two elements of the args_mapping_rule tuple must be different, not {type(rule_1)}")
-            if rule_1 in _SENDER_RULES_SET and rule_2 in _RECEIVER_RULES_SET:
-                return rule_2, rule_1
-            return rule_1, rule_2
-        else:
-            raise ValueError(f"The args_mapping_rule tuple must have 1 or 2 elements, not {len(args_mapping_rule)}")    
-    else:
-        return parse_single_mode(args_mapping_rule)
 
 
 class ArgsManager:
@@ -162,7 +102,7 @@ class ArgsManager:
         # record the receiver and sender rules of the workers
         self._worker_rule_dict = {}
         for key, worker in worker_dict.items():
-            receiver_rule, sender_rule = parse_args_mapping_rule(worker.args_mapping_rule)
+            receiver_rule, sender_rule = worker.args_mapping_rule, worker.result_dispatching_rule
             dependencies = deepcopy(worker.dependencies)
             if worker.is_start:
                 dependencies.append("__automa__")
@@ -174,10 +114,10 @@ class ArgsManager:
                 "sender_rule": sender_rule,
             }
         for key, value in self._start_arguments.items():
-            if isinstance(value, Distribute):
-                sender_rule = ArgsMappingRule.DISTRIBUTE
+            if isinstance(value, InOrder):
+                sender_rule = ResultDispatchingRule.IN_ORDER
             else:
-                sender_rule = ArgsMappingRule.GATHER
+                sender_rule = ResultDispatchingRule.AS_IS
             self._worker_rule_dict[key] = {
                 "dependencies": [],
                 "param_names": [],
@@ -224,7 +164,6 @@ class ArgsManager:
         kickoff_single = "start" if last_worker_key == "__automa__" else "dependency"
         worker_dependencies = self._worker_rule_dict[current_worker_key]["dependencies"]
         worker_receiver_rule = self._worker_rule_dict[current_worker_key]["receiver_rule"]
-        worker_param_names = self._worker_rule_dict[current_worker_key]["param_names"]
 
         # If the last worker is not a dependency of the current worker, then return empty arguments.
         if not last_worker_key in worker_dependencies:
@@ -234,12 +173,12 @@ class ArgsManager:
             data_mode_list = []
             for key, value in self._start_arguments.items():
                 sender_rule = self._worker_rule_dict[key]["sender_rule"]
-                if isinstance(value, Distribute) and value.data is None:
-                    raise ValueError(f"The data of the Distribute must be `List` or `Tuple`, but got Type `{type(value.data)}`.")
+                if isinstance(value, InOrder) and value.data is None:
+                    raise ValueError(f"The data of the Dispatching must be `List` or `Tuple`, but got Type `{type(value.data)}`.")
 
                 data_mode_list.append({
                     'worker_key': key,
-                    'data': value.data if isinstance(value, Distribute) else value,
+                    'data': value.data if isinstance(value, InOrder) else value,
                     'send_rule': sender_rule,
                 })
             data = self._args_send(data_mode_list)
@@ -257,7 +196,7 @@ class ArgsManager:
 
         def _dependency_args_binding(
             worker_dependencies: List[str], 
-            worker_receiver_rule: RECEIVER_RULES, 
+            worker_receiver_rule: ArgsMappingRule, 
         ) -> Tuple[Tuple[Any, ...], Dict[str, Any]]:
             data_mode_list = []
             for dependency_worker_key in worker_dependencies:
@@ -284,16 +223,16 @@ class ArgsManager:
         for _, params in params_name.items():
             for param in params:
                 param_name, param_type = param
-                if isinstance(param_type, Distribute):
+                if isinstance(param_type, InOrder):
                     param_info = params_filled_arguments[param_name]
                     if param_info['source'] == 'args':
                         next_args_list = list(next_args)
-                        distribute_data = Distribute(data=param_info['value'])
+                        distribute_data = InOrder(data=param_info['value'])
                         distribute_data.check_data()
                         next_args_list[param_info['index']] = distribute_data
                         next_args = tuple(next_args_list)
                     elif param_info['source'] == 'kwargs':
-                        distribute_data = Distribute(data=param_info['value'])
+                        distribute_data = InOrder(data=param_info['value'])
                         distribute_data.check_data()
                         next_kwargs[param_info['key']] = distribute_data
         
@@ -329,9 +268,9 @@ class ArgsManager:
             worker_key = data_mode['worker_key']
             data = data_mode['data']
             send_rule = data_mode['send_rule']
-            if send_rule == ArgsMappingRule.GATHER:
+            if send_rule == ResultDispatchingRule.AS_IS:
                 send_data.append(data)
-            elif send_rule == ArgsMappingRule.DISTRIBUTE:
+            elif send_rule == ResultDispatchingRule.IN_ORDER:
                 # if the worker output is not iterable -- tuple or list, then raise error
                 if not isinstance(data, (tuple, list)):
                     raise WorkerArgsMappingError(
@@ -361,7 +300,7 @@ class ArgsManager:
         self, 
         last_worker_key: str,
         current_worker_key: str,
-        current_worker_receiver_rule: RECEIVER_RULES,
+        current_worker_receiver_rule: ArgsMappingRule,
         data: List[Any]
     ) -> Tuple[Tuple[Any, ...], Dict[str, Any]]:
         """
@@ -380,7 +319,7 @@ class ArgsManager:
             The key of the predecessor worker that produced the data.
         current_worker_key : str
             The key of the current worker that will receive the arguments.
-        current_worker_receiver_rule : RECEIVER_RULES
+        current_worker_receiver_rule : ArgsMappingRule
             The receiver rule to apply when processing the data.
         data : List[Any]
             The data received from predecessor workers.
@@ -538,6 +477,7 @@ class ArgsManager:
                 dependencies: List[str] = deepcopy(dynamic_task.dependencies)
                 is_start: bool = dynamic_task.is_start
                 args_mapping_rule: ArgsMappingRule = dynamic_task.args_mapping_rule
+                result_dispatching_rule: ResultDispatchingRule = dynamic_task.result_dispatching_rule
                 
                 # update the _worker_forward_count according to the "add_worker" interface
                 for trigger in dependencies:
@@ -549,7 +489,7 @@ class ArgsManager:
                     self._worker_forward_count[trigger]["forward_count"] += 1
 
                 # update the _worker_rule_dict according to the "add_worker" interface
-                receiver_rule, sender_rule = parse_args_mapping_rule(args_mapping_rule)
+                receiver_rule, sender_rule = args_mapping_rule, result_dispatching_rule
                 dependencies = deepcopy(dependencies)  # Make sure do not affect the original worker's dependencies.
                 if is_start:
                     dependencies.append("__automa__")

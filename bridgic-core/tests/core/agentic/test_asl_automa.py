@@ -2,7 +2,7 @@ from bridgic.core.automa._graph_automa import GraphAutoma
 import pytest
 from typing import List
 from bridgic.core.automa.worker import Worker
-from bridgic.core.automa.args import System, ArgsMappingRule, From
+from bridgic.core.automa.args import System, ArgsMappingRule, From, ResultDispatchingRule
 from bridgic.core.agentic.asl import graph, concurrent, ASLAutoma, Settings, Data, ASLField
 from bridgic.core.automa import ASLCompilationError
 
@@ -113,7 +113,7 @@ def asl_run_correctly_graph():
             a = SubGraph2()   # 2
             b = worker2   # 4
             c = Worker3(y=1) # 5
-            d = SubGraph() *Settings(args_mapping_rule=ArgsMappingRule.DISTRIBUTE)  # [10, 11, 12, 13, 14]
+            d = SubGraph() *Settings(result_dispatching_rule=ResultDispatchingRule.IN_ORDER)  # [10, 11, 12, 13, 14]
 
             arrangement_1 = +a >> b >> c  # 5
             arrangement_2 = arrangement_1 >> d  # [10, 11, 12, 13, 14]

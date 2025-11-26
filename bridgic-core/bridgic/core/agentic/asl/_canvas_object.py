@@ -1,5 +1,5 @@
 import inspect
-from inspect import Parameter
+from inspect import Parameter, _ParameterKind
 from contextvars import ContextVar
 from dataclasses import dataclass
 from pydantic_core import PydanticUndefinedType
@@ -8,7 +8,7 @@ from typing import List, Any, Union, Callable, Tuple, Type, Optional, Dict
 
 from bridgic.core.automa.worker import Worker
 from bridgic.core.automa import GraphAutoma, RunningOptions
-from bridgic.core.automa.args import ArgsMappingRule, Distribute, override_func_signature, set_method_signature
+from bridgic.core.automa.args import ArgsMappingRule, ResultDispatchingRule, InOrder, override_func_signature, set_method_signature
 from bridgic.core.agentic import ConcurrentAutoma
 from bridgic.core.types._error import ASLCompilationError
 
@@ -98,6 +98,7 @@ class Settings:
     is_output: bool = None
     dependencies: List[str] = None
     args_mapping_rule: ArgsMappingRule = None
+    result_dispatching_rule: ResultDispatchingRule = None
 
     def __post_init__(self):
         """
@@ -116,6 +117,8 @@ class Settings:
             self.dependencies = []
         if not self.args_mapping_rule:
             self.args_mapping_rule = ArgsMappingRule.AS_IS
+        if not self.result_dispatching_rule:
+            self.result_dispatching_rule = ResultDispatchingRule.AS_IS
 
     def update(self, other: "Settings") -> None:
         """
@@ -146,6 +149,8 @@ class Settings:
             self.dependencies = other.dependencies
         if other.args_mapping_rule != self.args_mapping_rule:
             self.args_mapping_rule = other.args_mapping_rule
+        if other.result_dispatching_rule != self.result_dispatching_rule:
+            self.result_dispatching_rule = other.result_dispatching_rule
 
     def __rmul__(self, other: Union[Callable, Worker]):
         """
@@ -213,7 +218,8 @@ class _CanvasObject:
             is_start=False,
             is_output=False,
             dependencies=[],
-            args_mapping_rule=ArgsMappingRule.AS_IS
+            args_mapping_rule=ArgsMappingRule.AS_IS,
+            result_dispatching_rule=ResultDispatchingRule.AS_IS
         )
 
     def update_settings(self, settings: Settings) -> None:
@@ -526,7 +532,7 @@ class _Element(_CanvasObject):
         """
         super().__init__(key, worker_material)
         self.is_lambda: bool = False
-        self.cached_param_names: Dict[_ParameterKind, List[str]] = None
+        self.cached_param_names: Dict[_ParameterKind, List[Tuple[str, Any]]] = None
 
     def __str__(self) -> str:
         return (
@@ -587,7 +593,7 @@ class _GraphContextManager:
         for key, value in kwargs.items():
             if not isinstance(value, ASLField):
                 raise ASLCompilationError(f"Invalid field type: {type(value)}.")
-            default_value = Distribute(
+            default_value = InOrder(
                 value.default
                 if not isinstance(value.default, PydanticUndefinedType) 
                 else inspect._empty

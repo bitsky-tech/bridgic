@@ -1,15 +1,13 @@
-import inspect
+import warnings
 
 from threading import Lock
-from typing import Any, Dict, Union, List, Optional, Type, Generic, TypeVar, TYPE_CHECKING, get_origin, get_args
+from typing import Any, Dict, Union, List, Optional, Type, Generic, TypeVar, TYPE_CHECKING, get_origin, get_args, get_type_hints
 from typing_extensions import override
 from bridgic.core.types._serialization import Serializable
 from bridgic.core.utils._inspect_tools import load_qualified_class_or_func
 
 if TYPE_CHECKING:
-    from bridgic.core.automa._graph_automa import GraphAutoma
-    from bridgic.core.automa._automa import _InteractionEventException
-    from bridgic.core.automa.interaction._human_interaction import InteractionException
+    from bridgic.core.automa._automa import Automa
 
 T_WorkerCallback = TypeVar("T_WorkerCallback", bound="WorkerCallback")
 """Type variable for WorkerCallback subclasses."""
@@ -37,7 +35,7 @@ class WorkerCallback(Serializable):
         self, 
         key: str,
         is_top_level: bool = False,
-        parent: Optional["GraphAutoma"] = None,
+        parent: Optional["Automa"] = None,
         arguments: Dict[str, Any] = None,
     ) -> None:
         """
@@ -53,7 +51,7 @@ class WorkerCallback(Serializable):
             Worker identifier.
         is_top_level: bool = False
             Whether the worker is the top-level automa. When True, parent will be the automa itself (parent is self).
-        parent : Optional[GraphAutoma] = None
+        parent : Optional[Automa] = None
             Parent automa instance containing this worker. For top-level automa, parent is the automa itself.
         arguments : Dict[str, Any] = None
             Execution parameters with keys "args" and "kwargs".
@@ -64,7 +62,7 @@ class WorkerCallback(Serializable):
         self,
         key: str,
         is_top_level: bool = False,
-        parent: Optional["GraphAutoma"] = None,
+        parent: Optional["Automa"] = None,
         arguments: Dict[str, Any] = None,
         result: Any = None,
     ) -> None:
@@ -81,7 +79,7 @@ class WorkerCallback(Serializable):
             Worker identifier.
         is_top_level: bool = False
             Whether the worker is the top-level automa. When True, parent will be the automa itself (parent is self).
-        parent : Optional[GraphAutoma] = None
+        parent : Optional[Automa] = None
             Parent automa instance containing this worker. For top-level automa, parent is the automa itself.
         arguments : Dict[str, Any] = None
             Execution arguments with keys "args" and "kwargs".
@@ -94,7 +92,7 @@ class WorkerCallback(Serializable):
         self,
         key: str,
         is_top_level: bool = False,
-        parent: Optional["GraphAutoma"] = None,
+        parent: Optional["Automa"] = None,
         arguments: Dict[str, Any] = None,
         error: Exception = None,
     ) -> bool:
@@ -141,7 +139,7 @@ class WorkerCallback(Serializable):
             Worker identifier.
         is_top_level: bool = False
             Whether the worker is the top-level automa. When True, parent will be the automa itself (parent is self).
-        parent : Optional[GraphAutoma] = None
+        parent : Optional[Automa] = None
             Parent automa instance containing this worker. For top-level automa, parent is the automa itself.
         arguments : Dict[str, Any] = None
             Execution arguments with keys "args" and "kwargs".
@@ -325,27 +323,28 @@ def can_handle_exception(callback: WorkerCallback, error: Exception) -> bool:
         False otherwise.
     """
     try:
-        sig = inspect.signature(callback.on_worker_error)
-        error_param = sig.parameters.get('error')
-        if error_param and error_param.annotation != inspect.Parameter.empty:
-            error_type = error_param.annotation
-            # Resolve forward references and get the actual type
-            if isinstance(error_type, str):
-                # Forward reference, skip for now
-                return False
-            
-            # Handle Union types (e.g., Union[ValueError, TypeError])
-            origin = get_origin(error_type)
-            if origin is Union:
-                union_args = get_args(error_type)
-                # Check if exception is instance of any type in the Union
-                return any(isinstance(error, t) for t in union_args if isinstance(t, type) and issubclass(t, Exception))
-            
-            # Handle single type annotation (including base Exception class)
-            elif isinstance(error_type, type) and issubclass(error_type, Exception):
-                # Match based on inheritance relationship using isinstance
-                return isinstance(error, error_type)
-    except (ValueError, TypeError, AttributeError):
+        annotations = get_type_hints(callback.on_worker_error)
+        error_type = annotations.get("error")
+        if error_type is None:
+            warnings.warn(
+                f"No type annotation found for the `error` parametor of "
+                f"`{callback.__class__.__name__}.on_worker_error`."
+            )
+            return False
+
+        origin = get_origin(error_type)
+
+        # Handle Union types (e.g., Union[ValueError, TypeError])
+        if origin is Union:
+            union_args = get_args(error_type)
+            # Check if exception is instance of any type in the Union
+            return any(isinstance(error, t) for t in union_args if isinstance(t, type) and issubclass(t, Exception))
+
+        # Handle single type annotation (including base Exception class)
+        if isinstance(error_type, type) and issubclass(error_type, Exception):
+            # Match based on inheritance relationship using isinstance
+            return isinstance(error, error_type)
+    except (ValueError, TypeError, AttributeError, NameError):
         # If we can't determine the type, skip this callback
         pass
     
@@ -356,7 +355,7 @@ async def try_handle_error_with_callbacks(
     callbacks: List[WorkerCallback],
     key: str,
     is_top_level: bool = False,
-    parent: Optional["GraphAutoma"] = None,
+    parent: Optional["Automa"] = None,
     arguments: Dict[str, Any] = None,
     error: Exception = None,
 ) -> bool:
@@ -380,7 +379,7 @@ async def try_handle_error_with_callbacks(
         Worker identifier.
     is_top_level : bool, optional
         Whether the worker is the top-level automa. Default is False. When True, parent will be the automa itself (parent is self).
-    parent : Optional[GraphAutoma], optional
+    parent : Optional[Automa], optional
         Parent automa instance containing this worker. For top-level automa, parent is the automa itself.
     arguments : Dict[str, Any], optional
         Execution arguments with keys "args" and "kwargs".

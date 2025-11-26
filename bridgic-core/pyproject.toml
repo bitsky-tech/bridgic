@@ -1,6 +1,6 @@
 [project]
 name = "bridgic-core"
-version = "0.1.1"
+version = "0.1.3.post1"
 license = {text = "MIT"}
 classifiers = [
     # "Private :: Do Not Upload",
@@ -39,6 +39,6 @@ build-backend = "hatchling.build"
 include = ["bridgic/"]
 
 [tool.uv.sources]
-bridgic-llms-openai-like = { path = "../bridgic-integration/llms/bridgic-llms-openai-like" }
-bridgic-llms-openai = { path = "../bridgic-integration/llms/bridgic-llms-openai" }
-bridgic-llms-vllm = { path = "../bridgic-integration/llms/bridgic-llms-vllm" }
+bridgic-llms-openai-like = { path = "../bridgic-integration/llms/bridgic-llms-openai-like", editable = true }
+bridgic-llms-openai = { path = "../bridgic-integration/llms/bridgic-llms-openai", editable = true }
+bridgic-llms-vllm = { path = "../bridgic-integration/llms/bridgic-llms-vllm", editable = true }
