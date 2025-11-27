@@ -12,31 +12,30 @@ def write_advertising(topic: str) -> str:
 
 @mcp.prompt()
 def ask_for_creative(topic: str, description: str) -> List[PromptMessage]:
-    messages = [
-        PromptMessage(
-            role="user",
-            content=TextContent(
-                type="text",
-                text=(
+    return [
+        {
+            "role": "user",
+            "content": {
+                "type": "text",
+                "text": (
                     f"You are a creativity expert specializing in the topic: {topic}.\n\n"
                     f"Based on the following description, please provide creative suggestions: {description}"
                 ),
-            )
-        ),
-        PromptMessage(
-            role="assistant",
-            content=TextContent(
-                type="text",
-                text=(
+            },
+        },
+        {
+            "role": "assistant",
+            "content": {
+                "type": "text",
+                "text": (
                     f"For the topic '{topic}', I suggest:\n"
                     f"1. Leverage unique features of the topic\n"
                     f"2. Highlight the key aspects of the description\n"
                     f"3. Propose an innovative integrated solution"
                 ),
-            )
-        )
+            },
+        }
     ]
-    return messages
 
 
 @click.command()

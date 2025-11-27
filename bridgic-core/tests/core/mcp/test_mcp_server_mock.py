@@ -14,9 +14,9 @@ async def mock_writer_stdio_connection():
         name="writer-mcp-stdio",
         command="python",
         args=["tests/core/mcp/mock_servers/mcp_server_writer.py", "--transport", "stdio"],
-        request_timeout=30,
+        request_timeout=5,
     )
-    await connection.connect()
+    connection.connect()
     yield connection
 
 @pytest_asyncio.fixture
@@ -31,20 +31,49 @@ async def mock_writer_streamable_http_connection():
         connection = McpServerConnectionStreamableHttp(
             name="writer-mcp-streamable-http",
             url=server.url,
-            request_timeout=30,
+            request_timeout=5,
         )
-        await connection.connect()
+        connection.connect()
         yield connection
 
 @pytest.mark.asyncio
-async def test_mock_writer_mcp_server_stdio_connection(mock_writer_stdio_connection):
-    assert mock_writer_stdio_connection.session is not None
-    assert mock_writer_stdio_connection.session._request_id > 0
+async def test_mcp_server_stdio_connection(mock_writer_stdio_connection):
+    assert mock_writer_stdio_connection._session is not None
+    assert mock_writer_stdio_connection._session._request_id > 0
     assert mock_writer_stdio_connection.is_connected == True
 
 @pytest.mark.asyncio
-async def test_mock_writer_mcp_server_streamable_http_connection(mock_writer_streamable_http_connection):
-    assert mock_writer_streamable_http_connection.session is not None
-    assert mock_writer_streamable_http_connection.session._request_id > 0
+async def test_mcp_server_streamable_http_connection(mock_writer_streamable_http_connection):
+    assert mock_writer_streamable_http_connection._session is not None
+    assert mock_writer_streamable_http_connection._session._request_id > 0
     assert mock_writer_streamable_http_connection.is_connected == True
 
+@pytest.mark.asyncio
+async def test_mcp_server_stdio_connection_list_prompts(mock_writer_stdio_connection):
+    result = mock_writer_stdio_connection.list_prompts()
+    assert result is not None
+    assert len(result.prompts) > 0
+
+@pytest.mark.asyncio
+async def test_mcp_server_streamable_http_connection_list_prompts(mock_writer_streamable_http_connection):
+    result = mock_writer_streamable_http_connection.list_prompts()
+    assert result is not None
+    assert len(result.prompts) > 0
+
+@pytest.mark.asyncio
+async def test_mcp_server_stdio_connection_get_prompt(mock_writer_stdio_connection):
+    result = mock_writer_stdio_connection.get_prompt(
+        prompt_name="ask_for_creative",
+        arguments={"topic": "Product Launch", "description": "A new innovative product that combines AI and design"},
+    )
+    assert result is not None
+    assert len(result.messages) > 0
+
+@pytest.mark.asyncio
+async def test_mcp_server_streamable_http_connection_get_prompt(mock_writer_streamable_http_connection):
+    result = mock_writer_streamable_http_connection.get_prompt(
+        prompt_name="ask_for_creative",
+        arguments={"topic": "Product Launch", "description": "A new innovative product that combines AI and design"},
+    )
+    assert result is not None
+    assert len(result.messages) > 0

@@ -1,13 +1,14 @@
-from typing import Any
 from abc import ABC, abstractmethod
-from contextlib import _AsyncGeneratorContextManager, AsyncExitStack
-from typing import List, Dict, Optional, Union, Any
 from datetime import timedelta
+from typing import List, Dict, Optional, Union, Any
+from contextlib import _AsyncGeneratorContextManager, AsyncExitStack
 from mcp.client.session import ClientSession
+from mcp.types import ListPromptsResult, GetPromptResult
 from mcp.client.stdio import stdio_client, StdioServerParameters
 from mcp.client.streamable_http import streamablehttp_client
-from mcp.client.websocket import websocket_client
+
 from bridgic.core.types._error import McpServerConnectionError
+from bridgic.core.mcp._mcp_server_connection_manager import McpServerConnectionManager
 
 class McpServerConnection(ABC):
     """
@@ -28,7 +29,7 @@ class McpServerConnection(ABC):
     """The name of the connected MCP server."""
 
     request_timeout: int
-    """The timeout in seconds for the requests to the MCP server."""
+    """The timeout in seconds for the requests to the MCP server. Default is 30 seconds."""
 
     encoding: str
     """The encoding to use for the connection."""
@@ -36,7 +37,10 @@ class McpServerConnection(ABC):
     client_kwargs: Dict[str, Any]
     """The keyword arguments to pass to the MCP client."""
 
-    session: ClientSession
+    _manager: McpServerConnectionManager
+    """The manager that is used to manage the connection."""
+
+    _session: ClientSession
     """The session that is used to interact with the MCP server."""
 
     _exit_stack: AsyncExitStack
@@ -50,17 +54,51 @@ class McpServerConnection(ABC):
         **kwargs: Any,
     ):
         self.name = name
-        self.request_timeout = request_timeout or 60
+        self.request_timeout = request_timeout or 30
         self.client_kwargs = kwargs
 
-        self.session = None
+        self._manager = None
+        self._session = None
+
         self.is_connected = False
 
-    async def connect(self):
+    def _get_manager(self) -> McpServerConnectionManager:
+        if self._manager is None:
+            manager = McpServerConnectionManager.get_instance()
+            manager.register_connection(self)
+        return self._manager
+
+    def connect(self):
         """
-        Establish a connection to the MCP server.
+        Establishe a connection to the MCP server. Call this method once before using the connection.
         """
-        if not self.session:
+        self._get_manager().run_async(
+            coro=self._connect_unsafe(),
+            timeout=self.request_timeout + 1,
+        )
+
+    def close(self):
+        """
+        Close the connection to the MCP server.
+        """
+        if self._manager is None:
+            return
+
+        manager = self._get_manager()
+        manager.run_async(
+            coro=self._close_unsafe(),
+            timeout=self.request_timeout + 1,
+        )
+        manager.unregister_connection(self)
+
+    async def _connect_unsafe(self):
+        """
+        Asynchronously establish a connection to the MCP server.
+
+        Since the session used to communicate with the MCP server is bound to a specific event 
+        loop, this method should be called within the designated event loop for the connection.
+        """
+        if not self._session:
             # Try to establish a connection to the specified server.
             try:
                 self._exit_stack = AsyncExitStack()
@@ -81,19 +119,78 @@ class McpServerConnection(ABC):
                 await self._exit_stack.aclose()
                 raise McpServerConnectionError(f"Failed to create session to MCP server: name={self.name}, error={ex}") from ex
             # Hold the connected session for later use.
-            self.session = session
+            self._session = session
             self.is_connected = True
-        elif self.session._request_id == 0:
-            await self.session.initialize()
+        elif self._session._request_id == 0:
+            await self._session.initialize()
             self.is_connected = True
 
-    async def close(self):
+    async def _close_unsafe(self):
         """
-        Close the connection to the MCP server.
+        Asynchronously close the connection to the MCP server.
+
+        Since the session used to communicate with the MCP server is bound to a specific event 
+        loop, this method should be called within the designated event loop for the connection.
         """
         await self._exit_stack.aclose()
-        self.session = None
+        self._session = None
         self.is_connected = False
+
+    def list_prompts(self) -> ListPromptsResult:
+        """
+        List the prompts from the MCP server.
+
+        Returns
+        -------
+        ListPromptsResult
+            The list of prompt templates from the server.
+        """
+        async def _list_prompts_unsafe() -> ListPromptsResult:
+            if not self.is_connected:
+                await self._connect_unsafe()
+            return await self._session.list_prompts()
+
+        return self._get_manager().run_async(
+            coro=_list_prompts_unsafe(),
+            timeout=self.request_timeout + 1,
+        )
+
+    def get_prompt(
+        self,
+        prompt_name: str,
+        arguments: Optional[Dict[str, Any]] = None,
+    ) -> GetPromptResult:
+        """
+        Synchronously get a prompt from the MCP server.
+
+        Parameters
+        ----------
+        prompt_name : str
+            The name of the prompt to retrieve.
+        arguments : Optional[Dict[str, Any]]
+            Arguments to pass to the prompt.
+
+        Returns
+        -------
+        GetPromptResult
+            The prompt result from the server.
+
+        Raises
+        ------
+        RuntimeError
+            If the connection is not established.
+        """
+        arguments = arguments or {}
+
+        async def _get_prompt_unsafe():
+            if not self.is_connected:
+                await self._connect_unsafe()
+            return await self._session.get_prompt(name=prompt_name, arguments=arguments)
+
+        return self._get_manager().run_async(
+            coro=_get_prompt_unsafe(),
+            timeout=self.request_timeout + 1,
+        )
 
     @abstractmethod
     def get_mcp_client(self) -> _AsyncGeneratorContextManager[Any, None]:
