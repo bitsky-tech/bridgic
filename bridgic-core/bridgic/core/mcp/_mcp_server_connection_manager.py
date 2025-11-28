@@ -1,7 +1,7 @@
 import asyncio
 import threading
-from typing import Optional, Any, ClassVar, Coroutine, TYPE_CHECKING
-from weakref import WeakSet
+import weakref
+from typing import Optional, Any, ClassVar, Coroutine, Awaitable, TYPE_CHECKING
 
 from bridgic.core.types._error import McpServerConnectionError
 
@@ -23,7 +23,7 @@ class McpServerConnectionManager:
     _name: str
 
     _connections_lock: threading.Lock
-    _connections: WeakSet
+    _connections: weakref.WeakSet
 
     _thread: threading.Thread
     _loop: asyncio.AbstractEventLoop
@@ -32,7 +32,7 @@ class McpServerConnectionManager:
     def __init__(self, name: str):
         self._name = name
         self._connections_lock = threading.Lock()
-        self._connections = WeakSet()
+        self._connections = weakref.WeakSet()
         self._thread = None
         self._loop = None
         self._shutdown = False
@@ -79,13 +79,15 @@ class McpServerConnectionManager:
         with self._connections_lock:
             self._connections.discard(connection)
 
-    def run_async(
+    def run_sync(
         self,
         coro: Coroutine[Any, Any, Any],
         timeout: Optional[float] = None,
     ) -> Any:
         """
-        Submit a coroutine to the manager's event loop and wait for the result.
+        Submit a coroutine to the manager's event loop and wait for the result synchronously.
+
+        This method blocks until the coroutine completes, suitable for use in synchronous contexts.
 
         Parameters
         ----------
@@ -113,6 +115,49 @@ class McpServerConnectionManager:
 
         future = asyncio.run_coroutine_threadsafe(coro, self._loop)
         return future.result(timeout=timeout)
+
+    async def run_async(
+        self,
+        coro: Coroutine[Any, Any, Any],
+        timeout: Optional[float] = None,
+    ) -> Any:
+        """
+        Submit a coroutine to the manager's event loop and await its result in a non-blocking way.
+
+        This method submits the coroutine to the manager's dedicated event loop, and then 
+        waits for its completion in a non-blocking way.
+
+        Parameters
+        ----------
+        coro : Coroutine
+            The coroutine to run.
+        timeout : Optional[float]
+            Timeout in seconds. If None, no timeout.
+
+        Returns
+        -------
+        Any
+            The result of the coroutine execution.
+
+        Raises
+        ------
+        RuntimeError
+            If the event loop is not running.
+        TimeoutError
+            If the coroutine execution times out.
+        """
+        self._ensure_loop_running()
+
+        if self._loop is None or not self._loop.is_running():
+            raise RuntimeError(f"Event loop is not running in McpServerConnectionManager-[{self._name}]")
+
+        future = asyncio.run_coroutine_threadsafe(coro, self._loop)
+        asyncio_future = asyncio.wrap_future(future)
+
+        if timeout is not None:
+            return await asyncio.wait_for(asyncio_future, timeout=timeout)
+        else:
+            return await asyncio_future
 
     def shutdown(self):
         """

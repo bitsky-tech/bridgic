@@ -72,7 +72,7 @@ class McpServerConnection(ABC):
         """
         Establishe a connection to the MCP server. Call this method once before using the connection.
         """
-        self._get_manager().run_async(
+        self._get_manager().run_sync(
             coro=self._connect_unsafe(),
             timeout=self.request_timeout + 1,
         )
@@ -85,7 +85,7 @@ class McpServerConnection(ABC):
             return
 
         manager = self._get_manager()
-        manager.run_async(
+        manager.run_sync(
             coro=self._close_unsafe(),
             timeout=self.request_timeout + 1,
         )
@@ -136,6 +136,32 @@ class McpServerConnection(ABC):
         self._session = None
         self.is_connected = False
 
+    async def _list_prompts_unsafe(self) -> ListPromptsResult:
+        """
+        Asynchronously list the prompts from the MCP server.
+
+        Since the session used to communicate with the MCP server is bound to a specific event 
+        loop, this method should be called within the designated event loop for the connection.
+        """
+        if not self.is_connected:
+            await self._connect_unsafe()
+        return await self._session.list_prompts()
+
+    async def _get_prompt_unsafe(
+        self,
+        prompt_name: str,
+        arguments: Optional[Dict[str, Any]] = None,
+    ) -> GetPromptResult:
+        """
+        Asynchronously get a prompt from the MCP server.
+
+        Since the session used to communicate with the MCP server is bound to a specific event 
+        loop, this method should be called within the designated event loop for the connection.
+        """
+        if not self.is_connected:
+            await self._connect_unsafe()
+        return await self._session.get_prompt(name=prompt_name, arguments=arguments or {})
+
     def list_prompts(self) -> ListPromptsResult:
         """
         List the prompts from the MCP server.
@@ -145,13 +171,22 @@ class McpServerConnection(ABC):
         ListPromptsResult
             The list of prompt templates from the server.
         """
-        async def _list_prompts_unsafe() -> ListPromptsResult:
-            if not self.is_connected:
-                await self._connect_unsafe()
-            return await self._session.list_prompts()
+        return self._get_manager().run_sync(
+            coro=self._list_prompts_unsafe(),
+            timeout=self.request_timeout + 1,
+        )
 
-        return self._get_manager().run_async(
-            coro=_list_prompts_unsafe(),
+    async def alist_prompts(self) -> ListPromptsResult:
+        """
+        Asynchronously list the prompts from the MCP server.
+
+        Returns
+        -------
+        ListPromptsResult
+            The list of prompt templates from the server.
+        """
+        return await self._get_manager().run_async(
+            coro=self._list_prompts_unsafe(),
             timeout=self.request_timeout + 1,
         )
 
@@ -180,15 +215,38 @@ class McpServerConnection(ABC):
         RuntimeError
             If the connection is not established.
         """
-        arguments = arguments or {}
+        return self._get_manager().run_sync(
+            coro=self._get_prompt_unsafe(prompt_name=prompt_name, arguments=arguments),
+            timeout=self.request_timeout + 1,
+        )
 
-        async def _get_prompt_unsafe():
-            if not self.is_connected:
-                await self._connect_unsafe()
-            return await self._session.get_prompt(name=prompt_name, arguments=arguments)
+    async def aget_prompt(
+        self,
+        prompt_name: str,
+        arguments: Optional[Dict[str, Any]] = None,
+    ) -> GetPromptResult:
+        """
+        Asynchronously get a prompt from the MCP server.
 
-        return self._get_manager().run_async(
-            coro=_get_prompt_unsafe(),
+        Parameters
+        ----------
+        prompt_name : str
+            The name of the prompt to retrieve.
+        arguments : Optional[Dict[str, Any]]
+            Arguments to pass to the prompt.
+
+        Returns
+        -------
+        GetPromptResult
+            The prompt result from the server.
+
+        Raises
+        ------
+        RuntimeError
+            If the connection is not established.
+        """
+        return await self._get_manager().run_async(
+            coro=self._get_prompt_unsafe(prompt_name=prompt_name, arguments=arguments),
             timeout=self.request_timeout + 1,
         )
 
