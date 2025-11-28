@@ -308,7 +308,7 @@ class ASLAutomaMeta(GraphMeta):
 
 class ASLAutoma(GraphAutoma, metaclass=ASLAutomaMeta):
     """
-    An automaton that builds agent structures from ASL (Agent Structured Language) definitions.
+    An automa that builds agent structures from ASL (Agent Structured Language) definitions.
     
     This class extends `GraphAutoma` and uses a declarative syntax to define workflows. It
     automatically builds the graph structure from definitions during initialization, handling 
@@ -343,9 +343,10 @@ class ASLAutoma(GraphAutoma, metaclass=ASLAutomaMeta):
         Parameters
         ----------
         name : str, optional
-            The name of the automaton. If None, a default name will be assigned.
+            The name of the automa. If None, a default name will be assigned.
         """
         super().__init__(name=name)
+        self.automa = None
         self._dynamic_workers = {}
         self._build_graph()
 
@@ -422,12 +423,11 @@ class ASLAutoma(GraphAutoma, metaclass=ASLAutomaMeta):
             
         # make the automa
         canvas.make_automa(running_options=RunningOptions(callback_builders=running_options_callback))
+        automa = canvas.worker_material
         if canvas.is_top_level():
-            automa = self
             params_data = canvas.worker_material.get_input_param_names()
             set_method_signature(self.arun, params_data)
-        else:
-            automa = canvas.worker_material
+            self.automa = automa
 
         
         ###############################
@@ -474,6 +474,18 @@ class ASLAutoma(GraphAutoma, metaclass=ASLAutomaMeta):
                 )
             else:
                 raise ValueError(f"Invalid automa type: {type(automa)}.")
+
+    async def arun(
+        self,
+        *args: Tuple[Any, ...],
+        feedback_data = None,
+        **kwargs: Dict[str, Any]
+    ) -> Any:
+        if not self.automa:
+            return 
+
+        res = await self.automa.arun(*args, feedback_data=feedback_data, **kwargs)
+        return res
 
 
 def build_concurrent(
@@ -586,7 +598,7 @@ class DynamicCallback(WorkerCallback):
     Base callback class for handling dynamic worker creation from lambda functions.
     
     This callback is responsible for executing lambda functions at runtime to generate
-    dynamic workers and adding them to the automaton. It tracks the generated worker
+    dynamic workers and adding them to the automa. It tracks the generated worker
     keys for later cleanup.
     
     Attributes
@@ -649,7 +661,7 @@ class DynamicCallback(WorkerCallback):
         Parameters
         ----------
         automa_name : str
-            The name of the automaton to include in the key.
+            The name of the automa to include in the key.
             
         Returns
         -------
@@ -690,10 +702,10 @@ class DynamicCallback(WorkerCallback):
         automa: GraphAutoma,
     ) -> None:
         """
-        Execute a lambda function to generate dynamic workers and add them to the automaton.
+        Execute a lambda function to generate dynamic workers and add them to the automa.
         
         This method processes the input arguments (extracting dispatching objects), executes
-        the lambda function, and then adds each returned worker material to the automaton
+        the lambda function, and then adds each returned worker material to the automa
         as a dynamic worker. The generated worker keys are tracked for cleanup.
         
         Parameters
@@ -705,7 +717,7 @@ class DynamicCallback(WorkerCallback):
         in_kwargs : Dict[str, Any]
             Keyword arguments to pass to the lambda function.
         automa : GraphAutoma
-            The automaton instance to add the dynamic workers to.
+            The automa instance to add the dynamic workers to.
             
         Notes
         -----
@@ -749,10 +761,10 @@ class DynamicCallback(WorkerCallback):
 
 class AsTopLevelDynamicCallback(DynamicCallback):
     """
-    Callback for handling dynamic workers at the top level of the automaton.
+    Callback for handling dynamic workers at the top level of the automa.
     
-    This callback is attached to the top-level automaton and generates dynamic workers
-    when the automaton starts executing. It removes the dynamic workers when execution
+    This callback is attached to the top-level automa and generates dynamic workers
+    when the automa starts executing. It removes the dynamic workers when execution
     completes.
     """
     def __init__(self, __dynamic_lambda_worker__: _Element):
@@ -769,7 +781,7 @@ class AsTopLevelDynamicCallback(DynamicCallback):
         Called when a top-level worker starts execution.
         
         This method generates dynamic workers by executing the lambda function with the
-        provided arguments and adds them to the parent automaton.
+        provided arguments and adds them to the parent automa.
         
         Parameters
         ----------
@@ -778,7 +790,7 @@ class AsTopLevelDynamicCallback(DynamicCallback):
         is_top_level : bool, optional
             Whether this is a top-level worker. Only processes if True.
         parent : GraphAutoma, optional
-            The parent automaton to add dynamic workers to.
+            The parent automa to add dynamic workers to.
         arguments : Dict[str, Any], optional
             Dictionary containing 'args' and 'kwargs' keys with the execution arguments.
         """
@@ -809,7 +821,7 @@ class AsTopLevelDynamicCallback(DynamicCallback):
         """
         Called when a top-level worker ends execution.
         
-        This method removes all dynamically created workers from the parent automaton
+        This method removes all dynamically created workers from the parent automa
         to clean up resources.
         
         Parameters
@@ -819,7 +831,7 @@ class AsTopLevelDynamicCallback(DynamicCallback):
         is_top_level : bool, optional
             Whether this is a top-level worker. Only processes if True.
         parent : GraphAutoma, optional
-            The parent automaton to remove dynamic workers from.
+            The parent automa to remove dynamic workers from.
         arguments : Dict[str, Any], optional
             The execution arguments (unused in cleanup).
         result : Any, optional
@@ -838,10 +850,10 @@ class AsTopLevelDynamicCallback(DynamicCallback):
 
 class AsWorkerDynamicCallback(DynamicCallback):
     """
-    Callback for handling dynamic workers within a specific worker's automaton.
+    Callback for handling dynamic workers within a specific worker's automa.
     
     This callback is attached to a worker and generates dynamic workers within that
-    worker's decorated automaton (e.g., a nested GraphAutoma). It removes the dynamic
+    worker's decorated automa (e.g., a nested GraphAutoma). It removes the dynamic
     workers when the worker completes execution.
     """
     def __init__(self, __dynamic_lambda_worker__: _Element):
@@ -857,7 +869,7 @@ class AsWorkerDynamicCallback(DynamicCallback):
         """
         Called when a worker starts execution.
         
-        This method retrieves the worker's decorated automaton and generates dynamic
+        This method retrieves the worker's decorated automa and generates dynamic
         workers by executing the lambda function with the provided arguments.
         
         Parameters
@@ -867,7 +879,7 @@ class AsWorkerDynamicCallback(DynamicCallback):
         is_top_level : bool, optional
             Whether this is a top-level worker (unused for worker callbacks).
         parent : GraphAutoma, optional
-            The parent automaton containing the worker.
+            The parent automa containing the worker.
         arguments : Dict[str, Any], optional
             Dictionary containing 'args' and 'kwargs' keys with the execution arguments.
         """
@@ -894,7 +906,7 @@ class AsWorkerDynamicCallback(DynamicCallback):
         """
         Called when a worker ends execution.
         
-        This method retrieves the worker's decorated automaton and removes all dynamically
+        This method retrieves the worker's decorated automa and removes all dynamically
         created workers to clean up resources.
         
         Parameters
@@ -904,7 +916,7 @@ class AsWorkerDynamicCallback(DynamicCallback):
         is_top_level : bool, optional
             Whether this is a top-level worker (unused for worker callbacks).
         parent : GraphAutoma, optional
-            The parent automaton containing the worker.
+            The parent automa containing the worker.
         arguments : Dict[str, Any], optional
             The execution arguments (unused in cleanup).
         result : Any, optional

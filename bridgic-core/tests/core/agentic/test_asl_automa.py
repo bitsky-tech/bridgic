@@ -60,6 +60,7 @@ async def ferry_to_worker(user_input: int, automa: GraphAutoma = System("automa"
         automa.ferry_to("worker3", user_input)
 
 async def merge_tasks(tasks_res: List[int]):
+    print(f"tasks_res: {tasks_res}")
     return tasks_res
 
 async def produce_tasks(user_input: int) -> list:
@@ -73,6 +74,9 @@ async def produce_tasks(user_input: int) -> list:
 
 async def tasks_done(task_input: int) -> int:
     return task_input + 3
+
+async def tasks_done_2(task_input: int) -> int:
+    return task_input
 
 
 ####################################################################################################################################################
@@ -107,6 +111,15 @@ def asl_run_correctly_graph():
             a = worker1
 
             ~(+a)
+
+    class SubGraph3(ASLAutoma):
+        with concurrent(subtasks = ASLField(list, distribute=True)) as sub_concurrent:
+            dynamic_logic = lambda subtasks: (
+                tasks_done_2 *Settings(
+                    key=f"tasks_done_{i}"
+                )
+                for i, subtask in enumerate(subtasks)
+            )
 
     class MyGraph(ASLAutoma):
         with graph as g:  # input: 1
@@ -168,8 +181,10 @@ def asl_run_correctly_graph():
                 +a >> ~sub_concurrent  # [18, 19, 20, 21, 22]
 
             merger = merge_tasks *Settings(args_mapping_rule=ArgsMappingRule.MERGE)
+            concurrent_merge = SubGraph3()
 
-            arrangement_2 >> (sub_graph_1 & sub_graph_2 & sub_graph_3 & sub_graph_4 & sub_graph_5) >> ~merger
+            # arrangement_2 >> (sub_graph_1 & sub_graph_2 & sub_graph_3 & sub_graph_4 & sub_graph_5) >> ~merger
+            arrangement_2 >> (sub_graph_1 & sub_graph_2 & sub_graph_3 & sub_graph_4 & sub_graph_5) >> merger >> ~concurrent_merge
 
     return MyGraph
 
