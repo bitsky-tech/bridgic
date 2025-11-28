@@ -6,7 +6,6 @@ from typing import List, Tuple, Optional, Any, Dict, TYPE_CHECKING
 
 from bridgic.core.automa.worker import Worker
 from bridgic.core.types._error import WorkerArgsInjectionError
-from bridgic.core.utils._args_map import safely_map_args
 
 if TYPE_CHECKING:
     from bridgic.core.automa._graph_automa import GraphAutoma

@@ -12,9 +12,9 @@ from types import MethodType
 from dataclasses import dataclass
 from pydantic import BaseModel, Field, ConfigDict
 
+from bridgic.core.config import GlobalSetting
 from bridgic.core.utils._console import printer
 from bridgic.core.utils._msgpackx import dump_bytes
-from bridgic.core.utils._args_map import safely_map_args
 from bridgic.core.types._error import *
 from bridgic.core.types._common import AutomaType
 from bridgic.core.automa import Automa, Snapshot
@@ -22,9 +22,8 @@ from bridgic.core.automa.worker import CallableWorker, Worker
 from bridgic.core.automa.interaction import Interaction, InteractionFeedback, InteractionException
 from bridgic.core.automa._automa import _InteractionAndFeedback, _InteractionEventException, RunningOptions
 from bridgic.core.automa.worker._worker_callback import WorkerCallback, WorkerCallbackBuilder, try_handle_error_with_callbacks
-from bridgic.core.config import GlobalSetting
 from bridgic.core.automa._graph_meta import GraphMeta
-from bridgic.core.automa.args._args_binding import ArgsManager, ArgsMappingRule, ResultDispatchingRule
+from bridgic.core.automa.args._args_binding import ArgsManager, ArgsMappingRule, ResultDispatchingRule, safely_map_args
 
 class _GraphAdaptedWorker(Worker):
     """
@@ -1231,7 +1230,9 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
                     ) for worker_key, worker_obj in self._workers.items()
                     if getattr(worker_obj, "is_start", False)
                 ]
-                # Each time the Automa re-runs, buffer the input arguments here.
+        
+        def _reinit_input_buffer_if_needed(args: Tuple[Any, ...], kwargs: Dict[str, Any]):
+            if not self._current_kickoff_workers:
                 self._input_buffer.args = args
                 self._input_buffer.kwargs = kwargs
 
@@ -1306,21 +1307,13 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
                     match_left_feedbacks.append(feedback)
             return match_left_feedbacks
 
+        _reinit_input_buffer_if_needed(args, kwargs)
         running_options = self._get_top_running_options()
 
         self._main_loop = asyncio.get_running_loop()
         self._main_thread_id = threading.get_ident()
-
         if self.thread_pool is None:
             self.thread_pool = ThreadPoolExecutor(thread_name_prefix="bridgic-thread")
-
-        if not self._automa_running:
-            # Here is the last chance to compile and check the DDG in the end of the [Initialization Phase] (phase 1 just before the first DS).
-            self._compile_graph_and_detect_risks()
-            self._automa_running = True
-
-        # An Automa needs to be re-run with _current_kickoff_workers reinitialized.
-        _reinit_current_kickoff_workers_if_needed()
 
         is_top_level = self.is_top_level()
 
@@ -1339,6 +1332,14 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
                         "feedback_data": feedback_data,
                     },
                 )
+        
+        if not self._automa_running:
+            # Here is the last chance to compile and check the DDG in the end of the [Initialization Phase] (phase 1 just before the first DS).
+            self._compile_graph_and_detect_risks()
+            self._automa_running = True
+
+        # An Automa needs to be re-run with _current_kickoff_workers reinitialized.
+        _reinit_current_kickoff_workers_if_needed()
 
         # For backward compatibility with old parameter names. To be removed in the future.
         interaction_feedback = kwargs.get("interaction_feedback")
@@ -1397,7 +1398,7 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
                 next_args, next_kwargs = safely_map_args(
                     (*binding_args, *ferry_args), 
                     {**propagation_kwargs, **binding_kwargs, **injection_kwargs, **ferry_kwargs}, 
-                    self._workers[kickoff_info.worker_key].get_input_param_names()
+                    self._workers[kickoff_info.worker_key].get_input_param_names(),
                 )
                 
                 # Collect the output worker keys.
@@ -1699,5 +1700,5 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
     def __str__(self) -> str:
         d = {}
         for k, v in self._workers.items():
-            d[k] = f"{v} depends on {getattr(v, 'dependencies', [])}"
+            d[k] = f"{v} depends on {getattr(v, 'dependencies', [])}, is_start: {getattr(v, 'is_start', False)}, is_output: {getattr(v, 'is_output', False)}"
         return json.dumps(d, ensure_ascii=False, indent=4)
