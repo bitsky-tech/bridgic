@@ -8,10 +8,9 @@ from bridgic.core.automa.worker import Worker, WorkerCallback, WorkerCallbackBui
 from bridgic.core.automa.args import ArgsMappingRule, ResultDispatchingRule, InOrder, override_func_signature, set_method_signature, safely_map_args
 from bridgic.core.automa._graph_automa import GraphMeta
 from bridgic.core.agentic import ConcurrentAutoma
-from bridgic.core.agentic.asl._canvas_object import _Canvas, _Element, _CanvasObject, graph_stack, Settings, Data, KeyUnDifined
 from bridgic.core.types._error import ASLCompilationError
 from bridgic.core.utils._inspect_tools import get_param_names_all_kinds
-
+from bridgic.asl._canvas_object import _Canvas, _Element, _CanvasObject, graph_stack, Settings, Data, KeyUnDifined
 
 
 class TrackingNamespace(dict):

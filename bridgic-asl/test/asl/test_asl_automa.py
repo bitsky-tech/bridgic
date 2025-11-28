@@ -3,7 +3,7 @@ import pytest
 from typing import List
 from bridgic.core.automa.worker import Worker
 from bridgic.core.automa.args import System, ArgsMappingRule, From, ResultDispatchingRule
-from bridgic.core.agentic.asl import graph, concurrent, ASLAutoma, Settings, Data, ASLField
+from bridgic.asl import graph, concurrent, ASLAutoma, Settings, Data, ASLField
 from bridgic.core.automa import ASLCompilationError
 
 
