@@ -22,6 +22,7 @@ def worker(
     args_mapping_rule: ArgsMappingRule = ArgsMappingRule.AS_IS,
     result_dispatching_rule: ResultDispatchingRule = ResultDispatchingRule.AS_IS,
     callback_builders: List[WorkerCallbackBuilder] = [],
+    trace: bool = True,
 ) -> Callable:
     """
     A decorator for designating a method as a worker node in a `GraphAutoma` subclass.
@@ -43,6 +44,8 @@ def worker(
     callback_builders: List[WorkerCallbackBuilder]
         A list of worker callback builders to be registered.
         Callback instances will be created from builders when the worker is instantiated.
+    trace: bool
+        Whether to trace this worker. Default is True. If False, trace callbacks will skip this worker.
     """
     ...
 
@@ -51,6 +54,7 @@ def worker(
     *,
     key: Optional[str] = None,
     callback_builders: List[WorkerCallbackBuilder] = [],
+    trace: bool = True,
 ) -> Callable:
     """
     A decorator for designating a method as a worker node in a `ConcurrentAutoma` or `ReActAutoma` subclass.
@@ -62,6 +66,8 @@ def worker(
     callback_builders: List[WorkerCallbackBuilder]
         A list of worker callback builders to be registered.
         Callback instances will be created from builders when the worker is instantiated.
+    trace: bool
+        Whether to trace this worker. Default is True. If False, trace callbacks will skip this worker.
     """
     ...
 
@@ -71,6 +77,7 @@ def worker(
     key: Optional[str] = None,
     args_mapping_rule: ArgsMappingRule = ArgsMappingRule.AS_IS,
     callback_builders: List[WorkerCallbackBuilder] = [],
+    trace: bool = True,
 ) -> Callable:
     """
     A decorator for designating a method as a worker node in a `SequentialAutoma` subclass.
@@ -84,6 +91,8 @@ def worker(
     callback_builders: List[WorkerCallbackBuilder]
         A list of worker callback builders to be registered.
         Callback instances will be created from builders when the worker is instantiated.
+    trace: bool
+        Whether to trace this worker. Default is True. If False, trace callbacks will skip this worker.
     """
     ...
 

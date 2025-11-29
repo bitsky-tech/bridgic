@@ -55,6 +55,7 @@ class ConcurrentAutoma(GraphAutoma):
                     key=worker_key,
                     func=worker_func,
                     is_start=True,
+                    trace=getattr(worker_func, "__trace__", True),
                 )
 
         # Add a hidden worker as the merger worker, which will merge the results of all the start workers.
@@ -64,6 +65,7 @@ class ConcurrentAutoma(GraphAutoma):
             dependencies=super().all_workers(),
             is_output=True,
             args_mapping_rule=ArgsMappingRule.MERGE,
+            trace=False,  # Hidden internal worker, no need to trace
         )
 
     def _merge_workers_results(self, results: List[Any]) -> List[Any]:
@@ -74,6 +76,8 @@ class ConcurrentAutoma(GraphAutoma):
         self,
         key: str,
         worker: Worker,
+        *,
+        trace: bool = True,
     ) -> None:
         """
         Add a concurrent worker to the concurrent automa. This worker will be concurrently executed with other concurrent workers.
@@ -89,7 +93,7 @@ class ConcurrentAutoma(GraphAutoma):
             raise AutomaRuntimeError(f"the reserved key `{key}` is not allowed to be used by `add_worker()`")
         # Implementation notes:
         # Concurrent workers are implemented as start workers in the underlying graph automa.
-        super().add_worker(key=key, worker=worker, is_start=True)
+        super().add_worker(key=key, worker=worker, is_start=True, trace=trace)
         super().add_dependency(self._MERGER_WORKER_KEY, key)
 
     @override
@@ -97,6 +101,8 @@ class ConcurrentAutoma(GraphAutoma):
         self,
         key: str,
         func: Callable,
+        *,
+        trace: bool = True,
     ) -> None:
         """
         Add a function or method as a concurrent worker to the concurrent automa. This worker will be concurrently executed with other concurrent workers.
@@ -112,7 +118,7 @@ class ConcurrentAutoma(GraphAutoma):
             raise AutomaRuntimeError(f"the reserved key `{key}` is not allowed to be used by `add_func_as_worker()`")
         # Implementation notes:
         # Concurrent workers are implemented as start workers in the underlying graph automa.
-        super().add_func_as_worker(key=key, func=func, is_start=True)
+        super().add_func_as_worker(key=key, func=func, is_start=True, trace=trace)
         super().add_dependency(self._MERGER_WORKER_KEY, key)
 
     @override
@@ -120,6 +126,7 @@ class ConcurrentAutoma(GraphAutoma):
         self,
         *,
         key: Optional[str] = None,
+        trace: bool = True,
     ) -> Callable:
         """
         This is a decorator to mark a function or method as a concurrent worker of the concurrent automa. This worker will be concurrently executed with other concurrent workers.
@@ -134,7 +141,7 @@ class ConcurrentAutoma(GraphAutoma):
 
         super_automa = super()
         def wrapper(func: Callable):
-            super_automa.add_func_as_worker(key=key, func=func, is_start=True)
+            super_automa.add_func_as_worker(key=key, func=func, is_start=True, trace=trace)
             super_automa.add_dependency(self._MERGER_WORKER_KEY, key)
 
         return wrapper

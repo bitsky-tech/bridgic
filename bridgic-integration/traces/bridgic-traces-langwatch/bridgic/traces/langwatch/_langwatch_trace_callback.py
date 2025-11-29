@@ -292,6 +292,10 @@ class LangWatchTraceCallback(WorkerCallback):
             warnings.warn(f"Failed to get worker instance for key '{key}': {e}")
             return
 
+        # Check if tracing is disabled for this worker
+        if hasattr(worker, 'trace') and not worker.trace:
+            return
+
         await self._start_worker_span(key, worker, parent, arguments)
 
     async def _complete_worker_execution(
@@ -334,6 +338,15 @@ class LangWatchTraceCallback(WorkerCallback):
         """
         if not self._is_ready:
             return
+        if not is_top_level:
+            try:
+                worker = self._get_worker_instance(key, parent)
+                # Check if tracing is disabled for this worker
+                if hasattr(worker, 'trace') and not worker.trace:
+                    return
+            except (KeyError, ValueError):
+                # If we can't get worker instance, continue with tracing
+                pass
         output = self._build_output_payload(result=result)
         await self._complete_worker_execution(output, is_top_level)
 
@@ -371,6 +384,15 @@ class LangWatchTraceCallback(WorkerCallback):
         """
         if not self._is_ready:
             return False
+        if not is_top_level:
+            try:
+                worker = self._get_worker_instance(key, parent)
+                # Check if tracing is disabled for this worker
+                if hasattr(worker, 'trace') and not worker.trace:
+                    return False
+            except (KeyError, ValueError) as e:
+                warnings.warn(f"Failed to get worker instance for key '{key}': {e}")
+                return False
         output = self._build_output_payload(error=error)
         await self._complete_worker_execution(output, is_top_level, error=error)
         return False

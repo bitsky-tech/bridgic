@@ -50,6 +50,7 @@ class SequentialAutoma(GraphAutoma):
                     dependencies=dependencies,
                     is_start=is_start,
                     args_mapping_rule=worker_func.__args_mapping_rule__,
+                    trace=getattr(worker_func, "__trace__", True),
                 )
                 self._last_worker_key = worker_key
 
@@ -61,6 +62,7 @@ class SequentialAutoma(GraphAutoma):
                 dependencies=[self._last_worker_key],
                 is_output=True,
                 args_mapping_rule=ArgsMappingRule.AS_IS,
+                trace=False,  # Hidden internal worker, no need to trace
             )
 
     def _tail_worker(self, result: Any) -> Any:
@@ -84,6 +86,7 @@ class SequentialAutoma(GraphAutoma):
         func_or_worker: Union[Callable, Worker],
         *,
         args_mapping_rule: ArgsMappingRule = ArgsMappingRule.AS_IS,
+        trace: bool = True,
     ) -> None:
         is_start = self._last_worker_key is None
         dependencies = [] if self._last_worker_key is None else [self._last_worker_key]
@@ -94,6 +97,7 @@ class SequentialAutoma(GraphAutoma):
                 dependencies=dependencies,
                 is_start=is_start,
                 args_mapping_rule=args_mapping_rule,
+                trace=trace,
             )
         else:
             super().add_worker(
@@ -102,6 +106,7 @@ class SequentialAutoma(GraphAutoma):
                 dependencies=dependencies,
                 is_start=is_start,
                 args_mapping_rule=args_mapping_rule,
+                trace=trace,
             )
         if self._last_worker_key is not None:
             # Remove the old hidden tail worker.
@@ -115,6 +120,7 @@ class SequentialAutoma(GraphAutoma):
             dependencies=[self._last_worker_key],
             is_output=True,
             args_mapping_rule=ArgsMappingRule.AS_IS,
+            trace=False,  # Hidden internal worker, no need to trace
         )
 
     @override
@@ -124,6 +130,7 @@ class SequentialAutoma(GraphAutoma):
         worker: Worker,
         *,
         args_mapping_rule: ArgsMappingRule = ArgsMappingRule.AS_IS,
+        trace: bool = True,
     ) -> None:
         """
         Add a sequential worker to the sequential automa at the end of the automa.
@@ -143,7 +150,8 @@ class SequentialAutoma(GraphAutoma):
         self.__add_worker_internal(
             key, 
             worker, 
-            args_mapping_rule=args_mapping_rule
+            args_mapping_rule=args_mapping_rule,
+            trace=trace,
         )
 
     @override
@@ -153,6 +161,7 @@ class SequentialAutoma(GraphAutoma):
         func: Callable,
         *,
         args_mapping_rule: ArgsMappingRule = ArgsMappingRule.AS_IS,
+        trace: bool = True,
     ) -> None:
         """
         Add a function or method as a sequential worker to the sequential automa at the end of the automa.
@@ -172,7 +181,8 @@ class SequentialAutoma(GraphAutoma):
         self.__add_worker_internal(
             key, 
             func, 
-            args_mapping_rule=args_mapping_rule
+            args_mapping_rule=args_mapping_rule,
+            trace=trace,
         )
 
     @override
@@ -181,6 +191,7 @@ class SequentialAutoma(GraphAutoma):
         *,
         key: Optional[str] = None,
         args_mapping_rule: ArgsMappingRule = ArgsMappingRule.AS_IS,
+        trace: bool = True,
     ) -> Callable:
         """
         This is a decorator to mark a function or method as a sequential worker of the sequential automa, at the end of the automa.
@@ -199,7 +210,8 @@ class SequentialAutoma(GraphAutoma):
             self.__add_worker_internal(
                 key, 
                 func, 
-                args_mapping_rule=args_mapping_rule
+                args_mapping_rule=args_mapping_rule,
+                trace=trace,
             )
 
         return wrapper

@@ -40,6 +40,7 @@ class _GraphAdaptedWorker(Worker):
     is_output: bool
     args_mapping_rule: str
     result_dispatching_rule: str
+    trace: bool
     _decorated_worker: Worker
     _worker_callbacks: List[WorkerCallback]
 
@@ -54,6 +55,7 @@ class _GraphAdaptedWorker(Worker):
         args_mapping_rule: ArgsMappingRule = ArgsMappingRule.AS_IS,
         result_dispatching_rule: ResultDispatchingRule = ResultDispatchingRule.AS_IS,
         callback_builders: List[WorkerCallbackBuilder] = [],
+        trace: bool = True,
     ):
         super().__init__()
         self.key = key or f"autokey-{uuid.uuid4().hex[:8]}"
@@ -62,6 +64,7 @@ class _GraphAdaptedWorker(Worker):
         self.is_output = is_output
         self.args_mapping_rule = args_mapping_rule
         self.result_dispatching_rule = result_dispatching_rule
+        self.trace = trace
         self._decorated_worker = worker
         self._worker_callbacks = [cb.build() for cb in callback_builders]
 
@@ -74,6 +77,7 @@ class _GraphAdaptedWorker(Worker):
         report_info["is_output"] = self.is_output
         report_info["args_mapping_rule"] = self.args_mapping_rule
         report_info["result_dispatching_rule"] = self.result_dispatching_rule
+        report_info["trace"] = self.trace
         return report_info
     
     @override
@@ -85,6 +89,7 @@ class _GraphAdaptedWorker(Worker):
         state_dict["is_output"] = self.is_output
         state_dict["args_mapping_rule"] = self.args_mapping_rule
         state_dict["result_dispatching_rule"] = self.result_dispatching_rule
+        state_dict["trace"] = self.trace
         state_dict["decorated_worker"] = self._decorated_worker
         state_dict["worker_callbacks"] = self._worker_callbacks
         return state_dict
@@ -98,6 +103,8 @@ class _GraphAdaptedWorker(Worker):
         self.is_output = state_dict["is_output"]
         self.args_mapping_rule = state_dict["args_mapping_rule"]
         self.result_dispatching_rule = state_dict["result_dispatching_rule"]
+        # For backward compatibility, default to True if trace is not present
+        self.trace = state_dict.get("trace", True)
         self._decorated_worker = state_dict["decorated_worker"]
         self._worker_callbacks = state_dict["worker_callbacks"]
     #
@@ -215,6 +222,7 @@ class _AddWorkerDeferredTask(BaseModel):
     args_mapping_rule: ArgsMappingRule = ArgsMappingRule.AS_IS
     result_dispatching_rule: ResultDispatchingRule = ResultDispatchingRule.AS_IS
     callback_builders: List[WorkerCallbackBuilder] = []
+    trace: bool = True
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
@@ -400,6 +408,7 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
                     args_mapping_rule=worker_func.__args_mapping_rule__,
                     result_dispatching_rule=worker_func.__result_dispatching_rule__,
                     callback_builders=worker_func.__callback_builders__,
+                    trace=getattr(worker_func, "__trace__", True),
                 )
 
         ###############################################################################
@@ -487,6 +496,7 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
         args_mapping_rule: ArgsMappingRule = ArgsMappingRule.AS_IS,
         result_dispatching_rule: ResultDispatchingRule = ResultDispatchingRule.AS_IS,
         callback_builders: List[WorkerCallbackBuilder] = [],
+        trace: bool = True,
     ) -> None:
         """
         Incrementally add a worker into the automa. For internal use only.
@@ -524,6 +534,7 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
             args_mapping_rule=args_mapping_rule,
             result_dispatching_rule=result_dispatching_rule,
             callback_builders=effective_callback_builders,
+            trace=trace,
         )
 
         # Register the worker_obj.
@@ -673,6 +684,7 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
         args_mapping_rule: ArgsMappingRule = ArgsMappingRule.AS_IS,
         result_dispatching_rule: ResultDispatchingRule = ResultDispatchingRule.AS_IS,
         callback_builders: List[WorkerCallbackBuilder] = [],
+        trace: bool = True,
     ) -> None:
         """
         The private version of the method `add_worker()`.
@@ -728,6 +740,7 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
                 args_mapping_rule=args_mapping_rule,
                 result_dispatching_rule=result_dispatching_rule,
                 callback_builders=callback_builders,
+                trace=trace,
             )
         else:
             # Add worker during the [Running Phase].
@@ -740,6 +753,7 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
                 args_mapping_rule=args_mapping_rule,
                 result_dispatching_rule=result_dispatching_rule,
                 callback_builders=callback_builders,
+                trace=trace,
             )
             # Note1: the execution order of topology change deferred tasks is important and is determined by the order of the calls of add_worker(), remove_worker() and add_dependency() in one DS.
             # Note2: add_worker() and remove_worker() may be called in a new thread. But _topology_change_deferred_tasks is not necessary to be thread-safe due to Visibility Guarantees of the Bridgic Concurrency Model.
@@ -756,6 +770,7 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
         args_mapping_rule: ArgsMappingRule = ArgsMappingRule.AS_IS,
         result_dispatching_rule: ResultDispatchingRule = ResultDispatchingRule.AS_IS,
         callback_builders: List[WorkerCallbackBuilder] = [],
+        trace: bool = True,
     ) -> None:
         """
         The private version of the method `add_func_as_worker()`.
@@ -782,6 +797,7 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
             args_mapping_rule=args_mapping_rule,
             result_dispatching_rule=result_dispatching_rule,
             callback_builders=callback_builders,
+            trace=trace,
         )
 
     def all_workers(self) -> List[str]:
@@ -806,6 +822,7 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
         args_mapping_rule: ArgsMappingRule = ArgsMappingRule.AS_IS,
         result_dispatching_rule: ResultDispatchingRule = ResultDispatchingRule.AS_IS,
         callback_builders: List[WorkerCallbackBuilder] = [],
+        trace: bool = True,
     ) -> None:
         """
         This method is used to add a worker dynamically into the automa.
@@ -835,6 +852,8 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
         callback_builders : List[WorkerCallbackBuilder]
             A list of worker callback builders to be registered.
             Callback instances will be created from builders when the worker is instantiated.
+        trace : bool
+            Whether to trace this worker. Default is True. If False, trace callbacks will skip this worker.
         """
         self._add_worker_internal(
             key=key,
@@ -845,6 +864,7 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
             args_mapping_rule=args_mapping_rule,
             result_dispatching_rule=result_dispatching_rule,
             callback_builders=callback_builders,
+            trace=trace,
         )
 
     def add_func_as_worker(
@@ -858,6 +878,7 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
         args_mapping_rule: ArgsMappingRule = ArgsMappingRule.AS_IS,
         result_dispatching_rule: ResultDispatchingRule = ResultDispatchingRule.AS_IS,
         callback_builders: List[WorkerCallbackBuilder] = [],
+        trace: bool = True,
     ) -> None:
         """
         This method is used to add a function as a worker into the automa.
@@ -884,6 +905,8 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
         callback_builders : List[WorkerCallbackBuilder]
             A list of worker callback builders to be registered.
             Callback instances will be created from builders when the worker is instantiated.
+        trace : bool
+            Whether to trace this worker. Default is True. If False, trace callbacks will skip this worker.
         """
         self._add_func_as_worker_internal(
             key=key,
@@ -894,6 +917,7 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
             args_mapping_rule=args_mapping_rule,
             result_dispatching_rule=result_dispatching_rule,
             callback_builders=callback_builders,
+            trace=trace,
         )
 
     def worker(
@@ -906,6 +930,7 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
         args_mapping_rule: ArgsMappingRule = ArgsMappingRule.AS_IS,
         result_dispatching_rule: ResultDispatchingRule = ResultDispatchingRule.AS_IS,
         callback_builders: List[WorkerCallbackBuilder] = [],
+        trace: bool = True,
     ) -> Callable:
         """
         This is a decorator used to mark a function as an GraphAutoma detectable Worker. Dislike the 
@@ -931,6 +956,8 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
         callback_builders : List[WorkerCallbackBuilder]
             A list of worker callback builders to be registered.
             Callback instances will be created from builders when the worker is instantiated.
+        trace : bool
+            Whether to trace this worker. Default is True. If False, trace callbacks will skip this worker.
         """
         def wrapper(func: Callable):
             self._add_func_as_worker_internal(
@@ -942,6 +969,7 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
                 args_mapping_rule=args_mapping_rule,
                 result_dispatching_rule=result_dispatching_rule,
                 callback_builders=callback_builders,
+                trace=trace,
             )
 
         return wrapper
@@ -1248,6 +1276,7 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
                         args_mapping_rule=topology_task.args_mapping_rule,
                         result_dispatching_rule=topology_task.result_dispatching_rule,
                         callback_builders=topology_task.callback_builders,
+                        trace=topology_task.trace,
                     )
                 elif topology_task.task_type == "remove_worker":
                     self._remove_worker_incrementally(topology_task.worker_key)

@@ -283,6 +283,10 @@ class OpikTraceCallback(WorkerCallback):
             warnings.warn(f"Failed to get worker instance for key '{key}': {e}")
             return
 
+        # Check if tracing is disabled for this worker
+        if hasattr(worker, 'trace') and not worker.trace:
+            return
+
         self._start_worker_span(key, worker, parent, arguments)
 
     def _finish_current_span(self, output: Dict[str, Any], error: Optional[Exception] = None) -> None:
@@ -365,6 +369,15 @@ class OpikTraceCallback(WorkerCallback):
         """
         if not self._is_ready:
             return
+        if not is_top_level:
+            try:
+                worker = self._get_worker_instance(key, parent)
+                # Check if tracing is disabled for this worker
+                if hasattr(worker, 'trace') and not worker.trace:
+                    return
+            except (KeyError, ValueError):
+                # If we can't get worker instance, continue with tracing
+                pass
         output = self._build_output_payload(result=result)
         self._complete_worker_execution(output, is_top_level)
 
@@ -402,9 +415,12 @@ class OpikTraceCallback(WorkerCallback):
         """
         if not self._is_ready:
             return False
-        if not is_top_level and parent:
+        if not is_top_level:
             try:
-                self._get_worker_instance(key, parent)
+                worker = self._get_worker_instance(key, parent)
+                # Check if tracing is disabled for this worker
+                if hasattr(worker, 'trace') and not worker.trace:
+                    return False
             except (KeyError, ValueError) as e:
                 warnings.warn(f"Failed to get worker instance for key '{key}': {e}")
                 return False
