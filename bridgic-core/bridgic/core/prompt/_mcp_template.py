@@ -1,5 +1,5 @@
 from typing import List, Union
-from mcp.types import PromptMessage
+from mcp.types import PromptMessage, Prompt
 
 from bridgic.core.prompt._base_template import BasePromptTemplate
 from bridgic.core.mcp._mcp_server_connection import McpServerConnection
@@ -13,11 +13,19 @@ class McpPromptTemplate(BasePromptTemplate):
     prompt_name: str
     """The name of the prompt template."""
 
+    prompt_info: Prompt
+    """The raw information of the prompt."""
+
     _server_connection: McpServerConnection
     """The connection to the MCP server."""
 
-    def __init__(self, prompt_name: str, server_connection: McpServerConnection):
-        super().__init__(prompt_name=prompt_name)
+    def __init__(
+        self,
+        prompt_name: str,
+        prompt_info: Prompt,
+        server_connection: McpServerConnection,
+    ):
+        super().__init__(prompt_name=prompt_name, prompt_info=prompt_info)
         self._server_connection = server_connection
 
     def format_messages(self, **kwargs) -> List[Message]:

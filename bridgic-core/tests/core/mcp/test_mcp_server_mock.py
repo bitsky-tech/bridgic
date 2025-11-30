@@ -52,13 +52,13 @@ async def test_mcp_server_streamable_http_connection(mock_writer_streamable_http
 async def test_mcp_server_stdio_connection_list_prompts(mock_writer_stdio_connection):
     result = mock_writer_stdio_connection.list_prompts()
     assert result is not None
-    assert len(result.prompts) > 0
+    assert len(result) > 0
 
 @pytest.mark.asyncio
 async def test_mcp_server_streamable_http_connection_list_prompts(mock_writer_streamable_http_connection):
     result = mock_writer_streamable_http_connection.list_prompts()
     assert result is not None
-    assert len(result.prompts) > 0
+    assert len(result) > 0
 
 @pytest.mark.asyncio
 async def test_mcp_server_stdio_connection_get_prompt(mock_writer_stdio_connection):

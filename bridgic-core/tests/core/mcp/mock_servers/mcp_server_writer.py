@@ -3,7 +3,7 @@ from typing import List
 from mcp.server.fastmcp import FastMCP
 from mcp.types import PromptMessage, TextContent
 
-mcp = FastMCP("writer-mcp")
+mcp = FastMCP("writer-mcp", log_level="WARNING")
 
 
 @mcp.tool()

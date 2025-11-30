@@ -2,7 +2,7 @@ import click
 from typing import Dict, Any, List
 from mcp.server.fastmcp import FastMCP
 
-mcp = FastMCP("crawler-mcp")
+mcp = FastMCP("crawler-mcp", log_level="WARNING")
 
 
 @mcp.tool()

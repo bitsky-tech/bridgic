@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 from datetime import timedelta
-from typing import List, Dict, Optional, Union, Any
+from typing import List, Dict, Optional, Union, Any, TYPE_CHECKING
 from contextlib import _AsyncGeneratorContextManager, AsyncExitStack
 from mcp.client.session import ClientSession
 from mcp.types import ListPromptsResult, GetPromptResult
@@ -9,6 +9,9 @@ from mcp.client.streamable_http import streamablehttp_client
 
 from bridgic.core.types._error import McpServerConnectionError
 from bridgic.core.mcp._mcp_server_connection_manager import McpServerConnectionManager
+
+if TYPE_CHECKING:
+    from bridgic.core.prompt._mcp_template import McpPromptTemplate
 
 class McpServerConnection(ABC):
     """
@@ -162,33 +165,55 @@ class McpServerConnection(ABC):
             await self._connect_unsafe()
         return await self._session.get_prompt(name=prompt_name, arguments=arguments or {})
 
-    def list_prompts(self) -> ListPromptsResult:
+    def list_prompts(self) -> List["McpPromptTemplate"]:
         """
         List the prompts from the MCP server.
 
         Returns
         -------
-        ListPromptsResult
-            The list of prompt templates from the server.
+        List[McpPromptTemplate]
+            The list of prompt template instances from the server.
         """
-        return self._get_manager().run_sync(
+        from bridgic.core.prompt._mcp_template import McpPromptTemplate
+
+        result = self._get_manager().run_sync(
             coro=self._list_prompts_unsafe(),
             timeout=self.request_timeout + 1,
         )
 
-    async def alist_prompts(self) -> ListPromptsResult:
+        return [
+            McpPromptTemplate(
+                prompt_name=prompt.name,
+                prompt_info=prompt,
+                server_connection=self
+            )
+            for prompt in result.prompts
+        ]
+
+    async def alist_prompts(self) -> List["McpPromptTemplate"]:
         """
         Asynchronously list the prompts from the MCP server.
 
         Returns
         -------
-        ListPromptsResult
-            The list of prompt templates from the server.
+        List[McpPromptTemplate]
+            The list of prompt template instances from the server.
         """
-        return await self._get_manager().run_async(
+        from bridgic.core.prompt._mcp_template import McpPromptTemplate
+
+        result = await self._get_manager().run_async(
             coro=self._list_prompts_unsafe(),
             timeout=self.request_timeout + 1,
         )
+
+        return [
+            McpPromptTemplate(
+                prompt_name=prompt.name,
+                prompt_info=prompt,
+                server_connection=self
+            )
+            for prompt in result.prompts
+        ]
 
     def get_prompt(
         self,
