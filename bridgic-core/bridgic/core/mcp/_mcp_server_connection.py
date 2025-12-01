@@ -3,7 +3,7 @@ from datetime import timedelta
 from typing import List, Dict, Optional, Union, Any, TYPE_CHECKING
 from contextlib import _AsyncGeneratorContextManager, AsyncExitStack
 from mcp.client.session import ClientSession
-from mcp.types import ListPromptsResult, GetPromptResult
+from mcp.types import ListPromptsResult, GetPromptResult, ListToolsResult, CallToolResult
 from mcp.client.stdio import stdio_client, StdioServerParameters
 from mcp.client.streamable_http import streamablehttp_client
 
@@ -12,6 +12,7 @@ from bridgic.core.mcp._mcp_server_connection_manager import McpServerConnectionM
 
 if TYPE_CHECKING:
     from bridgic.core.prompt._mcp_template import McpPromptTemplate
+    from bridgic.core.agentic.tool_specs._mcp_tool_spec import McpToolSpec
 
 class McpServerConnection(ABC):
     """
@@ -94,6 +95,22 @@ class McpServerConnection(ABC):
         )
         manager.unregister_connection(self)
 
+    @abstractmethod
+    def get_mcp_client(self) -> _AsyncGeneratorContextManager[Any, None]:
+        """
+        Get an MCP client.
+
+        Returns
+        -------
+        _AsyncGeneratorContextManager[Any, None]
+            An async context manager for the MCP client transport.
+        """
+        ...
+
+    ###########################################################################
+    # Protected methods that should be called within the dedicated event loop.
+    ###########################################################################
+
     async def _connect_unsafe(self):
         """
         Asynchronously establish a connection to the MCP server.
@@ -164,6 +181,36 @@ class McpServerConnection(ABC):
         if not self.is_connected:
             await self._connect_unsafe()
         return await self._session.get_prompt(name=prompt_name, arguments=arguments or {})
+
+    async def _list_tools_unsafe(self) -> ListToolsResult:
+        """
+        Asynchronously list the tools from the MCP server.
+
+        Since the session used to communicate with the MCP server is bound to a specific event 
+        loop, this method should be called within the designated event loop for the connection.
+        """
+        if not self.is_connected:
+            await self._connect_unsafe()
+        return await self._session.list_tools()
+
+    async def _call_tool_unsafe(
+        self,
+        tool_name: str,
+        arguments: Optional[Dict[str, Any]] = None,
+    ) -> CallToolResult:
+        """
+        Asynchronously call a tool on the MCP server.
+
+        Since the session used to communicate with the MCP server is bound to a specific event 
+        loop, this method should be called within the designated event loop for the connection.
+        """
+        if not self.is_connected:
+            await self._connect_unsafe()
+        return await self._session.call_tool(name=tool_name, arguments=arguments or {})
+
+    ###########################################################################
+    # Public methods that are safely wrapped and could be called anywhere.
+    ###########################################################################
 
     def list_prompts(self) -> List["McpPromptTemplate"]:
         """
@@ -275,17 +322,141 @@ class McpServerConnection(ABC):
             timeout=self.request_timeout + 1,
         )
 
-    @abstractmethod
-    def get_mcp_client(self) -> _AsyncGeneratorContextManager[Any, None]:
+    def list_tools(self) -> List["McpToolSpec"]:
         """
-        Get an MCP client.
+        List the tools from the MCP server.
+
+        This method synchronously retrieves the list of tools available from the connected
+        MCP server and wraps each tool in an `McpToolSpec` instance for use within the
+        bridgic framework.
 
         Returns
         -------
-        _AsyncGeneratorContextManager[Any, None]
-            An async context manager for the MCP client transport.
+        List[McpToolSpec]
+            The list of tool specification instances from the server.
+
+        Raises
+        ------
+        RuntimeError
+            If the connection is not established and cannot be established.
         """
-        ...
+        from bridgic.core.agentic.tool_specs._mcp_tool_spec import McpToolSpec
+
+        result = self._get_manager().run_sync(
+            coro=self._list_tools_unsafe(),
+            timeout=self.request_timeout + 1,
+        )
+
+        return [
+            McpToolSpec(
+                tool_name=tool.name,
+                tool_info=tool,
+                server_connection=self
+            )
+            for tool in result.tools
+        ]
+
+    async def alist_tools(self) -> List["McpToolSpec"]:
+        """
+        Asynchronously list the tools from the MCP server.
+
+        This method asynchronously retrieves the list of tools available from the connected
+        MCP server and wraps each tool in an `McpToolSpec` instance for use within the
+        bridgic framework.
+
+        Returns
+        -------
+        List[McpToolSpec]
+            The list of tool specification instances from the server.
+
+        Raises
+        ------
+        RuntimeError
+            If the connection is not established and cannot be established.
+        """
+        from bridgic.core.agentic.tool_specs._mcp_tool_spec import McpToolSpec
+
+        result = await self._get_manager().run_async(
+            coro=self._list_tools_unsafe(),
+            timeout=self.request_timeout + 1,
+        )
+
+        return [
+            McpToolSpec(
+                tool_name=tool.name,
+                tool_info=tool,
+                server_connection=self
+            )
+            for tool in result.tools
+        ]
+
+    def call_tool(
+        self,
+        tool_name: str,
+        arguments: Optional[Dict[str, Any]] = None,
+    ) -> CallToolResult:
+        """
+        Synchronously call a tool on the MCP server.
+
+        This method synchronously invokes a tool on the connected MCP server with the
+        specified arguments and returns the result.
+
+        Parameters
+        ----------
+        tool_name : str
+            The name of the tool to call.
+        arguments : Optional[Dict[str, Any]]
+            The arguments to pass to the tool. If None, an empty dictionary will be used.
+
+        Returns
+        -------
+        CallToolResult
+            The result of the tool call from the server, containing content and optionally
+            structured content.
+
+        Raises
+        ------
+        RuntimeError
+            If the connection is not established and cannot be established.
+        """
+        return self._get_manager().run_sync(
+            coro=self._call_tool_unsafe(tool_name=tool_name, arguments=arguments),
+            timeout=self.request_timeout + 1,
+        )
+
+    async def acall_tool(
+        self,
+        tool_name: str,
+        arguments: Optional[Dict[str, Any]] = None,
+    ) -> CallToolResult:
+        """
+        Asynchronously call a tool on the MCP server.
+
+        This method asynchronously invokes a tool on the connected MCP server with the
+        specified arguments and returns the result.
+
+        Parameters
+        ----------
+        tool_name : str
+            The name of the tool to call.
+        arguments : Optional[Dict[str, Any]]
+            The arguments to pass to the tool. If None, an empty dictionary will be used.
+
+        Returns
+        -------
+        CallToolResult
+            The result of the tool call from the server, containing content and optionally
+            structured content.
+
+        Raises
+        ------
+        RuntimeError
+            If the connection is not established and cannot be established.
+        """
+        return await self._get_manager().run_async(
+            coro=self._call_tool_unsafe(tool_name=tool_name, arguments=arguments),
+            timeout=self.request_timeout + 1,
+        )
 
 
 class McpServerConnectionStdio(McpServerConnection):

@@ -1,9 +1,7 @@
 import asyncio
 import threading
 import weakref
-from typing import Optional, Any, ClassVar, Coroutine, Awaitable, TYPE_CHECKING
-
-from bridgic.core.types._error import McpServerConnectionError
+from typing import Optional, Any, ClassVar, Coroutine, Awaitable, Dict, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from bridgic.core.mcp._mcp_server_connection import McpServerConnection
@@ -17,13 +15,14 @@ class McpServerConnectionManager:
     event loop, avoiding issues with cross-thread event loop usage.
     """
 
-    _default_instance_lock: ClassVar[threading.Lock] = threading.Lock()
-    _default_instance: ClassVar["McpServerConnectionManager"] = None
+    _instances_lock: ClassVar[threading.Lock] = threading.Lock()
+    _instances: ClassVar[Dict[str, "McpServerConnectionManager"]] = {}
+    _connection_to_manager: ClassVar[Dict[str, str]] = {}
 
     _name: str
 
     _connections_lock: threading.Lock
-    _connections: weakref.WeakSet
+    _connections: weakref.WeakValueDictionary[str, "McpServerConnection"]
 
     _thread: threading.Thread
     _loop: asyncio.AbstractEventLoop
@@ -32,26 +31,36 @@ class McpServerConnectionManager:
     def __init__(self, name: str):
         self._name = name
         self._connections_lock = threading.Lock()
-        self._connections = weakref.WeakSet()
+        self._connections = weakref.WeakValueDictionary()
         self._thread = None
         self._loop = None
         self._shutdown = False
+        
+        # Automatically register this instance in the class-level registry.
+        with self._instances_lock:
+            if name in self._instances:
+                raise ValueError(f"Manager with name '{name}' already exists")
+            self._instances[name] = self
 
     @classmethod
-    def get_instance(cls) -> "McpServerConnectionManager":
+    def get_instance(cls, manager_name: str = "default-mcp-manager") -> "McpServerConnectionManager":
         """
-        Get the default manager instance.
+        Get a manager instance by name, creating it if it doesn't exist.
+
+        Parameters
+        ----------
+        manager_name : str
+            The name of the manager instance to retrieve. Defaults to "default-mcp-manager".
 
         Returns
         -------
         McpServerConnectionManager
-            The default manager instance.
+            The manager instance with the specified name.
         """
-        if cls._default_instance is None:
-            with cls._default_instance_lock:
-                if cls._default_instance is None:
-                    cls._default_instance = cls(name="default-mcp-manager")
-        return cls._default_instance
+        with cls._instances_lock:
+            if manager_name not in cls._instances:
+                cls._instances[manager_name] = cls(name=manager_name)
+            return cls._instances[manager_name]
 
     def register_connection(self, connection: "McpServerConnection"):
         """
@@ -62,22 +71,86 @@ class McpServerConnectionManager:
         connection : McpServerConnection
             The connection to register.
         """
-        self._ensure_loop_running()
         with self._connections_lock:
-            self._connections.add(connection)
+            self._connections[connection.name] = connection
+
         connection._manager = self
+        
+        cls = type(self)
+        with cls._instances_lock:
+            cls._connection_to_manager[connection.name] = self._name
 
     def unregister_connection(self, connection: "McpServerConnection"):
         """
         Unregister a connection from the manager.
-        
+
         Parameters
         ----------
         connection : McpServerConnection
             The connection to unregister.
         """
         with self._connections_lock:
-            self._connections.discard(connection)
+            self._connections.pop(connection.name, None)
+        
+        cls = type(self)
+        with cls._instances_lock:
+            cls._connection_to_manager.pop(connection.name, None)
+
+    def get_connection_by_name(self, name: str) -> Optional["McpServerConnection"]:
+        """
+        Get a connection by its name from this manager instance.
+
+        This method looks up a registered connection by its name within this manager.
+        If the connection has been garbage collected, `weakref.WeakValueDictionary` will
+        automatically remove it and None will be returned.
+
+        Parameters
+        ----------
+        name : str
+            The name of the connection to retrieve.
+
+        Returns
+        -------
+        Optional[McpServerConnection]
+            The connection with the specified name, or None if not found or has been
+            garbage collected.
+        """
+        with self._connections_lock:
+            return self._connections.get(name)
+
+    @classmethod
+    def get_connection(cls, connection_name: str) -> Optional["McpServerConnection"]:
+        """
+        Get a connection by its name across all manager instances.
+
+        It first finds the manager that owns the connection using the class-level 
+        connection-to-manager mapping, then retrieves the connection from that manager.
+
+        Parameters
+        ----------
+        connection_name : str
+            The name of the connection to retrieve.
+
+        Returns
+        -------
+        Optional[McpServerConnection]
+            The connection with the specified name, or None if not found, the manager
+            doesn't exist, or the connection has been garbage collected.
+        """
+        with cls._instances_lock:
+            manager_name = cls._connection_to_manager.get(connection_name)
+            
+            if manager_name is None:
+                return None
+            
+            manager = cls._instances.get(manager_name)
+            if manager is None:
+                raise RuntimeError(
+                    f"Connection '{connection_name}' was registered with manager '{manager_name}', "
+                    f"but the manager was not found. This should never happen."
+                )
+        
+        return manager.get_connection_by_name(connection_name)
 
     def run_sync(
         self,
@@ -162,6 +235,9 @@ class McpServerConnectionManager:
     def shutdown(self):
         """
         Shutdown the manager and stop the event loop.
+
+        This method also removes the manager from the class-level registry and cleans up
+        all connection-to-manager mappings for connections registered with this manager.
         """
         with self._connections_lock:
             if self._loop is not None:
@@ -173,6 +249,19 @@ class McpServerConnectionManager:
                     self._thread.join(timeout=5)
                 self._loop = None
                 self._thread = None
+
+        cls = type(self)
+
+        # Remove manager from class-level registry.
+        with cls._instances_lock:
+            cls._instances.pop(self._name, None)
+            
+            # Clean up connection-to-manager mappings.
+            conn_names_to_remove = [
+                conn_name for conn_name, mgr_name in cls._connection_to_manager.items() if mgr_name == self._name
+            ]
+            for conn_name in conn_names_to_remove:
+                cls._connection_to_manager.pop(conn_name, None)
 
     def _ensure_loop_running(self):
         """
