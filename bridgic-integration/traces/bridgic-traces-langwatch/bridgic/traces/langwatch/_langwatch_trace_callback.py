@@ -3,16 +3,14 @@
 import json
 import warnings
 from contextvars import ContextVar
-from typing import Any, Dict, List, Optional, Sequence, Tuple, TYPE_CHECKING
+from typing import Any, Dict, Optional, Sequence, Tuple, TYPE_CHECKING
 
 import langwatch
 from langwatch.state import get_instance
 from langwatch.types import BaseAttributes
 from langwatch.telemetry.span import LangWatchSpan
 from langwatch.telemetry.tracing import LangWatchTrace
-from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.instrumentation.instrumentor import BaseInstrumentor
-from langwatch.domain import BaseAttributes, SpanProcessingExcludeRule
+from langwatch.domain import BaseAttributes
 
 from bridgic.core.automa.worker import Worker, WorkerCallback
 from bridgic.core.utils._collection import serialize_data
@@ -214,7 +212,7 @@ class LangWatchTraceCallback(WorkerCallback):
         span = langwatch.span(
             name=step_name,
             input=serialized_args,
-            type="agent" if worker.is_automa() else "tool",
+            type="span",
             attributes={
                 **normalized_worker_tracing,
                 # TODO: Investigate why LangWatch coerces integers into dict form; keep string for now.
@@ -236,7 +234,7 @@ class LangWatchTraceCallback(WorkerCallback):
             name=key or "top_level_automa",
             input=serialized_args,
             metadata=trace_metadata,
-            type="agent",
+            type="span",
         )
         await trace_data.__aenter__()
         self._current_trace.set(trace_data)
