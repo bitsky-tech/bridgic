@@ -1,4 +1,5 @@
 import warnings
+import sys
 
 from threading import Lock
 from typing import Any, Dict, Union, List, Optional, Type, Generic, TypeVar, TYPE_CHECKING, get_origin, get_args, get_type_hints
@@ -323,7 +324,16 @@ def can_handle_exception(callback: WorkerCallback, error: Exception) -> bool:
         False otherwise.
     """
     try:
-        annotations = get_type_hints(callback.on_worker_error)
+        # Maintain the namespace dictionary.
+        callback_module = sys.modules.get(callback.__class__.__module__)
+        globalns = callback_module.__dict__ if callback_module else {}
+
+        # Import Automa here and add it to the namespace to resolve forward references.
+        from bridgic.core.automa._automa import Automa
+        globalns = {**globalns, 'Automa': Automa}
+
+        # Extract the error type.
+        annotations = get_type_hints(callback.on_worker_error, globalns=globalns)
         error_type = annotations.get("error")
         if error_type is None:
             warnings.warn(
