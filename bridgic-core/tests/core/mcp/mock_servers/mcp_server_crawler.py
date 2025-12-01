@@ -7,6 +7,9 @@ mcp = FastMCP("crawler-mcp", log_level="WARNING")
 
 @mcp.tool()
 def get_weather(date: str, city: str) -> Dict[str, Any]:
+    """
+    Get the weather of a specified city on a specified date.
+    """
     city_temps = {
         "New York": 15,
         "London": 10,
@@ -30,6 +33,9 @@ def get_weather(date: str, city: str) -> Dict[str, Any]:
 
 @mcp.tool()
 def get_news(date: str, country: str) -> List[str]:
+    """
+    Get the news of a specified country on a specified date.
+    """
     news_templates = [
         f"{date} {country} [Technology]: major progress in innovation",
         f"{date} {country} [Social]: continuous optimization of people's livehood policies",

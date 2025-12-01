@@ -8,6 +8,9 @@ mcp = FastMCP("writer-mcp", log_level="WARNING")
 
 @mcp.tool()
 def write_advertising(topic: str) -> str:
+    """
+    Write an advertising about a specified topic.
+    """
     return f"This is advertising about {topic}."
 
 @mcp.prompt()

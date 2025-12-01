@@ -6,6 +6,8 @@ from typing import Optional, Any, ClassVar, Coroutine, Awaitable, Dict, TYPE_CHE
 if TYPE_CHECKING:
     from bridgic.core.mcp._mcp_server_connection import McpServerConnection
 
+from bridgic.core.types._error import McpServerConnectionError
+
 
 class McpServerConnectionManager:
     """
@@ -35,12 +37,14 @@ class McpServerConnectionManager:
         self._thread = None
         self._loop = None
         self._shutdown = False
-        
+
+        cls = type(self)
+
         # Automatically register this instance in the class-level registry.
-        with self._instances_lock:
-            if name in self._instances:
+        with cls._instances_lock:
+            if name in cls._instances:
                 raise ValueError(f"Manager with name '{name}' already exists")
-            self._instances[name] = self
+            cls._instances[name] = self
 
     @classmethod
     def get_instance(cls, manager_name: str = "default-mcp-manager") -> "McpServerConnectionManager":
@@ -57,10 +61,44 @@ class McpServerConnectionManager:
         McpServerConnectionManager
             The manager instance with the specified name.
         """
-        with cls._instances_lock:
-            if manager_name not in cls._instances:
-                cls._instances[manager_name] = cls(name=manager_name)
-            return cls._instances[manager_name]
+        if manager_name not in cls._instances:
+            return cls(name=manager_name)
+        return cls._instances[manager_name]
+
+    @classmethod
+    def get_connection(cls, connection_name: str) -> Optional["McpServerConnection"]:
+        """
+        Get a connection by its name across all manager instances.
+
+        It first finds the manager that owns the connection using the class-level 
+        connection-to-manager mapping, then retrieves the connection from that manager.
+
+        Parameters
+        ----------
+        connection_name : str
+            The name of the connection to retrieve.
+
+        Returns
+        -------
+        Optional[McpServerConnection]
+            The connection with the specified name, or None if not found, the manager
+            doesn't exist, or the connection has been garbage collected.
+
+        Raises
+        ------
+        KeyError
+            If the connection is not found.
+        """
+        manager_name = cls._connection_to_manager.get(connection_name)
+        manager = cls.get_instance(manager_name) if manager_name is not None else None
+
+        if manager is None:
+            raise KeyError(
+                f"McpServerConnectionManager-[{manager_name}] is not found: "
+                f"connection_name={connection_name}"
+            )
+
+        return manager.get_connection_by_name(connection_name)
 
     def register_connection(self, connection: "McpServerConnection"):
         """
@@ -70,15 +108,26 @@ class McpServerConnectionManager:
         ----------
         connection : McpServerConnection
             The connection to register.
+
+        Raises
+        ------
+        McpServerConnectionError
+            If a connection with the same name is already registered.
         """
+        cls = type(self)
+        if connection.name in cls._connection_to_manager:
+            raise McpServerConnectionError(
+                f"A connection with the name '{connection.name}' is already registered."
+            )
+
+        with cls._instances_lock:
+            cls._connection_to_manager[connection.name] = self._name
+
         with self._connections_lock:
             self._connections[connection.name] = connection
 
         connection._manager = self
-        
-        cls = type(self)
-        with cls._instances_lock:
-            cls._connection_to_manager[connection.name] = self._name
+
 
     def unregister_connection(self, connection: "McpServerConnection"):
         """
@@ -91,7 +140,7 @@ class McpServerConnectionManager:
         """
         with self._connections_lock:
             self._connections.pop(connection.name, None)
-        
+
         cls = type(self)
         with cls._instances_lock:
             cls._connection_to_manager.pop(connection.name, None)
@@ -114,43 +163,18 @@ class McpServerConnectionManager:
         Optional[McpServerConnection]
             The connection with the specified name, or None if not found or has been
             garbage collected.
+
+        Raises
+        ------
+        KeyError
+            If the connection is not found.
         """
-        with self._connections_lock:
-            return self._connections.get(name)
+        if name not in self._connections:
+            raise KeyError(
+                f"Connection '{name}' is not found in McpServerConnectionManager-[{self._name}]"
+            )
 
-    @classmethod
-    def get_connection(cls, connection_name: str) -> Optional["McpServerConnection"]:
-        """
-        Get a connection by its name across all manager instances.
-
-        It first finds the manager that owns the connection using the class-level 
-        connection-to-manager mapping, then retrieves the connection from that manager.
-
-        Parameters
-        ----------
-        connection_name : str
-            The name of the connection to retrieve.
-
-        Returns
-        -------
-        Optional[McpServerConnection]
-            The connection with the specified name, or None if not found, the manager
-            doesn't exist, or the connection has been garbage collected.
-        """
-        with cls._instances_lock:
-            manager_name = cls._connection_to_manager.get(connection_name)
-            
-            if manager_name is None:
-                return None
-            
-            manager = cls._instances.get(manager_name)
-            if manager is None:
-                raise RuntimeError(
-                    f"Connection '{connection_name}' was registered with manager '{manager_name}', "
-                    f"but the manager was not found. This should never happen."
-                )
-        
-        return manager.get_connection_by_name(connection_name)
+        return self._connections.get(name)
 
     def run_sync(
         self,
@@ -239,27 +263,32 @@ class McpServerConnectionManager:
         This method also removes the manager from the class-level registry and cleans up
         all connection-to-manager mappings for connections registered with this manager.
         """
-        with self._connections_lock:
-            if self._loop is not None:
-                # First, mark the manager is going to shutdown.
-                self._shutdown = True
-                # Then stop the event loop as soon as possible.
-                self._loop.call_soon_threadsafe(self._loop.stop)
-                if self._thread is not None:
-                    self._thread.join(timeout=5)
-                self._loop = None
-                self._thread = None
+        # Mark the manager is going to shutdown.
+        self._shutdown = True
+
+        # Stop the event loop as soon as possible.
+        if self._loop is not None and self._loop.is_running():
+            self._loop.call_soon_threadsafe(self._loop.stop)
+
+        # Join the thread to wait for it to finish.
+        if self._thread is not None:
+            self._thread.join(timeout=5)
+
+        self._loop = None
+        self._thread = None
 
         cls = type(self)
 
-        # Remove manager from class-level registry.
+        # Remove the registered item.
         with cls._instances_lock:
+            # Remove the manager from the class-level registry.
             cls._instances.pop(self._name, None)
-            
-            # Clean up connection-to-manager mappings.
-            conn_names_to_remove = [
-                conn_name for conn_name, mgr_name in cls._connection_to_manager.items() if mgr_name == self._name
-            ]
+
+        # Clean up connection-to-manager mappings.
+        conn_names_to_remove = [
+            conn_name for conn_name, mgr_name in cls._connection_to_manager.items() if mgr_name == self._name
+        ]
+        with cls._instances_lock:
             for conn_name in conn_names_to_remove:
                 cls._connection_to_manager.pop(conn_name, None)
 

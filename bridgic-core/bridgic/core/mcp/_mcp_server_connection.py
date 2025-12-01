@@ -70,11 +70,33 @@ class McpServerConnection(ABC):
         if self._manager is None:
             manager = McpServerConnectionManager.get_instance()
             manager.register_connection(self)
+            assert manager is self._manager
         return self._manager
 
     def connect(self):
         """
         Establishe a connection to the MCP server. Call this method once before using the connection.
+
+        If the connection is not registered in a specific manager explicitly, it will be registered
+        in the default manager (manager_name="default-mcp-manager"). If the connection needs to be
+        registered in a specific manager, the `connect` method should be called after the registration.
+
+        Notes
+        -----
+        The event loop responsible for managing the session is determined at the time when `connect()` is called.
+        Therefore, it is required to register the connection to the desired manager *before* calling `connect()`.
+        Otherwise, the connection will be registered to the default manager. All registrations could not be changed later.
+
+        Example
+        -------
+        >>> connection = McpServerConnectionStreamableHttp(
+        ...     name="streamable-http-server-connection",
+        ...     url="http://localhost:8000",
+        ...     request_timeout=5,
+        ... )
+        >>> manager = McpServerConnectionManager.get_instance("my-manager")
+        >>> manager.register_connection(connection)
+        >>> connection.connect()
         """
         self._get_manager().run_sync(
             coro=self._connect_unsafe(),

@@ -7,19 +7,17 @@ import socket
 from typing import Optional
 
 
+def _check_port_available(host: str, port: int) -> bool:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.settimeout(1)
+        result = sock.connect_ex((host, port))
+        return result != 0
+
 def _wait_for_server(host: str, port: int, timeout: float = 10.0) -> bool:
     start_time = time.time()
     while time.time() - start_time < timeout:
-        try:
-            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            sock.settimeout(1)
-            result = sock.connect_ex((host, port))
-            sock.close()
-            if result == 0:
-                time.sleep(0.5)
-                return True
-        except Exception:
-            pass
+        if not _check_port_available(host, port):
+            return True
         time.sleep(0.1)
     return False
 
@@ -59,6 +57,12 @@ class McpHttpServerProcess:
         self.process: Optional[subprocess.Popen] = None
 
     def __enter__(self) -> "McpHttpServerProcess":
+        # If the port is not available, raise exception
+        if not _check_port_available(self.host, self.port):
+            raise RuntimeError(
+                f"Port {self.port} is already in use on {self.host}"
+            )
+
         # Start the server process
         self.process = subprocess.Popen(
             [
@@ -77,7 +81,7 @@ class McpHttpServerProcess:
             raise RuntimeError(
                 f"Server failed to start on {self.host}:{self.port} within {self.startup_timeout}s timeout"
             )
-        
+
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
