@@ -183,7 +183,6 @@ class OpikTraceCallback(WorkerCallback):
             trace_id=trace_data.id,
             name=step_name,
             parent_span_id=parent_span.id if parent_span else None,
-            type="tool",
             input=inputs,
             metadata=metadata,
             project_name=project_name,
