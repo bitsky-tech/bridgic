@@ -89,6 +89,7 @@ class DataAnalysisAutoma(GraphAutoma):
     async def collect_data(self, topic: str) -> dict:
         """Collect data for the given topic."""
         # Simulate data collection
+        await asyncio.sleep(1)
         return {
             "topic": topic,
             "data_points": ["point1", "point2", "point3"],
@@ -99,6 +100,7 @@ class DataAnalysisAutoma(GraphAutoma):
     async def analyze_trends(self, data: dict) -> dict:
         """Analyze trends in the collected data."""
         # Simulate trend analysis
+        await asyncio.sleep(1)
         return {
             "trends": ["trend1", "trend2"],
             "confidence": 0.85,
@@ -108,6 +110,7 @@ class DataAnalysisAutoma(GraphAutoma):
     @worker(dependencies=["analyze_trends"], is_output=True)
     async def generate_report(self, analysis: dict) -> str:
         """Generate a final report."""
+        await asyncio.sleep(1)
         return f"Report: Found {len(analysis['trends'])} trends with {analysis['confidence']} confidence."
 
 async def automa_arun():
@@ -143,6 +146,7 @@ class DataAnalysisAutoma(GraphAutoma):
     async def collect_data(self, topic: str) -> dict:
         """Collect data for the given topic."""
         # Simulate data collection
+        await asyncio.sleep(1)
         return {
             "topic": topic,
             "data_points": ["point1", "point2", "point3"],
@@ -153,6 +157,7 @@ class DataAnalysisAutoma(GraphAutoma):
     async def analyze_trends(self, data: dict) -> dict:
         """Analyze trends in the collected data."""
         # Simulate trend analysis
+        await asyncio.sleep(1)
         return {
             "trends": ["trend1", "trend2"],
             "confidence": 0.85,
@@ -162,6 +167,7 @@ class DataAnalysisAutoma(GraphAutoma):
     @worker(dependencies=["analyze_trends"], is_output=True)
     async def generate_report(self, analysis: dict) -> str:
         """Generate a final report."""
+        await asyncio.sleep(1)
         return f"Report: Found {len(analysis['trends'])} trends with {analysis['confidence']} confidence."
 
 async def automa_arun():
