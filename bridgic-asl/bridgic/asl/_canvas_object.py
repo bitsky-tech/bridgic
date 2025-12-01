@@ -84,19 +84,12 @@ class Settings:
     ----------
     key : str
         The unique identifier for the canvas object. Defaults to KeyUnDifined if not set.
-    is_start : bool
-        Whether this object is a start node in the graph. Defaults to False.
-    is_output : bool
-        Whether this object is an output node in the graph. Defaults to False.
-    dependencies : List[str]
-        List of keys of other objects that this object depends on. Defaults to empty list.
     args_mapping_rule : ArgsMappingRule
         The rule for mapping arguments to this object. Defaults to ArgsMappingRule.AS_IS.
+    result_dispatching_rule : ResultDispatchingRule
+        The rule for dispatching the result of this object to the next object. Defaults to ResultDispatchingRule.AS_IS.
     """
     key: str = None
-    is_start: bool = None
-    is_output: bool = None
-    dependencies: List[str] = None
     args_mapping_rule: ArgsMappingRule = None
     result_dispatching_rule: ResultDispatchingRule = None
 
@@ -109,54 +102,16 @@ class Settings:
         """
         if not self.key:
             self.key = KeyUnDifined()
-        if not self.is_start:
-            self.is_start = False
-        if not self.is_output:
-            self.is_output = False
-        if not self.dependencies:
-            self.dependencies = []
         if not self.args_mapping_rule:
             self.args_mapping_rule = ArgsMappingRule.AS_IS
         if not self.result_dispatching_rule:
             self.result_dispatching_rule = ResultDispatchingRule.AS_IS
 
-    def update(self, other: "Settings") -> None:
-        """
-        Update this Settings instance with values from another Settings instance.
-        
-        Only non-default values from the other Settings are applied. This allows
-        for incremental configuration updates.
-        
-        Parameters
-        ----------
-        other : Settings
-            The Settings instance to copy values from.
-            
-        Raises
-        ------
-        ASLCompilationError
-            If duplicate dependencies are detected in the other Settings.
-        """
-        if other.key != self.key and not isinstance(other.key, KeyUnDifined):
-            self.key = other.key
-        if other.is_start != self.is_start:
-            self.is_start = other.is_start
-        if other.is_output != self.is_output:
-            self.is_output = other.is_output
-        if other.dependencies != self.dependencies:  # detect duplicate error
-            if len(other.dependencies) != len(set(other.dependencies)):
-                raise ASLCompilationError(f"Duplicate dependency: {other.dependencies}.")
-            self.dependencies = other.dependencies
-        if other.args_mapping_rule != self.args_mapping_rule:
-            self.args_mapping_rule = other.args_mapping_rule
-        if other.result_dispatching_rule != self.result_dispatching_rule:
-            self.result_dispatching_rule = other.result_dispatching_rule
-
     def __rmul__(self, other: Union[Callable, Worker]):
         """
         Attach this Settings configuration to a worker or callable using left-multiplication.
         
-        This allows syntax like `other * Settings(key="worker1", is_start=True)` to
+        This allows syntax like `other * Settings(key="worker1", result_dispatching_rule=ResultDispatchingRule.IN_ORDER)` to
         attach configuration settings to a worker or callable function.
         
         Parameters
@@ -212,15 +167,12 @@ class _CanvasObject:
         self.left_canvas_obj = None
         self.right_canvas_obj = None
 
-        # settings initialization
-        self.settings = Settings(
-            key=key,
-            is_start=False,
-            is_output=False,
-            dependencies=[],
-            args_mapping_rule=ArgsMappingRule.AS_IS,
-            result_dispatching_rule=ResultDispatchingRule.AS_IS
-        )
+        self.key = KeyUnDifined()
+        self.is_start = False
+        self.is_output = False
+        self.dependencies = []
+        self.args_mapping_rule = ArgsMappingRule.AS_IS
+        self.result_dispatching_rule = ResultDispatchingRule.AS_IS
 
     def update_settings(self, settings: Settings) -> None:
         """
@@ -236,7 +188,12 @@ class _CanvasObject:
         _CanvasObject
             Returns self for method chaining.
         """
-        self.settings.update(settings)
+        if settings.key != self.key:
+            self.key = settings.key
+        if settings.args_mapping_rule != self.args_mapping_rule:
+            self.args_mapping_rule = settings.args_mapping_rule
+        if settings.result_dispatching_rule != self.result_dispatching_rule:
+            self.result_dispatching_rule = settings.result_dispatching_rule
         return self
 
     def update_data(self, data: Data) -> None:
@@ -284,24 +241,24 @@ class _CanvasObject:
         """
         def check_duplicate_dependency(current_canvas_obj: _CanvasObject, left_canvas_objs: List[str]) -> None:
             for dependency in left_canvas_objs:
-                if dependency in current_canvas_obj.settings.dependencies:
+                if dependency in current_canvas_obj.dependencies:
                     raise ASLCompilationError(f"Duplicate dependency: {dependency}.")
 
         current_canvas_obj = self
-        left_canvas_objs = [self.settings.key]
+        left_canvas_objs = [self.key]
         while current_canvas_obj.left_canvas_obj:
             current_canvas_obj = current_canvas_obj.left_canvas_obj
-            left_canvas_objs.append(current_canvas_obj.settings.key)
+            left_canvas_objs.append(current_canvas_obj.key)
         left_canvas_objs.reverse()  # Keep the order consistent with the declaration.
 
         check_duplicate_dependency(other, left_canvas_objs)
-        other.settings.dependencies.extend(left_canvas_objs)
+        other.dependencies.extend(left_canvas_objs)
 
         current_canvas_obj = other
         while current_canvas_obj.left_canvas_obj:
             current_canvas_obj = current_canvas_obj.left_canvas_obj
             check_duplicate_dependency(current_canvas_obj, left_canvas_objs)
-            current_canvas_obj.settings.dependencies.extend(left_canvas_objs)
+            current_canvas_obj.dependencies.extend(left_canvas_objs)
         return other
 
     def __or__(self, other: "_CanvasObject") -> None:
@@ -344,13 +301,13 @@ class _CanvasObject:
         _CanvasObject
             Returns self for method chaining.
         """
-        self.settings.is_start = True
+        self.is_start = True
         
         current_canvas_obj = self
         while current_canvas_obj.left_canvas_obj:
-            current_canvas_obj.settings.is_start = True
+            current_canvas_obj.is_start = True
             current_canvas_obj = current_canvas_obj.left_canvas_obj
-        current_canvas_obj.settings.is_start = True  # set the last one
+        current_canvas_obj.is_start = True  # set the last one
         
         return self
 
@@ -367,33 +324,33 @@ class _CanvasObject:
         _CanvasObject
             Returns self for method chaining.
         """
-        self.settings.is_output = True
+        self.is_output = True
 
         current_canvas_obj = self
         while current_canvas_obj.left_canvas_obj:
-            current_canvas_obj.settings.is_output = True
+            current_canvas_obj.is_output = True
             current_canvas_obj = current_canvas_obj.left_canvas_obj
-        current_canvas_obj.settings.is_output = True  # set the last one
+        current_canvas_obj.is_output = True  # set the last one
 
         return self
 
     def __str__(self) -> str:
         return (
             f"CanvasObject("
-            f"key={self.settings.key}, "
+            f"key={self.key}, "
             f"worker_material={self.worker_material}, "
-            f"settings={self.settings}"
+            f"settings={self}"
         )
 
     def __repr__(self) -> str:
         return self.__str__()
 
     def __hash__(self) -> int:
-        return hash(self.settings.key)
+        return hash(self.key)
 
     def __eq__(self, other: Any) -> bool:
         if isinstance(other, _CanvasObject):
-            return self.settings.key == other.settings.key
+            return self.key == other.key
         return False
 
 
@@ -473,12 +430,12 @@ class _Canvas(_CanvasObject):
         """
         if self.automa_type == "graph":
             self.worker_material = GraphAutoma(
-                name=self.settings.key, 
+                name=self.key, 
                 running_options=running_options
             )
         elif self.automa_type == "concurrent":
             self.worker_material = ConcurrentAutoma(
-                name=self.settings.key, 
+                name=self.key, 
                 running_options=running_options
             )
         else:
@@ -504,10 +461,10 @@ class _Canvas(_CanvasObject):
     def __str__(self) -> str:
         return (
             f"_Canvas("
-            f"key={self.settings.key}, "
-            f"parent_canvas={self.parent_canvas.settings.key if self.parent_canvas else None}, "
+            f"key={self.key}, "
+            f"parent_canvas={self.parent_canvas.key if self.parent_canvas else None}, "
             f"elements={self.elements}, "
-            f"settings={self.settings}"
+            f"settings={self}"
         )
 
 
@@ -537,9 +494,9 @@ class _Element(_CanvasObject):
     def __str__(self) -> str:
         return (
             f"_Element("
-            f"key={self.settings.key}, "
-            f"parent_canvas={self.parent_canvas.settings.key if self.parent_canvas else None}, "
-            f"settings={self.settings})"
+            f"key={self.key}, "
+            f"parent_canvas={self.parent_canvas.key if self.parent_canvas else None}, "
+            f"settings={self})"
         )
 
 
@@ -593,11 +550,14 @@ class _GraphContextManager:
         for key, value in kwargs.items():
             if not isinstance(value, ASLField):
                 raise ASLCompilationError(f"Invalid field type: {type(value)}.")
+
+            # TODO: If the future parameter distribution mechanism is expanded, 
+            # this part should also be expanded accordingly.
             default_value = InOrder(
                 value.default
                 if not isinstance(value.default, PydanticUndefinedType) 
                 else inspect._empty
-            ) if value.distribute else (
+            ) if value.dispatching_rule == ResultDispatchingRule.IN_ORDER else (
                 value.default 
                 if not isinstance(value.default, PydanticUndefinedType) 
                 else inspect._empty
@@ -661,7 +621,7 @@ class ASLField(FieldInfo):
         type: Type[Any] = Any,
         *,
         default: Any = ...,
-        distribute: bool = False,
+        dispatching_rule: ResultDispatchingRule = ResultDispatchingRule.AS_IS,
         **kwargs: Any
     ):
         """
@@ -673,11 +633,11 @@ class ASLField(FieldInfo):
             Explicit default value. Must be provided if you want a default value.
         type : Type[Any]
             Type information stored as metadata. Does not automatically generate default values.
-        distribute : bool
-            Whether to distribute the data to multiple workers.
+        dispatching_rule : ResultDispatchingRule
+            The rule for dispatching the data to multiple workers.
         **kwargs : Any
             Other Field parameters (description, ge, le, etc.)
         """
         super().__init__(default=default, **kwargs)
         self.type = type
-        self.distribute = distribute
+        self.dispatching_rule = dispatching_rule

@@ -102,8 +102,8 @@ class TrackingNamespace(dict):
                     raise ASLCompilationError(f"Duplicate key: {key}, every key of canvas must be unique.")
 
                 # set the key of the nested canvas
-                if isinstance(value.settings.key, KeyUnDifined):
-                    value.settings.key = key
+                if isinstance(value.key, KeyUnDifined):
+                    value.key = key
 
                 # update the settings of the nested canvas
                 if settings:
@@ -127,8 +127,8 @@ class TrackingNamespace(dict):
                     parent_canvas.register(key, value)
 
                     # register to the tracking namespace
-                    parent_canvas_namespace = super().__getitem__(parent_canvas.settings.key)
-                    parent_canvas_namespace[value.settings.key] = value
+                    parent_canvas_namespace = super().__getitem__(parent_canvas.key)
+                    parent_canvas_namespace[value.key] = value
 
             elif isinstance(value, _Element):
                 # if the stack is empty, indicates that the element is not under any canvas.
@@ -139,13 +139,13 @@ class TrackingNamespace(dict):
                 parent_canvas: _Canvas = stack[-1]
 
                 # register to the current canvas
-                if isinstance(value.settings.key, KeyUnDifined):
-                    value.settings.key = key
-                parent_canvas.register(value.settings.key, value)
+                if isinstance(value.key, KeyUnDifined):
+                    value.key = key
+                parent_canvas.register(value.key, value)
 
                 # register to the tracking namespace
-                parent_canvas_namespace = super().__getitem__(parent_canvas.settings.key)
-                parent_canvas_namespace[value.settings.key] = value
+                parent_canvas_namespace = super().__getitem__(parent_canvas.key)
+                parent_canvas_namespace[value.key] = value
         else:
             # record the normal key-value pair in the tracking namespace
             super().__setitem__(key, value)
@@ -182,7 +182,7 @@ class TrackingNamespace(dict):
 
         # get the current canvas and its namespace
         current_canvas: _Canvas = stack[-1]
-        current_canvas_key = current_canvas.settings.key
+        current_canvas_key = current_canvas.key
         current_canvas_namespace = super().__getitem__(current_canvas_key)
         if key == current_canvas_key:
             raise ASLCompilationError(f"Invalid canvas: {key}, cannot use the canvas itself.")
@@ -255,7 +255,7 @@ class ASLAutomaMeta(GraphMeta):
                         raise ASLCompilationError("Multiple root canvases are not allowed.")
 
                 # record the canvas to the canvases dictionary
-                canvases_dict[value.settings.key] = value
+                canvases_dict[value.key] = value
 
         # bottom up order traversal to get the canvases
         def bottom_up_order_traversal(canvases: List[_Canvas]) -> List[_Canvas]:
@@ -265,27 +265,27 @@ class ASLAutomaMeta(GraphMeta):
                 return canvases
             
             result: List[_Canvas] = []
-            remaining = {canvas.settings.key: canvas for canvas in canvases}
+            remaining = {canvas.key: canvas for canvas in canvases}
             
             while remaining:
                 remaining_keys = set(remaining.keys())
                 all_parents = {
-                    canvas.parent_canvas.settings.key 
+                    canvas.parent_canvas.key 
                     for canvas in remaining.values() 
                     if canvas.parent_canvas 
-                    and canvas.parent_canvas.settings.key in remaining_keys
-                    and canvas.parent_canvas.settings.key != canvas.settings.key
+                    and canvas.parent_canvas.key in remaining_keys
+                    and canvas.parent_canvas.key != canvas.key
                 }
                 leaves = [
                     canvas for canvas in remaining.values() 
-                    if canvas.settings.key not in all_parents
+                    if canvas.key not in all_parents
                 ]
                 
                 if not leaves:
                     root_nodes = [
                         canvas for canvas in remaining.values()
                         if canvas.parent_canvas 
-                        and canvas.parent_canvas.settings.key == canvas.settings.key
+                        and canvas.parent_canvas.key == canvas.key
                     ]
                     if root_nodes:
                         result.extend(root_nodes)
@@ -296,7 +296,7 @@ class ASLAutomaMeta(GraphMeta):
                 result.extend(leaves)
                 
                 for leaf in leaves:
-                    del remaining[leaf.settings.key]
+                    del remaining[leaf.key]
             
             return result
 
@@ -345,7 +345,7 @@ class ASLAutoma(GraphAutoma, metaclass=ASLAutomaMeta):
             The name of the automa. If None, a default name will be assigned.
         """
         super().__init__(name=name)
-        self.automa = None
+        self.automa: GraphAutoma = None
         self._dynamic_workers = {}
         self._build_graph()
 
@@ -394,8 +394,7 @@ class ASLAutoma(GraphAutoma, metaclass=ASLAutomaMeta):
             Dictionary of dynamic elements (lambda functions) that will generate workers at runtime.
         """
         automa = None
-        current_canvas_key = canvas.settings.key
-
+        current_canvas_key = canvas.key
 
         ###############################
         # build the dynamic logic flow
@@ -413,7 +412,7 @@ class ASLAutoma(GraphAutoma, metaclass=ASLAutomaMeta):
 
             # else should delegate parent automa add callback during building graph.
             else:
-                parent_key = canvas.parent_canvas.settings.key
+                parent_key = canvas.parent_canvas.key
                 if parent_key not in self._dynamic_workers:
                     self._dynamic_workers[parent_key] = {}
                 if current_canvas_key not in self._dynamic_workers[parent_key]:
@@ -433,17 +432,17 @@ class ASLAutoma(GraphAutoma, metaclass=ASLAutomaMeta):
         # build the static logic flow
         ###############################
         for _, element in static_elements.items():
-            key = element.settings.key
+            key = element.key
             worker_material = element.worker_material
-            is_start = element.settings.is_start
-            is_output = element.settings.is_output
-            dependencies = element.settings.dependencies
-            args_mapping_rule = element.settings.args_mapping_rule
-            result_dispatching_rule = element.settings.result_dispatching_rule
+            is_start = element.is_start
+            is_output = element.is_output
+            dependencies = element.dependencies
+            args_mapping_rule = element.args_mapping_rule
+            result_dispatching_rule = element.result_dispatching_rule
 
             # prepare the callback builders
-            callback_builders = []
             # if current element delegated dynamic workers to be added in current canvas
+            callback_builders = []
             if current_canvas_key in self._dynamic_workers and key in self._dynamic_workers[current_canvas_key]:
                 delegated_dynamic_workers = self._dynamic_workers[current_canvas_key][key]
                 for delegated_dynamic_element in delegated_dynamic_workers:
@@ -473,6 +472,18 @@ class ASLAutoma(GraphAutoma, metaclass=ASLAutomaMeta):
                 )
             else:
                 raise ValueError(f"Invalid automa type: {type(automa)}.")
+
+    # def dump_to_dict(self) -> Dict[str, Any]:
+    #     """
+    #     Dump the ASLAutoma instance to a dictionary.
+    #     """
+    #     return self.automa.dump_to_dict()
+
+    # def load_from_dict(self, state_dict: Dict[str, Any]) -> None:
+    #     """
+    #     Load the ASLAutoma instance from a dictionary.
+    #     """
+    #     self.automa.load_from_dict(state_dict)
 
     async def arun(
         self,
