@@ -1,10 +1,9 @@
 """Opik tracing callback handler for Bridgic."""
 
 import time
-from bridgic.core.automa import Automa
 import opik
-from typing_extensions import override
 import warnings
+from typing_extensions import override
 from typing import Any, Dict, Optional
 
 from opik import context_storage as opik_context_storage
@@ -12,6 +11,7 @@ from opik.api_objects import helpers, opik_client, span, trace
 from opik.decorator import error_info_collector
 from opik.types import ErrorInfoDict
 
+from bridgic.core.automa import Automa
 from bridgic.core.automa.worker import WorkerCallback, Worker
 from bridgic.core.utils._collection import serialize_data, merge_optional_dicts
 from bridgic.core.utils._worker_tracing import build_worker_tracing_dict, get_worker_tracing_step_name
@@ -101,7 +101,7 @@ class OpikTraceCallback(WorkerCallback):
         else:
             self._is_ready = True
     
-    def _get_worker_instance(self, key: str, parent: Optional["Automa"]) -> Worker:
+    def _get_worker_instance(self, key: str, parent: Optional[Automa]) -> Worker:
         """
         Get worker instance from parent automa.
         
@@ -229,7 +229,7 @@ class OpikTraceCallback(WorkerCallback):
         if serialized_args:
             trace_data.input = serialized_args
 
-    def _start_worker_span(self, key: str, worker: Worker, parent: "Automa", arguments: Optional[Dict[str, Any]]) -> None:
+    def _start_worker_span(self, key: str, worker: Worker, parent: Automa, arguments: Optional[Dict[str, Any]]) -> None:
         """Start a span for worker execution."""
         step_name = get_worker_tracing_step_name(key, worker)
         worker_tracing_dict = build_worker_tracing_dict(worker, parent)
@@ -243,7 +243,7 @@ class OpikTraceCallback(WorkerCallback):
         self,
         key: str,
         is_top_level: bool = False,
-        parent: Optional["Automa"] = None,
+        parent: Optional[Automa] = None,
         arguments: Optional[Dict[str, Any]] = None,
     ) -> None:
         """
@@ -333,7 +333,7 @@ class OpikTraceCallback(WorkerCallback):
         self,
         key: str,
         is_top_level: bool = False,
-        parent: Optional["Automa"] = None,
+        parent: Optional[Automa] = None,
         arguments: Optional[Dict[str, Any]] = None,
         result: Any = None,
     ) -> None:
@@ -365,7 +365,7 @@ class OpikTraceCallback(WorkerCallback):
         self,
         key: str,
         is_top_level: bool = False,
-        parent: Optional["Automa"] = None,
+        parent: Optional[Automa] = None,
         arguments: Optional[Dict[str, Any]] = None,
         error: Exception = None,
     ) -> bool:
