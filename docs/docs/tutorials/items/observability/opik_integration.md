@@ -48,7 +48,7 @@ Pick one of the three options below—they produce the exact same runtime behavi
 
     ```python
     from bridgic.traces.opik import start_opik_trace
-    start_opik_trace(project_name="bridgic-integration-demo", use_local=True)
+    start_opik_trace(project_name="bridgic-integration-demo", use_local=True, host="http://localhost:5173/api")
     ```
 
 === "GlobalSetting"
