@@ -552,7 +552,6 @@ class GlobalLogCallback(WorkerCallback):
         parent: Optional[GraphAutoma] = None,
         arguments: Dict[str, Any] = None,
     ) -> None:
-        print(self._tag + f"[START] {key} args={arguments}")
         if key == "nested_automa_as_worker":
             assert 11 in arguments["args"]
             assert "x" in arguments["kwargs"]
