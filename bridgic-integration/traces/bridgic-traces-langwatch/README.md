@@ -88,20 +88,38 @@ GlobalSetting.set(callback_builders=[WorkerCallbackBuilder(
     init_kwargs={"base_attributes": {"app": "demo"}}
 )])
 
-class MyAutoma(GraphAutoma):
+class DataAnalysisAutoma(GraphAutoma):
     @worker(is_start=True)
-    async def step1(self):
+    async def collect_data(self, topic: str) -> dict:
+        """Collect data for the given topic."""
+        # Simulate data collection
         await asyncio.sleep(1)
-        return "hello"
+        return {
+            "topic": topic,
+            "data_points": ["point1", "point2", "point3"],
+            "timestamp": "2024-01-01"
+        }
 
-    @worker(dependencies=["step1"], is_output=True)
-    async def step2(self, step1: str):
+    @worker(dependencies=["collect_data"])
+    async def analyze_trends(self, data: dict) -> dict:
+        """Analyze trends in the collected data."""
+        # Simulate trend analysis
         await asyncio.sleep(1)
-        return f"{step1} world"
+        return {
+            "trends": ["trend1", "trend2"],
+            "confidence": 0.85,
+            "source_data": data
+        }
+
+    @worker(dependencies=["analyze_trends"], is_output=True)
+    async def generate_report(self, analysis: dict) -> str:
+        """Generate a final report."""
+        await asyncio.sleep(1)
+        return f"Report: Found {len(analysis['trends'])} trends with {analysis['confidence']} confidence."
 
 async def main():
-    automa = MyAutoma()
-    result = await automa.arun()
+    automa = DataAnalysisAutoma()
+    result = await automa.arun(topic="market analysis")
     print(result)
 
 if __name__ == "__main__":
