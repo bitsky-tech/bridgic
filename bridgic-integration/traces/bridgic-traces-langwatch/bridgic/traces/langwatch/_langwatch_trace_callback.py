@@ -3,7 +3,7 @@
 import json
 import warnings
 from contextvars import ContextVar
-from typing import Any, Dict, Optional, Sequence, Tuple, TYPE_CHECKING
+from typing import Any, Dict, Optional, Sequence, Tuple
 
 import langwatch
 from langwatch.state import get_instance
@@ -12,6 +12,7 @@ from langwatch.telemetry.span import LangWatchSpan
 from langwatch.telemetry.tracing import LangWatchTrace
 from langwatch.domain import BaseAttributes
 
+from bridgic.core.automa import Automa
 from bridgic.core.automa.worker import Worker, WorkerCallback
 from bridgic.core.utils._collection import serialize_data
 from bridgic.core.utils._worker_tracing import (
@@ -22,10 +23,6 @@ from bridgic.core.utils._worker_tracing import (
 # import logging
 
 # logging.getLogger("langwatch.client").setLevel(logging.WARNING)
-
-
-if TYPE_CHECKING:
-    from bridgic.core.automa import Automa
 
 class LangWatchTraceCallback(WorkerCallback):
     """
@@ -194,7 +191,7 @@ class LangWatchTraceCallback(WorkerCallback):
         self,
         key: str,
         worker: "Worker",
-        parent: "Automa",
+        parent: Automa,
         arguments: Optional[Dict[str, Any]],
     ) -> None:
         """
@@ -239,7 +236,7 @@ class LangWatchTraceCallback(WorkerCallback):
         await trace_data.__aenter__()
         self._current_trace.set(trace_data)
 
-    def _get_worker_instance(self, key: str, parent: Optional["Automa"]) -> Worker:
+    def _get_worker_instance(self, key: str, parent: Optional[Automa]) -> Worker:
         """
         Get worker instance from parent automa.
         
@@ -256,7 +253,7 @@ class LangWatchTraceCallback(WorkerCallback):
         self,
         key: str,
         is_top_level: bool = False,
-        parent: "Automa" = None,
+        parent: Optional[Automa] = None,
         arguments: Optional[Dict[str, Any]] = None,
     ) -> None:
         """
@@ -307,7 +304,7 @@ class LangWatchTraceCallback(WorkerCallback):
         self,
         key: str,
         is_top_level: bool = False,
-        parent: Optional["Automa"] = None,
+        parent: Optional[Automa] = None,
         arguments: Optional[Dict[str, Any]] = None,
         result: Any = None,
     ) -> None:
@@ -339,7 +336,7 @@ class LangWatchTraceCallback(WorkerCallback):
         self,
         key: str,
         is_top_level: bool = False,
-        parent: Optional["Automa"] = None,
+        parent: Optional[Automa] = None,
         arguments: Optional[Dict[str, Any]] = None,
         error: Exception = None,
     ) -> bool:
