@@ -381,12 +381,18 @@ class ArgsManager:
             
         positional_only_param_names = get_param_names(rx_param_names_dict.get(Parameter.POSITIONAL_ONLY, []))
         positional_or_keyword_param_names = get_param_names(rx_param_names_dict.get(Parameter.POSITIONAL_OR_KEYWORD, []))
+        var_keyword_param_names = get_param_names(rx_param_names_dict.get(Parameter.VAR_KEYWORD, []))
 
         propagation_kwargs = {}
         for key, value in input_kwargs.items():
-            if key in positional_only_param_names:
+            if var_keyword_param_names:
                 propagation_kwargs[key] = value
-            elif key in positional_or_keyword_param_names:
+                continue
+
+            if (
+                key in positional_only_param_names or
+                key in positional_or_keyword_param_names
+            ):
                 propagation_kwargs[key] = value
 
         return (), propagation_kwargs
