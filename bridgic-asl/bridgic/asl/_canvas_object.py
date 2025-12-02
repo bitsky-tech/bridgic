@@ -188,7 +188,7 @@ class _CanvasObject:
         _CanvasObject
             Returns self for method chaining.
         """
-        if settings.key != self.key:
+        if settings.key != self.key and not isinstance(settings.key, KeyUnDifined):
             self.key = settings.key
         if settings.args_mapping_rule != self.args_mapping_rule:
             self.args_mapping_rule = settings.args_mapping_rule

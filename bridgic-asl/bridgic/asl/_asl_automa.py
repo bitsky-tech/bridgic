@@ -124,20 +124,25 @@ class TrackingNamespace(dict):
                 else stack[-1] if isinstance(value, _Element) 
                 else None if len(stack) == 1 else stack[-2]
             )
-            if parent_canvas:
-                parent_canvas_namespace = super().__getitem__(parent_canvas.key)
-                parent_canvas_namespace[value.key] = value
-                parent_canvas.register(key, value)
-            else:
-                # Check if element is declared outside any canvas
-                if isinstance(value, _Element):
-                    raise ASLCompilationError("All workers must be written under one graph.")
-                # Initialize canvas namespace (common for both root and nested canvases)
+
+            if isinstance(value, _Element):
+                if parent_canvas:
+                    parent_canvas_namespace = super().__getitem__(parent_canvas.key)
+                    parent_canvas_namespace[value.key] = value
+                    parent_canvas.register(key, value)
                 else:
-                    super().__setitem__(key, {})
-                    current_canvas_namespace = super().__getitem__(key)
-                    current_canvas_namespace["__self__"] = value
-                    current_canvas_namespace["__fragment__"] = {}
+                    # Check if element is declared outside any canvas
+                    if isinstance(value, _Element):
+                        raise ASLCompilationError("All workers must be written under one graph.")
+            elif isinstance(value, _Canvas):
+                if parent_canvas:
+                    parent_canvas_namespace = super().__getitem__(parent_canvas.key)
+                    parent_canvas_namespace[value.key] = value
+                    parent_canvas.register(key, value)
+                super().__setitem__(key, {})
+                current_canvas_namespace = super().__getitem__(key)
+                current_canvas_namespace["__self__"] = value
+                current_canvas_namespace["__fragment__"] = {}
         else:
             # record the normal key-value pair in the tracking namespace
             super().__setitem__(key, value)
