@@ -443,21 +443,17 @@ class ASLAutoma(GraphAutoma, metaclass=ASLAutomaMeta):
             #   2. GraphAutoma
             #   3. Worker
             if isinstance(worker_material, Worker):
-                if key == 'c':
-                    print(f'worker_material: {id(worker_material)}')
-
                 if isinstance(worker_material, ASLAutoma):
-                    pass
+                    asl_automa_class = type(worker_material)
+                    automa_name = getattr(asl_automa_class, "name", None)
+                    copied_worker = asl_automa_class(name=automa_name)
                 else:
                     worker_class = type(worker_material)
                     copied_worker = worker_class.__new__(worker_class)
 
                     for k, v in worker_material.__dict__.items():
                         setattr(copied_worker, k, v)
-                    worker_material = copied_worker
-
-                if key == 'c':
-                    print(f'copied_worker: {id(copied_worker)}')
+                worker_material = copied_worker
 
             # prepare the callback builders
             # if current element delegated dynamic workers to be added in current canvas
