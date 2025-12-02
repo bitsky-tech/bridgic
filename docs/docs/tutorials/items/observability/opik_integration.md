@@ -34,9 +34,9 @@ pip install bridgic-traces-opik
 
 The recommended approach to configuring the Python SDK is to use the opik configure command. This will prompt you to set up your API key and Opik instance URL (if applicable) to ensure proper routing and authentication. All details will be saved to a configuration file.
 
-=== "Opik Cloud"
+=== "Opik cloud"
 
-    If you are using the Cloud version of the platform, you can configure the SDK by running:
+    If you are using the cloud version of the platform, you can configure the SDK by running:
 
     ```python
     import opik
@@ -83,7 +83,7 @@ You can register Opik tracing at the scope that best fits your application. `sta
 
 Pick one of the three options below—they produce the exact same runtime behavior:
 
-=== "start_opik_trace for opik Cloud"
+=== "start_opik_trace for opik cloud"
 
     ```python
     from bridgic.traces.opik import start_opik_trace
