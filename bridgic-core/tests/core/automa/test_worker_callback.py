@@ -336,7 +336,6 @@ async def test_global_setting_callback(graph_with_global_setting: GraphAutoma, c
     # Clean up: reset global setting
     GlobalSetting.set(callback_builders=[])
 
-
 # - - - - - - - - - - - - - - - -
 # test case: RunningOptions callback_builders
 # - - - - - - - - - - - - - - - -
