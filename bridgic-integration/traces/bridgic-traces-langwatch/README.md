@@ -49,10 +49,12 @@ import asyncio
 class MyAutoma(GraphAutoma):
     @worker(is_start=True)
     async def step1(self):
+        await asyncio.sleep(1)
         return "hello"
 
     @worker(dependencies=["step1"], is_output=True)
     async def step2(self, step1: str):
+        await asyncio.sleep(1)
         return f"{step1} world"
 
 async def main():
@@ -65,7 +67,8 @@ async def main():
     result = await automa.arun()
     print(result)
 
-asyncio.run(main())
+if __name__ == "__main__":
+    asyncio.run(main())
 ```
 
 ### Method 2: Global Scope with GlobalSetting
@@ -120,7 +123,6 @@ async def main():
     print(result)
 
 if __name__ == "__main__":
-    import asyncio
     asyncio.run(main())
 ```
 

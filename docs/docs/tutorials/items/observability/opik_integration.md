@@ -29,61 +29,26 @@ Comet provides a hosted version of the Opik platform, or you can run the platfor
 pip install bridgic-traces-opik
 ```
 
-### Step 2: Configure Opik
-
-
-The recommended approach to configuring the Python SDK is to use the opik configure command. This will prompt you to set up your API key and Opik instance URL (if applicable) to ensure proper routing and authentication. All details will be saved to a configuration file.
-
-=== "Opik Cloud"
-
-    If you are using the Cloud version of the platform, you can configure the SDK by running:
-
-    ```python
-    import opik
-
-    opik.configure(use_local=False)
-    ```
-
-    You can also configure the SDK by calling [`configure`](https://www.comet.com/docs/opik/python-sdk-reference/cli.html) from the Command line:
-
-    ```bash
-    opik configure
-    ``` 
-=== "Self-hosting"
-
-    If you are self-hosting the platform, you can configure the SDK by running:
-
-    ```python
-    import opik
-
-    opik.configure(use_local=True)
-    ```
-
-    or from the Command line:
-
-    ```bash
-    opik configure --use_local
-    ```
-
-The `configure` methods will prompt you for the necessary information and save it to a configuration file (`~/.opik.config`). When using the command line version, you can use the `-y` or `--yes` flag to automatically approve any confirmation prompts:
-
-```bash
-opik configure --yes
-```
-
-### Step 3: Register the callback
+### Step 2: Register the callback
 
 You can register Opik tracing at the scope that best fits your application. `start_opik_trace` is the fastest path (a single line that configures global tracing via `GlobalSetting`). When you want to customize the same global setup or target only a specific automa, Bridgic exposes direct hooks for both use cases.
 
 #### Method 1: Application-wide registration (helper or manual)
 
-Pick one of the two options below—they produce the exact same runtime behavior:
+Pick one of the three options below—they produce the exact same runtime behavior:
 
-=== "start_opik_trace"
+=== "start_opik_trace for opik cloud"
 
     ```python
     from bridgic.traces.opik import start_opik_trace
-    start_opik_trace(project_name="bridgic-integration-demo")
+    start_opik_trace(project_name="bridgic-integration-demo", api_key="your-api-key")
+    ```
+
+=== "start_opik_trace for self-hosted"
+
+    ```python
+    from bridgic.traces.opik import start_opik_trace
+    start_opik_trace(project_name="bridgic-integration-demo", use_local=True, host="http://localhost:5173/api")
     ```
 
 === "GlobalSetting"
@@ -95,7 +60,7 @@ Pick one of the two options below—they produce the exact same runtime behavior
 
     GlobalSetting.set(callback_builders=[WorkerCallbackBuilder(
         OpikTraceCallback,
-        init_kwargs={"project_name": "bridgic-integration-demo"}
+        init_kwargs={"project_name": "bridgic-integration-demo", "api_key": "your-api-key"}
     )])
     ```
 
@@ -134,7 +99,7 @@ class DataAnalysisAutoma(GraphAutoma):
 
 async def automa_arun():
     # Call either start_opik_trace(...) or GlobalSetting.set(...) once at startup
-    start_opik_trace(project_name="bridgic-integration-demo")
+    start_opik_trace(project_name="bridgic-integration-demo", api_key="your-api-key")
     automa = DataAnalysisAutoma()
     result = await automa.arun(topic="market analysis")
     print(result)
@@ -183,7 +148,7 @@ class DataAnalysisAutoma(GraphAutoma):
         return f"Report: Found {len(analysis['trends'])} trends with {analysis['confidence']} confidence."
 
 async def automa_arun():
-    builder = WorkerCallbackBuilder(OpikTraceCallback, init_kwargs={"project_name": "bridgic-integration-demo"})
+    builder = WorkerCallbackBuilder(OpikTraceCallback, init_kwargs={"project_name": "bridgic-integration-demo", "api_key": "your-api-key"})
     running_options = RunningOptions(callback_builders=[builder])
     automa = DataAnalysisAutoma(running_options=running_options)
     result = await automa.arun(topic="market analysis")
