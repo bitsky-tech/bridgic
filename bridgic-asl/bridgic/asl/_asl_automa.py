@@ -1,7 +1,7 @@
 import copy
 import uuid
 import enum
-from typing import Callable, List, Any, Dict, Tuple, Union
+from typing import Callable, List, Any, Dict, Tuple, Union, Optional
 
 from bridgic.core.automa import GraphAutoma, RunningOptions
 from bridgic.core.automa.worker import Worker, WorkerCallback, WorkerCallbackBuilder
@@ -10,7 +10,7 @@ from bridgic.core.automa._graph_automa import GraphMeta
 from bridgic.core.agentic import ConcurrentAutoma
 from bridgic.core.types._error import ASLCompilationError
 from bridgic.core.utils._inspect_tools import get_param_names_all_kinds
-from bridgic.asl._canvas_object import _Canvas, _Element, _CanvasObject, graph_stack, Settings, Data, KeyUnDifined
+from bridgic.asl._canvas_object import _Canvas, _Element, _CanvasObject, graph_stack, Settings, Data, KeyUnDifined, _GraphContextManager
 
 
 class TrackingNamespace(dict):
@@ -22,6 +22,10 @@ class TrackingNamespace(dict):
     the extraction of settings and data from worker materials and creates appropriate _Element
     or _Canvas instances.
     """
+    def __init__(self):
+        super().__init__()
+        self.canvas_definition_start = False
+
     def __setitem__(self, key: str, value: Any):
         """
         Register a key-value pair in the tracking namespace.
@@ -47,19 +51,34 @@ class TrackingNamespace(dict):
         - If a value is already an _Element, it skips re-registration to handle fragment declarations.
         - If a value is a _Canvas and has already been declared, It also indicates the corresponding
         """
-        # if the value is a _Element, it indicates that the corresponding Worker object or 
-        # callable has already been declared. Declaring it again is likely to be a fragment.
-        # So skip the registration process.
-        if isinstance(value, _Element):
+        # Before the class body of Python is truly executed, the class body definition of the 
+        # parent class will be executed first, so we'll skip them for now.
+        if not self.canvas_definition_start:
             super().__setitem__(key, value)
+            if key == '__qualname__' and value != "ASLAutoma":
+                self.canvas_definition_start = True
             return
-        
-        # if the value is a _Canvas and has already been declared, It also indicates the corresponding
-        # canvas has already been registered. So skip the registration process. Declaring it again is 
-        # likely to be a fragment. So skip the registration process.
-        if isinstance(value, _Canvas) and super().__contains__(key):
-            super().__setitem__(key, value)
-            return
+
+        # if the value is a _CanvasObject before the object is registered, it indicates that 
+        # the corresponding canvas object is a fragment.
+        if isinstance(value, _CanvasObject):
+            stack = list[_Canvas](graph_stack.get())
+            parent_canvas: _Canvas = stack[-1]
+            parent_canvas_namespace = super().__getitem__(parent_canvas.key)
+            parent_canvas_fragment_namespace = parent_canvas_namespace.get('__fragment__')
+            if parent_canvas_fragment_namespace.get(key) or parent_canvas_namespace.get(key):
+                raise ASLCompilationError(
+                    f"Duplicate name: {key} under canvas: {parent_canvas.key} of a fragment or a registered object, "
+                    f"every name of fragment must be unique."
+                )
+            
+            if isinstance(value, _Element):
+                parent_canvas_fragment_namespace[key] = value
+                return
+            
+            if isinstance(value, _Canvas):
+                parent_canvas_fragment_namespace[key] = value
+                return
 
         # get the settings and data from the value and clear the settings and data of the value
         settings = copy.deepcopy(getattr(value, "__settings__", None))
@@ -70,82 +89,55 @@ class TrackingNamespace(dict):
             setattr(value, "__data__", None)
 
         # track the _Element values
-        if not key.startswith('_') and (isinstance(value, Worker) or isinstance(value, Callable)):
-            if key != 'arun' and key != 'run':
-                # create the _Element instance
-                element: _Element = _Element(key, value)
+        if (isinstance(value, Worker) or isinstance(value, Callable)) and not isinstance(value, _GraphContextManager):
+            # create the _Element instance
+            element: _Element = _Element(key, value)
 
-                # update the settings of the element
-                if settings:
-                    element.update_settings(settings)
+            # judge if the value is a lambda function
+            if isinstance(value, Callable) and getattr(value.__code__, "co_name", None) == '<lambda>':
+                element.is_lambda = True
+                element.cached_param_names = get_param_names_all_kinds(value)
 
-                # update the data of the element
-                if data:
-                    element.update_data(data)
-
-                # judge if the value is a lambda function
-                if isinstance(value, Callable) and getattr(value.__code__, "co_name", None) == '<lambda>':
-                    element.is_lambda = True
-                    element.cached_param_names = get_param_names_all_kinds(value)
-
-                # cover the value with the element
-                value = element
+            # cover the value with the element
+            value = element
+        
+        # track the _Canvas values
+        if isinstance(value, _GraphContextManager):
+            stack = list[_Canvas](graph_stack.get())
+            current_canvas: _Canvas = stack[-1]
+            value = current_canvas
 
         # register the _CanvasObject to the current canvas
         if isinstance(value, _CanvasObject):
-            stack = list[_Canvas](graph_stack.get())
+            # update the key, settings and data of the canvas object
+            if isinstance(value.key, KeyUnDifined):
+                value.key = key
+            if settings:
+                value.update_settings(settings)
+            if data:
+                value.update_data(data)
             
-            # if is a nested canvas, register to the parent canvas.
-            if isinstance(value, _Canvas):
-                # if the canvas is already in the tracking namespace, raise error.
-                if super().__contains__(key):
-                    raise ASLCompilationError(f"Duplicate key: {key}, every key of canvas must be unique.")
-
-                # set the key of the nested canvas
-                if isinstance(value.key, KeyUnDifined):
-                    value.key = key
-
-                # update the settings of the nested canvas
-                if settings:
-                    value.update_settings(settings)
-
-                # update the data of the nested canvas
-                if data:
-                    value.update_data(data)
-
-                # register current canvas to the tracking namespace
-                super().__setitem__(key, {})
-                current_canvas_namespace = super().__getitem__(key)
-                current_canvas_namespace["__self__"] = value
-                
-                # if the stack is only one, the current canvas is the root canvas, skip the registration.
-                if len(stack) > 1:
-                    # get the parent canvas
-                    parent_canvas: _Canvas = stack[-2]
-
-                    # register to the parent canvas
-                    parent_canvas.register(key, value)
-
-                    # register to the tracking namespace
-                    parent_canvas_namespace = super().__getitem__(parent_canvas.key)
-                    parent_canvas_namespace[value.key] = value
-
-            elif isinstance(value, _Element):
-                # if the stack is empty, indicates that the element is not under any canvas.
-                if len(stack) == 0:
-                    raise ASLCompilationError("All workers must be written under one graph.")
-
-                # get the current canvas
-                parent_canvas: _Canvas = stack[-1]
-
-                # register to the current canvas
-                if isinstance(value.key, KeyUnDifined):
-                    value.key = key
-                parent_canvas.register(value.key, value)
-
-                # register to the tracking namespace
+            # get the parent canvas and register to the parent canvas
+            stack = list[_Canvas](graph_stack.get())
+            parent_canvas: Optional[_Canvas] = (
+                None if len(stack) == 0 
+                else stack[-1] if isinstance(value, _Element) 
+                else None if len(stack) == 1 else stack[-2]
+            )
+            if parent_canvas:
                 parent_canvas_namespace = super().__getitem__(parent_canvas.key)
                 parent_canvas_namespace[value.key] = value
+                parent_canvas.register(key, value)
+            else:
+                # Check if element is declared outside any canvas
+                if isinstance(value, _Element):
+                    raise ASLCompilationError("All workers must be written under one graph.")
+                # Initialize canvas namespace (common for both root and nested canvases)
+                else:
+                    super().__setitem__(key, {})
+                    current_canvas_namespace = super().__getitem__(key)
+                    current_canvas_namespace["__self__"] = value
+                    current_canvas_namespace["__fragment__"] = {}
         else:
             # record the normal key-value pair in the tracking namespace
             super().__setitem__(key, value)
@@ -184,12 +176,16 @@ class TrackingNamespace(dict):
         current_canvas: _Canvas = stack[-1]
         current_canvas_key = current_canvas.key
         current_canvas_namespace = super().__getitem__(current_canvas_key)
+        current_canvas_fragment_namespace = current_canvas_namespace.get('__fragment__')
         if key == current_canvas_key:
             raise ASLCompilationError(f"Invalid canvas: {key}, cannot use the canvas itself.")
 
         # if the key is in the current canvas namespace, return the element.
         if key in current_canvas_namespace:
             res = current_canvas_namespace[key]
+            return res
+        if key in current_canvas_fragment_namespace:
+            res = current_canvas_fragment_namespace[key]
             return res
 
         return super().__getitem__(key)
@@ -440,6 +436,29 @@ class ASLAutoma(GraphAutoma, metaclass=ASLAutomaMeta):
             args_mapping_rule = element.args_mapping_rule
             result_dispatching_rule = element.result_dispatching_rule
 
+            # If the node object is an instance of a worker object, it must be ensured that each time 
+            # an instance of the current ASLAutoma is created, it is an independent copy of this worker 
+            # object instance. Here, the worker object has three forms: 
+            #   1. ASLAutoma
+            #   2. GraphAutoma
+            #   3. Worker
+            if isinstance(worker_material, Worker):
+                if key == 'c':
+                    print(f'worker_material: {id(worker_material)}')
+
+                if isinstance(worker_material, ASLAutoma):
+                    pass
+                else:
+                    worker_class = type(worker_material)
+                    copied_worker = worker_class.__new__(worker_class)
+
+                    for k, v in worker_material.__dict__.items():
+                        setattr(copied_worker, k, v)
+                    worker_material = copied_worker
+
+                if key == 'c':
+                    print(f'copied_worker: {id(copied_worker)}')
+
             # prepare the callback builders
             # if current element delegated dynamic workers to be added in current canvas
             callback_builders = []
@@ -473,17 +492,31 @@ class ASLAutoma(GraphAutoma, metaclass=ASLAutomaMeta):
             else:
                 raise ValueError(f"Invalid automa type: {type(automa)}.")
 
-    # def dump_to_dict(self) -> Dict[str, Any]:
-    #     """
-    #     Dump the ASLAutoma instance to a dictionary.
-    #     """
-    #     return self.automa.dump_to_dict()
+    def dump_to_dict(self) -> Dict[str, Any]:
+        """
+        Dump the ASLAutoma instance to a dictionary.
+        """
+        state_dict = super().dump_to_dict()
+        state_dict["automa"] = self.automa.dump_to_dict()
+        state_dict["automa_type"] = type(self.automa).__name__
+        state_dict["_dynamic_workers"] = self._dynamic_workers
+        state_dict["_canvases"] = self._canvases
+        return state_dict
 
-    # def load_from_dict(self, state_dict: Dict[str, Any]) -> None:
-    #     """
-    #     Load the ASLAutoma instance from a dictionary.
-    #     """
-    #     self.automa.load_from_dict(state_dict)
+    def load_from_dict(self, state_dict: Dict[str, Any]) -> None:
+        """
+        Load the ASLAutoma instance from a dictionary.
+        """
+        super().load_from_dict(state_dict)
+        if state_dict["automa_type"] == "GraphAutoma":
+            self.automa = GraphAutoma()
+        elif state_dict["automa_type"] == "ConcurrentAutoma":
+            self.automa = ConcurrentAutoma()
+        else:
+            raise ValueError(f"Invalid automa type: {state_dict['automa_type']}.")
+        self.automa.load_from_dict(state_dict["automa"])
+        self._dynamic_workers = state_dict["_dynamic_workers"]
+        self._canvases = state_dict["_canvases"]
 
     async def arun(
         self,
@@ -496,6 +529,12 @@ class ASLAutoma(GraphAutoma, metaclass=ASLAutomaMeta):
 
         res = await self.automa.arun(*args, feedback_data=feedback_data, **kwargs)
         return res
+
+    def __str__(self) -> str:
+        return f"ASLAutoma(automa={self.automa})"
+
+    def __repr__(self) -> str:
+        return self.__str__()
 
 
 def build_concurrent(

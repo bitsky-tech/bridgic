@@ -338,8 +338,7 @@ class _CanvasObject:
         return (
             f"CanvasObject("
             f"key={self.key}, "
-            f"worker_material={self.worker_material}, "
-            f"settings={self}"
+            f"worker_material={self.worker_material})"
         )
 
     def __repr__(self) -> str:
@@ -462,9 +461,9 @@ class _Canvas(_CanvasObject):
         return (
             f"_Canvas("
             f"key={self.key}, "
+            f"automa_type={self.automa_type}, "
             f"parent_canvas={self.parent_canvas.key if self.parent_canvas else None}, "
-            f"elements={self.elements}, "
-            f"settings={self}"
+            f"elements={self.elements})"
         )
 
 
@@ -495,8 +494,9 @@ class _Element(_CanvasObject):
         return (
             f"_Element("
             f"key={self.key}, "
+            f"worker_material={self.worker_material}, "
             f"parent_canvas={self.parent_canvas.key if self.parent_canvas else None}, "
-            f"settings={self})"
+            f"is_lambda={self.is_lambda})"
         )
 
 
@@ -579,11 +579,10 @@ class _GraphContextManager:
             The newly created canvas instance.
         """
         ctx = _Canvas(automa_type=self.automa_type, params=self.params)
-
         stack = list(graph_stack.get())
         stack.append(ctx)
         graph_stack.set(stack)
-        return ctx
+        return self
 
     def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
         """
