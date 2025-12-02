@@ -334,6 +334,93 @@ async def test_global_setting_callback(graph_with_global_setting: GraphAutoma, c
     GlobalSetting.set(callback_builders=[])
 
 
+class GlobalLogCallback(WorkerCallback):
+    def __init__(self, tag: str = None):
+        self._tag = tag or ""
+
+    async def on_worker_start(
+        self,
+        key: str,
+        is_top_level: bool = False,
+        parent: Optional[GraphAutoma] = None,
+        arguments: Dict[str, Any] = None,
+    ) -> None:
+        print(self._tag + f"[START] {key} args={arguments}")
+
+    async def on_worker_end(
+        self,
+        key: str,
+        is_top_level: bool = False,
+        parent: Optional[GraphAutoma] = None,
+        arguments: Dict[str, Any] = None,
+        result: Any = None,
+    ) -> None:
+        print(self._tag + f"[END] {key} result={result}")
+
+
+@pytest.fixture
+def graph_with_global_setting_inputs_propagation():
+    # Top-level automa
+    class TopAutoma(GraphAutoma):
+        @worker(is_start=True)
+        async def top_worker(self, x: int) -> int:
+            return x + 1
+
+    # Inner automa (will be used as a nested worker)
+    class InnerAutoma(GraphAutoma):
+        @worker(is_start=True, is_output=True)
+        async def inner_worker(self, x: int) -> int:
+            return x * 2
+
+    # Configure callback at global setting, with <Global> tag.
+    GlobalSetting.set(
+        callback_builders=[
+            WorkerCallbackBuilder(GlobalLogCallback, init_kwargs={"tag": "<Global>"}),
+        ]
+    )
+
+    # Configure callback at top-level automa, with <Automa> tag.
+    running_options = RunningOptions(
+        callback_builders=[
+            WorkerCallbackBuilder(GlobalLogCallback, init_kwargs={"tag": "<Automa>"})
+        ]
+    )
+    automa = TopAutoma(name="top-automa", running_options=running_options)
+
+    # Add a instance of InnerAutoma as a worker.
+    automa.add_worker("nested_automa_as_worker", InnerAutoma(name="inner-automa"), dependencies=["top_worker"], is_output=True)
+
+    return automa
+
+@pytest.mark.asyncio
+async def test_global_setting_callback_inputs_propagation(graph_with_global_setting_inputs_propagation: GraphAutoma, capsys):
+    result = await graph_with_global_setting_inputs_propagation.arun(x=10)
+    assert result == 22
+
+    captured = capsys.readouterr()
+    output = captured.out
+
+    assert "<Global>[START] top-automa args={'args': (), 'kwargs': {'x': 10}, 'feedback_data': None}" in output
+    assert "<Automa>[START] top-automa args={'args': (), 'kwargs': {'x': 10}, 'feedback_data': None}" in output
+    assert "<Global>[START] top_worker args={'args': (), 'kwargs': {'x': 10}}" in output
+    assert "<Automa>[START] top_worker args={'args': (), 'kwargs': {'x': 10}}" in output
+    assert "<Global>[END] top_worker result=11" in output
+    assert "<Automa>[END] top_worker result=11" in output
+    assert "<Global>[START] nested_automa_as_worker args={'args': (11,), 'kwargs': {'feedback_data': None, 'x': 10}}" in output
+    assert "<Automa>[START] nested_automa_as_worker args={'args': (11,), 'kwargs': {'feedback_data': None, 'x': 10}}" in output
+    assert "<Global>[START] inner_worker args={'args': (11,), 'kwargs': {}}" in output
+    assert "<Automa>[START] inner_worker args={'args': (11,), 'kwargs': {}}" in output
+    assert "<Global>[END] inner_worker result=22" in output
+    assert "<Automa>[END] inner_worker result=22" in output
+    assert "<Global>[END] nested_automa_as_worker result=22" in output
+    assert "<Automa>[END] nested_automa_as_worker result=22" in output
+    assert "<Global>[END] top-automa result=22" in output
+    assert "<Automa>[END] top-automa result=22" in output
+
+    # Clean up: reset global setting
+    GlobalSetting.set(callback_builders=[])
+
+
 # - - - - - - - - - - - - - - - -
 # test case: RunningOptions callback_builders
 # - - - - - - - - - - - - - - - -
