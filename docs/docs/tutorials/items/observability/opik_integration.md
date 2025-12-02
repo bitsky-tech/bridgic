@@ -71,19 +71,30 @@ The `configure` methods will prompt you for the necessary information and save i
 opik configure --yes
 ```
 
+!!! info "Note"
+    The above approach is not suitable for opik configuration in code. If we want to implement opik configuration in code, we can use the `start_opik_trace` method, which is explained below
+
+
 ### Step 3: Register the callback
 
 You can register Opik tracing at the scope that best fits your application. `start_opik_trace` is the fastest path (a single line that configures global tracing via `GlobalSetting`). When you want to customize the same global setup or target only a specific automa, Bridgic exposes direct hooks for both use cases.
 
 #### Method 1: Application-wide registration (helper or manual)
 
-Pick one of the two options below—they produce the exact same runtime behavior:
+Pick one of the three options below—they produce the exact same runtime behavior:
 
-=== "start_opik_trace"
+=== "start_opik_trace for opik Cloud"
 
     ```python
     from bridgic.traces.opik import start_opik_trace
-    start_opik_trace(project_name="bridgic-integration-demo")
+    start_opik_trace(project_name="bridgic-integration-demo",api_key="your-api-key")
+    ```
+
+=== "start_opik_trace for self-hosted"
+
+    ```python
+    from bridgic.traces.opik import start_opik_trace
+    start_opik_trace(project_name="bridgic-integration-demo",use_local=True)
     ```
 
 === "GlobalSetting"
