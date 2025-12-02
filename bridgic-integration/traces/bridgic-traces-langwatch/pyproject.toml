@@ -1,6 +1,6 @@
 [project]
 name = "bridgic-traces-langwatch"
-version = "0.1.1"
+version = "0.1.2.dev1"
 license = {text = "MIT"}
 classifiers = [
     # "Private :: Do Not Upload",

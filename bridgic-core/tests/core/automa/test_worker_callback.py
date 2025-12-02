@@ -3,13 +3,16 @@ import uuid
 import asyncio
 import re
 
-from typing import List, Tuple, Dict, Any, Union, Optional
+from typing import List, Tuple, Dict, Any, Union, Optional, TYPE_CHECKING
 from contextvars import ContextVar
-from bridgic.core.automa import GraphAutoma, worker, Snapshot, RunningOptions, Automa
+from bridgic.core.automa import GraphAutoma, worker, Snapshot, RunningOptions
 from bridgic.core.automa.worker import Worker, WorkerCallback, WorkerCallbackBuilder
 from bridgic.core.automa.interaction import Event, FeedbackSender, Feedback, InteractionException, InteractionFeedback
 from bridgic.core.config import GlobalSetting
 from bridgic.core.utils._console import printer, colored
+
+if TYPE_CHECKING:
+    from bridgic.core.automa._automa import Automa
 
 
 class PostEventCallback(WorkerCallback):
@@ -17,7 +20,7 @@ class PostEventCallback(WorkerCallback):
         self, 
         key: str,
         is_top_level: bool = False,
-        parent: Optional[Automa] = None,
+        parent: Optional["Automa"] = None,
         arguments: Dict[str, Any] = None,
         result: Any = None,
     ) -> None:
@@ -34,7 +37,7 @@ class RequestFeedbackCallback(WorkerCallback):
         self, 
         key: str,
         is_top_level: bool = False,
-        parent: Optional[Automa] = None,
+        parent: Optional["Automa"] = None,
         arguments: Dict[str, Any] = None,
     ) -> None:
         if parent:
@@ -54,7 +57,7 @@ class InteractWithHumanCallback(WorkerCallback):
         self, 
         key: str,
         is_top_level: bool = False,
-        parent: Optional[Automa] = None,
+        parent: Optional["Automa"] = None,
         arguments: Dict[str, Any] = None,
     ) -> None:
         if parent:
@@ -74,7 +77,7 @@ class RemoveWorkerCallback(WorkerCallback):
         self, 
         key: str,
         is_top_level: bool = False,
-        parent: Optional[Automa] = None,
+        parent: Optional["Automa"] = None,
         arguments: Dict[str, Any] = None,
         result: Any = None,
     ) -> None:
@@ -297,7 +300,7 @@ class GlobalCallback(WorkerCallback):
         self, 
         key: str,
         is_top_level: bool = False,
-        parent: Optional[Automa] = None,
+        parent: Optional["Automa"] = None,
         arguments: Dict[str, Any] = None,
     ) -> None:
         print(f"global callback for {key}")
@@ -342,7 +345,7 @@ class AutomaCallback(WorkerCallback):
         self, 
         key: str,
         is_top_level: bool = False,
-        parent: Optional[Automa] = None,
+        parent: Optional["Automa"] = None,
         arguments: Dict[str, Any] = None,
     ) -> None:
         print(f"automa callback for {key}")
@@ -352,7 +355,7 @@ class AutomaObserveValueErrorCallback(WorkerCallback):
         self, 
         key: str,
         is_top_level: bool = False,
-        parent: Optional[Automa] = None,
+        parent: Optional["Automa"] = None,
         arguments: Dict[str, Any] = None,
         error: ValueError = None,
     ) -> bool:
@@ -364,7 +367,7 @@ class AutomaSuppressValueErrorCallback(WorkerCallback):
         self, 
         key: str,
         is_top_level: bool = False,
-        parent: Optional[Automa] = None,
+        parent: Optional["Automa"] = None,
         arguments: Dict[str, Any] = None,
         error: ValueError = None,
     ) -> bool:
@@ -488,7 +491,7 @@ class ValueErrorCallback(WorkerCallback):
         self,
         key: str,
         is_top_level: bool = False,
-        parent: Optional[Automa] = None,
+        parent: Optional["Automa"] = None,
         arguments: Dict[str, Any] = None,
         error: ValueError = None,  # Specific type annotation
     ) -> bool:
@@ -501,7 +504,7 @@ class TypeErrorCallback(WorkerCallback):
         self,
         key: str,
         is_top_level: bool = False,
-        parent: Optional[Automa] = None,
+        parent: Optional["Automa"] = None,
         arguments: Dict[str, Any] = None,
         error: TypeError = None,  # Specific type annotation
     ) -> bool:
@@ -514,7 +517,7 @@ class UnionExceptionCallback(WorkerCallback):
         self,
         key: str,
         is_top_level: bool = False,
-        parent: Optional[Automa] = None,
+        parent: Optional["Automa"] = None,
         arguments: Dict[str, Any] = None,
         error: Union[ValueError, TypeError] = None,  # Union type annotation
     ) -> bool:
@@ -526,7 +529,7 @@ class BaseExceptionCallback(WorkerCallback):
         self,
         key: str,
         is_top_level: bool = False,
-        parent: Optional[Automa] = None,
+        parent: Optional["Automa"] = None,
         arguments: Dict[str, Any] = None,
         error: Exception = None,  # Base class annotation
     ) -> bool:
@@ -621,7 +624,7 @@ class TopLevelCallback(WorkerCallback):
         self,
         key: str,
         is_top_level: bool = False,
-        parent: Optional[Automa] = None,
+        parent: Optional["Automa"] = None,
         arguments: Dict[str, Any] = None,
     ) -> None:
         if is_top_level:
@@ -645,7 +648,7 @@ class TopLevelCallback(WorkerCallback):
         self,
         key: str,
         is_top_level: bool = False,
-        parent: Optional[Automa] = None,
+        parent: Optional["Automa"] = None,
         arguments: Dict[str, Any] = None,
         result: Any = None,
     ) -> None:
@@ -657,7 +660,7 @@ class MiddleLevelCallback(WorkerCallback):
         self,
         key: str,
         is_top_level: bool = False,
-        parent: Optional[Automa] = None,
+        parent: Optional["Automa"] = None,
         arguments: Dict[str, Any] = None,
     ) -> None:
         printer.print(f"[MiddleLevel] on_worker_start: {key}")
@@ -666,7 +669,7 @@ class MiddleLevelCallback(WorkerCallback):
         self,
         key: str,
         is_top_level: bool = False,
-        parent: Optional[Automa] = None,
+        parent: Optional["Automa"] = None,
         arguments: Dict[str, Any] = None,
         result: Any = None,
     ) -> None:
@@ -679,7 +682,7 @@ class InnerLevelCallback(WorkerCallback):
         self,
         key: str,
         is_top_level: bool = False,
-        parent: Optional[Automa] = None,
+        parent: Optional["Automa"] = None,
         arguments: Dict[str, Any] = None,
     ) -> None:
         printer.print(f"[InnerLevel] on_worker_start: {key}")
@@ -688,7 +691,7 @@ class InnerLevelCallback(WorkerCallback):
         self,
         key: str,
         is_top_level: bool = False,
-        parent: Optional[Automa] = None,
+        parent: Optional["Automa"] = None,
         arguments: Dict[str, Any] = None,
         result: Any = None,
     ) -> None:

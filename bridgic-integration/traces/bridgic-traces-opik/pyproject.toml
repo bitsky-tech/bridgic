@@ -1,6 +1,6 @@
 [project]
 name = "bridgic-traces-opik"
-version = "0.1.2"
+version = "0.1.3.dev1"
 license = {text = "MIT"}
 classifiers = [
     # "Private :: Do Not Upload",
