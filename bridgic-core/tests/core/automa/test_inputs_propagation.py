@@ -4,10 +4,11 @@ Test cases for the inputs propagation mechanism of Bridgic framework.
 
 import pytest
 
-from bridgic.core.automa import GraphAutoma, worker
+from bridgic.core.config import GlobalSetting
+from bridgic.core.automa import GraphAutoma, worker, RunningOptions
 from bridgic.core.automa.args import ArgsMappingRule
-from bridgic.core.automa.worker import Worker
-from typing import Tuple, Any
+from bridgic.core.automa.worker import Worker, WorkerCallback, WorkerCallbackBuilder
+from typing import Tuple, Any, Dict, Optional
 
 ###########################################################
 ###### Part One: Test decorated workers -- async def ######
@@ -534,3 +535,86 @@ def flow_4(flow_4_nested):
 async def test_flow_4(flow_4):
     result = await flow_4.arun(11, 22, x=2, y=3, user_input="hi")
     assert result == (9, 11)
+
+###########################################################
+##### Part Five: Test Nested Automa propagation #####
+###########################################################
+
+
+class GlobalLogCallback(WorkerCallback):
+    def __init__(self, tag: str = None):
+        self._tag = tag or ""
+
+    async def on_worker_start(
+        self,
+        key: str,
+        is_top_level: bool = False,
+        parent: Optional[GraphAutoma] = None,
+        arguments: Dict[str, Any] = None,
+    ) -> None:
+        if key == "nested_automa_as_worker":
+            assert 11 in arguments["args"]
+            assert "x" in arguments["kwargs"]
+            assert arguments["kwargs"]["x"] == 10
+        elif key == "inner_worker":
+            assert 11 in arguments["args"]
+            assert "x" not in arguments["kwargs"]
+
+    async def on_worker_end(
+        self,
+        key: str,
+        is_top_level: bool = False,
+        parent: Optional[GraphAutoma] = None,
+        arguments: Dict[str, Any] = None,
+        result: Any = None,
+    ) -> None:
+        if key == "nested_automa_as_worker":
+            assert 11 in arguments["args"]
+            assert "x" in arguments["kwargs"]
+            assert arguments["kwargs"]["x"] == 10
+        elif key == "inner_worker":
+            assert 11 in arguments["args"]
+            assert "x" not in arguments["kwargs"]
+
+
+@pytest.fixture
+def graph_with_global_setting_inputs_propagation():
+    # Top-level automa
+    class TopAutoma(GraphAutoma):
+        @worker(is_start=True)
+        async def top_worker(self, x: int) -> int:
+            return x + 1
+
+    # Inner automa (will be used as a nested worker)
+    class InnerAutoma(GraphAutoma):
+        @worker(is_start=True, is_output=True)
+        async def inner_worker(self, x: int) -> int:
+            return x * 2
+
+    # Configure callback at global setting, with <Global> tag.
+    GlobalSetting.set(
+        callback_builders=[
+            WorkerCallbackBuilder(GlobalLogCallback, init_kwargs={"tag": "<Global>"}),
+        ]
+    )
+
+    # Configure callback at top-level automa, with <Automa> tag.
+    running_options = RunningOptions(
+        callback_builders=[
+            WorkerCallbackBuilder(GlobalLogCallback, init_kwargs={"tag": "<Automa>"})
+        ]
+    )
+    automa = TopAutoma(name="top-automa", running_options=running_options)
+
+    # Add a instance of InnerAutoma as a worker.
+    automa.add_worker("nested_automa_as_worker", InnerAutoma(name="inner-automa"), dependencies=["top_worker"], is_output=True)
+
+    return automa
+
+@pytest.mark.asyncio
+async def test_global_setting_callback_inputs_propagation(graph_with_global_setting_inputs_propagation: GraphAutoma):
+    result = await graph_with_global_setting_inputs_propagation.arun(x=10)
+    assert result == 22
+
+    # Clean up: reset global setting
+    GlobalSetting.set(callback_builders=[])
