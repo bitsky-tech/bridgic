@@ -1,4 +1,5 @@
 import inspect
+from copy import deepcopy
 from inspect import Parameter, _ParameterKind
 from contextvars import ContextVar
 from dataclasses import dataclass
@@ -217,7 +218,7 @@ class _CanvasObject:
             func_name = getattr(self.worker_material, "__name__", repr(self.worker_material))
             override_func_signature(func_name, self.worker_material, data.data)
 
-    def __rshift__(self, other: Union["_CanvasObject"]) -> None:
+    def __rshift__(self, other: Union["_CanvasObject", "_Fragment"]) -> None:
         """
         Right-shift operator (>>) sets the current object as a dependency of the other object.
         
@@ -249,7 +250,18 @@ class _CanvasObject:
 
         def add_dependencies(canvas_obj: _CanvasObject, dependencies_obj: List[_CanvasObject]) -> None:
             for dependency_obj in dependencies_obj:
-                canvas_obj.dependencies.append(dependency_obj)
+                if isinstance(canvas_obj, _Fragment):
+                    if isinstance(dependency_obj, _Fragment):
+                        for s in dependency_obj.starts:
+                            s.dependencies.extend(dependency_obj.ends)
+                    else:
+                        for s in canvas_obj.starts:
+                            s.dependencies.append(dependency_obj)
+                else:
+                    if isinstance(dependency_obj, _Fragment):
+                        canvas_obj.dependencies.extend(dependency_obj.ends)
+                    else:
+                        canvas_obj.dependencies.append(dependency_obj)
     
         current_canvas_obj = other
         add_dependencies(current_canvas_obj, left_canvas_objs)
@@ -258,13 +270,14 @@ class _CanvasObject:
             add_dependencies(current_canvas_obj, left_canvas_objs)
         return other
 
-    def __or__(self, other: "_CanvasObject") -> None:
+    def __or__(self, other: Union["_CanvasObject", "_Fragment"]) -> None:
         """
         "|" operator.
         """
+        # TODO: In the future, the `|` symbol will be used to implement the relationship of conditional edges.
         raise NotImplementedError("`|` operator is not supported for AgentCanvasObject.")
 
-    def __and__(self, other: "_CanvasObject") -> None:
+    def __and__(self, other: Union["_CanvasObject", "_Fragment"]) -> None:
         """
         Bitwise AND operator (&) groups multiple canvas objects together.
         
@@ -300,12 +313,8 @@ class _CanvasObject:
         """
         self.is_start = True
         
-        current_canvas_obj = self
-        while current_canvas_obj.left_canvas_obj:
-            current_canvas_obj.is_start = True
-            current_canvas_obj = current_canvas_obj.left_canvas_obj
-        current_canvas_obj.is_start = True  # Set the last one in the group.
-        
+        if self.left_canvas_obj:
+            self.left_canvas_obj.__pos__()
         return self
 
     def __invert__(self) -> None:
@@ -323,12 +332,8 @@ class _CanvasObject:
         """
         self.is_output = True
 
-        current_canvas_obj = self
-        while current_canvas_obj.left_canvas_obj:
-            current_canvas_obj.is_output = True
-            current_canvas_obj = current_canvas_obj.left_canvas_obj
-        current_canvas_obj.is_output = True  # Set the last one in the group.
-
+        if self.left_canvas_obj:
+            self.left_canvas_obj.__invert__()
         return self
 
     def __str__(self) -> str:
@@ -493,6 +498,52 @@ class _Element(_CanvasObject):
             f"parent_canvas={self.parent_canvas.key if self.parent_canvas else None}, "
             f"is_lambda={self.is_lambda})"
         )
+
+
+class _Fragment(_CanvasObject):
+    """
+    Represents a fragment of a logic flow.
+    """
+    def __init__(self, key: str, fragment_material: "_CanvasObject") -> None:
+        super().__init__(key, None)
+        self.starts, self.ends = self.unpack_fragment(fragment_material)
+
+    def unpack_fragment(self, fragment_material: "_CanvasObject") -> Tuple[List[_CanvasObject], List[_CanvasObject]]:
+        """
+        Unpack the fragment into starts and ends.
+        """
+        starts = []
+        ends = []
+
+        middle_dependencies = []
+        current_canvas_obj = fragment_material
+        ends.append(current_canvas_obj)
+        middle_dependencies.extend(current_canvas_obj.dependencies)
+        while current_canvas_obj.right_canvas_obj:
+            current_canvas_obj = current_canvas_obj.right_canvas_obj
+            middle_dependencies.extend(current_canvas_obj.dependencies)
+            ends.append(current_canvas_obj)
+        middle_dependencies = list(set(middle_dependencies))
+
+        while middle_dependencies:
+            starts = deepcopy(middle_dependencies)
+            current_objs = []
+            for current_obj in middle_dependencies:
+                current_objs.extend(current_obj.dependencies)
+            middle_dependencies = deepcopy(list(set(current_objs)))
+        return starts, ends
+
+    def __pos__(self) -> None:
+        """
+        Unsupported operator `+` for Fragment.
+        """
+        raise NotImplementedError("`+` operator is not supported for Fragment.")
+
+    def __invert__(self) -> None:
+        """
+        Unsupported operator `~` for Fragment.
+        """
+        raise NotImplementedError("`~` operator is not supported for Fragment.")
 
 
 class _GraphContextManager:

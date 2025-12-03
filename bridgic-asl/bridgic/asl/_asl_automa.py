@@ -14,7 +14,7 @@ from bridgic.core.automa._graph_automa import GraphMeta
 from bridgic.core.agentic import ConcurrentAutoma
 from bridgic.core.types._error import ASLCompilationError
 from bridgic.core.utils._inspect_tools import get_param_names_all_kinds
-from bridgic.asl._canvas_object import _Canvas, _Element, _CanvasObject, graph_stack, Settings, Data, KeyUnDifined, _GraphContextManager
+from bridgic.asl._canvas_object import _Canvas, _Element, _CanvasObject, _Fragment, graph_stack, Settings, Data, KeyUnDifined, _GraphContextManager
 
 
 class TrackingNamespace(dict):
@@ -80,13 +80,8 @@ class TrackingNamespace(dict):
                     f"Duplicate name: {key} under canvas: {parent_canvas.key} of a fragment or a registered node."
                 )
             
-            if isinstance(value, _Element):
-                parent_canvas_fragment_namespace[key] = value
-                return
-            
-            if isinstance(value, _Canvas):
-                parent_canvas_fragment_namespace[key] = value
-                return
+            value = _Fragment(key, value)
+            parent_canvas_fragment_namespace[key] = value
 
         # Get the settings and data from the value and clear the settings and data of the value.
         settings = copy.deepcopy(getattr(value, "__settings__", None))
