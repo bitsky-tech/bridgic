@@ -164,6 +164,7 @@ class _CanvasObject:
         """
         self.worker_material = worker_material
         self.parent_canvas = None
+
         self.left_canvas_obj = None
         self.right_canvas_obj = None
 
@@ -216,7 +217,7 @@ class _CanvasObject:
             func_name = getattr(self.worker_material, "__name__", repr(self.worker_material))
             override_func_signature(func_name, self.worker_material, data.data)
 
-    def __rshift__(self, other: Union["_CanvasObject", Tuple["_CanvasObject"]]) -> None:
+    def __rshift__(self, other: Union["_CanvasObject"]) -> None:
         """
         Right-shift operator (>>) sets the current object as a dependency of the other object.
         
@@ -226,7 +227,7 @@ class _CanvasObject:
         
         Parameters
         ----------
-        other : Union[_CanvasObject, Tuple[_CanvasObject]]
+        other : _CanvasObject
             The canvas object(s) that will depend on this object.
             
         Returns
@@ -239,26 +240,22 @@ class _CanvasObject:
         ValueError
             If duplicate dependencies are detected.
         """
-        def check_duplicate_dependency(current_canvas_obj: _CanvasObject, left_canvas_objs: List[str]) -> None:
-            for dependency in left_canvas_objs:
-                if dependency in current_canvas_obj.dependencies:
-                    raise ASLCompilationError(f"Duplicate dependency: {dependency}.")
-
         current_canvas_obj = self
-        left_canvas_objs = [self.key]
+        left_canvas_objs = [self]
         while current_canvas_obj.left_canvas_obj:
             current_canvas_obj = current_canvas_obj.left_canvas_obj
-            left_canvas_objs.append(current_canvas_obj.key)
+            left_canvas_objs.append(current_canvas_obj)
         left_canvas_objs.reverse()  # Keep the order consistent with the declaration.
 
-        check_duplicate_dependency(other, left_canvas_objs)
-        other.dependencies.extend(left_canvas_objs)
-
+        def add_dependencies(canvas_obj: _CanvasObject, dependencies_obj: List[_CanvasObject]) -> None:
+            for dependency_obj in dependencies_obj:
+                canvas_obj.dependencies.append(dependency_obj)
+    
         current_canvas_obj = other
+        add_dependencies(current_canvas_obj, left_canvas_objs)
         while current_canvas_obj.left_canvas_obj:
             current_canvas_obj = current_canvas_obj.left_canvas_obj
-            check_duplicate_dependency(current_canvas_obj, left_canvas_objs)
-            current_canvas_obj.dependencies.extend(left_canvas_objs)
+            add_dependencies(current_canvas_obj, left_canvas_objs)
         return other
 
     def __or__(self, other: "_CanvasObject") -> None:

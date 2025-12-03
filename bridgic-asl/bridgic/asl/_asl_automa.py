@@ -472,7 +472,7 @@ class ASLAutoma(GraphAutoma, metaclass=ASLAutomaMeta):
             worker_material = element.worker_material
             is_start = element.is_start
             is_output = element.is_output
-            dependencies = element.dependencies
+            dependencies = [item.key for item in element.dependencies]
             args_mapping_rule = element.args_mapping_rule
             result_dispatching_rule = element.result_dispatching_rule
 

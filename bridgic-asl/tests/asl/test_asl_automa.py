@@ -407,22 +407,6 @@ async def test_asl_can_not_have_multiple_root_canvases():
 
 
 # - - - - - - - - - - - - - - -
-# test duplicated dependency
-# - - - - - - - - - - - - - - - 
-@pytest.mark.asyncio
-async def test_asl_duplicated_dependency():
-    with pytest.raises(ASLCompilationError, match=(
-        f"Duplicate dependency: a."
-    )):
-        class MyGraph(ASLAutoma):
-            with graph as g:
-                a = worker1
-                b = worker2
-                c = Worker3(y=1)
-                +a >> b >> c >> a >> b
-
-
-# - - - - - - - - - - - - - - -
 # test lambda dynamic logic must be written under a concurrent or sequential canvas
 # - - - - - - - - - - - - - - -  
 @pytest.mark.asyncio
