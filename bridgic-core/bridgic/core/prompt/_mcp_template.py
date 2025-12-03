@@ -3,6 +3,7 @@ from mcp.types import PromptMessage, Prompt
 
 from bridgic.core.prompt._base_template import BasePromptTemplate
 from bridgic.core.mcp._mcp_server_connection import McpServerConnection
+from bridgic.core.mcp._mcp_server_connection_manager import McpServerConnectionManager
 from bridgic.core.model.types import Message
 
 class McpPromptTemplate(BasePromptTemplate):
@@ -23,10 +24,17 @@ class McpPromptTemplate(BasePromptTemplate):
         self,
         prompt_name: str,
         prompt_info: Prompt,
-        server_connection: McpServerConnection,
+        server_connection: Union[str, McpServerConnection],
     ):
         super().__init__(prompt_name=prompt_name, prompt_info=prompt_info)
-        self._server_connection = server_connection
+        
+        # Try to associate with the real connection object.
+        if isinstance(server_connection, str):
+            self._server_connection = McpServerConnectionManager.get_connection(server_connection)
+        elif isinstance(server_connection, McpServerConnection):
+            self._server_connection = server_connection
+        else:
+            raise TypeError(f"Invalid type for server connection: {type(server_connection)}")
 
     def format_messages(self, **kwargs) -> List[Message]:
         """
