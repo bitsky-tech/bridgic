@@ -1,7 +1,12 @@
 import copy
 import uuid
 import enum
+import warnings
+import pickle
+from types import MethodType
 from typing import Callable, List, Any, Dict, Tuple, Union, Optional
+from typing_extensions import override
+from concurrent.futures import ThreadPoolExecutor
 
 from bridgic.core.automa import GraphAutoma, RunningOptions
 from bridgic.core.automa.worker import Worker, WorkerCallback, WorkerCallbackBuilder
@@ -9,7 +14,7 @@ from bridgic.core.automa.args import ArgsMappingRule, ResultDispatchingRule, InO
 from bridgic.core.automa._graph_automa import GraphMeta
 from bridgic.core.agentic import ConcurrentAutoma
 from bridgic.core.types._error import ASLCompilationError
-from bridgic.core.utils._inspect_tools import get_param_names_all_kinds
+from bridgic.core.utils._inspect_tools import get_param_names_all_kinds, load_qualified_class_or_func
 from bridgic.asl._canvas_object import _Canvas, _Element, _CanvasObject, graph_stack, Settings, Data, KeyUnDifined, _GraphContextManager
 
 
@@ -61,6 +66,7 @@ class TrackingNamespace(dict):
 
         # if the value is a _CanvasObject before the object is registered, it indicates that 
         # the corresponding canvas object is a fragment.
+        # TODO: Need Fragment class to handle the fragment logic.
         if isinstance(value, _CanvasObject):
             stack = list[_Canvas](graph_stack.get())
             parent_canvas: _Canvas = stack[-1]
@@ -89,7 +95,10 @@ class TrackingNamespace(dict):
             setattr(value, "__data__", None)
 
         # track the _Element values
-        if (isinstance(value, Worker) or isinstance(value, Callable)) and not isinstance(value, _GraphContextManager):
+        if (
+            (isinstance(value, Worker) or isinstance(value, Callable) or isinstance(value, ASLAutoma)) and 
+            not isinstance(value, _GraphContextManager)
+        ):
             # create the _Element instance
             element: _Element = _Element(key, value)
 
@@ -210,12 +219,12 @@ class ASLAutomaMeta(GraphMeta):
 
     def __new__(mcls, name, bases, namespace):
         cls = super().__new__(mcls, name, bases, namespace)
-        canvases = cls._collect_canvases(namespace)
-        setattr(cls, "_canvases", canvases)
+        top_canvas = cls._collect_canvases(namespace)
+        setattr(cls, "_top_canvas", top_canvas)
         return cls
 
     @classmethod
-    def _collect_canvases(mcls, dct: Dict[str, Any]) -> List[_Canvas]:
+    def _collect_canvases(mcls, dct: Dict[str, Any]) -> _Canvas:
         """
         Collect all canvases from the class namespace and organize them in bottom-up order.
         
@@ -334,9 +343,14 @@ class ASLAutoma(GraphAutoma, metaclass=ASLAutomaMeta):
     >>> result = await graph.arun(x=1)  # result: 4 (1+1+2)
     """
     # The canvases of the automa.
-    _canvases: List[_Canvas] = []
+    _top_canvas: _Canvas = None
 
-    def __init__(self, name: str = None):
+    def __init__(
+        self, 
+        name: str = None, 
+        thread_pool: Optional[ThreadPoolExecutor] = None, 
+        running_options: Optional[RunningOptions] = None
+    ):
         """
         Initialize the ASLAutoma instance.
         
@@ -344,13 +358,20 @@ class ASLAutoma(GraphAutoma, metaclass=ASLAutomaMeta):
         ----------
         name : str, optional
             The name of the automa. If None, a default name will be assigned.
+        thread_pool : ThreadPoolExecutor, optional
+            The thread pool for parallel running of I/O-bound tasks. If None, a default thread pool will be used.
+        running_options : RunningOptions, optional
+            The running options for the automa. If None, a default running options will be used.
         """
-        super().__init__(name=name)
-        self.automa: GraphAutoma = None
+        super().__init__(name=name, thread_pool=thread_pool, running_options=running_options)
         self._dynamic_workers = {}
-        self._build_graph()
+        if not self._top_canvas:
+            self.automa = GraphAutoma(name=name, thread_pool=thread_pool, running_options=running_options)
+        else:
+            top_canvas = self._top_canvas[-1]
+            self.automa: GraphAutoma = self._build_graph(top_canvas)
 
-    def _build_graph(self) -> None:
+    def _build_graph(self, canvas: _Canvas) -> GraphAutoma:
         """
         Build the graph structure from all canvases.
         
@@ -358,25 +379,24 @@ class ASLAutoma(GraphAutoma, metaclass=ASLAutomaMeta):
         structure for each canvas. It separates static and dynamic elements and delegates
         the actual building to _inner_build_graph.
         """
-        for canvas in self._canvases:
-            static_elements = {
-                key: value 
-                for key, value in canvas.elements.items() 
-                if (isinstance(value, _Element) and not value.is_lambda) or isinstance(value, _Canvas)
-            }
-            dynamic_elements = {
-                key: value 
-                for key, value in canvas.elements.items() 
-                if (isinstance(value, _Element) and value.is_lambda)
-            }
-            self._inner_build_graph(canvas, static_elements, dynamic_elements)
+        static_elements = {
+            key: value 
+            for key, value in canvas.elements.items() 
+            if (isinstance(value, _Element) and not value.is_lambda) or isinstance(value, _Canvas)
+        }
+        dynamic_elements = {
+            key: value 
+            for key, value in canvas.elements.items() 
+            if (isinstance(value, _Element) and value.is_lambda)
+        }
+        return self._inner_build_graph(canvas, static_elements, dynamic_elements)
             
     def _inner_build_graph(
         self, 
         canvas: _Canvas, 
         static_elements: Dict[str, "_Element"],
         dynamic_elements: Dict[str, "_Element"]
-    ) -> None:
+    ) -> GraphAutoma:
         """
         Build the graph structure for a specific canvas.
         
@@ -402,12 +422,15 @@ class ASLAutoma(GraphAutoma, metaclass=ASLAutomaMeta):
         ###############################
         running_options_callback = []
         for _, element in dynamic_elements.items():
+            worker_material = element.worker_material
+            params_names = element.cached_param_names
+
             # if the canvas is top level, should use `RunningOptions` to add callback.
             if canvas.is_top_level():
                 running_options_callback.append(
                     WorkerCallbackBuilder(
                         AsTopLevelDynamicCallback, 
-                        init_kwargs={"__dynamic_lambda_worker__": element}
+                        init_kwargs={"__dynamic_lambda_func__": worker_material, "__param_names__": params_names}
                     )
                 )
 
@@ -426,7 +449,6 @@ class ASLAutoma(GraphAutoma, metaclass=ASLAutomaMeta):
         if canvas.is_top_level():
             params_data = canvas.worker_material.get_input_param_names()
             set_method_signature(self.arun, params_data)
-            self.automa = automa
 
         
         ###############################
@@ -441,24 +463,39 @@ class ASLAutoma(GraphAutoma, metaclass=ASLAutomaMeta):
             args_mapping_rule = element.args_mapping_rule
             result_dispatching_rule = element.result_dispatching_rule
 
-            # If the node object is an instance of a worker object, it must be ensured that each time 
-            # an instance of the current ASLAutoma is created, it is an independent copy of this worker 
-            # object instance. Here, the worker object has three forms: 
-            #   1. ASLAutoma
-            #   2. GraphAutoma
-            #   3. Worker
-            if isinstance(worker_material, Worker):
+            # If the node object is an instance of a object instance, it must be ensured that each time 
+            # an instance of the current ASLAutoma is created, it is an independent one of this object 
+            # instance. Here, the object has these forms: 
+            #   1. Canvas:
+            #     a. graph (exactly is GraphAutoma) or concurrent (exactly is ConcurrentAutoma) etc.
+            #   2. Element:
+            #     a. Callable
+            #     b. ASLAutoma
+            #     c. GraphAutoma etc.
+            #     d. Worker
+            if isinstance(element, _Canvas):
+                worker_material = self._build_graph(element)
+            elif isinstance(element, _Element):
                 if isinstance(worker_material, ASLAutoma):
                     asl_automa_class = type(worker_material)
-                    automa_name = getattr(asl_automa_class, "name", None)
-                    copied_worker = asl_automa_class(name=automa_name)
-                else:
-                    worker_class = type(worker_material)
-                    copied_worker = worker_class.__new__(worker_class)
-
-                    for k, v in worker_material.__dict__.items():
-                        setattr(copied_worker, k, v)
-                worker_material = copied_worker
+                    worker_material = asl_automa_class(
+                        name=getattr(worker_material, "name", None), 
+                        thread_pool=getattr(worker_material, "thread_pool", None), 
+                        running_options=getattr(worker_material, "running_options", None)
+                    )
+                elif isinstance(worker_material, GraphAutoma):
+                    graph_automa_class = type(worker_material)
+                    worker_material = graph_automa_class(
+                        name=getattr(worker_material, "name", None), 
+                        thread_pool=getattr(worker_material, "thread_pool", None), 
+                        running_options=getattr(worker_material, "running_options", None)
+                    )
+                elif isinstance(worker_material, Worker):
+                    worker_material = _copy_worker_safely(worker_material)
+                elif isinstance(worker_material, Callable):
+                    pass
+            else:
+                raise ValueError(f"Invalid worker material type: {type(worker_material)}.")
 
             # prepare the callback builders
             # if current element delegated dynamic workers to be added in current canvas
@@ -466,9 +503,11 @@ class ASLAutoma(GraphAutoma, metaclass=ASLAutomaMeta):
             if current_canvas_key in self._dynamic_workers and key in self._dynamic_workers[current_canvas_key]:
                 delegated_dynamic_workers = self._dynamic_workers[current_canvas_key][key]
                 for delegated_dynamic_element in delegated_dynamic_workers:
+                    delegated_dynamic_func = delegated_dynamic_element.worker_material
+                    delegated_dynamic_params_names = delegated_dynamic_element.cached_param_names
                     callback_builders.append(WorkerCallbackBuilder(
                         AsWorkerDynamicCallback,
-                        init_kwargs={"__dynamic_lambda_worker__": delegated_dynamic_element}
+                        init_kwargs={"__dynamic_lambda_func__": delegated_dynamic_func, "__param_names__": delegated_dynamic_params_names}
                     ))
 
             if isinstance(automa, ConcurrentAutoma):
@@ -492,6 +531,7 @@ class ASLAutoma(GraphAutoma, metaclass=ASLAutomaMeta):
                 )
             else:
                 raise ValueError(f"Invalid automa type: {type(automa)}.")
+        return automa
 
     def dump_to_dict(self) -> Dict[str, Any]:
         """
@@ -499,9 +539,6 @@ class ASLAutoma(GraphAutoma, metaclass=ASLAutomaMeta):
         """
         state_dict = super().dump_to_dict()
         state_dict["automa"] = self.automa.dump_to_dict()
-        state_dict["automa_type"] = type(self.automa).__name__
-        state_dict["_dynamic_workers"] = self._dynamic_workers
-        state_dict["_canvases"] = self._canvases
         return state_dict
 
     def load_from_dict(self, state_dict: Dict[str, Any]) -> None:
@@ -509,15 +546,7 @@ class ASLAutoma(GraphAutoma, metaclass=ASLAutomaMeta):
         Load the ASLAutoma instance from a dictionary.
         """
         super().load_from_dict(state_dict)
-        if state_dict["automa_type"] == "GraphAutoma":
-            self.automa = GraphAutoma()
-        elif state_dict["automa_type"] == "ConcurrentAutoma":
-            self.automa = ConcurrentAutoma()
-        else:
-            raise ValueError(f"Invalid automa type: {state_dict['automa_type']}.")
-        self.automa.load_from_dict(state_dict["automa"])
-        self._dynamic_workers = state_dict["_dynamic_workers"]
-        self._canvases = state_dict["_canvases"]
+        self.automa = state_dict["automa"]
 
     async def arun(
         self,
@@ -653,21 +682,26 @@ class DynamicCallback(WorkerCallback):
     
     Attributes
     ----------
-    __dynamic_lambda_worker__ : _Element
-        The element containing the lambda function that generates dynamic workers.
+    __dynamic_lambda_func__ : Callable
+        The lambda function that generates dynamic workers.
+    __param_names__ : List[str]
+        The parameter names of the lambda function.
     __dynamic_worker_keys__ : List[str]
         List of keys for dynamically created workers, used for cleanup.
     """
-    def __init__(self, __dynamic_lambda_worker__: _Element):
+    def __init__(self, __dynamic_lambda_func__: Callable, __param_names__: List[str]):
         """
         Initialize the dynamic callback.
         
         Parameters
         ----------
-        __dynamic_lambda_worker__ : _Element
-            The element containing the lambda function that will generate dynamic workers.
+        __dynamic_lambda_func__ : Callable
+            The lambda function that will generate dynamic workers.
+        __param_names__ : List[str]
+            The parameter names of the lambda function.
         """
-        self.__dynamic_lambda_worker__ = __dynamic_lambda_worker__
+        self.__dynamic_lambda_func__ = __dynamic_lambda_func__
+        self.__param_names__ = __param_names__
         self.__dynamic_worker_keys__ = []
 
     def get_dynamic_worker_settings(self, worker_material: Union[Worker, Callable]) -> Settings:
@@ -808,6 +842,42 @@ class DynamicCallback(WorkerCallback):
             )
             self.__dynamic_worker_keys__.append(dynamic_worker_key)
 
+    @override
+    def dump_to_dict(self) -> Dict[str, Any]:
+        """
+        Dump the DynamicCallback instance to a dictionary.
+        
+        The lambda function is serialized using a strategy similar to CallableWorker:
+        1. If the function has a qualified name (__module__ and __qualname__) and is not
+           a lambda function (lambda functions typically have '<lambda>' as qualname),
+           serialize by name
+        2. Otherwise, use pickle to serialize the function (including its closure)
+        3. For bound methods, handle them specially
+        
+        Note: Lambda functions with non-serializable closure variables (e.g., SimpleQueue,
+        thread locks) may fail to serialize. In such cases, pickle will raise an error.
+        """
+        state_dict = super().dump_to_dict()
+        state_dict["__dynamic_worker_keys__"] = self.__dynamic_worker_keys__
+        state_dict["__param_names__"] = self.__param_names__
+        return state_dict
+
+    @override
+    def load_from_dict(self, state_dict: Dict[str, Any]) -> None:
+        """
+        Load the DynamicCallback instance from a dictionary.
+        
+        The lambda function is deserialized based on how it was serialized:
+        1. If serialized by name, load it using load_qualified_class_or_func
+        2. If serialized by pickle, load it using pickle.loads
+        
+        Note: For bound methods that were serialized by name, they will need to be
+        rebound to the appropriate instance after deserialization if needed.
+        """
+        super().load_from_dict(state_dict)
+        self.__dynamic_worker_keys__ = state_dict.get("__dynamic_worker_keys__", [])
+        self.__param_names__ = state_dict.get("__param_names__", None)
+
 
 class AsTopLevelDynamicCallback(DynamicCallback):
     """
@@ -817,8 +887,8 @@ class AsTopLevelDynamicCallback(DynamicCallback):
     when the automa starts executing. It removes the dynamic workers when execution
     completes.
     """
-    def __init__(self, __dynamic_lambda_worker__: _Element):
-        super().__init__(__dynamic_lambda_worker__)
+    def __init__(self, __dynamic_lambda_func__: Callable, __param_names__: List[str]):
+        super().__init__(__dynamic_lambda_func__, __param_names__)
 
     async def on_worker_start(
         self,
@@ -853,8 +923,8 @@ class AsTopLevelDynamicCallback(DynamicCallback):
 
         # build the dynamic workers
         self.build_dynamic_workers(
-            lambda_func=self.__dynamic_lambda_worker__.worker_material,
-            rx_param_names_dict=self.__dynamic_lambda_worker__.cached_param_names,
+            lambda_func=self.__dynamic_lambda_func__,
+            rx_param_names_dict=self.__param_names__,
             in_args=arguments["args"],
             in_kwargs=arguments["kwargs"],
             automa=specific_automa
@@ -906,8 +976,8 @@ class AsWorkerDynamicCallback(DynamicCallback):
     worker's decorated automa (e.g., a nested GraphAutoma). It removes the dynamic
     workers when the worker completes execution.
     """
-    def __init__(self, __dynamic_lambda_worker__: _Element):
-        super().__init__(__dynamic_lambda_worker__)
+    def __init__(self, __dynamic_lambda_func__: Callable, __param_names__: List[str]):
+        super().__init__(__dynamic_lambda_func__, __param_names__)
 
     async def on_worker_start(
         self,
@@ -938,8 +1008,8 @@ class AsWorkerDynamicCallback(DynamicCallback):
 
         # build the dynamic workers
         self.build_dynamic_workers(
-            lambda_func=self.__dynamic_lambda_worker__.worker_material,
-            rx_param_names_dict=self.__dynamic_lambda_worker__.cached_param_names,
+            lambda_func=self.__dynamic_lambda_func__,
+            rx_param_names_dict=self.__param_names__,
             in_args=arguments["args"],
             in_kwargs=arguments["kwargs"],
             automa=specific_automa
@@ -978,3 +1048,82 @@ class AsWorkerDynamicCallback(DynamicCallback):
         # remove the dynamic workers from the specific automa
         for dynamic_worker_key in self.__dynamic_worker_keys__:
             specific_automa.remove_worker(dynamic_worker_key)
+
+
+def _copy_worker_safely(worker: Worker) -> Worker:
+    """
+    Safely copy a Worker instance, handling unserializable objects.
+    
+    First attempts to use copy.deepcopy() for deep copying. If it encounters
+    unserializable objects (e.g., thread locks, file handles, etc.), it falls
+    back to an intelligent copying strategy: creates a new instance and deep copies
+    serializable attributes as much as possible, while using shallow copy
+    (shared reference) for unserializable attributes and issuing a warning.
+    
+    Parameters
+    ----------
+    worker : Worker
+        The Worker instance to copy
+        
+    Returns
+    -------
+    Worker
+        The copied Worker instance
+        
+    Warns
+    -----
+    UserWarning
+        When encountering unserializable objects, a warning is issued indicating
+        that certain attributes may be shared
+    """
+    try:
+        # First attempt deep copy
+        return copy.deepcopy(worker)
+    except (TypeError, ValueError, AttributeError) as e:
+        # If deep copy fails (usually due to unserializable objects), use intelligent copying strategy
+        worker_class = type(worker)
+        
+        # Create new instance (without calling __init__ to avoid side effects)
+        new_worker = worker_class.__new__(worker_class)
+        
+        # Get all attributes from the original instance
+        original_dict = worker.__dict__.copy()
+        unserializable_attrs = []
+        
+        # Attributes that need special handling: these should not be deep copied,
+        # or need to be reset after copying
+        # __parent usually points to an Automa instance and will be set correctly later, so skip it here
+        skip_attrs = {'_Worker__parent'}  # Use name-mangled attribute name
+        
+        # Try to deep copy each attribute individually
+        for attr_name, attr_value in original_dict.items():
+            # Skip special attributes
+            if attr_name in skip_attrs:
+                # For __parent, set it to the new instance itself (Worker's default behavior)
+                if attr_name == '_Worker__parent':
+                    setattr(new_worker, attr_name, new_worker)
+                continue
+            
+            try:
+                # Attempt to deep copy this attribute
+                setattr(new_worker, attr_name, copy.deepcopy(attr_value))
+            except (TypeError, ValueError, AttributeError):
+                # If this attribute cannot be deep copied, use shallow copy (shared reference)
+                setattr(new_worker, attr_name, attr_value)
+                # Only record user-defined attributes, not internal attributes
+                if not attr_name.startswith('_Worker__') and not attr_name.startswith('__'):
+                    unserializable_attrs.append(attr_name)
+        
+        # If there are unserializable user-defined attributes, issue a warning
+        if unserializable_attrs:
+            warnings.warn(
+                f"Worker {worker_class.__name__} contains unserializable attributes: {unserializable_attrs}. "
+                f"These attributes will be shared between the original and copied instances. "
+                f"This may lead to unexpected behavior if these attributes are modified. "
+                f"Consider avoiding unserializable objects (e.g., locks, file handles, database connections) "
+                f"in Worker instances, or implement custom __deepcopy__ methods for them.",
+                UserWarning,
+                stacklevel=2
+            )
+        
+        return new_worker
