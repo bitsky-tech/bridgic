@@ -44,7 +44,7 @@ class Data:
         """
         Attach this Data configuration to a worker or callable using right-multiplication.
         
-        This allows syntax like `other * Data(param1=value1)` to attach parameter
+        This method allows syntax like `other * Data(param1=value1)` to attach parameter
         configuration to a worker or callable function.
         
         Parameters
@@ -109,9 +109,9 @@ class Settings:
 
     def __rmul__(self, other: Union[Callable, Worker]):
         """
-        Attach this Settings configuration to a worker or callable using left-multiplication.
+        Attach this Settings configuration to a worker or callable using right-multiplication.
         
-        This allows syntax like `other * Settings(key="worker1", result_dispatching_rule=ResultDispatchingRule.IN_ORDER)` to
+        This method allows syntax like `other * Settings(key="worker1", result_dispatching_rule=ResultDispatchingRule.IN_ORDER)` to
         attach configuration settings to a worker or callable function.
         
         Parameters
@@ -245,7 +245,7 @@ class _CanvasObject:
         while current_canvas_obj.left_canvas_obj:
             current_canvas_obj = current_canvas_obj.left_canvas_obj
             left_canvas_objs.append(current_canvas_obj)
-        left_canvas_objs.reverse()  # Keep the order consistent with the declaration.
+        left_canvas_objs.reverse()  # Keep the order consistent with the declaration order.
 
         def add_dependencies(canvas_obj: _CanvasObject, dependencies_obj: List[_CanvasObject]) -> None:
             for dependency_obj in dependencies_obj:
@@ -304,7 +304,7 @@ class _CanvasObject:
         while current_canvas_obj.left_canvas_obj:
             current_canvas_obj.is_start = True
             current_canvas_obj = current_canvas_obj.left_canvas_obj
-        current_canvas_obj.is_start = True  # set the last one
+        current_canvas_obj.is_start = True  # Set the last one in the group.
         
         return self
 
@@ -327,7 +327,7 @@ class _CanvasObject:
         while current_canvas_obj.left_canvas_obj:
             current_canvas_obj.is_output = True
             current_canvas_obj = current_canvas_obj.left_canvas_obj
-        current_canvas_obj.is_output = True  # set the last one
+        current_canvas_obj.is_output = True  # Set the last one in the group.
 
         return self
 
@@ -546,7 +546,7 @@ class _GraphContextManager:
             if not isinstance(value, ASLField):
                 raise ASLCompilationError(f"Invalid field type: {type(value)}.")
 
-            # TODO: If the future parameter distribution mechanism is expanded, 
+            # TODO: If the parameter distribution mechanism is expanded in the future,
             # this part should also be expanded accordingly.
             default_value = InOrder(
                 value.default
