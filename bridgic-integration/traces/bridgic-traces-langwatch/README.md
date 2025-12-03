@@ -49,10 +49,12 @@ import asyncio
 class MyAutoma(GraphAutoma):
     @worker(is_start=True)
     async def step1(self):
+        await asyncio.sleep(1)
         return "hello"
 
     @worker(dependencies=["step1"], is_output=True)
     async def step2(self, step1: str):
+        await asyncio.sleep(1)
         return f"{step1} world"
 
 async def main():
@@ -65,7 +67,8 @@ async def main():
     result = await automa.arun()
     print(result)
 
-asyncio.run(main())
+if __name__ == "__main__":
+    asyncio.run(main())
 ```
 
 ### Method 2: Global Scope with GlobalSetting
@@ -90,6 +93,7 @@ class DataAnalysisAutoma(GraphAutoma):
     async def collect_data(self, topic: str) -> dict:
         """Collect data for the given topic."""
         # Simulate data collection
+        await asyncio.sleep(1)
         return {
             "topic": topic,
             "data_points": ["point1", "point2", "point3"],
@@ -100,6 +104,7 @@ class DataAnalysisAutoma(GraphAutoma):
     async def analyze_trends(self, data: dict) -> dict:
         """Analyze trends in the collected data."""
         # Simulate trend analysis
+        await asyncio.sleep(1)
         return {
             "trends": ["trend1", "trend2"],
             "confidence": 0.85,
@@ -109,6 +114,7 @@ class DataAnalysisAutoma(GraphAutoma):
     @worker(dependencies=["analyze_trends"], is_output=True)
     async def generate_report(self, analysis: dict) -> str:
         """Generate a final report."""
+        await asyncio.sleep(1)
         return f"Report: Found {len(analysis['trends'])} trends with {analysis['confidence']} confidence."
 
 async def main():
@@ -117,7 +123,6 @@ async def main():
     print(result)
 
 if __name__ == "__main__":
-    import asyncio
     asyncio.run(main())
 ```
 

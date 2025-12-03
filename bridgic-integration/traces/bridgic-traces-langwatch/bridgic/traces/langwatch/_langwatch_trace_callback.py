@@ -3,17 +3,16 @@
 import json
 import warnings
 from contextvars import ContextVar
-from typing import Any, Dict, List, Optional, Sequence, Tuple, TYPE_CHECKING
+from typing import Any, Dict, Optional, Sequence, Tuple
 
 import langwatch
 from langwatch.state import get_instance
 from langwatch.types import BaseAttributes
 from langwatch.telemetry.span import LangWatchSpan
 from langwatch.telemetry.tracing import LangWatchTrace
-from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.instrumentation.instrumentor import BaseInstrumentor
-from langwatch.domain import BaseAttributes, SpanProcessingExcludeRule
+from langwatch.domain import BaseAttributes
 
+from bridgic.core.automa import Automa
 from bridgic.core.automa.worker import Worker, WorkerCallback
 from bridgic.core.utils._collection import serialize_data
 from bridgic.core.utils._worker_tracing import (
@@ -24,10 +23,6 @@ from bridgic.core.utils._worker_tracing import (
 # import logging
 
 # logging.getLogger("langwatch.client").setLevel(logging.WARNING)
-
-
-if TYPE_CHECKING:
-    from bridgic.core.automa import Automa
 
 class LangWatchTraceCallback(WorkerCallback):
     """
@@ -196,7 +191,7 @@ class LangWatchTraceCallback(WorkerCallback):
         self,
         key: str,
         worker: "Worker",
-        parent: "Automa",
+        parent: Automa,
         arguments: Optional[Dict[str, Any]],
     ) -> None:
         """
@@ -214,7 +209,7 @@ class LangWatchTraceCallback(WorkerCallback):
         span = langwatch.span(
             name=step_name,
             input=serialized_args,
-            type="agent" if worker.is_automa() else "tool",
+            type="span",
             attributes={
                 **normalized_worker_tracing,
                 # TODO: Investigate why LangWatch coerces integers into dict form; keep string for now.
@@ -236,12 +231,12 @@ class LangWatchTraceCallback(WorkerCallback):
             name=key or "top_level_automa",
             input=serialized_args,
             metadata=trace_metadata,
-            type="agent",
+            type="span",
         )
         await trace_data.__aenter__()
         self._current_trace.set(trace_data)
 
-    def _get_worker_instance(self, key: str, parent: Optional["Automa"]) -> Worker:
+    def _get_worker_instance(self, key: str, parent: Optional[Automa]) -> Worker:
         """
         Get worker instance from parent automa.
         
@@ -258,7 +253,7 @@ class LangWatchTraceCallback(WorkerCallback):
         self,
         key: str,
         is_top_level: bool = False,
-        parent: "Automa" = None,
+        parent: Optional[Automa] = None,
         arguments: Optional[Dict[str, Any]] = None,
     ) -> None:
         """
@@ -309,7 +304,7 @@ class LangWatchTraceCallback(WorkerCallback):
         self,
         key: str,
         is_top_level: bool = False,
-        parent: Optional["Automa"] = None,
+        parent: Optional[Automa] = None,
         arguments: Optional[Dict[str, Any]] = None,
         result: Any = None,
     ) -> None:
@@ -341,7 +336,7 @@ class LangWatchTraceCallback(WorkerCallback):
         self,
         key: str,
         is_top_level: bool = False,
-        parent: Optional["Automa"] = None,
+        parent: Optional[Automa] = None,
         arguments: Optional[Dict[str, Any]] = None,
         error: Exception = None,
     ) -> bool:

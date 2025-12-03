@@ -1,18 +1,17 @@
 """Opik tracing callback handler for Bridgic."""
 
 import time
-from bridgic.core.automa import Automa
 import opik
-from typing_extensions import override
 import warnings
+from typing_extensions import override
 from typing import Any, Dict, Optional
 
-import opik.decorator.tracing_runtime_config as tracing_runtime_config
 from opik import context_storage as opik_context_storage
 from opik.api_objects import helpers, opik_client, span, trace
 from opik.decorator import error_info_collector
 from opik.types import ErrorInfoDict
 
+from bridgic.core.automa import Automa
 from bridgic.core.automa.worker import WorkerCallback, Worker
 from bridgic.core.utils._collection import serialize_data, merge_optional_dicts
 from bridgic.core.utils._worker_tracing import build_worker_tracing_dict, get_worker_tracing_step_name
@@ -102,7 +101,7 @@ class OpikTraceCallback(WorkerCallback):
         else:
             self._is_ready = True
     
-    def _get_worker_instance(self, key: str, parent: Optional["Automa"]) -> Worker:
+    def _get_worker_instance(self, key: str, parent: Optional[Automa]) -> Worker:
         """
         Get worker instance from parent automa.
         
@@ -122,11 +121,6 @@ class OpikTraceCallback(WorkerCallback):
             project_name=self._project_name
         )
 
-    def _log_if_active(self, log_func, **params) -> None:
-        """Log to Opik if tracing is active."""
-        if tracing_runtime_config.is_tracing_active():
-            log_func(**params)
-
     def _get_or_create_trace_data(self, trace_name: Optional[str] = None) -> trace.TraceData:
         """Initialize or reuse existing trace."""
         existing_trace = opik_context_storage.get_trace_data()
@@ -138,7 +132,7 @@ class OpikTraceCallback(WorkerCallback):
         opik_context_storage.set_trace_data(trace_data)
         
         if self._opik_client.config.log_start_trace_span:
-            self._log_if_active(self._opik_client.trace, **trace_data.as_start_parameters)
+            self._opik_client.trace(**trace_data.as_start_parameters)
         return trace_data
 
     def _complete_trace(self, output: Optional[Dict[str, Any]], error_info: Optional[ErrorInfoDict]) -> None:
@@ -164,7 +158,7 @@ class OpikTraceCallback(WorkerCallback):
         if error_info:
             trace_data.update(error_info=error_info)
 
-        self._log_if_active(self._opik_client.trace, **trace_data.as_parameters)
+        self._opik_client.trace(**trace_data.as_parameters)
         opik_context_storage.pop_trace_data(ensure_id=trace_data.id)
         self._flush()
 
@@ -189,7 +183,6 @@ class OpikTraceCallback(WorkerCallback):
             trace_id=trace_data.id,
             name=step_name,
             parent_span_id=parent_span.id if parent_span else None,
-            type="tool",
             input=inputs,
             metadata=metadata,
             project_name=project_name,
@@ -202,7 +195,7 @@ class OpikTraceCallback(WorkerCallback):
         opik_context_storage.add_span_data(span_data)
 
         if self._opik_client.config.log_start_trace_span:
-            self._log_if_active(self._opik_client.span, **span_data.as_start_parameters)
+            self._opik_client.span(**span_data.as_start_parameters)
 
     def _finish_span(self, span_data: span.SpanData, worker_metadata: Optional[Dict[str, Any]] = None) -> None:
         """Finish a worker span with metadata and output, then pop from context."""
@@ -217,7 +210,7 @@ class OpikTraceCallback(WorkerCallback):
                 span_data.update(output=output)
 
         span_data.init_end_time()
-        self._log_if_active(self._opik_client.span, **span_data.as_parameters)
+        self._opik_client.span(**span_data.as_parameters)
         
         # Pop span from context stack
         opik_context_storage.pop_span_data(ensure_id=span_data.id)
@@ -236,7 +229,7 @@ class OpikTraceCallback(WorkerCallback):
         if serialized_args:
             trace_data.input = serialized_args
 
-    def _start_worker_span(self, key: str, worker: Worker, parent: "Automa", arguments: Optional[Dict[str, Any]]) -> None:
+    def _start_worker_span(self, key: str, worker: Worker, parent: Automa, arguments: Optional[Dict[str, Any]]) -> None:
         """Start a span for worker execution."""
         step_name = get_worker_tracing_step_name(key, worker)
         worker_tracing_dict = build_worker_tracing_dict(worker, parent)
@@ -250,7 +243,7 @@ class OpikTraceCallback(WorkerCallback):
         self,
         key: str,
         is_top_level: bool = False,
-        parent: Optional["Automa"] = None,
+        parent: Optional[Automa] = None,
         arguments: Optional[Dict[str, Any]] = None,
     ) -> None:
         """
@@ -340,7 +333,7 @@ class OpikTraceCallback(WorkerCallback):
         self,
         key: str,
         is_top_level: bool = False,
-        parent: Optional["Automa"] = None,
+        parent: Optional[Automa] = None,
         arguments: Optional[Dict[str, Any]] = None,
         result: Any = None,
     ) -> None:
@@ -372,7 +365,7 @@ class OpikTraceCallback(WorkerCallback):
         self,
         key: str,
         is_top_level: bool = False,
-        parent: Optional["Automa"] = None,
+        parent: Optional[Automa] = None,
         arguments: Optional[Dict[str, Any]] = None,
         error: Exception = None,
     ) -> bool:
