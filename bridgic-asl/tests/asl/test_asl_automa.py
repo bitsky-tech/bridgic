@@ -1,7 +1,7 @@
 import pytest
 from typing import List
 
-from bridgic.core.automa import GraphAutoma, Snapshot
+from bridgic.core.automa import GraphAutoma, Snapshot, worker
 from bridgic.core.automa.worker import Worker
 from bridgic.core.automa.args import System, ArgsMappingRule, From, ResultDispatchingRule
 from bridgic.core.automa.interaction import Event, InteractionFeedback, InteractionException
@@ -76,6 +76,7 @@ async def produce_tasks(user_input: int) -> list:
             user_input + 3,
             user_input + 4,
             user_input + 5,
+            user_input + 6,
         ]
 
 async def tasks_done(task_input: int) -> int:
@@ -98,6 +99,20 @@ async def interact_with_user(res: List, automa: GraphAutoma = System("automa")) 
     return res
 
 
+class MyGraphAutoma(GraphAutoma):
+    @worker(is_start=True)
+    async def worker_0(self, user_input: int) -> int:
+        return user_input + 1
+
+    @worker(dependencies=["worker_0"])
+    async def worker_1(self, x: int) -> int:
+        return x + 1
+
+    @worker(dependencies=["worker_1"], is_output=True)
+    async def worker_2(self, x: int) -> int:
+        return x + 1
+
+
 # - - - - - - - - - - - - - - -
 # asl graphs
 # - - - - - - - - - - - - - - -
@@ -106,7 +121,7 @@ class SubGraph(ASLAutoma):
         a = worker1  # 6
         b = worker2  # 8
         c = Worker3(y=1)  # 9
-        d = produce_tasks  # [10, 11, 12, 13, 14]
+        d = produce_tasks  # [10, 11, 12, 13, 14, 15]
         
         +a >> b >> c >> ~d
 
@@ -165,19 +180,20 @@ class MyGraph(ASLAutoma):
             +a >> b >> ~c
 
         with graph as sub_graph_5:  # input: 14 -> res: [18, 19, 20, 21, 22]
-            a = produce_tasks  # [15, 16, 17, 18, 19]
+            a = produce_tasks  # [15, 16, 17, 18, 19, 20]
             with concurrent(subtasks = ASLField(list, dispatching_rule=ResultDispatchingRule.IN_ORDER)) as sub_concurrent:
                 dynamic_logic = lambda subtasks: (
                     tasks_done *Settings(key=f"tasks_done_{i}")
                     for i, subtask in enumerate(subtasks)
                 )
             
-            +a >> ~sub_concurrent  # [18, 19, 20, 21, 22]
-
+            +a >> ~sub_concurrent  # [18, 19, 20, 21, 22, 23]
+        
+        sub_graph_6 = MyGraphAutoma(name="sub_graph_6")  # input: 15 -> res: 18
         merger = merge_tasks *Settings(args_mapping_rule=ArgsMappingRule.MERGE)
         concurrent_merge = SubGraph3()
 
-        arrangement_2 >> (sub_graph_1 & sub_graph_2 & sub_graph_3 & sub_graph_4 & sub_graph_5) >> ~merger
+        arrangement_2 >> (sub_graph_1 & sub_graph_2 & sub_graph_3 & sub_graph_4 & sub_graph_5 & sub_graph_6) >> ~merger
 
 
 class MyGraphInteract(MyGraph):
@@ -207,16 +223,17 @@ class MyGraphInteract(MyGraph):
 async def test_asl_run_correctly():
     graph_1 = MyGraph()
     result_1 = await graph_1.arun(user_input=1)
-    assert result_1 == [(34, 35), 13, 16, (16, 14), [18, 19, 20, 21, 22]]
+    assert result_1 == [(34, 35), 13, 16, (16, 14), [18, 19, 20, 21, 22, 23], 18]
 
     graph_2 = MyGraph()
     result_2 = await graph_2.arun(user_input=1)
-    assert result_2 == [(34, 35), 13, 16, (16, 14), [18, 19, 20, 21, 22]]
+    assert result_2 == [(34, 35), 13, 16, (16, 14), [18, 19, 20, 21, 22, 23], 18]
 
 
 # - - - - - - - - - - - - - - -
 # test interact with user correctly
-#   1. interact with user correctly
+#   1. serialization correctly
+#   2. deserialization and running correctly
 # - - - - - - - - - - - - - - -
 
 # Shared fixtures for all test cases.
@@ -231,7 +248,7 @@ async def test_asl_interact_with_user_correctly_serialization(request, db_base_p
         result = await graph.arun(user_input=1)
     except InteractionException as e:
         assert e.interactions[0].event.event_type == "if_add"
-        assert e.interactions[0].event.data["prompt_to_user"] == "Current value is [(34, 35), 13, 16, (16, 14), [18, 19, 20, 21, 22]], do you want to add another 200 to them (yes/no) ?"
+        assert e.interactions[0].event.data["prompt_to_user"] == "Current value is [(34, 35), 13, 16, (16, 14), [18, 19, 20, 21, 22, 23], 18], do you want to add another 200 to them (yes/no) ?"
         assert type(e.snapshot.serialized_bytes) is bytes
         # Send e.interactions to human. Here is a simulation.
         interaction_id = e.interactions[0].interaction_id
@@ -276,7 +293,7 @@ async def test_asl_interact_with_user_correctly_deserialization(
     result = await deserialized_asl_interact_with_user_correctly.arun(
         feedback_data=interaction_feedback_1_yes
     )
-    assert result == [213, 216]
+    assert result == [213, 216, 218]
     
 
 

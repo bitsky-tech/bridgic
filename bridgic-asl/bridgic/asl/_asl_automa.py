@@ -3,6 +3,7 @@ import uuid
 import enum
 import warnings
 import pickle
+import inspect
 from types import MethodType
 from typing import Callable, List, Any, Dict, Tuple, Union, Optional
 from typing_extensions import override
@@ -430,7 +431,7 @@ class ASLAutoma(GraphAutoma, metaclass=ASLAutomaMeta):
                 running_options_callback.append(
                     WorkerCallbackBuilder(
                         AsTopLevelDynamicCallback, 
-                        init_kwargs={"__dynamic_lambda_func__": worker_material, "__param_names__": params_names}
+                        init_kwargs={"__dynamic_lambda_func__": worker_material, "__param_names__": simplify_param_names(params_names)}
                     )
                 )
 
@@ -507,7 +508,7 @@ class ASLAutoma(GraphAutoma, metaclass=ASLAutomaMeta):
                     delegated_dynamic_params_names = delegated_dynamic_element.cached_param_names
                     callback_builders.append(WorkerCallbackBuilder(
                         AsWorkerDynamicCallback,
-                        init_kwargs={"__dynamic_lambda_func__": delegated_dynamic_func, "__param_names__": delegated_dynamic_params_names}
+                        init_kwargs={"__dynamic_lambda_func__": delegated_dynamic_func, "__param_names__": simplify_param_names(delegated_dynamic_params_names)}
                     ))
 
             if isinstance(automa, ConcurrentAutoma):
@@ -565,6 +566,37 @@ class ASLAutoma(GraphAutoma, metaclass=ASLAutomaMeta):
 
     def __repr__(self) -> str:
         return self.__str__()
+
+
+def simplify_param_names(param_names: Dict[enum.IntEnum, List[Tuple[str, Any]]]) -> Dict[str, List[Tuple[str, Any]]]:
+    """
+    Simplify the parameter names dictionary for serialization in CallbackBuilder and DynamicCallback.
+    """
+    res = {}
+    for kind, param_list in param_names.items():
+        # Convert enum.IntEnum to its string name (e.g., "POSITIONAL_OR_KEYWORD")
+        kind_name = kind.name if hasattr(kind, 'name') else str(kind)
+        res[kind_name] = param_list
+    return res
+
+
+def recover_param_names_dict(simplified_param_names_dict: Dict[str, List[Tuple[str, Any]]]) -> Dict[enum.IntEnum, List[Tuple[str, Any]]]:
+    """
+    Recover the parameter names dictionary from simplified format to original format.
+    """
+    kind_map = {
+        "POSITIONAL_ONLY": inspect.Parameter.POSITIONAL_ONLY,
+        "POSITIONAL_OR_KEYWORD": inspect.Parameter.POSITIONAL_OR_KEYWORD,
+        "VAR_POSITIONAL": inspect.Parameter.VAR_POSITIONAL,
+        "KEYWORD_ONLY": inspect.Parameter.KEYWORD_ONLY,
+        "VAR_KEYWORD": inspect.Parameter.VAR_KEYWORD,
+    }
+    
+    res = {}
+    for kind_name, param_list in simplified_param_names_dict.items():
+        if kind_name in kind_map:
+            res[kind_map[kind_name]] = param_list
+    return res
 
 
 def build_concurrent(
@@ -689,7 +721,7 @@ class DynamicCallback(WorkerCallback):
     __dynamic_worker_keys__ : List[str]
         List of keys for dynamically created workers, used for cleanup.
     """
-    def __init__(self, __dynamic_lambda_func__: Callable, __param_names__: List[str]):
+    def __init__(self, __dynamic_lambda_func__: Callable, __param_names__: Dict[str, List[Tuple[str, Any]]]):
         """
         Initialize the dynamic callback.
         
@@ -697,12 +729,12 @@ class DynamicCallback(WorkerCallback):
         ----------
         __dynamic_lambda_func__ : Callable
             The lambda function that will generate dynamic workers.
-        __param_names__ : List[str]
-            The parameter names of the lambda function.
         """
+        super().__init__()
         self.__dynamic_lambda_func__ = __dynamic_lambda_func__
         self.__param_names__ = __param_names__
         self.__dynamic_worker_keys__ = []
+
 
     def get_dynamic_worker_settings(self, worker_material: Union[Worker, Callable]) -> Settings:
         """
@@ -780,7 +812,7 @@ class DynamicCallback(WorkerCallback):
     def build_dynamic_workers(
         self, 
         lambda_func: Callable,
-        rx_param_names_dict: Dict[enum.IntEnum, List[str]],
+        simplified_param_names_dict: Dict[str, List[Tuple[str, Any]]],
         in_args: Tuple[Any, ...],
         in_kwargs: Dict[str, Any],
         automa: GraphAutoma,
@@ -820,6 +852,7 @@ class DynamicCallback(WorkerCallback):
             else item.data 
             for key, item in in_kwargs.items()
         }
+        rx_param_names_dict = recover_param_names_dict(simplified_param_names_dict)
         rx_args, rx_kwargs = safely_map_args(args, kwargs, rx_param_names_dict)
         dynamic_worker_materials = lambda_func(*rx_args, **rx_kwargs)
         for worker_material in dynamic_worker_materials:
@@ -846,20 +879,12 @@ class DynamicCallback(WorkerCallback):
     def dump_to_dict(self) -> Dict[str, Any]:
         """
         Dump the DynamicCallback instance to a dictionary.
-        
-        The lambda function is serialized using a strategy similar to CallableWorker:
-        1. If the function has a qualified name (__module__ and __qualname__) and is not
-           a lambda function (lambda functions typically have '<lambda>' as qualname),
-           serialize by name
-        2. Otherwise, use pickle to serialize the function (including its closure)
-        3. For bound methods, handle them specially
-        
-        Note: Lambda functions with non-serializable closure variables (e.g., SimpleQueue,
-        thread locks) may fail to serialize. In such cases, pickle will raise an error.
+    
         """
         state_dict = super().dump_to_dict()
-        state_dict["__dynamic_worker_keys__"] = self.__dynamic_worker_keys__
+        state_dict["__dynamic_lambda_func__"] = self.__dynamic_lambda_func__
         state_dict["__param_names__"] = self.__param_names__
+        state_dict["__dynamic_worker_keys__"] = self.__dynamic_worker_keys__
         return state_dict
 
     @override
@@ -875,8 +900,9 @@ class DynamicCallback(WorkerCallback):
         rebound to the appropriate instance after deserialization if needed.
         """
         super().load_from_dict(state_dict)
-        self.__dynamic_worker_keys__ = state_dict.get("__dynamic_worker_keys__", [])
-        self.__param_names__ = state_dict.get("__param_names__", None)
+        self.__dynamic_lambda_func__ = state_dict["__dynamic_lambda_func__"]
+        self.__dynamic_worker_keys__ = state_dict["__dynamic_worker_keys__"]
+        self.__param_names__ = state_dict["__param_names__"]
 
 
 class AsTopLevelDynamicCallback(DynamicCallback):
@@ -887,7 +913,7 @@ class AsTopLevelDynamicCallback(DynamicCallback):
     when the automa starts executing. It removes the dynamic workers when execution
     completes.
     """
-    def __init__(self, __dynamic_lambda_func__: Callable, __param_names__: List[str]):
+    def __init__(self, __dynamic_lambda_func__: Callable, __param_names__: Dict[str, List[Tuple[str, Any]]]):
         super().__init__(__dynamic_lambda_func__, __param_names__)
 
     async def on_worker_start(
@@ -924,7 +950,7 @@ class AsTopLevelDynamicCallback(DynamicCallback):
         # build the dynamic workers
         self.build_dynamic_workers(
             lambda_func=self.__dynamic_lambda_func__,
-            rx_param_names_dict=self.__param_names__,
+            simplified_param_names_dict=self.__param_names__,
             in_args=arguments["args"],
             in_kwargs=arguments["kwargs"],
             automa=specific_automa
@@ -976,7 +1002,7 @@ class AsWorkerDynamicCallback(DynamicCallback):
     worker's decorated automa (e.g., a nested GraphAutoma). It removes the dynamic
     workers when the worker completes execution.
     """
-    def __init__(self, __dynamic_lambda_func__: Callable, __param_names__: List[str]):
+    def __init__(self, __dynamic_lambda_func__: Callable, __param_names__: Dict[str, List[Tuple[str, Any]]]):
         super().__init__(__dynamic_lambda_func__, __param_names__)
 
     async def on_worker_start(
@@ -1009,7 +1035,7 @@ class AsWorkerDynamicCallback(DynamicCallback):
         # build the dynamic workers
         self.build_dynamic_workers(
             lambda_func=self.__dynamic_lambda_func__,
-            rx_param_names_dict=self.__param_names__,
+            simplified_param_names_dict=self.__param_names__,
             in_args=arguments["args"],
             in_kwargs=arguments["kwargs"],
             automa=specific_automa

@@ -174,20 +174,22 @@ class MyGraph(ASLAutoma):
         merger = merge_tasks *Settings(args_mapping_rule=ArgsMappingRule.MERGE)
         concurrent_merge = SubGraph3()
 
-        arrangement_2 >> (sub_graph_1 & sub_graph_2 & sub_graph_3 & sub_graph_4 & sub_graph_5) >> ~merger
-        # interact = interact_with_user
-        # arrangement_2 >> sub_graph_1 >> ~interact
+        # arrangement_2 >> (sub_graph_1 & sub_graph_2 & sub_graph_3 & sub_graph_4 & sub_graph_5) >> ~merger
+        interact = interact_with_user
+        arrangement_2 >> (sub_graph_1 & sub_graph_2 & sub_graph_3 & sub_graph_4 & sub_graph_5) >> merger >> ~interact
+        # +arrangement_2 >> sub_graph_1 >> ~interact
 
 
 if __name__ == "__main__":
     graph_1 = MyGraph()
     result_1 = asyncio.run(graph_1.arun(user_input=1))
-    print(result_1)
 
-
-    graph_2 = MyGraph()
-    result_2 = asyncio.run(graph_2.arun(user_input=1))
-    print(result_2)
+    # try:
+    #     graph_2 = MyGraph()
+    #     result_2 = asyncio.run(graph_2.arun(user_input=1))
+    #     print(result_2)
+    # except Exception as e:
+    #     print(e.interactions[0].event.event_type)
 
     # graph = ConcurrentAutoma()
     # graph.add_func_as_worker(
