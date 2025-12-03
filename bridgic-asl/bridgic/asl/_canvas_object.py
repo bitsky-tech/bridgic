@@ -437,8 +437,6 @@ class _Canvas(_CanvasObject):
                 name=self.key, 
                 running_options=running_options
             )
-        else:
-            raise ASLCompilationError(f"Invalid automa type: {self.automa_type}")
 
         if self.params:
             set_method_signature(self.worker_material.arun, self.params)
@@ -566,7 +564,7 @@ class _GraphContextManager:
         self.params = params
         return self
 
-    def __enter__(self) -> _Canvas:
+    def __enter__(self) -> "_GraphContextManager":
         """
         Enter the context and create a new canvas.
         
@@ -575,7 +573,7 @@ class _GraphContextManager:
         
         Returns
         -------
-        _Canvas
+        _GraphContextManager
             The newly created canvas instance.
         """
         ctx = _Canvas(automa_type=self.automa_type, params=self.params)
@@ -600,6 +598,12 @@ class _GraphContextManager:
         stack = list(graph_stack.get())
         stack.pop()
         graph_stack.set(stack)
+
+    def __invert__(self) -> None:
+        """
+        Maintain the grammatical consistency of each element node in ASL.
+        """
+        pass
         
 
 # Create module-level instances (not global variables, but singleton objects)

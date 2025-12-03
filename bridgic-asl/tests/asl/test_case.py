@@ -95,93 +95,14 @@ async def interact_with_user(res: List, automa: GraphAutoma = System("automa")) 
 # - - - - - - - - - - - - - - -
 # asl graphs
 # - - - - - - - - - - - - - - -
-class SubGraph(ASLAutoma):
-    with graph as g:  # input: 5
-        a = worker1  # 6
-        b = worker2  # 8
-        c = Worker3(y=1)  # 9
-        +a >> b >> ~c
-
-        # d = produce_tasks  # [10, 11, 12, 13, 14]
-        # +a >> b >> c >> ~d
-
-
-class SubGraph2(ASLAutoma):
+class MyGraph1(ASLAutoma):
     with graph as g:
         a = worker1
-
-        ~(+a)
-
-class SubGraph3(ASLAutoma):
-    with concurrent(subtasks = ASLField(list, dispatching_rule=ResultDispatchingRule.IN_ORDER)) as sub_concurrent:
-        dynamic_logic = lambda subtasks: (
-            tasks_done_2 *Settings(key=f"tasks_done_{i}")
-            for i, subtask in enumerate(subtasks)
-        )
-
-class MyGraph(ASLAutoma):
-    with graph as main_graph:  # input: 1
-        a = SubGraph2()   # 2
-        b = worker2   # 4
-        c = Worker3(y=1) # 5
-        # d = SubGraph() *Settings(result_dispatching_rule=ResultDispatchingRule.IN_ORDER)  # [10, 11, 12, 13, 14]
-        d = SubGraph()  # [10, 11, 12, 13, 14]
-
-        arrangement_1 = +a >> b >> c  # 5
-        arrangement_2 = arrangement_1 >> d  # [10, 11, 12, 13, 14]
-
-        with graph as sub_graph_1:  # input: 10 -> res: (34, 35)
-            a = worker1 # 11
-            b = worker11 # 12
-            c = worker12 # 11
-            d = worker5 # 34
-            e = worker6 # 35
-            merge = merge # (34, 35)
-
-            +(a & b & c) >> (d & e) >> ~merge # (34, 35)
-
-        with graph as sub_graph_2:  # input: 11 -> res: 13
-            ferry_to_worker = ferry_to_worker
-            worker2 = worker2
-            worker3 = Worker3(y=1)
-
-            +ferry_to_worker, ~worker2, ~worker3  # 13
-
-        with graph as sub_graph_3:  # input: 12 -> res: 16
-            a = worker1  # 13
-            b = worker2 *Settings(args_mapping_rule=ArgsMappingRule.AS_IS)  # 15
-            c = Worker3(y=1)  # 16
-
-            +a >> b >> ~c  # 16
-
-        with graph as sub_graph_4:  # input: 13 -> res: (16, 14)
-            a = worker1  # 14
-            b = worker2  # 16
-            c = merge *Data(y=From("a"))
-
-            +a >> b >> ~c
-
-        with graph as sub_graph_5:  # input: 14 -> res: [18, 19, 20, 21, 22]
-            a = produce_tasks  # [15, 16, 17, 18, 19]
-            with concurrent(subtasks = ASLField(list, dispatching_rule=ResultDispatchingRule.IN_ORDER)) as sub_concurrent:
-                dynamic_logic = lambda subtasks: (
-                    tasks_done *Settings(key=f"tasks_done_{i}")
-                    for i, subtask in enumerate(subtasks)
-                )
-            
-            +a >> ~sub_concurrent  # [18, 19, 20, 21, 22]
-
-        merger = merge_tasks *Settings(args_mapping_rule=ArgsMappingRule.MERGE)
-        concurrent_merge = SubGraph3()
-
-        # arrangement_2 >> (sub_graph_1 & sub_graph_2 & sub_graph_3 & sub_graph_4 & sub_graph_5) >> ~merger
-        interact = interact_with_user
-        arrangement_2 >> (sub_graph_1 & sub_graph_2 & sub_graph_3 & sub_graph_4 & sub_graph_5) >> merger >> ~interact
-        # +arrangement_2 >> sub_graph_1 >> ~interact
+        b = worker2
 
 
 if __name__ == "__main__":
-    graph_1 = MyGraph()
+    graph_1 = MyGraph1()
     result_1 = asyncio.run(graph_1.arun(user_input=1))
 
     # try:

@@ -302,8 +302,156 @@ async def test_asl_interact_with_user_correctly_deserialization(
 ####################################################################################################################################################
 
 # - - - - - - - - - - - - - - -
-# test raise duplicate dependency error correctly
+# test node declaration must be under graph
 # - - - - - - - - - - - - - - - 
-pass
+@pytest.mark.asyncio
+async def test_asl_node_declaration_must_under_graph():
+    with pytest.raises(ASLCompilationError, match=(
+        f"All workers must be written under one graph."
+    )):
+        class MyGraph(ASLAutoma):
+            with graph as g:
+                a = worker1
+                b = worker2
+            c = Worker3(y=1)
+
+
+# - - - - - - - - - - - - - - -
+# test node declaration must have a unique name
+# - - - - - - - - - - - - - - - 
+@pytest.mark.asyncio
+async def test_asl_node_declaration_must_have_a_unique_name():
+    with pytest.raises(ASLCompilationError, match=(
+        f"Duplicate name: a under canvas: g of a fragment or a registered node."
+    )):
+        class MyGraph(ASLAutoma):
+            with graph as g:
+                a = worker1
+                a = worker2
+
+    with pytest.raises(ASLCompilationError, match=(
+        f"Duplicate name: a under canvas: g of a fragment or a registered node."
+    )):
+        class MyGraph(ASLAutoma):
+            with graph as g:
+                a = worker1
+                b = worker2
+                a = +a >> ~b
+
+    with pytest.raises(ASLCompilationError, match=(
+        f"Duplicate name: a under canvas: g of a fragment or a registered node."
+    )):
+        class MyGraph(ASLAutoma):
+            with graph as g:
+                a = worker1
+                with graph as a:
+                    b = worker2
+
+
+# - - - - - - - - - - - - - - -
+# test can not use canvas itself as a node
+# - - - - - - - - - - - - - - - 
+@pytest.mark.asyncio
+async def test_asl_canvas_declaration_must_under_graph():
+    with pytest.raises(ASLCompilationError, match=(
+        f"Invalid node name: g, cannot use the canvas itself as a node."
+    )):
+        class MyGraph(ASLAutoma):
+            with graph as g:
+                a = worker1
+                g = worker2
+
+
+    with pytest.raises(ASLCompilationError, match=(
+        f"Invalid node name: g, cannot use the canvas itself as a node."
+    )):
+        class MyGraph(ASLAutoma):
+            with graph as g:
+                a = worker1
+                +a >> ~g
+
+# - - - - - - - - - - - - - - -
+# test parent canvas must have a name
+# - - - - - - - - - - - - - - - 
+@pytest.mark.asyncio
+async def test_asl_parent_canvas_must_have_a_name():
+    with pytest.raises(ASLCompilationError, match=(
+        f"The parent canvas of node a has no name! Please declare the parent canvas name with `with graph as <name>:`."
+    )):
+        class MyGraph(ASLAutoma):
+            with graph:
+                a = worker1
+                b = worker2
+                c = Worker3(y=1)
+                +a >> ~b >> ~c
+
+
+# - - - - - - - - - - - - - - -
+# test can not have multiple root canvases
+# - - - - - - - - - - - - - - - 
+@pytest.mark.asyncio
+async def test_asl_can_not_have_multiple_root_canvases():
+    with pytest.raises(ASLCompilationError, match=(
+        f"Multiple root canvases are not allowed."
+    )):
+        class MyGraph2(ASLAutoma):
+            with graph as g:
+                a = worker1
+                b = worker2
+                c = Worker3(y=1)
+
+            with graph as g1:
+                a = worker1
+                b = worker2
+                c = Worker3(y=1)
+
+
+# - - - - - - - - - - - - - - -
+# test duplicated dependency
+# - - - - - - - - - - - - - - - 
+@pytest.mark.asyncio
+async def test_asl_duplicated_dependency():
+    with pytest.raises(ASLCompilationError, match=(
+        f"Duplicate dependency: a."
+    )):
+        class MyGraph(ASLAutoma):
+            with graph as g:
+                a = worker1
+                b = worker2
+                c = Worker3(y=1)
+                +a >> b >> c >> a >> b
+
+
+# - - - - - - - - - - - - - - -
+# test lambda dynamic logic must be written under a concurrent or sequential canvas
+# - - - - - - - - - - - - - - -  
+@pytest.mark.asyncio
+async def test_asl_lambda_dynamic_logic_declaration_correctly():
+    with pytest.raises(ASLCompilationError, match=(
+        f"Lambda dynamic logic must be written under a `concurrent`, `sequential`, not `graph`."
+    )):
+        class MyGraph(ASLAutoma):
+            with graph as g:
+                a = worker1
+                b = worker2
+                c = Worker3(y=1)
+                dynamic_logic = lambda: worker1
+                +a >> b >> c >> ~dynamic_logic
+    
+
+# - - - - - - - - - - - - - - -
+# test graph params declaration must be ASLField
+# - - - - - - - - - - - - - - -  
+@pytest.mark.asyncio
+async def test_asl_graph_params_declaration_must_be_ASLField():
+    with pytest.raises(ASLCompilationError, match=(
+        f"Invalid field type: <class 'int'>."
+    )):
+        class MyGraph(ASLAutoma):
+            with graph(x=1) as g:
+                a = worker1
+                b = worker2 *Settings(args_mapping_rule=ArgsMappingRule.AS_IS)
+                c = Worker3(y=1)
+                +a >> b >> c
 
     

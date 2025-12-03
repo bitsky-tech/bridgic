@@ -65,6 +65,8 @@ class TrackingNamespace(dict):
                 self.canvas_definition_start = True
             return
 
+        print(f"key: {key}, value: {value}, type: {type(value)}")
+
         # if the value is a _CanvasObject before the object is registered, it indicates that 
         # the corresponding canvas object is a fragment.
         # TODO: Need Fragment class to handle the fragment logic.
@@ -73,10 +75,9 @@ class TrackingNamespace(dict):
             parent_canvas: _Canvas = stack[-1]
             parent_canvas_namespace = super().__getitem__(parent_canvas.key)
             parent_canvas_fragment_namespace = parent_canvas_namespace.get('__fragment__')
-            if parent_canvas_fragment_namespace.get(key) or parent_canvas_namespace.get(key):
+            if parent_canvas_namespace.get(key) or parent_canvas_fragment_namespace.get(key):
                 raise ASLCompilationError(
-                    f"Duplicate name: {key} under canvas: {parent_canvas.key} of a fragment or a registered object, "
-                    f"every name of fragment must be unique."
+                    f"Duplicate name: {key} under canvas: {parent_canvas.key} of a fragment or a registered node."
                 )
             
             if isinstance(value, _Element):
@@ -134,10 +135,19 @@ class TrackingNamespace(dict):
                 else stack[-1] if isinstance(value, _Element) 
                 else None if len(stack) == 1 else stack[-2]
             )
+            parent_key = parent_canvas.key if parent_canvas else None
+
+            if parent_key and parent_key == key:
+                raise ASLCompilationError(f"Invalid node name: {key}, cannot use the canvas itself as a node.")
+            if isinstance(parent_key, KeyUnDifined):
+                raise ASLCompilationError(f"The parent canvas of node {key} has no name! Please declare the parent canvas name with `with graph as <name>:`.")
 
             if isinstance(value, _Element):
                 if parent_canvas:
                     parent_canvas_namespace = super().__getitem__(parent_canvas.key)
+                    parent_canvas_fragment_namespace = parent_canvas_namespace.get('__fragment__')
+                    if parent_canvas_namespace.get(value.key) or parent_canvas_fragment_namespace.get(value.key):
+                        raise ASLCompilationError(f"Duplicate name: {value.key} under canvas: {parent_canvas.key} of a fragment or a registered node.")
                     parent_canvas_namespace[value.key] = value
                     parent_canvas.register(key, value)
                 else:
@@ -147,6 +157,9 @@ class TrackingNamespace(dict):
             elif isinstance(value, _Canvas):
                 if parent_canvas:
                     parent_canvas_namespace = super().__getitem__(parent_canvas.key)
+                    parent_canvas_fragment_namespace = parent_canvas_namespace.get('__fragment__')
+                    if parent_canvas_namespace.get(value.key) or parent_canvas_fragment_namespace.get(value.key):
+                        raise ASLCompilationError(f"Duplicate name: {value.key} under canvas: {parent_canvas.key} of a fragment or a registered node.")
                     parent_canvas_namespace[value.key] = value
                     parent_canvas.register(key, value)
                 super().__setitem__(key, {})
@@ -192,16 +205,15 @@ class TrackingNamespace(dict):
         current_canvas_key = current_canvas.key
         current_canvas_namespace = super().__getitem__(current_canvas_key)
         current_canvas_fragment_namespace = current_canvas_namespace.get('__fragment__')
+
         if key == current_canvas_key:
-            raise ASLCompilationError(f"Invalid canvas: {key}, cannot use the canvas itself.")
+            raise ASLCompilationError(f"Invalid node name: {key}, cannot use the canvas itself as a node.")
 
         # if the key is in the current canvas namespace, return the element.
         if key in current_canvas_namespace:
-            res = current_canvas_namespace[key]
-            return res
+            return current_canvas_namespace[key]
         if key in current_canvas_fragment_namespace:
-            res = current_canvas_fragment_namespace[key]
-            return res
+            return current_canvas_fragment_namespace[key]
 
         return super().__getitem__(key)
 
