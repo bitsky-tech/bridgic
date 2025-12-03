@@ -10,7 +10,7 @@ from bridgic.core.automa import Automa
 from bridgic.core.automa.worker import Worker
 from bridgic.core.agentic.tool_specs._base_tool_spec import ToolSpec
 from bridgic.core.utils._json_schema import create_func_params_json_schema
-from bridgic.core.utils._inspect_tools import load_qualified_class_or_func
+from bridgic.core.utils._inspect_tools import load_qualified_class_or_func, get_tool_description_from
 
 def as_tool(spec_func: Callable) -> Callable:
     """
@@ -30,43 +30,6 @@ def as_tool(spec_func: Callable) -> Callable:
         return cls
     return decorator
 
-def get_tool_description_from(
-    spec_func: Callable,
-    tool_name: Optional[str] = None
-) -> str:
-    """
-    Get the tool description from the spec function.
-    """
-    docstring = parse_docstring(spec_func.__doc__)
-    tool_description = docstring.description
-    if tool_description:
-        tool_description = tool_description.strip()
-
-    if not tool_description:
-        # No description provided, use the function signature as the description.
-        fn_sig = inspect.signature(spec_func)
-        filtered_params = []
-        ignore_params: List[str] = ["self", "cls"]
-        for param_name, param in fn_sig.parameters.items():
-            if param_name in ignore_params:
-                continue
-
-            # Resolve the original type of the parameter.
-            param_type = param.annotation
-            if get_origin(param_type) is Annotated:
-                param_type = param_type.__origin__
-
-            # Note: Remove the default of the parameter.
-            filtered_params.append(param.replace(
-                annotation=param_type,
-                default=inspect.Parameter.empty
-            ))
-
-        fn_sig = fn_sig.replace(parameters=filtered_params)
-        if not tool_name:
-            tool_name = spec_func.__name__
-        tool_description = f"{tool_name}{fn_sig}\n"
-    return tool_description
 
 class AutomaToolSpec(ToolSpec):
     _automa_cls: Type[Automa]

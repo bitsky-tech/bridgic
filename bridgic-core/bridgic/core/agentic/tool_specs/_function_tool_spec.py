@@ -5,8 +5,7 @@ from bridgic.core.model.types import Tool
 from bridgic.core.automa.worker import Worker, CallableWorker
 from bridgic.core.agentic.tool_specs._base_tool_spec import ToolSpec
 from bridgic.core.utils._json_schema import create_func_params_json_schema
-from bridgic.core.utils._inspect_tools import load_qualified_class_or_func
-from bridgic.core.agentic.tool_specs._automa_tool_spec import get_tool_description_from
+from bridgic.core.utils._inspect_tools import load_qualified_class_or_func, get_tool_description_from
 
 class FunctionToolSpec(ToolSpec):
     _func: Callable

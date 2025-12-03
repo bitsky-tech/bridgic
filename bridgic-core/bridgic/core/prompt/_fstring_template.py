@@ -50,6 +50,11 @@ class FstringPromptTemplate(BasePromptTemplate):
     ... )
     """
 
+    template_str: str
+
+    def __init__(self, template_str: str):
+        super().__init__(template_str=template_str)
+
     def format_message(self, role: Union[Role, str], **kwargs) -> Message:
         """
         Format a single message from the template.
