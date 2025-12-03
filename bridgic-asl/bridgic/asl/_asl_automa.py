@@ -65,8 +65,6 @@ class TrackingNamespace(dict):
                 self.canvas_definition_start = True
             return
 
-        print(f"key: {key}, value: {value}, type: {type(value)}")
-
         # If the value is a _CanvasObject before the object is registered, it indicates that
         # the corresponding canvas object is a fragment.
         # TODO: Need Fragment class to handle the fragment logic.
