@@ -302,10 +302,10 @@ class _CanvasObject:
 
     def __pos__(self) -> None:
         """
-        Unary plus operator (+) marks this object and its group as start nodes.
+        Unary plus operator (+) marks this object and its group as start workers.
         
         When applied to a grouped sequence (connected with `&`), all objects in the
-        group are marked as start nodes, meaning they can begin execution without
+        group are marked as start workers, meaning they can begin execution without
         waiting for dependencies.
         
         Returns
@@ -321,10 +321,10 @@ class _CanvasObject:
 
     def __invert__(self) -> None:
         """
-        Unary invert operator (~) marks this object and its group as output nodes.
+        Unary invert operator (~) marks this object and its group as output workers.
         
         When applied to a grouped sequence (connected with `&`), all objects in the
-        group are marked as output nodes, meaning their results will be collected
+        group are marked as output workers, meaning their results will be collected
         as outputs of the graph.
         
         Returns
@@ -549,7 +549,7 @@ class _Fragment(_CanvasObject):
             # If there are no internal dependencies, all fragment elements are starts.
             starts = list(ends)
         else:
-            # Traverse backwards through internal dependencies to find root nodes.
+            # Traverse backwards through internal dependencies to find root workers.
             middle_dependencies = internal_dependencies.copy()
             
             while middle_dependencies:
@@ -686,12 +686,6 @@ class _GraphContextManager:
         stack = list(graph_stack.get())
         stack.pop()
         graph_stack.set(stack)
-
-    def __invert__(self) -> None:
-        """
-        Maintain the grammatical consistency of each element node in ASL.
-        """
-        pass
         
 
 # Create module-level instances (not global variables, but singleton objects)

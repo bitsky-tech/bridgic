@@ -75,7 +75,7 @@ class TrackingNamespace(dict):
             parent_canvas_fragment_namespace = parent_canvas_namespace.get('__fragment__')
             if parent_canvas_namespace.get(key) or parent_canvas_fragment_namespace.get(key):
                 raise ASLCompilationError(
-                    f"Duplicate name: {key} under canvas: {parent_canvas.key} of a fragment or a registered node."
+                    f"Duplicate key: {key} under graph: {parent_canvas.key} of a fragment or a registered worker."
                 )
             
             value = _Fragment(key, value)
@@ -131,16 +131,16 @@ class TrackingNamespace(dict):
             parent_key = parent_canvas.key if parent_canvas else None
 
             if parent_key and parent_key == key:
-                raise ASLCompilationError(f"Invalid node name: {key}, cannot use the canvas itself as a node.")
+                raise ASLCompilationError(f"Invalid worker key: {key}, cannot use the canvas itself as a worker.")
             if isinstance(parent_key, KeyUnDifined):
-                raise ASLCompilationError(f"The parent canvas of node {key} has no name! Please declare the parent canvas name with `with graph as <name>:`.")
+                raise ASLCompilationError(f"The parent of worker {key} has no name! Please declare the parent key with `with graph as <name>:`.")
 
             if isinstance(value, _Element):
                 if parent_canvas:
                     parent_canvas_namespace = super().__getitem__(parent_canvas.key)
                     parent_canvas_fragment_namespace = parent_canvas_namespace.get('__fragment__')
                     if parent_canvas_namespace.get(value.key) or parent_canvas_fragment_namespace.get(value.key):
-                        raise ASLCompilationError(f"Duplicate name: {value.key} under canvas: {parent_canvas.key} of a fragment or a registered node.")
+                        raise ASLCompilationError(f"Duplicate key: {value.key} under graph: {parent_canvas.key} of a fragment or a registered worker.")
                     parent_canvas_namespace[value.key] = value
                     parent_canvas.register(key, value)
                 else:
@@ -152,7 +152,7 @@ class TrackingNamespace(dict):
                     parent_canvas_namespace = super().__getitem__(parent_canvas.key)
                     parent_canvas_fragment_namespace = parent_canvas_namespace.get('__fragment__')
                     if parent_canvas_namespace.get(value.key) or parent_canvas_fragment_namespace.get(value.key):
-                        raise ASLCompilationError(f"Duplicate name: {value.key} under canvas: {parent_canvas.key} of a fragment or a registered node.")
+                        raise ASLCompilationError(f"Duplicate key: {value.key} under graph: {parent_canvas.key} of a fragment or a registered worker.")
                     parent_canvas_namespace[value.key] = value
                     parent_canvas.register(key, value)
                 super().__setitem__(key, {})
@@ -200,7 +200,7 @@ class TrackingNamespace(dict):
         current_canvas_fragment_namespace = current_canvas_namespace.get('__fragment__')
 
         if key == current_canvas_key:
-            raise ASLCompilationError(f"Invalid node name: {key}, cannot use the canvas itself as a node.")
+            raise ASLCompilationError(f"Invalid worker key: {key}, cannot use the canvas itself as a worker.")
 
         # If the key is in the current canvas namespace, return the element.
         if key in current_canvas_namespace:
@@ -274,7 +274,7 @@ class ASLAutomaMeta(GraphMeta):
                     if not root:
                         root = value
                     else:
-                        raise ASLCompilationError("Multiple root canvases are not allowed.")
+                        raise ASLCompilationError("Multiple root graph are not allowed.")
 
                 # Record the canvas to the canvases dictionary.
                 canvases_dict[value.key] = value
@@ -349,7 +349,7 @@ class ASLAutoma(GraphAutoma, metaclass=ASLAutomaMeta):
     ...     with graph as g:
     ...         a = add_one
     ...         b = add_two
-    ...         +a >> b  # a is the start node, b depends on a and is the output node.
+    ...         +a >> b  # a is the start worker, b depends on a and is the output worker.
     >>> 
     >>> graph = MyGraph()
     >>> result = await graph.arun(x=1)  # result: 4 (1+1+2)
@@ -475,7 +475,7 @@ class ASLAutoma(GraphAutoma, metaclass=ASLAutomaMeta):
             args_mapping_rule = element.args_mapping_rule
             result_dispatching_rule = element.result_dispatching_rule
 
-            # If the node object is an instance of an object instance, it must be ensured that each time
+            # If the object is an instance of an object instance, it must be ensured that each time
             # an instance of the current ASLAutoma is created, it is an independent one of this object
             # instance. Here, the object has these forms:
             #   1. Canvas:
@@ -732,9 +732,9 @@ def build_graph(
     worker_material : Union[Worker, Callable]
         Either a Worker instance or a callable function to add as a worker.
     is_start : bool
-        Whether this worker is a start node in the graph.
+        Whether this worker is a start worker in the graph.
     is_output : bool
-        Whether this worker is an output node in the graph.
+        Whether this worker is an output worker in the graph.
     dependencies : List[str]
         List of worker keys that this worker depends on.
     args_mapping_rule : ArgsMappingRule
