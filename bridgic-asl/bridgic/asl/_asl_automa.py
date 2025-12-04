@@ -9,7 +9,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 from bridgic.core.automa import GraphAutoma, RunningOptions
 from bridgic.core.automa.worker import Worker, WorkerCallback, WorkerCallbackBuilder
-from bridgic.core.automa.args import ArgsMappingRule, ResultDispatchingRule, InOrder, override_func_signature, set_method_signature, safely_map_args
+from bridgic.core.automa.args._args_binding import ArgsMappingRule, ResultDispatchingRule, InOrder, override_func_signature, set_method_signature, safely_map_args
 from bridgic.core.automa._graph_automa import GraphMeta
 from bridgic.core.agentic import ConcurrentAutoma
 from bridgic.core.types._error import ASLCompilationError
