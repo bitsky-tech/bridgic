@@ -1,5 +1,4 @@
 import inspect
-from copy import deepcopy
 from inspect import Parameter, _ParameterKind
 from contextvars import ContextVar
 from dataclasses import dataclass
@@ -241,33 +240,36 @@ class _CanvasObject:
         ValueError
             If duplicate dependencies are detected.
         """
-        current_canvas_obj = self
-        left_canvas_objs = [self]
-        while current_canvas_obj.left_canvas_obj:
-            current_canvas_obj = current_canvas_obj.left_canvas_obj
-            left_canvas_objs.append(current_canvas_obj)
-        left_canvas_objs.reverse()  # Keep the order consistent with the declaration order.
-
-        def add_dependencies(canvas_obj: _CanvasObject, dependencies_obj: List[_CanvasObject]) -> None:
-            for dependency_obj in dependencies_obj:
-                if isinstance(canvas_obj, _Fragment):
-                    if isinstance(dependency_obj, _Fragment):
-                        for s in dependency_obj.starts:
-                            s.dependencies.extend(dependency_obj.ends)
-                    else:
-                        for s in canvas_obj.starts:
-                            s.dependencies.append(dependency_obj)
+        def add_dependencies(canvas_obj: _CanvasObject, dependency_obj: _CanvasObject) -> None:
+            if isinstance(canvas_obj, _Fragment):
+                if isinstance(dependency_obj, _Fragment):
+                    for s in canvas_obj.starts:
+                        s.dependencies.extend(dependency_obj.ends)
                 else:
-                    if isinstance(dependency_obj, _Fragment):
-                        canvas_obj.dependencies.extend(dependency_obj.ends)
-                    else:
-                        canvas_obj.dependencies.append(dependency_obj)
+                    for s in canvas_obj.starts:
+                        s.dependencies.append(dependency_obj)
+            else:
+                if isinstance(dependency_obj, _Fragment):
+                    canvas_obj.dependencies.extend(dependency_obj.ends)
+                else:
+                    canvas_obj.dependencies.append(dependency_obj)
     
         current_canvas_obj = other
-        add_dependencies(current_canvas_obj, left_canvas_objs)
+        add_dependencies(current_canvas_obj, self)
         while current_canvas_obj.left_canvas_obj:
             current_canvas_obj = current_canvas_obj.left_canvas_obj
-            add_dependencies(current_canvas_obj, left_canvas_objs)
+            add_dependencies(current_canvas_obj, self)
+        
+        # The `>>`` operator for the associative element of recursive call
+        if self.left_canvas_obj:  
+            self.left_canvas_obj.__rshift__(other)
+        # If it is the last element, reverse the order to make the dependencies of other consistent with the writing order.
+        else:
+            if isinstance(other, _Fragment):
+                for s in other.starts:
+                    s.dependencies.reverse()
+            else:
+                other.dependencies.reverse()
         return other
 
     def __or__(self, other: Union["_CanvasObject", "_Fragment"]) -> None:
@@ -463,6 +465,11 @@ class _Canvas(_CanvasObject):
             f"key={self.key}, "
             f"automa_type={self.automa_type}, "
             f"parent_canvas={self.parent_canvas.key if self.parent_canvas else None}, "
+            f"is_start={self.is_start}, "
+            f"is_output={self.is_output}, "
+            f"dependencies={[item.key for item in self.dependencies]}, "
+            f"args_mapping_rule={self.args_mapping_rule}, "
+            f"result_dispatching_rule={self.result_dispatching_rule}, "
             f"elements={self.elements})"
         )
 
@@ -496,6 +503,11 @@ class _Element(_CanvasObject):
             f"key={self.key}, "
             f"worker_material={self.worker_material}, "
             f"parent_canvas={self.parent_canvas.key if self.parent_canvas else None}, "
+            f"is_start={self.is_start}, "
+            f"is_output={self.is_output}, "
+            f"dependencies={[item.key for item in self.dependencies]}, "
+            f"args_mapping_rule={self.args_mapping_rule}, "
+            f"result_dispatching_rule={self.result_dispatching_rule}, "
             f"is_lambda={self.is_lambda})"
         )
 
@@ -512,25 +524,53 @@ class _Fragment(_CanvasObject):
         """
         Unpack the fragment into starts and ends.
         """
-        starts = []
-        ends = []
 
-        middle_dependencies = []
+        # Get the ends of the fragment.
+        ends = []
         current_canvas_obj = fragment_material
         ends.append(current_canvas_obj)
-        middle_dependencies.extend(current_canvas_obj.dependencies)
-        while current_canvas_obj.right_canvas_obj:
-            current_canvas_obj = current_canvas_obj.right_canvas_obj
-            middle_dependencies.extend(current_canvas_obj.dependencies)
+        while current_canvas_obj.left_canvas_obj:
+            current_canvas_obj = current_canvas_obj.left_canvas_obj
             ends.append(current_canvas_obj)
-        middle_dependencies = list(set(middle_dependencies))
+        
+        # Get the starts of the fragment.
+        # Collect all dependencies of elements in the fragment (including dependencies from left_canvas_obj chain).
+        internal_dependencies = []
+        current_canvas_obj = fragment_material
+        internal_dependencies.extend(current_canvas_obj.dependencies)
+        while current_canvas_obj.left_canvas_obj:
+            current_canvas_obj = current_canvas_obj.left_canvas_obj
+            internal_dependencies.extend(current_canvas_obj.dependencies)
+        internal_dependencies = list(set(internal_dependencies))
 
-        while middle_dependencies:
-            starts = deepcopy(middle_dependencies)
-            current_objs = []
-            for current_obj in middle_dependencies:
-                current_objs.extend(current_obj.dependencies)
-            middle_dependencies = deepcopy(list(set(current_objs)))
+        # Find starts: elements in fragment that have no dependencies within the fragment.        
+        starts = []
+        if not internal_dependencies:
+            # If there are no internal dependencies, all fragment elements are starts.
+            starts = list(ends)
+        else:
+            # Traverse backwards through internal dependencies to find root nodes.
+            middle_dependencies = internal_dependencies.copy()
+            
+            while middle_dependencies:
+                starts = [s for s in middle_dependencies if s in ends]
+                current_objs = []
+                for current_obj in middle_dependencies:
+                    temp_current_objs = []
+                    temp_current_obj = current_obj
+                    temp_current_objs.extend(temp_current_obj.dependencies)
+                    while temp_current_obj.left_canvas_obj:
+                        temp_current_obj = temp_current_obj.left_canvas_obj
+                        temp_current_objs.extend(temp_current_obj.dependencies)
+                    current_objs.extend(temp_current_objs)
+                next_dependencies = list(set(current_objs))
+                # Filter to only internal dependencies.
+                next_internal_deps = [dep for dep in next_dependencies if dep in ends]
+                # If no new internal dependencies found, we've reached the root.
+                if not next_internal_deps or set(next_internal_deps) == set(middle_dependencies):
+                    break
+                middle_dependencies = next_internal_deps
+    
         return starts, ends
 
     def __pos__(self) -> None:

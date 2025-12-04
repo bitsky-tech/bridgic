@@ -156,7 +156,9 @@ class MyGraph(ASLAutoma):
             e = worker6 # 35
             merge = merge # (34, 35)
 
-            +(a & b & c) >> (d & e) >> ~merge # (34, 35)
+            fragment_1 = +(a & b & c)
+            fragment_2 = (d & e)
+            fragment_1 >> fragment_2 >> ~merge  # (34, 35)
 
         with graph as sub_graph_2:  # input: 11 -> res: 13
             ferry_to_worker = ferry_to_worker
