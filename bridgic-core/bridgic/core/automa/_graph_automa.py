@@ -1230,7 +1230,9 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
                     ) for worker_key, worker_obj in self._workers.items()
                     if getattr(worker_obj, "is_start", False)
                 ]
-                # Each time the Automa re-runs, buffer the input arguments here.
+        
+        def _reinit_input_buffer_if_needed(args: Tuple[Any, ...], kwargs: Dict[str, Any]):
+            if not self._current_kickoff_workers:
                 self._input_buffer.args = args
                 self._input_buffer.kwargs = kwargs
 
@@ -1305,21 +1307,13 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
                     match_left_feedbacks.append(feedback)
             return match_left_feedbacks
 
+        _reinit_input_buffer_if_needed(args, kwargs)
         running_options = self._get_top_running_options()
 
         self._main_loop = asyncio.get_running_loop()
         self._main_thread_id = threading.get_ident()
-
         if self.thread_pool is None:
             self.thread_pool = ThreadPoolExecutor(thread_name_prefix="bridgic-thread")
-
-        if not self._automa_running:
-            # Here is the last chance to compile and check the DDG in the end of the [Initialization Phase] (phase 1 just before the first DS).
-            self._compile_graph_and_detect_risks()
-            self._automa_running = True
-
-        # An Automa needs to be re-run with _current_kickoff_workers reinitialized.
-        _reinit_current_kickoff_workers_if_needed()
 
         is_top_level = self.is_top_level()
 
@@ -1338,6 +1332,14 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
                         "feedback_data": feedback_data,
                     },
                 )
+        
+        if not self._automa_running:
+            # Here is the last chance to compile and check the DDG in the end of the [Initialization Phase] (phase 1 just before the first DS).
+            self._compile_graph_and_detect_risks()
+            self._automa_running = True
+
+        # An Automa needs to be re-run with _current_kickoff_workers reinitialized.
+        _reinit_current_kickoff_workers_if_needed()
 
         # For backward compatibility with old parameter names. To be removed in the future.
         interaction_feedback = kwargs.get("interaction_feedback")
@@ -1698,5 +1700,5 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
     def __str__(self) -> str:
         d = {}
         for k, v in self._workers.items():
-            d[k] = f"{v} depends on {getattr(v, 'dependencies', [])}"
+            d[k] = f"{v} depends on {getattr(v, 'dependencies', [])}, is_start: {getattr(v, 'is_start', False)}, is_output: {getattr(v, 'is_output', False)}"
         return json.dumps(d, ensure_ascii=False, indent=4)
