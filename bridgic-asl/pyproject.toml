@@ -12,7 +12,7 @@ authors = [
     { name = "Tielei Zhang", email = "43289893@qq.com" },
 ]
 dependencies = [
-    "bridgic-core>=0.1.1",
+    "bridgic-core>=0.1.4",
 ]
 
 [dependency-groups]
