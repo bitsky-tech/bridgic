@@ -76,10 +76,12 @@ import asyncio
 class MyAutoma(GraphAutoma):
     @worker(is_start=True)
     async def step1(self):
+        await asyncio.sleep(1)
         return "hello"
     
     @worker(dependencies=["step1"], is_output=True)
     async def step2(self, step1: str):
+        await asyncio.sleep(1)
         return f"{step1} world"
 
 async def main():
@@ -92,7 +94,9 @@ async def main():
     result = await automa.arun()
     print(result)
 
-asyncio.run(main())
+
+if __name__ == "__main__":
+    asyncio.run(main())
 ```
 
 ### Method 2: Global Scope with GlobalSetting
@@ -115,18 +119,22 @@ GlobalSetting.set(callback_builders=[WorkerCallbackBuilder(
 class MyAutoma(GraphAutoma):
     @worker(is_start=True)
     async def step1(self):
+        await asyncio.sleep(1)
         return "hello"
     
     @worker(dependencies=["step1"], is_output=True)
     async def step2(self, step1: str):
+        await asyncio.sleep(1)
         return f"{step1} world"
+
 
 async def main():
     automa = MyAutoma()  # Automatically uses global callback
     result = await automa.arun()
     print(result)
 
-asyncio.run(main())
+if __name__ == "__main__":
+    asyncio.run(main())
 ```
 
 From the perspective of tracking worker execution, the following approach is equivalent to the above one:
