@@ -73,8 +73,6 @@ class Worker(Serializable):
         if topest_automa:
             thread_pool = topest_automa.thread_pool
             if thread_pool:
-                # rx_param_names_dict = self.get_input_param_names()
-                # rx_args, rx_kwargs = safely_map_args(args, kwargs, rx_param_names_dict)
                 # kwargs can only be passed by functools.partial.
                 return await loop.run_in_executor(thread_pool, partial(self.run, *args, **kwargs))
 
