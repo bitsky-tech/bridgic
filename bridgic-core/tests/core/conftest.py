@@ -24,6 +24,7 @@ async def mock_writer_stdio_connection():
     )
     connection.connect()
     yield connection
+    connection.close()
 
 
 @pytest_asyncio.fixture(scope="session")
@@ -42,6 +43,7 @@ async def mock_writer_streamable_http_connection():
         )
         connection.connect()
         yield connection
+        connection.close()
 
 
 @pytest_asyncio.fixture(scope="session")
@@ -60,4 +62,5 @@ async def mock_crawler_streamable_http_connection():
         )
         connection.connect()
         yield connection
+        connection.close()
 

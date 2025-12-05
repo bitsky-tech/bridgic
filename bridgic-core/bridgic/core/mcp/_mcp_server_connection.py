@@ -1,3 +1,5 @@
+import asyncio
+import warnings
 from abc import ABC, abstractmethod
 from datetime import timedelta
 from typing import List, Dict, Optional, Union, Any, TYPE_CHECKING
@@ -42,13 +44,16 @@ class McpServerConnection(ABC):
     """The keyword arguments to pass to the MCP client."""
 
     _manager: McpServerConnectionManager
-    """The manager that is used to manage the connection."""
-
     _session: ClientSession
-    """The session that is used to interact with the MCP server."""
-
     _exit_stack: AsyncExitStack
-    """The exit stack for the connection."""
+
+    _lifecycle_task: asyncio.Task
+    _connection_ready_event: asyncio.Event
+    _connection_stop_event: asyncio.Event
+    _connection_error: Exception
+
+    is_connected: bool
+    """Whether the connection is established."""
 
     def __init__(
         self,
@@ -63,8 +68,14 @@ class McpServerConnection(ABC):
 
         self._manager = None
         self._session = None
+        self._exit_stack = None
+
+        self._lifecycle_task = None
+        self._connection_stop_event = asyncio.Event()
+        self._connection_ready_event = asyncio.Event()
 
         self.is_connected = False
+        self._connection_error = None
 
     def _get_manager(self) -> McpServerConnectionManager:
         if self._manager is None:
@@ -75,7 +86,7 @@ class McpServerConnection(ABC):
 
     def connect(self):
         """
-        Establishe a connection to the MCP server. Call this method once before using the connection.
+        Establish a connection to the MCP server. Call this method once before using the connection.
 
         If the connection is not registered in a specific manager explicitly, it will be registered
         in the default manager (manager_name="default-mcp-manager"). If the connection needs to be
@@ -98,8 +109,29 @@ class McpServerConnection(ABC):
         >>> manager.register_connection(connection)
         >>> connection.connect()
         """
+        if self.is_connected:
+            return
+
+        # Create events and lifecycle task in the manager's event loop.
+        async def setup_and_wait():
+            # Create events in the manager's event loop.
+            self._connection_stop_event.clear()
+            self._connection_ready_event.clear()
+            self._connection_error = None
+
+            # Create the lifecycle task.
+            self._lifecycle_task = asyncio.create_task(self._lifecycle_task_coro())
+
+            # Wait for connection to be ready
+            await self._connection_ready_event.wait()
+
+            # Check if there was an error
+            if self._connection_error:
+                raise self._connection_error
+
+        # Setup the connection and make sure it could be closed within the same lifecycle task.
         self._get_manager().run_sync(
-            coro=self._connect_unsafe(),
+            coro=setup_and_wait(),
             timeout=self.request_timeout + 1,
         )
 
@@ -107,15 +139,28 @@ class McpServerConnection(ABC):
         """
         Close the connection to the MCP server.
         """
-        if self._manager is None:
+        if not self.is_connected:
             return
 
-        manager = self._get_manager()
-        manager.run_sync(
-            coro=self._close_unsafe(),
+        # Signal the lifecycle task to stop and wait for it to complete.
+        async def stop_and_wait():
+            if self._connection_stop_event is not None:
+                self._connection_stop_event.set()
+
+            if self._lifecycle_task is not None:
+                try:
+                    await self._lifecycle_task
+                except Exception as e:
+                    warnings.warn(f"Exception occurred while waiting for the lifecycle task to complete: {e}")
+                finally:
+                    self.is_connected = False
+                    self._lifecycle_task = None
+                    self._manager.unregister_connection(self)
+
+        self._get_manager().run_sync(
+            coro=stop_and_wait(),
             timeout=self.request_timeout + 1,
         )
-        manager.unregister_connection(self)
 
     @abstractmethod
     def get_mcp_client(self) -> _AsyncGeneratorContextManager[Any, None]:
@@ -133,17 +178,22 @@ class McpServerConnection(ABC):
     # Protected methods that should be called within the dedicated event loop.
     ###########################################################################
 
-    async def _connect_unsafe(self):
+    async def _lifecycle_task_coro(self):
         """
-        Asynchronously establish a connection to the MCP server.
+        The lifecycle task coroutine that manages the connection lifecycle.
 
-        Since the session used to communicate with the MCP server is bound to a specific event 
-        loop, this method should be called within the designated event loop for the connection.
+        This coroutine runs in the manager's dedicated event loop and is responsible for:
+        1. Establishing the connection to the MCP server
+        2. Waiting for the stop event
+        3. Closing the connection when the stop event is set
+
+        This ensures that the connection is created and closed within the same Task,
+        which is required by anyio's cancel scope mechanism.
         """
-        if not self._session:
-            # Try to establish a connection to the specified server.
+        try:
+            # Establish connection
+            self._exit_stack = AsyncExitStack()
             try:
-                self._exit_stack = AsyncExitStack()
                 transport = await self._exit_stack.enter_async_context(self.get_mcp_client())
                 session = await self._exit_stack.enter_async_context(
                     ClientSession(
@@ -158,25 +208,28 @@ class McpServerConnection(ABC):
                 )
                 await session.initialize()
             except Exception as ex:
-                await self._exit_stack.aclose()
-                raise McpServerConnectionError(f"Failed to create session to MCP server: name={self.name}, error={ex}") from ex
+                session = None
+                self._connection_error = McpServerConnectionError(
+                    f"Failed to create session to MCP server: name={self.name}"
+                ).with_traceback(ex.__traceback__)
+
             # Hold the connected session for later use.
             self._session = session
-            self.is_connected = True
-        elif self._session._request_id == 0:
-            await self._session.initialize()
-            self.is_connected = True
+            self.is_connected = True if session is not None else False
 
-    async def _close_unsafe(self):
-        """
-        Asynchronously close the connection to the MCP server.
+            # Signal that the connection is ready.
+            self._connection_ready_event.set()
 
-        Since the session used to communicate with the MCP server is bound to a specific event 
-        loop, this method should be called within the designated event loop for the connection.
-        """
-        await self._exit_stack.aclose()
-        self._session = None
-        self.is_connected = False
+            # Wait for the stop signal.
+            await self._connection_stop_event.wait()
+        finally:
+            # At the final moment, the exit stack must be closed.
+            if self._exit_stack is not None:
+                await self._exit_stack.aclose()
+                self._exit_stack = None
+
+            self._session = None
+            self.is_connected = False
 
     async def _list_prompts_unsafe(self) -> ListPromptsResult:
         """
@@ -185,8 +238,10 @@ class McpServerConnection(ABC):
         Since the session used to communicate with the MCP server is bound to a specific event 
         loop, this method should be called within the designated event loop for the connection.
         """
-        if not self.is_connected:
-            await self._connect_unsafe()
+        if not self.is_connected or self._session is None:
+            raise McpServerConnectionError(
+                f"Connection to MCP server is not established: name={self.name}"
+            )
         return await self._session.list_prompts()
 
     async def _get_prompt_unsafe(
@@ -200,8 +255,10 @@ class McpServerConnection(ABC):
         Since the session used to communicate with the MCP server is bound to a specific event 
         loop, this method should be called within the designated event loop for the connection.
         """
-        if not self.is_connected:
-            await self._connect_unsafe()
+        if not self.is_connected or self._session is None:
+            raise McpServerConnectionError(
+                f"Connection to MCP server is not established: name={self.name}"
+            )
         return await self._session.get_prompt(name=prompt_name, arguments=arguments or {})
 
     async def _list_tools_unsafe(self) -> ListToolsResult:
@@ -211,8 +268,10 @@ class McpServerConnection(ABC):
         Since the session used to communicate with the MCP server is bound to a specific event 
         loop, this method should be called within the designated event loop for the connection.
         """
-        if not self.is_connected:
-            await self._connect_unsafe()
+        if not self.is_connected or self._session is None:
+            raise McpServerConnectionError(
+                f"Connection to MCP server is not established: name={self.name}"
+            )
         return await self._session.list_tools()
 
     async def _call_tool_unsafe(
@@ -226,8 +285,10 @@ class McpServerConnection(ABC):
         Since the session used to communicate with the MCP server is bound to a specific event 
         loop, this method should be called within the designated event loop for the connection.
         """
-        if not self.is_connected:
-            await self._connect_unsafe()
+        if not self.is_connected or self._session is None:
+            raise McpServerConnectionError(
+                f"Connection to MCP server is not established: name={self.name}"
+            )
         return await self._session.call_tool(name=tool_name, arguments=arguments or {})
 
     ###########################################################################

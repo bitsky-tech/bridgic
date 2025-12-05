@@ -145,6 +145,8 @@ class McpServerConnectionManager:
         with cls._instances_lock:
             cls._connection_to_manager.pop(connection.name, None)
 
+        connection._manager = None
+
     def get_connection_by_name(self, name: str) -> Optional["McpServerConnection"]:
         """
         Get a connection by its name from this manager instance.
