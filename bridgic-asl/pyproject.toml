@@ -1,6 +1,6 @@
 [project]
 name = "bridgic-asl"
-version = "0.1.0.dev2"
+version = "0.1.0.dev3"
 classifiers = [
     "Private :: Do Not Upload",
     "Programming Language :: Python :: 3",
@@ -12,7 +12,7 @@ authors = [
     { name = "Tielei Zhang", email = "43289893@qq.com" },
 ]
 dependencies = [
-    "bridgic-core>=0.1.5.dev1",
+    "bridgic-core>=0.1.5.dev2",
 ]
 
 [dependency-groups]
