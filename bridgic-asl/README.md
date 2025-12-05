@@ -1,7 +1,7 @@
 # ASL (Agent Structure Language)
 
 
-**ASL (Agent Structure Language)** — a internal DSL(Domain Specific Language) in Python for building agents based on `bridgic-core`. It provides a declarative, intuitive syntax for defining complex workflow graphs and concurrent automata, making it easier to build and maintain agent-based applications.
+**ASL (Agent Structure Language)** — an internal DSL(Domain Specific Language) in Python for building agents based on `bridgic-core`. It provides a declarative, intuitive syntax for defining complex workflow graphs and concurrent automata, making it easier to build and maintain agent-based applications.
 
 ## Features
 
