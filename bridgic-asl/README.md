@@ -45,8 +45,8 @@ result = await graph.arun(x=1)  # result: 3 (1+1+2)
 
 ### Operators Explained
 
-- `+` marks a worker as a **start node** (entry point)
-- `~` marks a worker as an **output node** (exit point)
+- `+` marks a worker as a **start worker** (entry point)
+- `~` marks a worker as an **output worker** (exit point)
 - `>>` defines a **dependency** (left must complete before right executes)
 - `&` **groups** multiple workers together
 
