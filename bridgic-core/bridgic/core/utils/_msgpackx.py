@@ -14,6 +14,8 @@ See more about [Python's common basic data types](https://docs.python.org/3/libr
 """
 import msgpack # type: ignore
 import pickle
+import cloudpickle
+from types import FunctionType
 
 from typing import Any, Optional
 from enum import Enum
@@ -46,6 +48,14 @@ def dump_bytes(obj: Any, pickle_fallback: bool = False) -> bytes:
             # msgpack does not support set natively, so we need to convert it to a list.
             ser_type = "set"
             ser_data = list(obj)
+        elif isinstance(obj, FunctionType) and hasattr(obj, "__code__") and getattr(obj.__code__, "co_name", None) == "<lambda>":
+            # Use cloudpickle to serialize lambda functions, as they cannot be serialized by standard pickle or msgpack.
+            ser_type = "lambda"
+            ser_data = cloudpickle.dumps(obj)
+        elif isinstance(obj, type):
+            # Serialize type objects (classes) using their fully qualified name
+            ser_type = "type"
+            ser_data = obj.__module__ + "." + obj.__qualname__
         elif hasattr(obj, "dump_to_dict") and hasattr(obj, "load_from_dict"):
             # Use hasattr() instead of isinstance(obj, Serializable) for performance reasons.
             # Refer to: https://docs.python.org/3/library/typing.html#typing.runtime_checkable
@@ -84,6 +94,12 @@ def load_bytes(data: bytes) -> Any:
             elif dict_obj["t"] == "set":
                 # list => set
                 return set(dict_obj["d"])
+            elif dict_obj["t"] == "lambda":
+                # Use cloudpickle to deserialize lambda functions
+                return cloudpickle.loads(dict_obj["d"])
+            elif dict_obj["t"] == "type":
+                # Deserialize type objects (classes) from their fully qualified name
+                return load_qualified_class_or_func(dict_obj["d"])
             elif dict_obj["t"] == "pickled":
                 return pickle.loads(dict_obj["d"])
             else:

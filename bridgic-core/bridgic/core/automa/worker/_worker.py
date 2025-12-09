@@ -8,7 +8,7 @@ from bridgic.core.automa.interaction import Event, InteractionFeedback, Feedback
 from bridgic.core.types._error import WorkerRuntimeError
 from bridgic.core.types._serialization import Serializable
 from bridgic.core.utils._inspect_tools import get_param_names_all_kinds
-from bridgic.core.utils._args_map import safely_map_args
+# from bridgic.core.automa.args._args_binding import safely_map_args
 
 if TYPE_CHECKING:
     from bridgic.core.automa._automa import Automa
@@ -73,10 +73,8 @@ class Worker(Serializable):
         if topest_automa:
             thread_pool = topest_automa.thread_pool
             if thread_pool:
-                rx_param_names_dict = self.get_input_param_names()
-                rx_args, rx_kwargs = safely_map_args(args, kwargs, rx_param_names_dict)
                 # kwargs can only be passed by functools.partial.
-                return await loop.run_in_executor(thread_pool, partial(self.run, *rx_args, **rx_kwargs))
+                return await loop.run_in_executor(thread_pool, partial(self.run, *args, **kwargs))
 
         # Unexpected: No thread pool is available.
         # Case 1: the worker is not inside an Automa (uncommon case).

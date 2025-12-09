@@ -1,6 +1,6 @@
 [project]
 name = "bridgic"
-version = "0.1.5.dev1"
+version = "0.2.1.dev1"
 license = {text = "MIT"}
 classifiers = [
     "Programming Language :: Python :: 3",
@@ -14,7 +14,8 @@ authors = [
     { name = "Tielei Zhang", email = "zhangtl04@gmail.com" },
 ]
 dependencies = [
-    "bridgic-core>=0.1.5.dev1,<0.2.0",
+    "bridgic-core>=0.2.1.dev1,<0.3.0",
+    "bridgic-asl>=0.1.0,<0.2.0",
     "bridgic-llms-openai-like>=0.1.1,<0.2.0",
 ]
 
@@ -40,4 +41,5 @@ include = ["/meta/bridgic/"]
 
 [tool.uv.sources]
 bridgic-core = { path = "./bridgic-core", editable = true }
+bridgic-asl = { path = "./bridgic-asl", editable = true }
 bridgic-llms-openai-like = { path = "./bridgic-integration/llms/bridgic-llms-openai-like", editable = true }

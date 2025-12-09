@@ -27,24 +27,21 @@ def test_get_param_names_by_kind():
     a = A()
 
     assert get_param_names_by_kind(a.func_1, Parameter.POSITIONAL_ONLY) == []
-    assert get_param_names_by_kind(a.func_1, Parameter.POSITIONAL_OR_KEYWORD) == ["a", "b", "c", "d"]
-    assert get_param_names_by_kind(a.func_1, Parameter.POSITIONAL_OR_KEYWORD, exclude_default=True) == ["a", "b"]
+    assert get_param_names_by_kind(a.func_1, Parameter.POSITIONAL_OR_KEYWORD) == ["self", "a", "b", "c", "d"]
+    assert get_param_names_by_kind(a.func_1, Parameter.POSITIONAL_OR_KEYWORD, exclude_default=True) == ["self", "a", "b"]
 
-    assert get_param_names_by_kind(a.func_2, Parameter.POSITIONAL_ONLY) == ["a"]
-    assert get_param_names_by_kind(a.func_2, Parameter.POSITIONAL_ONLY, exclude_default=True) == ["a"]
+    assert get_param_names_by_kind(a.func_2, Parameter.POSITIONAL_ONLY) == ["self", "a"]
     assert get_param_names_by_kind(a.func_2, Parameter.POSITIONAL_OR_KEYWORD) == ["b", "c", "d"]
     assert get_param_names_by_kind(a.func_2, Parameter.POSITIONAL_OR_KEYWORD, exclude_default=True) == ["b"]
 
-    assert get_param_names_by_kind(a.func_3, Parameter.POSITIONAL_ONLY) == ["a"]
-    assert get_param_names_by_kind(a.func_3, Parameter.POSITIONAL_ONLY, exclude_default=True) == ["a"]
+    assert get_param_names_by_kind(a.func_3, Parameter.POSITIONAL_ONLY) == ["self", "a"]
     assert get_param_names_by_kind(a.func_3, Parameter.POSITIONAL_OR_KEYWORD) == ["b", "c", "d"]
     assert get_param_names_by_kind(a.func_3, Parameter.POSITIONAL_OR_KEYWORD, exclude_default=True) == ["b"]
     assert get_param_names_by_kind(a.func_3, Parameter.KEYWORD_ONLY) == ["e", "f", "g", "h"]
     assert get_param_names_by_kind(a.func_3, Parameter.KEYWORD_ONLY, exclude_default=True) == ["e", "g"]
     assert get_param_names_by_kind(a.func_3, Parameter.VAR_KEYWORD) == ["kwargs"]
 
-    assert get_param_names_by_kind(a.func_4, Parameter.POSITIONAL_ONLY) == ["a"]
-    assert get_param_names_by_kind(a.func_4, Parameter.POSITIONAL_ONLY, exclude_default=True) == ["a"]
+    assert get_param_names_by_kind(a.func_4, Parameter.POSITIONAL_ONLY) == ["self", "a"]
     assert get_param_names_by_kind(a.func_4, Parameter.POSITIONAL_OR_KEYWORD) == ["b", "c", "d"]
     assert get_param_names_by_kind(a.func_4, Parameter.POSITIONAL_OR_KEYWORD, exclude_default=True) == ["b"]
     assert get_param_names_by_kind(a.func_4, Parameter.KEYWORD_ONLY) == ["e", "f", "g"]
@@ -56,20 +53,20 @@ def test_get_param_names_all_kinds():
     a = A()
     
     assert get_param_names_all_kinds(a.func_1) == {
-        Parameter.POSITIONAL_OR_KEYWORD: [("a", inspect._empty), ("b", inspect._empty), ("c", 5), ("d", 6)],
+        Parameter.POSITIONAL_OR_KEYWORD: [('self', inspect._empty), ("a", inspect._empty), ("b", inspect._empty), ("c", 5), ("d", 6)],
     }
     assert get_param_names_all_kinds(a.func_2) == {
-        Parameter.POSITIONAL_ONLY: [("a", inspect._empty)],
+        Parameter.POSITIONAL_ONLY: [('self', inspect._empty), ("a", inspect._empty)],
         Parameter.POSITIONAL_OR_KEYWORD: [("b", inspect._empty), ("c", 5), ("d", 6)],
     }
     assert get_param_names_all_kinds(a.func_3) == {
-        Parameter.POSITIONAL_ONLY: [("a", inspect._empty)],
+        Parameter.POSITIONAL_ONLY: [('self', inspect._empty), ("a", inspect._empty)],
         Parameter.POSITIONAL_OR_KEYWORD: [("b", inspect._empty), ("c", 5), ("d", 6)],
         Parameter.KEYWORD_ONLY: [("e", inspect._empty), ("f", 7), ("g", inspect._empty), ("h", "")],
         Parameter.VAR_KEYWORD: [("kwargs", inspect._empty)],
     }
     assert get_param_names_all_kinds(a.func_4) == {
-        Parameter.POSITIONAL_ONLY: [("a", inspect._empty)],
+        Parameter.POSITIONAL_ONLY: [('self', inspect._empty), ("a", inspect._empty)],
         Parameter.POSITIONAL_OR_KEYWORD: [("b", inspect._empty), ("c", 5), ("d", 6)],
         Parameter.KEYWORD_ONLY: [("e", 7), ("f", inspect._empty), ("g", inspect._empty)],
         Parameter.VAR_POSITIONAL: [("args", inspect._empty)],
