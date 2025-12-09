@@ -1,6 +1,6 @@
 [project]
 name = "bridgic-core"
-version = "0.1.5.dev2"
+version = "0.1.5"
 license = {text = "MIT"}
 classifiers = [
     # "Private :: Do Not Upload",
