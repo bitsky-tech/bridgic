@@ -2,7 +2,6 @@
 name = "bridgic-asl"
 version = "0.1.0"
 classifiers = [
-    "Private :: Do Not Upload",
     "Programming Language :: Python :: 3",
 ]
 description = "ASL(Agent Structure Language) -- A python DSL(Domain Special Language) for descriping agent applications based on bridgic-core"
