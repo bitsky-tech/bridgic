@@ -28,6 +28,7 @@ nav:
         - Observability: tutorials/items/observability/index.md
         - Opik Integration: tutorials/items/observability/opik_integration.md
         - LangWatch Integration: tutorials/items/observability/lang_watch_integration.md
+      - ASL: tutorials/items/asl/quick_start.ipynb
   - Understanding:
     - Introduction: home/introduction.md
     - Basics: home/basics.md

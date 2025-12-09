@@ -2,7 +2,8 @@ import inspect
 import importlib
 import enum
 
-from typing import Callable, List, Dict, Any, Tuple
+from types import MethodType
+from typing import Callable, List, Dict, Any, Tuple, Union
 from typing_extensions import get_overloads, overload
 from bridgic.core.utils._collection import deep_hash
 
@@ -59,6 +60,10 @@ def get_param_names_by_kind(
     List[str]
         A list of parameter names.
     """
+    # Handle bound methods by using __func__ to get the unbound method
+    if isinstance(func, MethodType):
+        func = func.__func__
+    
     sig = inspect.signature(func)
     param_names = []
     for name, param in sig.parameters.items():
@@ -93,7 +98,29 @@ def get_param_names_all_kinds(
         - inspect.Parameter.KEYWORD_ONLY
         - inspect.Parameter.VAR_KEYWORD
     """
-    sig = inspect.signature(func)
+    # Handle bound methods: check if instance has a custom signature first
+    # This allows per-instance signatures set by set_method_signature to take precedence
+    # over the class method signature, preventing signature pollution between instances
+    if isinstance(func, MethodType):
+        instance = func.__self__
+        method_name = func.__func__.__name__
+        signature_attr = f"__{method_name}_signature__"
+        # Check if the instance has a custom signature stored by set_method_signature
+        if hasattr(instance, signature_attr):
+            sig = getattr(instance, signature_attr)
+        else:
+            # If instance doesn't have custom signature, check if class method signature was modified
+            # If modified, use the original signature to avoid pollution
+            func_obj = func.__func__
+            original_sig_attr = f"__{method_name}_original_signature__"
+            if hasattr(func_obj, original_sig_attr):
+                # Use original signature to avoid pollution from other instances
+                sig = getattr(func_obj, original_sig_attr)
+            else:
+                # Fall back to the class method signature (backward compatible)
+                sig = inspect.signature(func_obj)
+    else:
+        sig = inspect.signature(func)
     param_names_dict = {}
     for name, param in sig.parameters.items():
         if exclude_default and param.default is not inspect.Parameter.empty:

@@ -12,5 +12,5 @@ __all__ = [
     "From",
     "System",
     "RuntimeContext",
-    "InOrder"
+    "InOrder",
 ]
