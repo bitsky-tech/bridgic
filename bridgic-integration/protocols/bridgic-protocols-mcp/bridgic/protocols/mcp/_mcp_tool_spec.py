@@ -5,12 +5,12 @@ from mcp.types import Tool as McpTool
 from bridgic.core.agentic.tool_specs._base_tool_spec import ToolSpec
 from bridgic.core.model.types import Tool
 from bridgic.core.automa.worker import Worker
-from bridgic.core.mcp._mcp_server_connection import McpServerConnection
-from bridgic.core.mcp._mcp_server_connection_manager import McpServerConnectionManager
+from bridgic.protocols.mcp._mcp_server_connection import McpServerConnection
+from bridgic.protocols.mcp._mcp_server_connection_manager import McpServerConnectionManager
 from bridgic.core.types._error import McpServerConnectionError
 
 if TYPE_CHECKING:
-    from bridgic.core.agentic.workers._mcp_tool_worker import McpToolWorker
+    from bridgic.protocols.mcp._mcp_tool_worker import McpToolWorker
 
 
 class McpToolSpec(ToolSpec):
@@ -146,7 +146,7 @@ class McpToolSpec(ToolSpec):
         Worker
             A new `McpToolWorker` object that can be added to an Automa to execute the tool.
         """
-        from bridgic.core.agentic.workers._mcp_tool_worker import McpToolWorker
+        from bridgic.protocols.mcp._mcp_tool_worker import McpToolWorker
         return McpToolWorker(
             tool_name=self._tool_name,
             server_connection=self.server_connection,
@@ -182,3 +182,4 @@ class McpToolSpec(ToolSpec):
                 f"server_connection_name=\"{connection_name}\", tool_name=\"{self._tool_name}\"."
             )
         self.tool_info = reload_tool_spec.tool_info
+

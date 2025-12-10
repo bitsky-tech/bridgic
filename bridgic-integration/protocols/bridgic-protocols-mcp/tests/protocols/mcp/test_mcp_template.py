@@ -2,7 +2,7 @@ import pytest
 import pytest_asyncio
 from mcp.types import Prompt
 
-from bridgic.core.prompt._mcp_template import McpPromptTemplate
+from bridgic.protocols.mcp import McpPromptTemplate
 from bridgic.core.model.types import Message, Role
 
 
@@ -47,3 +47,4 @@ async def test_mcp_prompt_template_streamable_http(mock_writer_streamable_http_c
         assert isinstance(msg, Message)
         assert msg.role in [Role.SYSTEM, Role.USER, Role.AI]
         assert len(msg.blocks) > 0
+

@@ -2,8 +2,8 @@ from typing import List, Union
 from mcp.types import PromptMessage, Prompt
 
 from bridgic.core.prompt._base_template import BasePromptTemplate
-from bridgic.core.mcp._mcp_server_connection import McpServerConnection
-from bridgic.core.mcp._mcp_server_connection_manager import McpServerConnectionManager
+from bridgic.protocols.mcp._mcp_server_connection import McpServerConnection
+from bridgic.protocols.mcp._mcp_server_connection_manager import McpServerConnectionManager
 from bridgic.core.model.types import Message
 
 class McpPromptTemplate(BasePromptTemplate):
@@ -66,3 +66,4 @@ class McpPromptTemplate(BasePromptTemplate):
                 messages.append(Message.from_text(text=msg.content.text, role=msg.role))
 
         return messages
+

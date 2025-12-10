@@ -2,7 +2,7 @@ import asyncio
 import time
 import pytest
 
-from bridgic.core.mcp._mcp_server_connection_manager import McpServerConnectionManager
+from bridgic.protocols.mcp import McpServerConnectionManager
 
 
 async def slow_task(duration: float, task_id: int = 0):

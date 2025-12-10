@@ -18,10 +18,6 @@ dependencies = [
     "jinja2>=3.1.0",
     "docstring-parser>=0.16.0",
     "cloudpickle>=3.1.2",
-    "mcp>=1.15.0",
-    "fastmcp>=2.13.0",
-    "websockets>=15.0.1",
-    "click>=8.1.0",
 ]
 
 [dependency-groups]

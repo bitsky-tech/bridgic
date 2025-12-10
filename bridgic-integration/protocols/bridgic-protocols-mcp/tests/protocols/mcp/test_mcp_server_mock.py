@@ -44,3 +44,4 @@ async def test_mcp_server_streamable_http_connection_get_prompt(mock_writer_stre
     )
     assert result is not None
     assert len(result.messages) > 0
+

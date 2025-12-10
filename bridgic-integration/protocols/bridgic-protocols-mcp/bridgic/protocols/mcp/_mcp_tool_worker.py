@@ -3,8 +3,8 @@ from typing_extensions import override
 from mcp.types import CallToolResult
 
 from bridgic.core.automa.worker import Worker
-from bridgic.core.mcp._mcp_server_connection import McpServerConnection
-from bridgic.core.mcp._mcp_server_connection_manager import McpServerConnectionManager
+from bridgic.protocols.mcp._mcp_server_connection import McpServerConnection
+from bridgic.protocols.mcp._mcp_server_connection_manager import McpServerConnectionManager
 from bridgic.core.types._error import McpServerConnectionError
 
 
@@ -145,3 +145,4 @@ class McpToolWorker(Worker):
                 f"You must create a McpServerConnection with name \"{connection_name}\" and "
                 f"ensure it is properly registered in a connection manager before using this worker."
             ) from e
+

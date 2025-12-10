@@ -4,7 +4,7 @@ import weakref
 from typing import Optional, Any, ClassVar, Coroutine, Awaitable, Dict, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from bridgic.core.mcp._mcp_server_connection import McpServerConnection
+    from bridgic.protocols.mcp._mcp_server_connection import McpServerConnection
 
 from bridgic.core.types._error import McpServerConnectionError
 
@@ -318,3 +318,4 @@ class McpServerConnectionManager:
                 daemon=True,
             )
             self._thread.start()
+

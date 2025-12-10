@@ -10,11 +10,11 @@ from mcp.client.stdio import stdio_client, StdioServerParameters
 from mcp.client.streamable_http import streamablehttp_client
 
 from bridgic.core.types._error import McpServerConnectionError
-from bridgic.core.mcp._mcp_server_connection_manager import McpServerConnectionManager
+from bridgic.protocols.mcp._mcp_server_connection_manager import McpServerConnectionManager
 
 if TYPE_CHECKING:
-    from bridgic.core.prompt._mcp_template import McpPromptTemplate
-    from bridgic.core.agentic.tool_specs._mcp_tool_spec import McpToolSpec
+    from bridgic.protocols.mcp._mcp_template import McpPromptTemplate
+    from bridgic.protocols.mcp._mcp_tool_spec import McpToolSpec
 
 class McpServerConnection(ABC):
     """
@@ -304,7 +304,7 @@ class McpServerConnection(ABC):
         List[McpPromptTemplate]
             The list of prompt template instances from the server.
         """
-        from bridgic.core.prompt._mcp_template import McpPromptTemplate
+        from bridgic.protocols.mcp._mcp_template import McpPromptTemplate
 
         result = self._get_manager().run_sync(
             coro=self._list_prompts_unsafe(),
@@ -329,7 +329,7 @@ class McpServerConnection(ABC):
         List[McpPromptTemplate]
             The list of prompt template instances from the server.
         """
-        from bridgic.core.prompt._mcp_template import McpPromptTemplate
+        from bridgic.protocols.mcp._mcp_template import McpPromptTemplate
 
         result = await self._get_manager().run_async(
             coro=self._list_prompts_unsafe(),
@@ -423,7 +423,7 @@ class McpServerConnection(ABC):
         RuntimeError
             If the connection is not established and cannot be established.
         """
-        from bridgic.core.agentic.tool_specs._mcp_tool_spec import McpToolSpec
+        from bridgic.protocols.mcp._mcp_tool_spec import McpToolSpec
 
         result = self._get_manager().run_sync(
             coro=self._list_tools_unsafe(),
@@ -457,7 +457,7 @@ class McpServerConnection(ABC):
         RuntimeError
             If the connection is not established and cannot be established.
         """
-        from bridgic.core.agentic.tool_specs._mcp_tool_spec import McpToolSpec
+        from bridgic.protocols.mcp._mcp_tool_spec import McpToolSpec
 
         result = await self._get_manager().run_async(
             coro=self._list_tools_unsafe(),
@@ -642,3 +642,4 @@ class McpServerConnectionStreamableHttp(McpServerConnection):
             start_args.update(self.client_kwargs)
 
         return streamablehttp_client(**start_args)
+

@@ -1,8 +1,8 @@
 import pytest
 import pytest_asyncio
 
-from bridgic.core.agentic.tool_specs import McpToolSpec
-from bridgic.core.agentic.workers._mcp_tool_worker import McpToolWorker
+from bridgic.protocols.mcp import McpToolSpec
+from bridgic.protocols.mcp._mcp_tool_worker import McpToolWorker
 from bridgic.core.utils._msgpackx import dump_bytes, load_bytes
 
 
@@ -67,3 +67,4 @@ async def test_mcp_tool_spec_deserialization(get_weather_tool_spec, mock_crawler
 
     # Verify the tool_info is not None
     assert obj.tool_info is not None    
+

@@ -9,7 +9,6 @@ enabling callable objects to be seamlessly used in agentic systems.
 from ._base_tool_spec import ToolSpec
 from ._function_tool_spec import FunctionToolSpec
 from ._automa_tool_spec import AutomaToolSpec, as_tool
-from ._mcp_tool_spec import McpToolSpec
 
 
 __all__ = [
@@ -17,5 +16,4 @@ __all__ = [
     "FunctionToolSpec",
     "AutomaToolSpec",
     "as_tool",
-    "McpToolSpec",
 ]
