@@ -154,17 +154,19 @@ class EjinjaPromptTemplate(BasePromptTemplate):
     >>> messages = template.format_messages(name="Charlie")
     """
 
+    template_str: str
+
     _env_template: Template
     _render_cache: MemoryCache
 
     def __init__(self, template_str: str):
         """
         Initialize the EjinjaPromptTemplate.
-        
+
         Parameters
         ----------
         template_str : str
-            The Jinja2 template string with optional `{% msg %}` blocks.
+            The template string using extended Jinja2 syntax.
         """
         super().__init__(template_str=template_str)
         self._env_template = env.from_string(template_str)

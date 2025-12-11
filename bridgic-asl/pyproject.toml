@@ -3,12 +3,14 @@ name = "bridgic-asl"
 version = "0.1.0"
 classifiers = [
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
 ]
 description = "ASL(Agent Structure Language) -- A python DSL(Domain Special Language) for descriping agent applications based on bridgic-core"
 readme = "README.md"
 requires-python = ">=3.9"
 authors = [
-    { name = "Tielei Zhang", email = "43289893@qq.com" },
+    { name = "Tielei Zhang", email = "zhangtl04@gmail.com" },
 ]
 dependencies = [
     "bridgic-core>=0.2.0",

@@ -1,10 +1,11 @@
 [project]
 name = "bridgic-core"
-version = "0.2.0"
+version = "0.2.1.dev1"
 license = {text = "MIT"}
 classifiers = [
-    # "Private :: Do Not Upload",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
 ]
 description = "Core classes and abstractions of Bridgic, as well as basic implementations for the orchestration framework."
 readme = "README.md"

@@ -5,8 +5,8 @@ This module provides specialized Worker implementations for specific functions t
 building Agentic systems with complex capabilities.
 """
 
-from ._tool_selection import ToolSelectionWorker
+from ._tool_selection_worker import ToolSelectionWorker
 
 __all__ = [
-    "ToolSelectionWorker"
+    "ToolSelectionWorker",
 ]
