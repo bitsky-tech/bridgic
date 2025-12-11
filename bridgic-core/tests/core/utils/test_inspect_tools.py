@@ -1,6 +1,14 @@
 import inspect
 from inspect import Parameter
-from bridgic.core.utils._inspect_tools import load_qualified_class_or_func, get_param_names_by_kind, get_param_names_all_kinds
+from typing import Annotated
+
+from bridgic.core.utils._console import printer
+from bridgic.core.utils._inspect_tools import (
+    load_qualified_class_or_func,
+    get_param_names_by_kind,
+    get_param_names_all_kinds,
+    get_tool_description_from,
+)
 
 class A:
     def func_1(self, a: int, b: str, c=5, d=6) -> int:
@@ -103,3 +111,42 @@ def test_load_functions_or_methods():
     func_qualified_name = load_qualified_class_or_func.__module__ + "." + load_qualified_class_or_func.__qualname__
     func = load_qualified_class_or_func(func_qualified_name)
     assert func is load_qualified_class_or_func
+
+def test_get_tool_description_from_docstring():
+    def func(x: int) -> int:
+        """
+        Short summary of func.
+
+        More details about func.
+
+        Returns
+        -------
+        int
+            The result of the function.
+        """
+        return x
+
+    desc = get_tool_description_from(func)
+    assert len(desc) > 0
+
+def test_get_tool_description_from_signature():
+    def func(a: int, b: Annotated[int, "meta"] = 1, *, c: str = "x") -> int:
+        return a
+
+    desc = get_tool_description_from(func)
+    assert desc == "func(a: int, b: int, *, c: str) -> int\n"
+
+def test_get_tool_description_ignores_self_and_cls():
+    class C:
+        def m(self, x: int):
+            return x
+
+        @classmethod
+        def n(cls, x: int):
+            return x
+
+    desc_m = get_tool_description_from(C.m)
+    assert desc_m == "m(x: int)\n"
+
+    desc_n = get_tool_description_from(C.n)
+    assert desc_n == "n(x: int)\n"
