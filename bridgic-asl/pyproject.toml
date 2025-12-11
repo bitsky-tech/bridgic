@@ -5,6 +5,9 @@ classifiers = [
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
 ]
 description = "ASL(Agent Structure Language) -- A python DSL(Domain Special Language) for descriping agent applications based on bridgic-core"
 readme = "README.md"
