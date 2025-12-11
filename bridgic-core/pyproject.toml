@@ -4,17 +4,18 @@ version = "0.2.1.dev1"
 license = {text = "MIT"}
 classifiers = [
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
 ]
 description = "Core classes and abstractions of Bridgic, as well as basic implementations for the orchestration framework."
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.9"
 authors = [
     { name = "Tielei Zhang", email = "zhangtl04@gmail.com" },
 ]
 dependencies = [
     "msgpack>=1.1.1",
-    "pydantic>=2.11.0",
+    "pydantic>=2.11.0,<2.12.0",
     "jinja2>=3.1.0",
     "docstring-parser>=0.16.0",
     "cloudpickle>=3.1.2",
@@ -24,9 +25,9 @@ dependencies = [
 dev = [
     "pytest>=8.4.0",
     "pytest-asyncio>=1.0.0",
-    "bridgic-llms-openai>=0.1.2.dev1",
-    "bridgic-llms-openai-like>=0.1.2.dev1",
-    "bridgic-llms-vllm>=0.1.2.dev1",
+    "bridgic-llms-openai>=0.1.1",
+    "bridgic-llms-openai-like>=0.1.1",
+    "bridgic-llms-vllm>=0.1.1",
 ]
 
 [tool.pytest.ini_options]

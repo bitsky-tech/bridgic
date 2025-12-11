@@ -1,19 +1,20 @@
 [project]
 name = "bridgic-llms-openai-like"
-version = "0.1.2.dev1"
+version = "0.1.1"
 license = {text = "MIT"}
 classifiers = [
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
 ]
 description = "OpenAI-like LLM adapters for Bridgic, enabling connectivity with external LLM providers."
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.9"
 authors = [
     { name = "Tielei Zhang", email = "zhangtl04@gmail.com" },
 ]
 dependencies = [
-    "bridgic-core>=0.1.4.dev1",
+    "bridgic-core>=0.1.1",
     "openai>=1.60.0",
     "httpx>=0.28.1",
     "httpx-aiohttp>=0.1.8",

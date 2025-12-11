@@ -4,12 +4,13 @@ version = "0.2.1.dev1"
 license = {text = "MIT"}
 classifiers = [
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
 ]
 description = "Bridgic is a project that enables developers to develop agents/workflows in a more natural and flexible way, consisting of several Python packages."
 keywords = ["LLM", "devtools", "workflow", "agent"]
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.9"
 authors = [
     { name = "Tielei Zhang", email = "zhangtl04@gmail.com" },
 ]

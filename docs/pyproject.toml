@@ -3,7 +3,7 @@ name = "bridgic-docs"
 version = "0.1.0"
 description = "Documentation for Bridgic framework."
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.9"
 dependencies = [
     "griffe-fieldz>=0.3.0",
     "mkdocs>=1.6.1",
