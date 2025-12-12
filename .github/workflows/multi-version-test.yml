@@ -1,0 +1,131 @@
+name: Multi-Version Test
+
+on:
+  push:
+    branches:
+      - main
+      - dev
+  pull_request:
+    branches:
+      - main
+      - dev
+  workflow_dispatch:  # Allow manual triggering
+
+jobs:
+  test-standard-range:
+    name: Test Standard Range (${{ matrix.package }}, Python ${{ matrix.python-version }})
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.9", "3.10", "3.11", "3.12", "3.13"]
+        package:
+          - bridgic-core
+          - bridgic-asl
+          - bridgic-integration/llms/bridgic-llms-openai
+          - bridgic-integration/llms/bridgic-llms-openai-like
+          - bridgic-integration/llms/bridgic-llms-vllm
+          - bridgic-integration/traces/bridgic-traces-opik
+          - bridgic-integration/traces/bridgic-traces-langwatch
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: "latest"
+          enable-cache: true
+
+      - name: Cache uv dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/uv
+            ${{ matrix.package }}/.venv
+          key: ${{ runner.os }}-${{ matrix.package }}-py${{ matrix.python-version }}-${{ hashFiles(format('{0}/uv.lock', matrix.package)) }}
+          restore-keys: |
+            ${{ runner.os }}-${{ matrix.package }}-py${{ matrix.python-version }}-
+
+      - name: Install dependencies
+        run: |
+          cd ${{ matrix.package }}
+          uv sync
+
+      - name: Run tests
+        run: |
+          cd ${{ matrix.package }}
+          uv run pytest --tb=short --verbose
+
+  test-special-range:
+    name: Test Special Range (${{ matrix.package }}, Python ${{ matrix.python-version }})
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
+        package:
+          - bridgic-integration/protocols/bridgic-protocols-mcp
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Setup Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: "latest"
+          enable-cache: true
+
+      - name: Cache uv dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/uv
+            ${{ matrix.package }}/.venv
+          key: ${{ runner.os }}-${{ matrix.package }}-py${{ matrix.python-version }}-${{ hashFiles(format('{0}/uv.lock', matrix.package)) }}
+          restore-keys: |
+            ${{ runner.os }}-${{ matrix.package }}-py${{ matrix.python-version }}-
+
+      - name: Install dependencies
+        run: |
+          cd ${{ matrix.package }}
+          uv sync
+
+      - name: Run tests
+        run: |
+          cd ${{ matrix.package }}
+          uv run pytest --tb=short --verbose
+
+  # Summary job that depends on all test jobs
+  test-summary:
+    name: Test Summary
+    runs-on: ubuntu-22.04
+    needs: [test-standard-range, test-special-range]
+    if: always()
+    
+    steps:
+      - name: Check test results
+        run: |
+          echo "Standard range tests: ${{ needs.test-standard-range.result }}"
+          echo "Special range tests: ${{ needs.test-special-range.result }}"
+          
+          if [[ "${{ needs.test-standard-range.result }}" != "success" ]] || \
+             [[ "${{ needs.test-special-range.result }}" != "success" ]]; then
+            echo "❌ Some tests failed"
+            exit 1
+          else
+            echo "✅ All tests passed"
+          fi
+
