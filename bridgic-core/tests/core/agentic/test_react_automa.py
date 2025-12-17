@@ -157,7 +157,7 @@ class MultiplyAutoma(GraphAutoma):
 def react_automa_2(llm: ToolSelection) -> ReActAutoma:
     return ReActAutoma(
         llm=llm,
-        system_prompt="You are a helpful assistant that are good at calculating by using tools.",
+        system_prompt="You are a helpful assistant that is good at calculating by using tools.",
     )
 
 @pytest.mark.asyncio

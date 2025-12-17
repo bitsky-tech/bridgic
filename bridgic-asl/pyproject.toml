@@ -9,7 +9,7 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
 ]
-description = "ASL(Agent Structure Language) -- A python DSL(Domain Special Language) for descriping agent applications based on bridgic-core"
+description = "ASL(Agent Structure Language) -- a powerful declarative DSL that embodies a component-oriented paradigm and is even capable of supporting dynamic topologies"
 readme = "README.md"
 requires-python = ">=3.9"
 authors = [
