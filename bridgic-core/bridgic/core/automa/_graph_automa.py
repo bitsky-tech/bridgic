@@ -245,7 +245,7 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
         The name of the automa.
 
     thread_pool : Optional[ThreadPoolExecutor]
-        The thread pool for parallel running of I/O-bound tasks.
+        The thread pool for parallel running of I/O-bound or CPU-bound tasks.
 
         - If not provided, a default thread pool will be used.
         The maximum number of threads in the default thread pool dependends on the number of CPU cores. Please refer to 
@@ -253,6 +253,9 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
 
         - If provided, all workers (including all nested Automa instances) will be run in it. In this case, the 
         application layer code is responsible to create it and shut it down.
+
+    running_options : Optional[RunningOptions]
+        The running options for an automa instance (if needed).
 
     Examples
     --------
