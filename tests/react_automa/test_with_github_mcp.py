@@ -28,7 +28,7 @@ def react_automa_with_github_mcp(openai_llm, github_mcp_streamable_http_connecti
 
 
 @pytest.mark.asyncio
-async def test_react_automa_github_pull_requests(
+async def test_query_for_pull_requests(
     react_automa_with_github_mcp,
     openai_api_key,
     openai_model_name,

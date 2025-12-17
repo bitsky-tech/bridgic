@@ -18,7 +18,7 @@ init-dev:
 	@source .venv/bin/activate && uv sync --group dev --group publish
 	@echo "\n==> Initializing virtual environment for subpackages..."
 	@source .venv/bin/activate && \
-	find . -maxdepth 4 -type d -name "bridgic-*" | while read dir; do \
+	find ./packages -maxdepth 4 -type d -name "bridgic-*" | while read dir; do \
 		if [ -f "$$dir/Makefile" ] && [ -f "$$dir/pyproject.toml" ]; then \
 			echo "==> Found Bridgic subpackage: $$dir"; \
 			$(MAKE) -C "$$dir" venv-collect; \
@@ -26,14 +26,14 @@ init-dev:
 	done
 
 test-all:
-	@find . -maxdepth 4 -type d -name "bridgic-*" | while read dir; do \
+	@find ./packages -maxdepth 4 -type d -name "bridgic-*" | while read dir; do \
 		if [ -f "$$dir/Makefile" ] && [ -f "$$dir/pyproject.toml" ]; then \
 			echo ""; \
 			echo "==> Testing subpackage [$$dir]..."; \
 			$(MAKE) -C "$$dir" test; \
 		fi \
 	done
-	@cd integration-tests && uv run -- pytest -v
+	@cd ./tests && uv run -- pytest -v
 
 build:
 	@mkdir -p dist
@@ -41,7 +41,7 @@ build:
 	@uv build
 
 build-all:
-	@find . -maxdepth 4 -type d -name "bridgic-*" | while read dir; do \
+	@find ./packages -maxdepth 4 -type d -name "bridgic-*" | while read dir; do \
 		if [ -f "$$dir/Makefile" ] && [ -f "$$dir/pyproject.toml" ]; then \
 			echo "==> Building subpackage [$$dir]..."; \
 			$(MAKE) -C "$$dir" build; \

@@ -1,0 +1,28 @@
+[project]
+name = "tests"
+version = "0.1.0"
+description = "Integration tests for Bridgic framework"
+requires-python = ">=3.10"
+classifiers = [
+    "Private :: Do Not Upload",
+]
+dependencies = [
+    "pytest>=8.4.0",
+    "pytest-asyncio>=1.0.0",
+    "bridgic-core",
+    "bridgic-llms-openai",
+    "bridgic-llms-openai-like",
+    "bridgic-llms-vllm",
+    "bridgic-protocols-mcp",
+]
+
+[tool.pytest.ini_options]
+addopts = ["--tb=short", "--verbose"]
+
+[tool.uv.sources]
+bridgic-core = { path = "../packages/bridgic-core", editable = true }
+bridgic-llms-openai = { path = "../packages/bridgic-integration/llms/bridgic-llms-openai", editable = true }
+bridgic-llms-openai-like = { path = "../packages/bridgic-integration/llms/bridgic-llms-openai-like", editable = true }
+bridgic-llms-vllm = { path = "../packages/bridgic-integration/llms/bridgic-llms-vllm", editable = true }
+bridgic-protocols-mcp = { path = "../packages/bridgic-integration/protocols/bridgic-protocols-mcp", editable = true }
+

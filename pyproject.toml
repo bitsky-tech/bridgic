@@ -39,6 +39,6 @@ include = ["/meta/bridgic/"]
 "/meta/bridgic" = "bridgic"
 
 [tool.uv.sources]
-bridgic-core = { path = "./bridgic-core", editable = true }
-bridgic-asl = { path = "./bridgic-asl", editable = true }
-bridgic-llms-openai-like = { path = "./bridgic-integration/llms/bridgic-llms-openai-like", editable = true }
+bridgic-core = { path = "./packages/bridgic-core", editable = true }
+bridgic-asl = { path = "./packages/bridgic-asl", editable = true }
+bridgic-llms-openai-like = { path = "./packages/bridgic-integration/llms/bridgic-llms-openai-like", editable = true }
