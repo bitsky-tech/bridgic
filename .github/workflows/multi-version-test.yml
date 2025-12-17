@@ -20,13 +20,13 @@ jobs:
       matrix:
         python-version: ["3.9", "3.10", "3.11", "3.12", "3.13"]
         package:
-          - bridgic-core
-          - bridgic-asl
-          - bridgic-integration/llms/bridgic-llms-openai
-          - bridgic-integration/llms/bridgic-llms-openai-like
-          - bridgic-integration/llms/bridgic-llms-vllm
-          - bridgic-integration/traces/bridgic-traces-opik
-          - bridgic-integration/traces/bridgic-traces-langwatch
+          - packages/bridgic-core
+          - packages/bridgic-asl
+          - packages/bridgic-integration/llms/bridgic-llms-openai
+          - packages/bridgic-integration/llms/bridgic-llms-openai-like
+          - packages/bridgic-integration/llms/bridgic-llms-vllm
+          - packages/bridgic-integration/traces/bridgic-traces-opik
+          - packages/bridgic-integration/traces/bridgic-traces-langwatch
 
     steps:
       - name: Checkout repository
@@ -71,7 +71,8 @@ jobs:
       matrix:
         python-version: ["3.10", "3.11", "3.12", "3.13"]
         package:
-          - bridgic-integration/protocols/bridgic-protocols-mcp
+          - packages/bridgic-integration/protocols/bridgic-protocols-mcp
+          - tests
 
     steps:
       - name: Checkout repository
