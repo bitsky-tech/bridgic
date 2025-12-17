@@ -21,6 +21,23 @@ DEFAULT_TEMPLATE_FILE = "tools_chat.jinja"
 class ReActAutoma(GraphAutoma):
     """
     A react automa is a subclass of graph automa that implements the [ReAct](https://arxiv.org/abs/2210.03629) prompting framework.
+
+    Parameters
+    ----------
+    llm : ToolSelection
+        The LLM instance used by ReAct internal planning (i.e., used for tool selection).
+    system_prompt : Optional[Union[str, SystemMessage]]
+        The system prompt used by ReAct. This argument can also be specified at runtime, i.e., when calling `arun`.
+    tools : Optional[List[Union[Callable, Automa, ToolSpec]]]
+        The tools used by ReAct. A tool can be a function, an automa instance, or a `ToolSpec` instance. This argument can also be specified at runtime, i.e., when calling `arun`.
+    name : Optional[str]
+        The name of the automa.
+    thread_pool : Optional[ThreadPoolExecutor]
+        The thread pool for parallel running of I/O-bound or CPU-bound tasks.
+    running_options : Optional[RunningOptions]
+        The running options for an automa instance (if needed).
+    max_iterations : int
+        The maximum number of iterations to be executed.
     """
 
     _llm: ToolSelection
@@ -123,6 +140,32 @@ class ReActAutoma(GraphAutoma):
         tools: Optional[List[Union[Callable, Automa, ToolSpec]]] = None,
         feedback_data: Optional[Union[InteractionFeedback, List[InteractionFeedback]]] = None,
     ) -> Any:
+        """
+        The entry point for a `ReActAutoma` instance.
+
+        Parameters
+        ----------
+        user_msg : Optional[Union[str, UserTextMessage]]
+            The input message from user. If this `user_msg` messages is provided and the `messages` is NOT provided, the final prompt given to the LLM will be composed of three parts: `system_prompt` + `chat_history` + `user_msg`.
+        chat_history : Optional[List[Union[UserTextMessage, AssistantTextMessage, ToolMessage]]]
+            The chat history.
+        messages : Optional[List[ChatMessage]]
+            The whole message list to LLM. If this `messages` argument is provided, the final prompt given to the LLM will use this argument instead of the `user_msg` argument.
+        tools : Optional[List[Union[Callable, Automa, ToolSpec]]]
+            The tools used by ReAct. A tool can be a function, an automa instance, or a `ToolSpec` instance. This argument can also be specified during the initialization of a `ReActAutoma` instance.
+        feedback_data : Optional[Union[InteractionFeedback, List[InteractionFeedback]]]
+            Feedbacks that are received from one or multiple human interactions occurred before the
+            Automa was paused. This argument may be of type `InteractionFeedback` or 
+            `List[InteractionFeedback]`. If only one interaction occurred, `feedback_data` should be
+            of type `InteractionFeedback`. If multiple interactions occurred simultaneously, 
+            `feedback_data` should be of type `List[InteractionFeedback]`.
+
+        Returns
+        -------
+        Any
+            The execution result of the output-worker that has the setting `is_output=True`,
+            otherwise None.
+        """
         return await super().arun(
             user_msg=user_msg,
             chat_history=chat_history,
@@ -140,9 +183,6 @@ class ReActAutoma(GraphAutoma):
         messages: Optional[List[ChatMessage]] = None,
         tools: Optional[List[Union[Callable, Automa, ToolSpec]]] = None,
     ) -> Dict[str, Any]:
-        """
-        Validate and transform the input messages and tools to the canonical format.
-        """
         
         # Part One: validate and transform the input messages.
         # Unify input messages of various types to the `ChatMessage` format.
@@ -323,9 +363,6 @@ class ReActAutoma(GraphAutoma):
         tool_results: List[Any],
         tool_calls: List[ToolCall] = From("plan_next_step"),
     ) -> List[ToolMessage]:
-        """
-        Merge the results of the tools.
-        """
         # print(f"\n******* ReActAutoma.merge_tools_results *******\n")
         # print(f"tool_results: {tool_results}")
         # print(f"tool_calls: {tool_calls}")
