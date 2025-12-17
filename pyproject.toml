@@ -5,7 +5,7 @@ license = {text = "MIT"}
 classifiers = [
     "Programming Language :: Python :: 3",
 ]
-description = "Bridgic is a project that enables developers to develop agents/workflows in a more natural and flexible way, consisting of several Python packages."
+description = "Bridgic is an agentic programming framework built around a novel dynamic topology orchestration model and a component-oriented paradigm."
 keywords = ["LLM", "devtools", "workflow", "agent"]
 readme = "README.md"
 requires-python = ">=3.9"
