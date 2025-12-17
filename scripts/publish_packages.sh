@@ -165,7 +165,7 @@ while IFS= read -r dir; do
     if [ -f "$dir/Makefile" ] && [ -f "$dir/pyproject.toml" ]; then
         subpackage_list+=("$dir")
     fi
-done < <(find . -maxdepth 4 -type d -name "bridgic-*" | sort)
+done < <(find ./packages -maxdepth 4 -type d -name "bridgic-*" | sort)
 
 ###############################################################################
 # Step 1: Publish priority packages first in order

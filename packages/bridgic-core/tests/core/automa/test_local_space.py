@@ -1,0 +1,364 @@
+from typing import Any, Dict
+import pytest
+from bridgic.core.automa import GraphAutoma, worker
+from bridgic.core.automa.args import ArgsMappingRule, System
+
+#### Test case: get_local_space runtime_context must contain worker_key
+
+class MissingWorkerKeyStateAutomaRuntimeContextNone(GraphAutoma):
+    @worker(is_start=True)
+    async def start(self):
+        local_space = self.get_local_space()
+        loop_index = local_space.get("loop_index", 1)
+        local_space["loop_index"] = loop_index + 1
+        return loop_index
+    
+    @worker(dependencies=["start"], is_output=True)
+    async def end(self, loop_index: int):
+        return loop_index + 5
+
+@pytest.fixture
+def missing_worker_key_state_automa_runtime_context_none():
+    graph = MissingWorkerKeyStateAutomaRuntimeContextNone()
+    return graph
+
+@pytest.mark.asyncio
+async def test_get_local_space_runtime_context_none(missing_worker_key_state_automa_runtime_context_none: MissingWorkerKeyStateAutomaRuntimeContextNone):
+    with pytest.raises(TypeError, match=r"get_local_space\(\) missing 1 required positional argument: 'runtime_context'"):
+        await missing_worker_key_state_automa_runtime_context_none.arun()
+
+#### Test case: get_local_space can be called multiple times
+
+class DuplicateLocalSpaceCallAutoma(GraphAutoma):
+    @worker(is_start=True)
+    async def start(self, rtx = System("runtime_context")):
+        local_space = self.get_local_space(rtx)
+        loop_index = local_space.get("loop_index", 1)
+        # first add 1
+        local_space["loop_index"] = loop_index + 1
+        local_space = self.get_local_space(runtime_context = rtx)
+        loop_index = local_space.get("loop_index", 1)
+        # second add 1
+        local_space["loop_index"] = loop_index + 1
+        return loop_index
+    
+    @worker(dependencies=["start"], is_output=True)
+    async def end(self, loop_index: int):
+        return loop_index + 5
+
+@pytest.fixture
+def duplicate_local_space_call_automa():
+    graph = DuplicateLocalSpaceCallAutoma()
+    return graph
+
+@pytest.mark.asyncio
+async def test_get_local_space_called_multiple_times_works(duplicate_local_space_call_automa: DuplicateLocalSpaceCallAutoma):
+    # get_local_space can be called multiple times, so this should not raise an error
+    result = await duplicate_local_space_call_automa.arun()
+    assert result == 7  # 1 + 1 + 5
+
+#### Test case: local space can be saved and reused across runs, should_reset_local_space is True by default, so local space will default to empty dict after rerun
+
+class ArithmeticAutomaWithLocalSpace(GraphAutoma):
+    @worker(is_start=True)
+    async def start(self, x: int, rtx = System("runtime_context")):
+        local_space = self.get_local_space(rtx)
+        start_state = local_space.get("start_state", x)
+        # start_state first run is the default value 2; second run reads from local space 3*2; third run reads from local space 3 * (3*2)
+        new_start_state = 3 * start_state
+        # set the start_state in local space
+        local_space["start_state"] = new_start_state
+        return new_start_state
+
+    @worker(dependencies=["start"], is_output=True)
+    async def end(self, start_state: int, rtx = System("runtime_context")):
+        local_space = self.get_local_space(rtx)
+        end_state = local_space.get("end_state", start_state)
+        # end_state first run is the default value 3 * 2; second run reads from local space 3*2 + 5; third run reads from local space 3*2 + 5 + 5
+        new_end_state = end_state + 5
+        # set the end_state in local space
+        local_space["end_state"] = new_end_state
+        return new_end_state # the arun result value is the new_end_state
+
+@pytest.fixture
+def arithmetic_automa_with_local_space():
+    graph = ArithmeticAutomaWithLocalSpace()
+    return graph
+
+@pytest.mark.asyncio
+async def test_automa_rerun_clear_local_space(arithmetic_automa_with_local_space: ArithmeticAutomaWithLocalSpace):
+    # First run.
+    result = await arithmetic_automa_with_local_space.arun(x=2)
+    assert result == 2*3+5
+    # Second run (with local space empty dict). x=5 take effect, because local_space is bound to the Automa instance and should_reset_local_space function result is False. After rerun, the local_space is reset to empty dict, so the start_state is the 5
+    result = await arithmetic_automa_with_local_space.arun(x=5)
+    assert result == 3*5+5
+    # Third run (with local space empty dict). x=10 take effect, because local_space is bound to the Automa instance and should_reset_local_space function result is False. After rerun, the local_space is reset to empty dict, so the start_state is the 10
+    result = await arithmetic_automa_with_local_space.arun(x=10)
+    assert result == 3 * 10 + 5
+
+
+#### Test case: local space can be saved and reused across runs, should_reset_local_space is False, so local space will not default to empty dict after rerun
+
+class ArithmeticAutomaWithPersistentLocalSpace(GraphAutoma):
+
+    def should_reset_local_space(self) -> bool:
+        return False
+
+    @worker(is_start=True)
+    async def start(self, x: int, rtx = System("runtime_context")):
+        local_space = self.get_local_space(rtx)
+        start_state = local_space.get("start_state", x)
+        # start_state first run is the default value 2; second run reads from local space 3*2; third run reads from local space 3 * (3*2)
+        new_start_state = 3 * start_state
+        # set the start_state in local space
+        local_space["start_state"] = new_start_state
+        return new_start_state
+
+    @worker(dependencies=["start"], is_output=True)
+    async def end(self, start_state: int, rtx = System("runtime_context")):
+        local_space = self.get_local_space(rtx)
+        end_state = local_space.get("end_state", start_state)
+        # end_state first run is the default value 3 * 2; second run reads from local space 3*2 + 5; third run reads from local space 3*2 + 5 + 5
+        new_end_state = end_state + 5
+        # set the end_state in local space
+        local_space["end_state"] = new_end_state
+        return new_end_state # the arun result value is the new_end_state
+
+@pytest.fixture
+def arithmetic_automa_with_persistent_local_space():
+    graph = ArithmeticAutomaWithPersistentLocalSpace()
+    return graph
+
+@pytest.mark.asyncio
+async def test_automa_rerun_persists_local_space(arithmetic_automa_with_persistent_local_space: ArithmeticAutomaWithPersistentLocalSpace):
+    # First run.
+    result = await arithmetic_automa_with_persistent_local_space.arun(x=2)
+    assert result == 2*3+5
+    # Second run (with local space persistent last arun result). x=5 does not take effect, because local_space is bound to the Automa instance and should_reset_local_space function result is False. After rerun, the local_space not reset to empty dict, so the start_state is the 3*2
+    result = await arithmetic_automa_with_persistent_local_space.arun(x=5)
+    assert result == (3 * 2 + 5) + 5
+    assert result != 3*5+5
+    # Third run (with local space persistent last arun result). x=10 does not take effect, because local_space is bound to the Automa instance and should_reset_local_space function result is False. After rerun, the local_space not reset to empty dict, so the start_state is the 3 * (3*2)
+    result = await arithmetic_automa_with_persistent_local_space.arun(x=10)
+    assert result == (3*2 + 5 + 5) + 5
+    assert result != 3 * 10 + 5
+
+
+#### Test case: rerun a nested Automa via ferry_to; nested counters should persist across reruns
+
+class TodoItem():
+    def __init__(self, text, completed=False, learn_count=1):
+        self.text = text
+        self.completed = completed
+        self.learn_count = learn_count
+    def dump_to_dict(self) -> Dict[str, Any]:
+        return {
+            "text": self.text,
+            "completed": self.completed,
+            "learn_count": self.learn_count
+        }
+    def load_from_dict(self, state_dict: Dict[str, Any]) -> None:
+        self.text = state_dict["text"]
+        self.completed = state_dict["completed"]
+        self.learn_count = state_dict["learn_count"]
+    def __str__(self):
+        status = "✅" if self.completed else "⭕"
+        return f"{status} {self.text} {self.learn_count}"
+    
+    def __repr__(self):
+        return f"TodoItem('{self.text}', {self.completed}, {self.learn_count})"
+    
+    def __eq__(self, other):
+        return (isinstance(other, TodoItem) and 
+                self.text == other.text and 
+                self.completed == other.completed and
+                self.learn_count == other.learn_count)
+
+class TopAutoma(GraphAutoma):
+    # The start worker is a nested Automa which will be added by add_worker()
+
+    @worker(dependencies=["start"], is_output=True)
+    async def end(self, my_list: list[str]):
+        if len(my_list) < 5:
+            self.ferry_to("start")
+        else:
+            return my_list
+
+class NestedAutoma(GraphAutoma):
+
+    def should_reset_local_space(self) -> bool:
+        return False
+    
+    @worker(is_start=True)
+    async def start(self, rtx = System("runtime_context")):
+        local_space = self.get_local_space(rtx)
+        loop_index = local_space.get("loop_index", 1)
+        local_space["loop_index"] = loop_index + 1
+        return loop_index
+    
+    @worker(dependencies=["start"])
+    async def test_local_space_str(self, loop_index, rtx = System("runtime_context")):
+        local_space = self.get_local_space(rtx)
+        hi = local_space.get("hi", "hi")
+        hi = hi + str(loop_index)
+        local_space["hi"] = hi
+        if loop_index == 1:
+            assert hi == "hi1"
+        elif loop_index == 2:
+            assert hi == "hi12"
+        elif loop_index == 3:
+            assert hi == "hi123"
+        elif loop_index == 4:
+            assert hi == "hi1234"
+        elif loop_index == 5:
+            assert hi == "hi12345"
+        return loop_index
+
+    @worker(dependencies=["test_local_space_str"])
+    async def test_local_space_obj(self, loop_index, rtx = System("runtime_context")):
+        local_space = self.get_local_space(rtx)
+        count_obj = local_space.get("count_obj", {"count": 1})
+        local_space["count_obj"] = {
+            "count": count_obj.get("count") + 1
+        }
+        assert local_space["count_obj"].get("count") == loop_index + 1
+        return loop_index
+
+    
+    @worker(dependencies=["test_local_space_obj"])
+    async def test_local_space_class(self,loop_index, rtx = System("runtime_context")):
+        local_space = self.get_local_space(rtx)
+        todo = local_space.get("todo", TodoItem("Learn Bridgic"))
+        assert todo.text == "Learn Bridgic"
+        assert type(todo).__name__ == "TodoItem"
+
+        # Update todo state
+        completed_todo = TodoItem("Learn Bridgic", True, 2)
+        if loop_index == 1:
+            assert todo.text == "Learn Bridgic"
+            assert type(todo).__name__ == "TodoItem"
+            assert not todo.completed
+            assert todo.learn_count == 1
+        elif loop_index == 2:
+            assert todo.text == "Learn Bridgic"
+            assert type(todo).__name__ == "TodoItem"
+            assert todo.completed
+            assert todo.learn_count == 2
+        local_space["todo"] = completed_todo
+
+    @worker(dependencies=["test_local_space_class"], args_mapping_rule=ArgsMappingRule.SUPPRESSED)
+    async def test_local_space_int(self, rtx = System("runtime_context")):
+        local_space = self.get_local_space(rtx)
+        count = local_space.get("count", 0)
+        local_space["count"] = count + 1
+        return count
+    
+    @worker(dependencies=["test_local_space_int"], is_output=True)
+    async def end(self, count: int):
+        return ['Learn Bridgic'] * count
+
+@pytest.fixture
+def nested_automa():
+    graph = NestedAutoma()
+    return graph
+
+@pytest.fixture
+def top_automa_with_nested(nested_automa):
+    graph = TopAutoma()
+    graph.add_worker("start", nested_automa, is_start=True)
+    return graph
+
+@pytest.mark.asyncio
+async def test_nested_ferry_to_automa_rerun_clear_local_space(top_automa_with_nested):
+    """
+    the top_automa_with_nested will clear the local space after arun(), 
+    but the nested_automa will not clear the local space after arun(), 
+    because the should_reset_local_space function result is False
+    so result will be next code
+    """
+    result = await top_automa_with_nested.arun()
+    assert result == ['Learn Bridgic'] * 5
+    result = await top_automa_with_nested.arun()
+    assert result == ['Learn Bridgic'] * 6
+    result = await top_automa_with_nested.arun()
+    assert result == ['Learn Bridgic'] * 7
+
+
+#####: Test case: local space to_dict/from_dict with a complex object (no nested Automa)
+
+class ComplexObjectLocalSpaceAutoma(GraphAutoma):
+    @worker(is_start=True)
+    async def start(self, rtx = System("runtime_context")):
+        local_space = self.get_local_space(rtx)
+        loop_index = local_space.get("loop_index", 1)
+        local_space["loop_index"] = loop_index + 1
+        return loop_index
+    
+    @worker(dependencies=["start"])
+    async def test_local_space_dict(self, loop_index: int, rtx = System("runtime_context")):
+        local_space_dict = self.get_local_space(rtx)
+        if loop_index != 1:
+            assert local_space_dict == {}
+        # set local_space_dict["loop_index"] to loop_index
+        local_space_dict["loop_index"] = loop_index
+        assert local_space_dict["loop_index"] == loop_index
+        local_space_dict.clear()
+        assert local_space_dict == {}
+        return loop_index
+    
+    @worker(dependencies=["test_local_space_dict"])
+    async def test_item(self, loop_index: int, rtx = System("runtime_context")):
+        local_space = self.get_local_space(rtx)
+        item = local_space.get("item", TodoItem("Learn Bridgic"))
+        new_item = TodoItem("Learn Bridgic" + str(loop_index), loop_index % 2 == 0, loop_index + 1)
+        local_space["item"] = new_item
+        if loop_index == 1:
+            assert item.text == "Learn Bridgic"
+            assert item.completed == False
+            assert item.learn_count == 1
+        elif loop_index == 2:
+            assert item.text == "Learn Bridgic1"
+            assert item.completed == False
+            assert item.learn_count == 2
+        elif loop_index == 3:
+            assert item.text == "Learn Bridgic2"
+            assert item.completed == True
+            assert item.learn_count == 3
+        elif loop_index == 4:
+            assert item.text == "Learn Bridgic3"
+            assert item.completed == False
+            assert item.learn_count == 4
+        elif loop_index == 5:
+            assert item.text == "Learn Bridgic4"
+            assert item.completed == True
+            assert item.learn_count == 5
+        return item
+    
+    @worker(dependencies=["test_item"], is_output=True)
+    async def end(self, item: TodoItem):
+        if item.learn_count < 5:
+            self.ferry_to("start")
+        else:
+            return ["Learn Bridgic"] * item.learn_count
+
+@pytest.fixture
+def complex_object_local_space_automa():
+    graph = ComplexObjectLocalSpaceAutoma()
+    return graph
+
+@pytest.mark.asyncio
+async def test_complex_object_local_space_automa_serialization(complex_object_local_space_automa: ComplexObjectLocalSpaceAutoma):
+    result = await complex_object_local_space_automa.arun()
+    assert result == ["Learn Bridgic"] * 5
+    automa_dict = complex_object_local_space_automa.dump_to_dict()
+    complex_object_local_space_automa.load_from_dict(automa_dict)
+    assert isinstance(complex_object_local_space_automa, ComplexObjectLocalSpaceAutoma)
+    # the local space is reset to empty dict after arun(), even if the local space is serialized and deserialized, the result is still ["Learn Bridgic"] * 5
+    result = await complex_object_local_space_automa.arun()
+    assert result == ["Learn Bridgic"] * 5
+    assert isinstance(complex_object_local_space_automa, ComplexObjectLocalSpaceAutoma)
+
+
+if __name__ == "__main__":
+    pytest.main(["-v", __file__])

@@ -38,7 +38,17 @@ include = ["/meta/bridgic/"]
 [tool.hatch.build.targets.wheel.sources]
 "/meta/bridgic" = "bridgic"
 
+[tool.uv.workspace]
+members = [
+    "packages/bridgic-core",
+    "packages/bridgic-asl",
+    "packages/bridgic-integration/llms/*",
+    "packages/bridgic-integration/protocols/*",
+    "packages/bridgic-integration/traces/*",
+    "tests",
+]
+
 [tool.uv.sources]
-bridgic-core = { path = "./bridgic-core", editable = true }
-bridgic-asl = { path = "./bridgic-asl", editable = true }
-bridgic-llms-openai-like = { path = "./bridgic-integration/llms/bridgic-llms-openai-like", editable = true }
+bridgic-core = { workspace = true }
+bridgic-asl = { workspace = true }
+bridgic-llms-openai-like = { workspace = true }
