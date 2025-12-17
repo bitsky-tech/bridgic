@@ -35,6 +35,9 @@ test-all:
 	done
 	@cd ./tests && uv run -- pytest -v
 
+test-integration:
+	@cd ./tests && uv run -- pytest -v
+
 build:
 	@mkdir -p dist
 	@rm -rf dist/*

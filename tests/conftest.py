@@ -11,7 +11,7 @@ import shutil
 
 from bridgic.llms.openai import OpenAILlm, OpenAIConfiguration
 from bridgic.llms.vllm import VllmServerLlm, VllmServerConfiguration
-from bridgic.protocols.mcp import McpServerConnectionStreamableHttp
+from bridgic.protocols.mcp import McpServerConnectionStdio, McpServerConnectionStreamableHttp
 
 
 # ============================================================================
@@ -107,6 +107,27 @@ def vllm_llm(vllm_api_base, vllm_api_key, vllm_model_name):
 # ============================================================================
 # MCP Server fixtures
 # ============================================================================
+
+@pytest_asyncio.fixture
+async def github_mcp_stdio_connection(has_npx, github_token):
+    """GitHub MCP server connection via stdio (requires npx)."""
+    if not has_npx:
+        pytest.skip("npx is not available")
+    if not github_token:
+        pytest.skip("GITHUB_TOKEN environment variable not set")
+
+    connection = McpServerConnectionStdio(
+        name="github-mcp-stdio",
+        command="npx",
+        args=["-y", "@modelcontextprotocol/server-github"],
+        env={"GITHUB_TOKEN": github_token},
+        request_timeout=5,
+    )
+
+    connection.connect()
+    yield connection
+    connection.close()
+
 
 @pytest_asyncio.fixture
 async def github_mcp_streamable_http_connection(github_mcp_url, github_token):
