@@ -28,10 +28,12 @@ init-dev:
 test-all:
 	@find . -maxdepth 4 -type d -name "bridgic-*" | while read dir; do \
 		if [ -f "$$dir/Makefile" ] && [ -f "$$dir/pyproject.toml" ]; then \
+			echo ""; \
 			echo "==> Testing subpackage [$$dir]..."; \
 			$(MAKE) -C "$$dir" test; \
 		fi \
 	done
+	@cd integration-tests && uv run -- pytest -v
 
 build:
 	@mkdir -p dist
