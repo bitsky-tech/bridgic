@@ -20,5 +20,4 @@ __all__ = [
     "AutomaCompilationError",
     "AutomaDeclarationError",
     "AutomaRuntimeError",
-    "ASLCompilationError",
 ]

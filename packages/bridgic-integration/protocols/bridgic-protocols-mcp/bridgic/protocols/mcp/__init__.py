@@ -51,7 +51,7 @@ from bridgic.protocols.mcp._mcp_tool_spec import McpToolSpec
 from bridgic.protocols.mcp._mcp_tool_worker import McpToolWorker
 from bridgic.protocols.mcp._mcp_template import McpPromptTemplate
 
-from bridgic.core.types._error import McpServerConnectionError
+from bridgic.protocols.mcp._error import McpServerConnectionError
 
 __all__ = [
     "McpServerConnection",

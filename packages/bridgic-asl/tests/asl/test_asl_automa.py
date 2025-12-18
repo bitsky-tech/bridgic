@@ -5,7 +5,7 @@ from bridgic.core.automa import GraphAutoma, Snapshot, worker
 from bridgic.core.automa.worker import Worker
 from bridgic.core.automa.args import System, ArgsMappingRule, From, ResultDispatchingRule
 from bridgic.core.automa.interaction import Event, InteractionFeedback, InteractionException
-from bridgic.core.automa import ASLCompilationError
+from bridgic.asl._error import ASLCompilationError
 from bridgic.asl import graph, concurrent, ASLAutoma, Settings, Data, ASLField
 
 

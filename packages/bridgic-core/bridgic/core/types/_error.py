@@ -57,23 +57,3 @@ class PromptSyntaxError(Exception):
 
 class PromptRenderError(RuntimeError):
     pass
-
-###########################################################
-# ASL Errors
-###########################################################
-
-class ASLCompilationError(Exception):
-    """
-    ASL code compilation error.
-    """
-    pass
-
-###########################################################
-# MCP Errors
-###########################################################
-
-class McpServerConnectionError(Exception):
-    """
-    Raised when the connection to an MCP server fails.
-    """
-    pass
