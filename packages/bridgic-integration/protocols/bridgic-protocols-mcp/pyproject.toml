@@ -1,6 +1,6 @@
 [project]
 name = "bridgic-protocols-mcp"
-version = "0.1.0.dev1"
+version = "0.1.0.dev2"
 license = {text = "MIT"}
 classifiers = [
     "Programming Language :: Python :: 3",
@@ -16,7 +16,7 @@ authors = [
     { name = "Tielei Zhang", email = "zhangtl04@gmail.com" },
 ]
 dependencies = [
-    "bridgic-core>=0.2.0",
+    "bridgic-core>=0.2.1.dev2",
     "mcp>=1.15.0",
     "fastmcp>=2.13.0",
     "websockets>=15.0.1",

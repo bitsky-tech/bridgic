@@ -10,7 +10,7 @@ from bridgic.core.automa.worker import Worker
 from bridgic.core.automa import GraphAutoma, RunningOptions
 from bridgic.core.automa.args._args_binding import ArgsMappingRule, ResultDispatchingRule, InOrder, override_func_signature, set_method_signature
 from bridgic.core.agentic import ConcurrentAutoma
-from bridgic.core.types._error import ASLCompilationError
+from bridgic.asl._error import ASLCompilationError
 
 graph_stack: ContextVar[List["_Canvas"]] = ContextVar("graph_stack", default=[])
 

@@ -6,7 +6,7 @@ from typing import Optional, Any, ClassVar, Coroutine, Awaitable, Dict, TYPE_CHE
 if TYPE_CHECKING:
     from bridgic.protocols.mcp._mcp_server_connection import McpServerConnection
 
-from bridgic.core.types._error import McpServerConnectionError
+from bridgic.protocols.mcp._error import McpServerConnectionError
 
 
 class McpServerConnectionManager:
