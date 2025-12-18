@@ -8,7 +8,7 @@ from contextlib import _AsyncGeneratorContextManager, AsyncExitStack
 from mcp.client.session import ClientSession
 from mcp.types import ListPromptsResult, GetPromptResult, ListToolsResult, CallToolResult
 from mcp.client.stdio import stdio_client, StdioServerParameters
-from mcp.client.streamable_http import streamable_http_client, create_mcp_http_client
+from mcp.client.streamable_http import streamable_http_client
 from bridgic.core.types._error import McpServerConnectionError
 from bridgic.protocols.mcp._mcp_server_connection_manager import McpServerConnectionManager
 
@@ -31,6 +31,7 @@ class McpServerConnection(ABC):
     get_mcp_client
         Get a MCP client to interact with the server.
     """
+
     name: str
     """The name of the connected MCP server."""
 
@@ -546,6 +547,19 @@ class McpServerConnectionStdio(McpServerConnection):
     """
     The connection to an MCP server using stdio.
     """
+
+    command: str
+    """The command to use for the connection."""
+
+    encoding: str
+    """The encoding to use for the connection."""
+
+    args: List[str]
+    """The arguments to use for the connection."""
+
+    env: Dict[str, str]
+    """The environment variables to use for the connection."""
+
     def __init__(
         self,
         name: str,
@@ -592,31 +606,51 @@ class McpServerConnectionStreamableHttp(McpServerConnection):
     """
     The connection to an MCP server using streamable http.
     """
+
     url: str
     """The URL of the MCP server."""
+
+    http_client: httpx.AsyncClient
+    """The HTTP client to use for the connection."""
+
+    terminate_on_close: bool
+    """Whether to terminate the session when the connection is closed."""
 
     def __init__(
         self,
         name: str,
         url: str,
         *,
-        headers: Optional[Dict[str, Any]] = None,
-        timeout: Optional[float] = None,
+        http_client: Optional[httpx.AsyncClient] = None,
         terminate_on_close: Optional[bool] = None,
-        sse_read_timeout: Optional[float] = None,
         request_timeout: Optional[int] = None,
-        **kwargs: Any,
     ):
+        """
+        Initialize a streamable HTTP connection to an MCP server.
+
+        Parameters
+        ----------
+        name : str
+            The name of the connection.
+        url : str
+            The URL of the MCP server.
+        http_client : Optional[httpx.AsyncClient]
+            Optional pre-configured httpx.AsyncClient. If None, a default
+            client with recommended MCP timeouts will be created. To configure headers,
+            authentication, or other HTTP settings, create an httpx.AsyncClient and pass it here.
+        terminate_on_close : Optional[bool]
+            If True, send a DELETE request to terminate the session when the connection
+            is closed. Defaults to True.
+        request_timeout : Optional[int]
+            The timeout in seconds for MCP requests. Default is 30 seconds.
+        """
         super().__init__(
             name,
             request_timeout=request_timeout,
-            **kwargs,
         )
         self.url = url
-        self.headers = headers or {}
-        self.timeout = timeout
-        self.terminate_on_close = terminate_on_close
-        self.sse_read_timeout = sse_read_timeout
+        self.http_client = http_client
+        self.terminate_on_close = terminate_on_close or True
 
     def get_mcp_client(self) -> _AsyncGeneratorContextManager[Any, None]:
         """
@@ -627,36 +661,9 @@ class McpServerConnectionStreamableHttp(McpServerConnection):
         _AsyncGeneratorContextManager[Any, None]
             An async context manager for the streamable HTTP client transport.
         """
-        # Create httpx.AsyncClient with configured parameters
-        if self.timeout is not None or self.sse_read_timeout is not None:
-            timeout_seconds = self.timeout if self.timeout is not None else 30.0
-            sse_read_timeout_seconds = self.sse_read_timeout if self.sse_read_timeout is not None else 300.0
-            timeout = httpx.Timeout(timeout_seconds, read=sse_read_timeout_seconds)
-        else:
-            timeout = None
-        
-        http_client = create_mcp_http_client(
-            headers=self.headers if self.headers else None,
-            timeout=timeout,
-        )
-        
-        # Handle additional client kwargs (e.g., auth)
-        if self.client_kwargs:
-            # If auth is provided in client_kwargs, apply it
-            if "auth" in self.client_kwargs:
-                # Recreate client with auth
-                http_client = create_mcp_http_client(
-                    headers=self.headers if self.headers else None,
-                    timeout=timeout,
-                    auth=self.client_kwargs["auth"],
-                )
-        
-        # Use new API: streamable_http_client
-        terminate_on_close = self.terminate_on_close if self.terminate_on_close is not None else True
-        
         return streamable_http_client(
             url=self.url,
-            http_client=http_client,
-            terminate_on_close=terminate_on_close,
+            http_client=self.http_client,
+            terminate_on_close=self.terminate_on_close,
         )
 
