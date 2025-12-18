@@ -41,24 +41,50 @@ for tool in tools:
 
 ### Using MCP Tools in an Automa
 
+MCP tools can be integrated into Bridgic automas as workers in `GraphAutoma`. Furthermore, in `ReActAutoma`, these tools can be used in a more advanced LLM-driven agents to select and invoke them dynamically.
+
+#### Using MCP Tools as Workers in GraphAutoma
+
+MCP tools can be converted to workers and added to a `GraphAutoma`, giving them the same execution status as regular scheduling units. This allows you to orchestrate MCP tool calls alongside other workers in your workflow.
+
 ```python
 from bridgic.core.automa import GraphAutoma
 from bridgic.protocols.mcp import McpServerConnectionStdio
 
 # Setup connection
-connection = McpServerConnectionStdio(
-    name="filesystem-server",
-    command="npx",
-    args=["-y", "@modelcontextprotocol/server-filesystem", "/tmp"],
-)
+connection = ...
 connection.connect()
 
-# Create automa and add MCP tools
+# Create automa and add MCP tools as workers. Then they can be orchestrated with other workers, 
+# participate in dependency graphs, and be scheduled just like any other worker in the system.
 automa = GraphAutoma()
 for tool_spec in connection.list_tools():
-    automa.add_worker(tool_spec.create_worker())
+    # Convert each MCP tool to a worker and add it to the automa
+    worker = tool_spec.create_worker()
+    automa.add_worker(worker)
 
-# Now the automa can use MCP tools
+```
+
+#### Using MCP Tools with ReActAutoma
+
+MCP tools can also be used directly with `ReActAutoma`, where the LLM can autonomously select and call tools based on the user's request. This enables building intelligent agents that can interact with MCP servers through natural language.
+
+```python
+from bridgic.core.agentic import ReActAutoma
+from bridgic.protocols.mcp import McpServerConnectionStreamableHttp
+from bridgic.llms.openai import OpenAILlm, OpenAIConfiguration
+import os
+
+# Setup MCP connection
+connection = ...
+connection.connect()
+
+# Create ReActAutoma with MCP tools
+react_automa = ReActAutoma(
+    llm=llm,
+    system_prompt="You are a helpful assistant that can help users query information about GitHub repositories.",
+    tools=connection.list_tools(),
+)
 ```
 
 ## Features
