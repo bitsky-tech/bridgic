@@ -93,7 +93,7 @@ Run it:
 
 ```python
 async def main():
-    query = "When and where was the Einstein born?"
+    query = "When and where was Einstein born?"
     answer = await chatbot.arun(user_input=query)
     print(answer)
 
@@ -148,7 +148,7 @@ async def main():
     """Run the simple router example."""
     router = SimpleRouter()
     test_requests = [
-        "When and where was the Einstein born?",
+        "When and where was Einstein born?",
         "Create a poeom about love."
     ]
     for request in test_requests:
@@ -162,8 +162,8 @@ if __name__ == "__main__":
 ```
 
 ```
---- Processing: When and where was the Einstein born? ---
-Routing request: When and where was the Einstein born?
+--- Processing: When and where was Einstein born? ---
+Routing request: When and where was Einstein born?
 ❓ QUESTION: Processing question
 --- Response: 
 Albert Einstein was born on March 14, 1879, in Ulm, in the Kingdom of Württemberg in the German Empire.
@@ -305,7 +305,7 @@ Create an instance of `RAGProcessor` and run it:
 ```python
 async def main():
     rag = RAGProcessor()
-    result = await rag.arun(user_input="When and where was the Einstein born?")
+    result = await rag.arun(user_input="When and where was Einstein born?")
     print(f"Final response: \n{result}")
 
 if __name__ == "__main__":
@@ -314,7 +314,7 @@ if __name__ == "__main__":
 ```
 
 ```
-When and where was the Einstein born?
+When and where was Einstein born?
 ---
 Answer the above question based on the following references.
 ['Albert Einstein was born on March 14, 1879, in Ulm, in the Kingdom of Württemberg, Germany  (now simply part of modern Germany).', 'Einstein was born into a secular Jewish family Biography.', 'Einstein had one sister, Maja, who was born two years after him.', 'Albert Einstein was born on March 14, 1879, in Ulm, in the Kingdom of Württemberg in the German Empire (now part of Germany).', 'Shortly after his birth, his family moved to Munich, where he spent most of his childhood.', 'Einstein excelled at physics and mathematics from an early age, teaching himself algebra, calculus, and Euclidean geometry by age twelve.']
