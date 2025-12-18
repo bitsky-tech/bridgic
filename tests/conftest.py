@@ -137,10 +137,17 @@ async def github_mcp_streamable_http_connection(github_mcp_url, github_token):
     if not github_token:
         pytest.skip("GITHUB_TOKEN environment variable not set")
     
+    import httpx
+    from mcp.shared._httpx_utils import create_mcp_http_client
+    
+    http_client = create_mcp_http_client(
+        headers={"Authorization": f"Bearer {github_token}"}
+    )
+    
     connection = McpServerConnectionStreamableHttp(
         name="github-mcp-streamable-http",
         url=github_mcp_url,
-        headers={"Authorization": f"Bearer {github_token}"},
+        http_client=http_client,
         request_timeout=10,
     )
     
