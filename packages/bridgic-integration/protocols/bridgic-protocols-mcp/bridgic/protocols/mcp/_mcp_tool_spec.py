@@ -7,7 +7,7 @@ from bridgic.core.model.types import Tool
 from bridgic.core.automa.worker import Worker
 from bridgic.protocols.mcp._mcp_server_connection import McpServerConnection
 from bridgic.protocols.mcp._mcp_server_connection_manager import McpServerConnectionManager
-from bridgic.core.types._error import McpServerConnectionError
+from bridgic.protocols.mcp._error import McpServerConnectionError
 
 if TYPE_CHECKING:
     from bridgic.protocols.mcp._mcp_tool_worker import McpToolWorker

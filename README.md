@@ -42,7 +42,7 @@ First of all, create a LLM instance for later use.
 ```python
 import os
 from bridgic.llms.openai import OpenAILlm, OpenAIConfiguration
-from bridgic.core.model.types import Message, Role
+from bridgic.core.model.types import Message
 
 # Get the API key and model name from environment variables.
 _api_key = os.environ.get("OPENAI_API_KEY")
@@ -68,8 +68,8 @@ from typing import List, Dict
 async def break_down_query(user_input: str) -> List[str]:
     llm_response = await llm.achat(
         messages=[
-            Message.from_text(text=f"Break down the query into multiple sub-queries and only return the sub-queries", role=Role.SYSTEM),
-            Message.from_text(text=user_input, role=Role.USER,),
+            Message.from_text(text="Break down the query into multiple sub-queries and only return the sub-queries", role="system"),
+            Message.from_text(text=user_input, role="user"),
         ]
     )
     return [item.strip() for item in llm_response.message.content.split("\n") if item.strip()]
@@ -80,8 +80,8 @@ async def query_answer(queries: List[str]) -> Dict[str, str]:
     for query in queries:
         response = await llm.achat(
             messages=[
-                Message.from_text(text=f"Answer the given query briefly", role=Role.SYSTEM),
-                Message.from_text(text=query, role=Role.USER,),
+                Message.from_text(text="Answer the given query briefly", role="system"),
+                Message.from_text(text=query, role="user"),
             ]
         )
         answers.append(response.message.content)
@@ -120,7 +120,7 @@ Create an instance of `SplitSolveAgent` and run it:
 ```python
 async def main():
     text_generation_agent = SplitSolveAgent()
-    query = "When and where was the Einstein born?"
+    query = "When and where was Einstein born?"
     sub_qas = await text_generation_agent.arun(query)
     print(sub_qas)
 
@@ -140,8 +140,8 @@ async def merge_answers(qa_pairs: Dict[str, str], user_input: str) -> str:
     answers = "\n".join([v for v in qa_pairs.values()])
     llm_response = await llm.achat(
         messages=[
-            Message.from_text(text=f"Merge the given answers into a unified response to the original question", role=Role.SYSTEM),
-            Message.from_text(text=f"Query: {user_input}\nAnswers: {answers}", role=Role.USER),
+            Message.from_text(text=f"Merge the given answers into a unified response to the original question", role="system"),
+            Message.from_text(text=f"Query: {user_input}\nAnswers: {answers}", role="user"),
         ]
     )
     return llm_response.message.content
@@ -160,7 +160,7 @@ Create an instance of `Chatbot` and run it:
 ```python
 async def main():
     chatbot = Chatbot()
-    query = "When and where was the Einstein born?"
+    query = "When and where was Einstein born?"
     answer = await chatbot.arun(query)
     print(answer)
 
@@ -220,8 +220,8 @@ async def handle_question(question: str) -> str:
     print("❓ QUESTION: Processing question")
     llm_response = await llm.achat(
         messages=[
-            Message.from_text(text=f"You are a helpful assistant", role=Role.SYSTEM),
-            Message.from_text(text=question, role=Role.USER,),
+            Message.from_text(text="You are a helpful assistant", role="system"),
+            Message.from_text(text=question, role="user"),
         ]
     )
     return llm_response.message.content
@@ -230,8 +230,8 @@ async def handle_general(question: str) -> str:
     print("📝 GENERAL: Processing general input")
     llm_response = await llm.achat(
         messages=[
-            Message.from_text(text=f"Carry out the user's instructions faithfully and briefly", role=Role.SYSTEM),
-            Message.from_text(text=question, role=Role.USER,),
+            Message.from_text(text="Carry out the user's instructions faithfully and briefly", role="system"),
+            Message.from_text(text=question, role="user"),
         ]
     )
     return llm_response.message.content
@@ -251,8 +251,8 @@ Create an instance of `SimpleRouter` and run it:
 async def main():
     router = SimpleRouter()
     test_requests = [
-        "When and where was the Einstein born?",
-        "Create a poeom about love."
+        "When and where was Einstein born?",
+        "Create a poem about love."
     ]
     for request in test_requests:
         print(f"\n--- Processing: {request} ---")
@@ -265,14 +265,14 @@ if __name__ == "__main__":
 ```
 
 ```
---- Processing: When and where was the Einstein born? ---
-Routing request: When and where was the Einstein born?
+--- Processing: When and where was Einstein born? ---
+Routing request: When and where was Einstein born?
 ❓ QUESTION: Processing question
 --- Response: 
 Albert Einstein was born on March 14, 1879, in the city of Ulm, in the Kingdom of Württemberg in the German Empire.
 
---- Processing: Create a poeom about love. ---
-Routing request: Create a poeom about love.
+--- Processing: Create a poem about love. ---
+Routing request: Create a poem about love.
 📝 GENERAL: Processing general input
 --- Response: 
 In whispers soft as twilight's breeze,  
@@ -383,8 +383,8 @@ async def synthesize_response(
     print(f"{prompt}\n------------------\n")
     llm_response = await llm.achat(
         messages=[
-            Message.from_text(text=f"You are a helpful assistant", role=Role.SYSTEM),
-            Message.from_text(text=prompt, role=Role.USER),
+            Message.from_text(text="You are a helpful assistant", role="system"),
+            Message.from_text(text=prompt, role="user"),
         ]
     )
     return llm_response.message.content
@@ -415,7 +415,7 @@ Create an instance of `RAGProcessor` and run it:
 ```python
 async def main():
     rag = RAGProcessor()
-    result = await rag.arun(user_input="When and where was the Einstein born?")
+    result = await rag.arun(user_input="When and where was Einstein born?")
     print(f"Final response: \n{result}")
 
 if __name__ == "__main__":
@@ -424,7 +424,7 @@ if __name__ == "__main__":
 ```
 
 ```
-When and where was the Einstein born?
+When and where was Einstein born?
 ---
 Answer the above question based on the following references.
 ['Albert Einstein was born on March 14, 1879, in Ulm, in the Kingdom of Württemberg, Germany  (now simply part of modern Germany).', 'Einstein was born into a secular Jewish family Biography.', 'Einstein had one sister, Maja, who was born two years after him.', 'Albert Einstein was born on March 14, 1879, in Ulm, in the Kingdom of Württemberg in the German Empire (now part of Germany).', 'Shortly after his birth, his family moved to Munich, where he spent most of his childhood.', 'Einstein excelled at physics and mathematics from an early age, teaching himself algebra, calculus, and Euclidean geometry by age twelve.']
@@ -462,7 +462,7 @@ async def main():
     react = ReActAutoma(
         llm=llm,
         tools=[get_weather],
-        system_prompt="You are a weatherman that is good at forcasting weather by using tools.",
+        system_prompt="You are a weatherman that is good at forecasting weather by using tools.",
     )
     result = await react.arun(user_msg="What is the weather in Tokyo?")
     print(f"Final response: \n{result}")
@@ -562,8 +562,10 @@ More features will be added in the near future. :)
 For more about development skills of Bridgic, see:
 
 - [Tutorials](https://docs.bridgic.ai/latest/tutorials/)
-- [ASL Syntax Reference](https://docs.bridgic.ai/latest/tutorials/items/asl/quick_start/#summary)
 - [Understanding](https://docs.bridgic.ai/latest/home/introduction/)
+- [ASL Syntax Learning](https://docs.bridgic.ai/latest/tutorials/items/asl/quick_start/)
+- [Model Integration](https://docs.bridgic.ai/latest/tutorials/items/model_integration/)
+- [Observability](https://docs.bridgic.ai/latest/tutorials/items/observability/)
 
 ## 📄 License
 

@@ -319,7 +319,7 @@ publish = [{ name = "tomli", specifier = ">=2.0.0" }]
 
 [[package]]
 name = "bridgic-asl"
-version = "0.1.0"
+version = "0.1.1.dev1"
 source = { editable = "packages/bridgic-asl" }
 dependencies = [
     { name = "bridgic-core" },
@@ -342,7 +342,7 @@ dev = [
 
 [[package]]
 name = "bridgic-core"
-version = "0.2.1.dev1"
+version = "0.2.1.dev2"
 source = { editable = "packages/bridgic-core" }
 dependencies = [
     { name = "cloudpickle" },
@@ -466,7 +466,7 @@ dev = [
 
 [[package]]
 name = "bridgic-protocols-mcp"
-version = "0.1.0.dev1"
+version = "0.1.0.dev2"
 source = { editable = "packages/bridgic-integration/protocols/bridgic-protocols-mcp" }
 dependencies = [
     { name = "bridgic-core" },

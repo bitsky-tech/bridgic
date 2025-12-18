@@ -9,7 +9,7 @@ from mcp.client.session import ClientSession
 from mcp.types import ListPromptsResult, GetPromptResult, ListToolsResult, CallToolResult
 from mcp.client.stdio import stdio_client, StdioServerParameters
 from mcp.client.streamable_http import streamable_http_client
-from bridgic.core.types._error import McpServerConnectionError
+from bridgic.protocols.mcp._error import McpServerConnectionError
 from bridgic.protocols.mcp._mcp_server_connection_manager import McpServerConnectionManager
 
 if TYPE_CHECKING:
