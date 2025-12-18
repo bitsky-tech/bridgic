@@ -1,6 +1,6 @@
 [project]
 name = "bridgic-core"
-version = "0.2.1.dev2"
+version = "0.2.1rc1"
 license = {text = "MIT"}
 classifiers = [
     "Programming Language :: Python :: 3",
