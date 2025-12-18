@@ -1,6 +1,6 @@
 [project]
 name = "bridgic"
-version = "0.2.1rc1"
+version = "0.2.1"
 license = {text = "MIT"}
 classifiers = [
     "Programming Language :: Python :: 3",
@@ -13,8 +13,8 @@ authors = [
     { name = "Tielei Zhang", email = "zhangtl04@gmail.com" },
 ]
 dependencies = [
-    "bridgic-core>=0.2.1rc1,<0.3.0",
-    "bridgic-asl>=0.1.1rc1,<0.2.0",
+    "bridgic-core>=0.2.1,<0.3.0",
+    "bridgic-asl>=0.1.1,<0.2.0",
     "bridgic-llms-openai-like>=0.1.1,<0.2.0",
 ]
 
