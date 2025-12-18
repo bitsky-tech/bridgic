@@ -1,5 +1,6 @@
 import asyncio
 import warnings
+import httpx
 from abc import ABC, abstractmethod
 from datetime import timedelta
 from typing import List, Dict, Optional, Union, Any, TYPE_CHECKING
@@ -7,8 +8,7 @@ from contextlib import _AsyncGeneratorContextManager, AsyncExitStack
 from mcp.client.session import ClientSession
 from mcp.types import ListPromptsResult, GetPromptResult, ListToolsResult, CallToolResult
 from mcp.client.stdio import stdio_client, StdioServerParameters
-from mcp.client.streamable_http import streamablehttp_client
-
+from mcp.client.streamable_http import streamable_http_client, create_mcp_http_client
 from bridgic.core.types._error import McpServerConnectionError
 from bridgic.protocols.mcp._mcp_server_connection_manager import McpServerConnectionManager
 
@@ -627,19 +627,36 @@ class McpServerConnectionStreamableHttp(McpServerConnection):
         _AsyncGeneratorContextManager[Any, None]
             An async context manager for the streamable HTTP client transport.
         """
-        start_args = {
-            "url": self.url,
-        }
-        if self.headers:
-            start_args["headers"] = self.headers
-        if self.timeout is not None:
-            start_args["timeout"] = self.timeout
-        if self.terminate_on_close is not None:
-            start_args["terminate_on_close"] = self.terminate_on_close
-        if self.sse_read_timeout is not None:
-            start_args["sse_read_timeout"] = self.sse_read_timeout
+        # Create httpx.AsyncClient with configured parameters
+        if self.timeout is not None or self.sse_read_timeout is not None:
+            timeout_seconds = self.timeout if self.timeout is not None else 30.0
+            sse_read_timeout_seconds = self.sse_read_timeout if self.sse_read_timeout is not None else 300.0
+            timeout = httpx.Timeout(timeout_seconds, read=sse_read_timeout_seconds)
+        else:
+            timeout = None
+        
+        http_client = create_mcp_http_client(
+            headers=self.headers if self.headers else None,
+            timeout=timeout,
+        )
+        
+        # Handle additional client kwargs (e.g., auth)
         if self.client_kwargs:
-            start_args.update(self.client_kwargs)
-
-        return streamablehttp_client(**start_args)
+            # If auth is provided in client_kwargs, apply it
+            if "auth" in self.client_kwargs:
+                # Recreate client with auth
+                http_client = create_mcp_http_client(
+                    headers=self.headers if self.headers else None,
+                    timeout=timeout,
+                    auth=self.client_kwargs["auth"],
+                )
+        
+        # Use new API: streamable_http_client
+        terminate_on_close = self.terminate_on_close if self.terminate_on_close is not None else True
+        
+        return streamable_http_client(
+            url=self.url,
+            http_client=http_client,
+            terminate_on_close=terminate_on_close,
+        )
 
