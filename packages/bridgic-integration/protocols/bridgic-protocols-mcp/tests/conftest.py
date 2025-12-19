@@ -1,0 +1,67 @@
+"""
+Shared pytest fixtures for MCP protocol tests.
+
+This module provides shared fixtures for connecting to mock MCP servers,
+avoiding connection name conflicts when multiple test files run together.
+"""
+import pytest_asyncio
+
+from bridgic.protocols.mcp import (
+    McpServerConnectionStdio,
+    McpServerConnectionStreamableHttp,
+)
+from tests.protocols.mcp.mock_servers._server_process import McpHttpServerProcess
+
+
+@pytest_asyncio.fixture(scope="session")
+async def mock_writer_stdio_connection():
+    connection = McpServerConnectionStdio(
+        name="writer-mcp-stdio",
+        command="python",
+        args=["tests/protocols/mcp/mock_servers/mcp_server_writer.py", "--transport", "stdio"],
+        request_timeout=5,
+    )
+    connection.connect()
+    yield connection
+    connection.close()
+
+
+@pytest_asyncio.fixture(scope="session")
+async def mock_writer_streamable_http_connection():
+    with McpHttpServerProcess(
+        server_script="tests/protocols/mcp/mock_servers/mcp_server_writer.py",
+        transport="streamable_http",
+        host="127.0.0.1",
+        port=1997,
+        startup_timeout=5.0,
+    ) as server:
+        connection = McpServerConnectionStreamableHttp(
+            name="writer-mcp-streamable-http",
+            url=server.url,
+            request_timeout=5,
+        )
+        connection.connect()
+        yield connection
+        connection.close()
+
+
+@pytest_asyncio.fixture(scope="session")
+async def mock_crawler_streamable_http_connection():
+    with McpHttpServerProcess(
+        server_script="tests/protocols/mcp/mock_servers/mcp_server_crawler.py",
+        transport="streamable_http",
+        host="127.0.0.1",
+        port=1998,
+        startup_timeout=5.0,
+    ) as server:
+        connection = McpServerConnectionStreamableHttp(
+            name="crawler-mcp-streamable-http",
+            url=server.url,
+            request_timeout=5,
+        )
+        connection.connect()
+        yield connection
+        connection.close()
+
+
+

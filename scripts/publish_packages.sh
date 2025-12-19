@@ -10,15 +10,8 @@ repo=${1:-"btsk"}
 echo "Publishing to repository [$repo]."
 echo ""
 
-if [ -z "$UV_PUBLISH_USERNAME" ]; then
-    read -p "Input your username: " UV_PUBLISH_USERNAME
-    export UV_PUBLISH_USERNAME
-fi
-
-if [ -z "$UV_PUBLISH_PASSWORD" ]; then
-    read -sp "Input your password: " UV_PUBLISH_PASSWORD
-    export UV_PUBLISH_PASSWORD
-fi
+# Set credentials - source the script to set environment variables directly
+source "$(dirname "$0")/set_publish_credentials.sh"
 
 echo ""
 echo "Now publishing all of your packages..."
@@ -101,26 +94,10 @@ publish_package() {
         is_main_package=true
     fi
 
-    local pyproject_file
     if [ "$is_main_package" = true ]; then
-        pyproject_file="pyproject.toml"
         echo "==> Found package: $pkg_name"
     else
-        pyproject_file="$pkg_dir/pyproject.toml"
         echo "==> Found subpackage: $pkg_name"
-    fi
-
-    local version
-    version=$(uv run python -c "import tomli; print(tomli.load(open('$pyproject_file', 'rb'))['project']['version'])")
-
-    if ! python scripts/version_check.py --version "$version" --repo "$repo" --package "$pkg_name"; then
-        echo "==> Skipping $pkg_name (version $version incompatible with $repo)"
-        if [ "$is_main_package" = true ]; then
-            echo "$pkg_name" >> "$failures_file"
-        else
-            echo "$pkg_dir" >> "$failures_file"
-        fi
-        return 1
     fi
 
     local publish_msg="==> Publishing"
@@ -165,7 +142,7 @@ while IFS= read -r dir; do
     if [ -f "$dir/Makefile" ] && [ -f "$dir/pyproject.toml" ]; then
         subpackage_list+=("$dir")
     fi
-done < <(find . -maxdepth 4 -type d -name "bridgic-*" | sort)
+done < <(find ./packages -maxdepth 4 -type d -name "bridgic-*" | sort)
 
 ###############################################################################
 # Step 1: Publish priority packages first in order

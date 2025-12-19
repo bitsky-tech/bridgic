@@ -1,0 +1,44 @@
+[project]
+name = "bridgic-protocols-mcp"
+version = "0.1.0"
+license = {text = "MIT"}
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+]
+description = "Model Context Protocol (MCP) integration for Bridgic."
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [
+    { name = "Tielei Zhang", email = "zhangtl04@gmail.com" },
+]
+dependencies = [
+    "bridgic-core>=0.2.1",
+    "mcp>=1.24.0",
+    "fastmcp>=2.13.0",
+    "websockets>=15.0.1",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.4.0",
+    "pytest-asyncio>=1.0.0",
+    "click>=8.1.0",
+]
+
+[tool.pytest.ini_options]
+addopts = ["--tb=short", "--verbose"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build]
+include = ["bridgic/"]
+
+[tool.uv.sources]
+bridgic-core = { workspace = true }
+

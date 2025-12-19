@@ -8,6 +8,11 @@ import sys
 import argparse
 from pathlib import Path
 
+try:
+    from bridgic.core.utils._console import colored
+except ImportError:
+    print("Error: 'Please install 'bridgic-core' before running this script.", file=sys.stderr)
+    sys.exit(1)
 
 def parse_version(version_str):
     """Parse version string and return version type"""
@@ -60,20 +65,28 @@ def main():
     parser.add_argument('--package', help='Package name (for error messages)')
     
     args = parser.parse_args()
-    
+
+    version_str = colored(f"{args.package}-{args.version}", "cyan")
+    repo_str = colored(args.repo, "yellow")
+
     if check_version_repo_compatibility(args.version, args.repo):
-        print(f"✓ Version [{args.package}-{args.version}] is compatible with repository [{args.repo}].")
+        checkmark = colored("✓", "green")
+        print(f"{checkmark} Version [{version_str}] is compatible with repository [{repo_str}].")
         sys.exit(0)
     else:
-        print(f"✗ Version [{args.package}-{args.version}] is not compatible with repository [{args.repo}].")
+        crossmark = colored("✗", "red")
+        print(f"{crossmark} Version [{version_str}] is not compatible with repository [{repo_str}].")
 
         version_type = parse_version(args.version)
         if version_type == 'dev':
-            print("  Development versions can only be published to [btsk].")
+            repo_name_str = colored("btsk", "yellow")
+            print(f"  Development versions can only be published to [{repo_name_str}].")
         elif version_type in ['alpha', 'beta', 'rc', 'post']:
-            print("  Pre-release versions can only be published to [pypi] or [testpypi].")
+            repo_name_str = colored("pypi or testpypi", "yellow")
+            print(f"  Pre-release versions can only be published to [{repo_name_str}].")
         elif version_type == 'release':
-            print("  Release versions can only be published to [pypi].")
+            repo_name_str = colored("pypi", "yellow")
+            print(f"  Release versions can only be published to [{repo_name_str}].")
         else:
             print("  Unknown version type.")
         

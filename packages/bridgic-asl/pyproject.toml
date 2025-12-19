@@ -1,0 +1,39 @@
+[project]
+name = "bridgic-asl"
+version = "0.1.1"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+]
+description = "ASL(Agent Structure Language) -- a powerful declarative DSL that embodies a component-oriented paradigm and is even capable of supporting dynamic topologies"
+readme = "README.md"
+requires-python = ">=3.9"
+authors = [
+    { name = "Tielei Zhang", email = "zhangtl04@gmail.com" },
+]
+dependencies = [
+    "bridgic-core>=0.2.1",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.4.0",
+    "pytest-asyncio>=1.0.0",
+]
+
+[tool.pytest.ini_options]
+addopts = ["--tb=short", "--verbose"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build]
+include = ["bridgic/"]
+
+[tool.uv.sources]
+bridgic-core = { workspace = true }

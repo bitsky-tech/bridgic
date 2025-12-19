@@ -1,0 +1,28 @@
+[project]
+name = "tests"
+version = "0.1.0"
+description = "Integration tests for Bridgic framework"
+requires-python = ">=3.10"
+classifiers = [
+    "Private :: Do Not Upload",
+]
+dependencies = [
+    "pytest>=8.4.0",
+    "pytest-asyncio>=1.0.0",
+    "bridgic-core",
+    "bridgic-llms-openai",
+    "bridgic-llms-openai-like",
+    "bridgic-llms-vllm",
+    "bridgic-protocols-mcp",
+]
+
+[tool.pytest.ini_options]
+addopts = ["--tb=short", "--verbose"]
+
+[tool.uv.sources]
+bridgic-core = { workspace = true }
+bridgic-llms-openai = { workspace = true }
+bridgic-llms-openai-like = { workspace = true }
+bridgic-llms-vllm = { workspace = true }
+bridgic-protocols-mcp = { workspace = true }
+

@@ -1,6 +1,6 @@
 # Welcome to the world of Bridgic!
 
-**Bridgic** is an innovative programming framework designed to create agentic systems, ranging from deterministic workflows to autonomous agents. It introduces a new paradigm that simplifies the development of agentic systems.
+**Bridgic** is an agentic programming framework built around a novel **dynamic topology** orchestration model and a **component-oriented paradigm** that is realized through **ASL (Agent Structure Language)**—a powerful declarative DSL for composing, reusing, and nesting agentic structures. Together, these elements make it possible to develop the entire spectrum of agentic systems, ranging from deterministic workflows to autonomous agents.
 
 ## What does the word "*Bridgic*" mean?
 
