@@ -1099,9 +1099,12 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
         ```
         """
         # TODO: check worker_key is valid, maybe deferred check...
-        running_options = self._get_top_running_options()
-        # if debug is enabled, trace back the kickoff worker key from stacktrace.
-        kickoff_worker_key: str = self._trace_back_kickoff_worker_key_from_stack() if running_options.debug else None
+        # Trace back the kickoff worker key from the current call stack to identify
+        # which worker initiated this ferry_to() call (if any).
+        # This allows worker-level callbacks (registered via callback_builders on
+        # specific workers) to receive on_ferry_to events, regardless of whether
+        # debug mode is enabled.
+        kickoff_worker_key: Optional[str] = self._trace_back_kickoff_worker_key_from_stack()
         deferred_task = _FerryDeferredTask(
             ferry_to_worker_key=key,
             kickoff_worker_key=kickoff_worker_key,
