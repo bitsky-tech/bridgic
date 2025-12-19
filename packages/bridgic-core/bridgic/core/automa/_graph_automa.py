@@ -1561,6 +1561,40 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
             # So,
             # First add kickoff workers triggered by ferry_to();
             for ferry_task in self._ferry_deferred_tasks:
+                # Call on_ferry_to hook for relevant callbacks
+                callbacks_to_notify = []
+                seen_callbacks = set()
+                
+                # Collect callbacks from the kickoff worker (if available)
+                # Worker callbacks already include GlobalSetting and ancestor callbacks
+                if ferry_task.kickoff_worker_key and ferry_task.kickoff_worker_key in self._workers:
+                    kickoff_worker = self._workers[ferry_task.kickoff_worker_key]
+                    if isinstance(kickoff_worker, _GraphAdaptedWorker):
+                        for callback in kickoff_worker._worker_callbacks:
+                            callback_id = id(callback)
+                            if callback_id not in seen_callbacks:
+                                callbacks_to_notify.append(callback)
+                                seen_callbacks.add(callback_id)
+                
+                # Collect callbacks from automa level
+                # Automa callbacks include GlobalSetting and automa-level callbacks
+                automa_callbacks = self._get_automa_callbacks()
+                for callback in automa_callbacks:
+                    callback_id = id(callback)
+                    if callback_id not in seen_callbacks:
+                        callbacks_to_notify.append(callback)
+                        seen_callbacks.add(callback_id)
+                
+                # Call on_ferry_to hook for all collected callbacks
+                for callback in callbacks_to_notify:
+                    await callback.on_ferry_to(
+                        ferry_to_worker_key=ferry_task.ferry_to_worker_key,
+                        kickoff_worker_key=ferry_task.kickoff_worker_key,
+                        is_top_level=is_top_level,
+                        parent=self.parent,
+                        arguments={"args": ferry_task.args, "kwargs": ferry_task.kwargs},
+                    )
+                
                 self._current_kickoff_workers.append(_KickoffInfo(
                     worker_key=ferry_task.ferry_to_worker_key,
                     last_kickoff=ferry_task.kickoff_worker_key,

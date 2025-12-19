@@ -89,6 +89,36 @@ class WorkerCallback(Serializable):
         """
         pass
 
+    async def on_ferry_to(
+        self,
+        ferry_to_worker_key: str,
+        kickoff_worker_key: Optional[str] = None,
+        is_top_level: bool = False,
+        parent: Optional["Automa"] = None,
+        arguments: Dict[str, Any] = None,
+    ) -> None:
+        """
+        Hook invoked when ferry_to() is called.
+
+        Called immediately when ferry_to() is invoked to schedule a worker.
+        Use for logging, monitoring, or tracking dynamic flow control.
+
+        Parameters
+        ----------
+        ferry_to_worker_key : str
+            The key of the worker that will be scheduled via ferry_to().
+        kickoff_worker_key : Optional[str] = None
+            The key of the worker that initiated the ferry_to() call.
+            None if called from outside a worker context or if debug mode is disabled.
+        is_top_level: bool = False
+            Whether the ferry_to() is called from the top-level automa context.
+        parent : Optional[Automa] = None
+            Parent automa instance containing this worker. For top-level automa, parent is the automa itself.
+        arguments : Dict[str, Any] = None
+            Arguments passed to ferry_to() with keys "args" and "kwargs".
+        """
+        pass
+
     async def on_worker_error(
         self,
         key: str,
