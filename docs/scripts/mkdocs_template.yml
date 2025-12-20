@@ -156,12 +156,12 @@ plugins:
             show_symbol_type_heading: true
             show_symbol_type_toc: true
           paths: 
-            - ../bridgic-core
-            - ../bridgic-integration/llms/bridgic-llms-openai
-            - ../bridgic-integration/llms/bridgic-llms-openai-like
-            - ../bridgic-integration/llms/bridgic-llms-vllm
-            - ../bridgic-integration/traces/bridgic-traces-opik
-            - ../bridgic-integration/traces/bridgic-traces-langwatch
+            - ../packages/bridgic-core
+            - ../packages/bridgic-integration/llms/bridgic-llms-openai
+            - ../packages/bridgic-integration/llms/bridgic-llms-openai-like
+            - ../packages/bridgic-integration/llms/bridgic-llms-vllm
+            - ../packages/bridgic-integration/traces/bridgic-traces-opik
+            - ../packages/bridgic-integration/traces/bridgic-traces-langwatch
   - mike
 
 markdown_extensions:
