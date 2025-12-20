@@ -26,22 +26,22 @@ exclude_files:
 # List of package directories to process
 packages:
   - name: "bridgic-core"
-    path: "bridgic-core"
+    path: "packages/bridgic-core"
     description: "Bridgic Core"
   - name: "bridgic-llms-openai-like"
-    path: "bridgic-integration/llms/bridgic-llms-openai-like"
+    path: "packages/bridgic-integration/llms/bridgic-llms-openai-like"
     description: "OpenAI-compatible LLM Integration"
   - name: "bridgic-llms-openai"
-    path: "bridgic-integration/llms/bridgic-llms-openai"
+    path: "packages/bridgic-integration/llms/bridgic-llms-openai"
     description: "OpenAI LLM Integration"
   - name: "bridgic-llms-vllm"
-    path: "bridgic-integration/llms/bridgic-llms-vllm"
+    path: "packages/bridgic-integration/llms/bridgic-llms-vllm"
     description: "vLLM Integration"
   - name: "bridgic-traces-opik"
-    path: "bridgic-integration/traces/bridgic-traces-opik"
+    path: "packages/bridgic-integration/traces/bridgic-traces-opik"
     description: "Opik Observability Integration"
   - name: "bridgic-traces-langwatch"
-    path: "bridgic-integration/traces/bridgic-traces-langwatch"
+    path: "packages/bridgic-integration/traces/bridgic-traces-langwatch"
     description: "LangWatch Observability Integration"
 
 # Documentation generation options
