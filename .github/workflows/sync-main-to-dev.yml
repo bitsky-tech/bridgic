@@ -6,13 +6,23 @@ on:
       - closed
     branches:
       - main
+  workflow_dispatch:  # Allow manual triggering
+    inputs:
+      reason:
+        description: 'Reason for manual sync (optional, for audit trail)'
+        required: false
+        default: 'Manual sync requested'
 
 permissions:
   contents: write
 
 jobs:
   merge:
-    if: github.event.pull_request.merged == true && startsWith(github.event.pull_request.head.ref, 'release/')
+    # For PR events: only run if merged and from release/* branch
+    # For manual dispatch: always run
+    if: |
+      (github.event_name == 'workflow_dispatch') ||
+      (github.event.pull_request.merged == true && startsWith(github.event.pull_request.head.ref, 'release/'))
     runs-on: ubuntu-latest
 
     steps:
@@ -36,9 +46,29 @@ jobs:
 
       - name: Sync main to dev
         run: |
-          git fetch origin dev
+          git fetch origin dev main
           git checkout dev
-          git merge origin/main -m "Sync: auto merge main after merging ${{ github.event.pull_request.head.ref }}."
+
+          # Check if dev is already up to date with main
+          if git merge-base --is-ancestor origin/main HEAD; then
+            echo "✅ All commits from main are already in dev branch."
+            exit 0
+          fi
+
+          # Determine commit message based on trigger type
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            COMMIT_MSG="Sync: manual merge main to dev"
+          else
+            COMMIT_MSG="Sync: auto merge main after merging ${{ github.event.pull_request.head.ref }}"
+          fi
+
+          # Perform merge
+          echo "🔄 Merging main into dev..."
+          git merge origin/main -m "$COMMIT_MSG"
+          echo "✅ Merge successful"
+
+          # Push changes
           git push origin dev
+          echo "✅ Successfully synced main to dev"
         env:
           GITHUB_TOKEN: ${{ steps.generate_token.outputs.token }}
