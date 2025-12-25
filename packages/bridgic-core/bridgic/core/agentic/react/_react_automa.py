@@ -14,6 +14,7 @@ from bridgic.core.agentic.types._chat_message import ChatMessage, SystemMessage,
 from bridgic.core.agentic.types._chat_message import FunctionToolCall, Function
 from bridgic.core.agentic.tool_specs import ToolSpec, FunctionToolSpec, AutomaToolSpec
 from bridgic.core.agentic.workers import ToolSelectionWorker
+from bridgic.core.utils._console import printer
 
 DEFAULT_MAX_ITERATIONS = 20
 DEFAULT_TEMPLATE_FILE = "tools_chat.jinja"
@@ -376,6 +377,41 @@ class ReActAutoma(GraphAutoma):
                 content=str(tool_result), 
                 tool_call_id=tool_call.id
             ))
+
+            if hasattr(tool_result, "content"):
+                try:
+                    from mcp import types
+                    _mcp_installed = True
+                except ImportError:
+                    _mcp_installed = False
+
+                content_str = ""
+
+                if _mcp_installed:
+                    from mcp.types import CallToolResult
+                    if isinstance(tool_result, CallToolResult):
+                        content = tool_result.content
+                        if isinstance(content, List):
+                            for idx, item in enumerate(content):
+                                if idx > 0:
+                                    content_str += "\n"
+                                match item.type:
+                                    case "text":
+                                        content_str += f"[{idx}]-[{item.type}]:\n\n" + item.text
+                                    case "image":
+                                        content_str += f"[{idx}]-[{item.type}]-{item.mimeType}:\n\n" + item.data
+                                    case "audio":
+                                        content_str += f"[{idx}]-[{item.type}]-{item.mimeType}:\n\n" + item.data
+                                    case _:
+                                        content_str += str(item)
+                    else:
+                        content_str = str(tool_result)
+                else:
+                    content_str = str(tool_result)
+
+                if self._running_options.debug:
+                    printer.print(content_str, color="green")
+
             # Remove the tool workers
             self.remove_worker(f"tool_{tool_call.name}_{tool_call.id}")
         # Remove self...

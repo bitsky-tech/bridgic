@@ -1582,9 +1582,6 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
                                 last_kickoff=worker_key,
                             ))
                         successor_keys.add(successor_key)
-            if running_options.debug:
-                deferred_ferrys = [ferry_task.ferry_to_worker_key for ferry_task in self._ferry_deferred_tasks]
-                printer.print(f"[DS][After Tasks Finished] successor workers: {successor_keys}, deferred ferrys: {deferred_ferrys}", color="purple")
 
             # Clear running tasks after all finished.
             self._running_tasks.clear()
