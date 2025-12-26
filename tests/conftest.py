@@ -5,6 +5,7 @@ This module provides shared fixtures for integration tests that require
 real LLM services, MCP servers, and other external dependencies.
 """
 import os
+import platform
 import pytest
 import pytest_asyncio
 import shutil
@@ -70,6 +71,43 @@ def github_mcp_url():
 def has_npx():
     """Check if npx is available."""
     return shutil.which("npx") is not None
+
+@pytest.fixture
+def has_chrome():
+    """Check if Chrome is available (cross-platform)."""
+    system = platform.system()
+
+    # Check common Chrome executable names via PATH
+    if system == "Linux":
+        chrome_names = ["google-chrome", "chrome", "chromium", "chromium-browser"]
+        for name in chrome_names:
+            if shutil.which(name):
+                return True
+
+    # macOS: Check for Chrome in Applications folder
+    if system == "Darwin":
+        chrome_paths = [
+            "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+            "/Applications/Chromium.app/Contents/MacOS/Chromium",
+        ]
+        for path in chrome_paths:
+            if os.path.exists(path) and os.access(path, os.X_OK):
+                return True
+
+    # Windows: Check common installation paths
+    elif system == "Windows":
+        chrome_paths = [
+            os.path.expandvars(r"%ProgramFiles%\Google\Chrome\Application\chrome.exe"),
+            os.path.expandvars(r"%ProgramFiles(x86)%\Google\Chrome\Application\chrome.exe"),
+            os.path.expandvars(r"%LocalAppData%\Google\Chrome\Application\chrome.exe"),
+            os.path.expandvars(r"%ProgramFiles%\Chromium\Application\chromium.exe"),
+            os.path.expandvars(r"%ProgramFiles(x86)%\Chromium\Application\chromium.exe"),
+        ]
+        for path in chrome_paths:
+            if os.path.exists(path):
+                return True
+
+    return False
 
 
 # ============================================================================
@@ -151,6 +189,28 @@ async def github_mcp_streamable_http_connection(github_mcp_url, github_token):
         request_timeout=10,
     )
     
+    connection.connect()
+    yield connection
+    connection.close()
+
+
+@pytest_asyncio.fixture
+async def playwright_mcp_stdio_connection(has_npx, has_chrome):
+    """Playwright MCP server connection via stdio (requires npx)."""
+    if not has_npx:
+        pytest.skip("npx is not available")
+    if not has_chrome:
+        pytest.skip("Chrome is not available")
+
+    connection = McpServerConnectionStdio(
+        name="browser-use-mcp-stdio",
+        command="npx",
+        args=[
+            "@playwright/mcp@latest",
+        ],
+        request_timeout=60,  # Browser operations may take longer
+    )
+
     connection.connect()
     yield connection
     connection.close()

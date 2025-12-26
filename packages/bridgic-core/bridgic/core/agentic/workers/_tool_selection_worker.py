@@ -6,6 +6,7 @@ from bridgic.core.model.types import Message, Tool, ToolCall
 from bridgic.core.model.protocols import ToolSelection
 from bridgic.core.agentic.types._chat_message import ChatMessage
 from bridgic.core.prompt.utils._prompt_utils import transform_chat_message_to_llm_message
+from bridgic.core.utils._console import printer
 
 class ToolSelectionWorker(Worker):
     """
@@ -51,13 +52,17 @@ class ToolSelectionWorker(Worker):
         llm_messages: List[Message] = []
         for message in messages:
             llm_messages.append(transform_chat_message_to_llm_message(message))
-        # print(f"\n******* ToolSelectionWorker.arun *******\n")
-        # print(f"messages: {llm_messages}")
-        # print(f"tools: {tools}")
+
         tool_calls, llm_response = await self._tool_selection_llm.aselect_tool(
             messages=llm_messages, 
             tools=tools, 
         )
+
+        from bridgic.core.automa import Automa
+        if isinstance(self.parent, Automa) and self.parent._running_options.debug:
+            for tool_call in tool_calls:
+                printer.print(f"tool_call: {tool_call}", color="yellow")
+
         return tool_calls, llm_response
 
     @override
