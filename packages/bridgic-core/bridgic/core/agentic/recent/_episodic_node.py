@@ -17,11 +17,6 @@ class NodeType(str, Enum):
 class BaseEpisodicNode(Serializable, ABC):
     """
     BaseEpisodicNode represents a single memory unit in the memory sequence in the ReCENT Algorithm.
-
-    **ReCENT Algorithm** (Recursive Compressed Episodic Node Tree Algorithm) is an algorithm designed to 
-    address issues such as context explosion and goal drift, by employing a recursive memory compression 
-    mechanism. In this algorithm, each episodic node will serve as a container of memory and could be 
-    tightly organized together to form a more efficient and reliable memory for the higher agentic system.
     """
 
     node_type: NodeType
@@ -58,28 +53,34 @@ class GoalEpisodicNode(BaseEpisodicNode):
     guidance: str
     """The guidance to achieve the goal."""
 
-    shifted_goal_timestep: int
-    """The timestep of the shifted goal."""
+    shifted_goal_node_timestep: int
+    """The timestep of the shifted goal node."""
 
-    def __init__(self, timestep: int, goal: str, guidance: Optional[str] = None):
+    def __init__(
+        self,
+        timestep: int,
+        goal: str,
+        guidance: Optional[str] = None,
+        shifted_goal_node_timestep: Optional[int] = None,
+    ):
         super().__init__(timestep)
         self.node_type = NodeType.GOAL
         self.goal = goal
         self.guidance = guidance if guidance is not None else ""
-        self.shifted_goal_timestep = -1 # -1 means the goal has not been shifted yet.
+        self.shifted_goal_node_timestep = shifted_goal_node_timestep if shifted_goal_node_timestep is not None else -1
 
     @override
     def dump_to_dict(self) -> Dict[str, Any]:
         result = super().dump_to_dict()
         result["content"] = self.goal
-        result["shifted_goal_timesteps"] = self.shifted_goal_timestep
+        result["shifted_goal_node_timestep"] = self.shifted_goal_node_timestep
         return result
-    
+
     @override
     def load_from_dict(self, state_dict: Dict[str, Any]) -> None:
         super().load_from_dict(state_dict)
         self.goal = state_dict["content"]
-        self.shifted_goal_timestep = state_dict.get("shifted_goal_timesteps")
+        self.shifted_goal_node_timestep = state_dict.get("shifted_goal_node_timestep")
 
 class LeafEpisodicNode(BaseEpisodicNode):
 
@@ -108,30 +109,28 @@ class LeafEpisodicNode(BaseEpisodicNode):
         self.messages = state_dict.get("messages")
         self.message_appendable = state_dict.get("message_appendable")
 
-
 class CompressedEpisodicNode(BaseEpisodicNode):
 
     summary: str
     """The summary of the compressed episodic node."""
 
-    compressed_timesteps: List[int]
+    compressed_node_timesteps: List[int]
     """The timesteps of the compressed episodic node."""
 
     def __init__(self, timestep: int, summary: str, compressed_timesteps: Optional[List[int]] = None):
         super().__init__(timestep)
         self.summary = summary
-        self.compressed_timesteps = compressed_timesteps if compressed_timesteps is not None else []
+        self.compressed_node_timesteps = compressed_timesteps if compressed_timesteps is not None else []
 
     @override
     def dump_to_dict(self) -> Dict[str, Any]:
         result = super().dump_to_dict()
         result["summary"] = self.summary
-        result["compressed_timesteps"] = self.compressed_timesteps
+        result["compressed_node_timesteps"] = self.compressed_node_timesteps
         return result
 
     @override
     def load_from_dict(self, state_dict: Dict[str, Any]) -> None:
         super().load_from_dict(state_dict)
         self.summary = state_dict.get("summary", "")
-        self.compressed_timesteps = state_dict.get("compressed_timesteps", [])
-
+        self.compressed_node_timesteps = state_dict.get("compressed_node_timesteps", [])
