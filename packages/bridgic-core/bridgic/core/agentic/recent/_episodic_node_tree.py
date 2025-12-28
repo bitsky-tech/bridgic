@@ -1,6 +1,8 @@
 from typing import List, Dict, Any, Optional, cast
+from threading import RLock
 
 from bridgic.core.model.types import Message
+from bridgic.core.types._serialization import Serializable
 from bridgic.core.agentic.recent._episodic_node import (
     BaseEpisodicNode,
     GoalEpisodicNode,
@@ -10,7 +12,7 @@ from bridgic.core.agentic.recent._episodic_node import (
 )
 
 
-class EpisodicNodeTree:
+class EpisodicNodeTree(Serializable):
     """
     EpisodicNodeTree is a data structure responsible for managing the sequence of episodic memory nodes, 
     which is the core data structure of the ReCENT Algorithm.
@@ -19,7 +21,16 @@ class EpisodicNodeTree:
     address issues such as context explosion and goal drift, by employing a recursive memory compression 
     mechanism. In this algorithm, each episodic node will serve as a container of memory and could be 
     tightly organized together to form a more efficient and reliable memory for the higher agentic system.
+
+    Notes:
+    ------
+    - This data structure only supports appending new nodes; deletion or insertion is not allowed.
+    - All write operations are protected by a lock to ensure atomicity and preserve ordered nature of the structure.
+    - The data structure does not and should not perform any computationally expensive operations such as summarization.
     """
+
+    _lock: RLock
+    """Reentrant lock for thread-safe node write operations."""
 
     _node_sequence: List[BaseEpisodicNode]
     """The sequence of nodes in the episodic node tree."""
@@ -33,7 +44,8 @@ class EpisodicNodeTree:
         self._node_sequence = []
         self._goal_node_timestep = -1
         self._non_goal_node_timesteps = []
-    
+        self._lock = RLock()
+
     def get_node(self, timestep: int) -> Optional[BaseEpisodicNode]:
         """
         Get a node by its timestep.
@@ -51,7 +63,7 @@ class EpisodicNodeTree:
         if timestep < len(self._node_sequence):
             return self._node_sequence[timestep]
         return None
-    
+
     def get_goal_node(self) -> Optional[GoalEpisodicNode]:
         """
         Get the current goal node.
@@ -64,7 +76,7 @@ class EpisodicNodeTree:
         if self._goal_node_timestep != -1:
             return cast(GoalEpisodicNode, self.get_node(self._goal_node_timestep))
         return None
-    
+
     def get_non_goal_nodes(self) -> List[BaseEpisodicNode]:
         """
         Get all directly accessible non-goal nodes (sorted by timestep).
@@ -78,7 +90,7 @@ class EpisodicNodeTree:
         for timestep in self._non_goal_node_timesteps:
             nodes.append(self.get_node(timestep))
         return nodes
-    
+ 
     def _get_next_timestep(self) -> int:
         """
         Get the next available timestep.
@@ -89,7 +101,7 @@ class EpisodicNodeTree:
             The next available timestep.
         """
         return len(self._node_sequence)
-    
+
     def _mark_tail_leaf_node_not_appendable(self) -> None:
         """
         Mark the tail appendable leaf node as not appendable.
@@ -98,7 +110,7 @@ class EpisodicNodeTree:
             last_node = self._node_sequence[-1]
             if isinstance(last_node, LeafEpisodicNode) and last_node.message_appendable:
                 last_node.message_appendable = False
-    
+
     def add_goal_node(self, goal: str, guidance: Optional[str] = None) -> int:
         """
         Add a goal node.
@@ -119,26 +131,27 @@ class EpisodicNodeTree:
         int
             The timestep of the new goal node.
         """
-        # Close the tail appendable leaf node.
-        self._mark_tail_leaf_node_not_appendable()
+        with self._lock:
+            # Close the tail appendable leaf node.
+            self._mark_tail_leaf_node_not_appendable()
 
-        # Get the next timestep.
-        new_timestep = self._get_next_timestep()
+            # Get the next timestep.
+            new_timestep = self._get_next_timestep()
 
-        # Create the new goal node.
-        goal_node = GoalEpisodicNode(
-            timestep=new_timestep,
-            goal=goal,
-            guidance=guidance,
-            shifted_goal_node_timestep=self._goal_node_timestep
-        )
+            # Create the new goal node.
+            goal_node = GoalEpisodicNode(
+                timestep=new_timestep,
+                goal=goal,
+                guidance=guidance,
+                shifted_goal_node_timestep=self._goal_node_timestep
+            )
 
-        # Add the new goal node to the sequence and update the goal timestep.
-        self._node_sequence.append(goal_node)
-        self._goal_node_timestep = new_timestep
+            # Add the new goal node to the sequence and update the goal timestep.
+            self._node_sequence.append(goal_node)
+            self._goal_node_timestep = new_timestep
 
-        return new_timestep
-    
+            return new_timestep
+
     def add_leaf_node(self, messages: List[Message]) -> int:
         """
         Add a new leaf node that is appendable to new messages.
@@ -155,23 +168,24 @@ class EpisodicNodeTree:
         int
             The timestep of the new leaf node.
         """
-        # Close the tail appendable leaf node.
-        self._mark_tail_leaf_node_not_appendable()
+        with self._lock:
+            # Close the tail appendable leaf node.
+            self._mark_tail_leaf_node_not_appendable()
 
-        # Get the next timestep.
-        new_timestep = self._get_next_timestep()
+            # Get the next timestep.
+            new_timestep = self._get_next_timestep()
 
-        # Create a new appendable leaf node.
-        leaf_node = LeafEpisodicNode(
-            timestep=new_timestep,
-            messages=messages
-        )
+            # Create a new appendable leaf node.
+            leaf_node = LeafEpisodicNode(
+                timestep=new_timestep,
+                messages=messages
+            )
 
-        # Add the new leaf node to the sequence and update the non-goal node timesteps.
-        self._node_sequence.append(leaf_node)
-        self._non_goal_node_timesteps.append(new_timestep)
+            # Add the new leaf node to the sequence and update the non-goal node timesteps.
+            self._node_sequence.append(leaf_node)
+            self._non_goal_node_timesteps.append(new_timestep)
 
-        return new_timestep
+            return new_timestep
 
     def add_compressed_node(self, summary: str, compressed_timesteps: List[int]) -> int:
         """
@@ -193,30 +207,31 @@ class EpisodicNodeTree:
         int
             The timestep of the new compressed node.
         """
-        # Close the tail appendable leaf node.
-        self._mark_tail_leaf_node_not_appendable()
+        with self._lock:
+            # Close the tail appendable leaf node.
+            self._mark_tail_leaf_node_not_appendable()
 
-        # Get the next timestep.
-        new_timestep = self._get_next_timestep()
+            # Get the next timestep.
+            new_timestep = self._get_next_timestep()
 
-        # Create the compressed node.
-        compressed_node = CompressedEpisodicNode(
-            timestep=new_timestep,
-            summary=summary,
-            compressed_timesteps=compressed_timesteps
-        )
+            # Create the compressed node.
+            compressed_node = CompressedEpisodicNode(
+                timestep=new_timestep,
+                summary=summary,
+                compressed_timesteps=compressed_timesteps
+            )
 
-        # Add the new compressed node to the sequence and update the non-goal node timesteps.
-        self._node_sequence.append(compressed_node)
-        self._non_goal_node_timesteps.append(new_timestep)
+            # Add the new compressed node to the sequence and update the non-goal node timesteps.
+            self._node_sequence.append(compressed_node)
+            self._non_goal_node_timesteps.append(new_timestep)
 
-        # Remove the timesteps of the compressed episodic nodes from _non_goal_node_timesteps.
-        self._non_goal_node_timesteps = [
-            t for t in self._non_goal_node_timesteps 
-            if t not in compressed_timesteps
-        ]
+            # Remove the timesteps of the compressed episodic nodes from _non_goal_node_timesteps.
+            self._non_goal_node_timesteps = [
+                t for t in self._non_goal_node_timesteps 
+                if t not in compressed_timesteps
+            ]
 
-        return new_timestep
+            return new_timestep
 
     def get_tail_appendable_leaf_node(self) -> Optional[LeafEpisodicNode]:
         """
