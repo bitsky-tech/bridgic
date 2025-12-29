@@ -1,4 +1,5 @@
-from typing import List, Dict, Any, Optional, cast
+import asyncio
+from typing import List, Dict, Any, Optional, Union, cast
 from threading import RLock
 
 from bridgic.core.model.types import Message
@@ -7,7 +8,7 @@ from bridgic.core.agentic.recent._episodic_node import (
     BaseEpisodicNode,
     GoalEpisodicNode,
     LeafEpisodicNode,
-    CompressedEpisodicNode,
+    CompressionEpisodicNode,
     NodeType,
 )
 
@@ -150,7 +151,7 @@ class EpisodicNodeTree(Serializable):
             self._node_sequence.append(goal_node)
             self._goal_node_timestep = new_timestep
 
-            return new_timestep
+        return new_timestep
 
     def add_leaf_node(self, messages: List[Message]) -> int:
         """
@@ -185,27 +186,27 @@ class EpisodicNodeTree(Serializable):
             self._node_sequence.append(leaf_node)
             self._non_goal_node_timesteps.append(new_timestep)
 
-            return new_timestep
+        return new_timestep
 
-    def add_compressed_node(self, summary: str, compressed_timesteps: List[int]) -> int:
+    def add_compression_node(self, compressed_timesteps: List[int], summary: Optional[str] = None) -> int:
         """
-        Add a compressed node.
+        Add a new compression node that summarizes the given non-goal nodes.
 
-        The tail appendable leaf node will be closed before adding the new node.
-        The timesteps of compressed nodes will be removed from the non-goal 
-        node timesteps list, and the new compressed node's timestep will be added.
+        Before creating the compression node, close the last leaf node if it is still appendable.
+        The `compressed_timesteps` list tells which nodes to summarize. Those nodes are then removed 
+        from the active list, and the new compression node replaces them in the active non-goal node list.
 
         Parameters
         ----------
-        summary : str
-            The compressed summary content.
         compressed_timesteps : List[int]
             List of timesteps of the compressed nodes.
+        summary : Optional[str]
+            The compression summary content. If not provided, an unset asyncio.Future of summary will be created.
 
         Returns
         -------
         int
-            The timestep of the new compressed node.
+            The timestep of the new compression node.
         """
         with self._lock:
             # Close the tail appendable leaf node.
@@ -214,24 +215,24 @@ class EpisodicNodeTree(Serializable):
             # Get the next timestep.
             new_timestep = self._get_next_timestep()
 
-            # Create the compressed node.
-            compressed_node = CompressedEpisodicNode(
+            # Create the compression node.
+            compression_node = CompressionEpisodicNode(
                 timestep=new_timestep,
+                compressed_timesteps=compressed_timesteps,
                 summary=summary,
-                compressed_timesteps=compressed_timesteps
             )
 
-            # Add the new compressed node to the sequence and update the non-goal node timesteps.
-            self._node_sequence.append(compressed_node)
+            # Add the new compression node to the sequence and update the non-goal node timesteps.
+            self._node_sequence.append(compression_node)
             self._non_goal_node_timesteps.append(new_timestep)
 
-            # Remove the timesteps of the compressed episodic nodes from _non_goal_node_timesteps.
+            # Remove the timesteps of the compressed nodes from _non_goal_node_timesteps.
             self._non_goal_node_timesteps = [
                 t for t in self._non_goal_node_timesteps 
                 if t not in compressed_timesteps
             ]
 
-            return new_timestep
+        return new_timestep
 
     def get_tail_appendable_leaf_node(self) -> Optional[LeafEpisodicNode]:
         """
@@ -266,9 +267,9 @@ class EpisodicNodeTree(Serializable):
             if node_type == NodeType.GOAL:
                 node = GoalEpisodicNode(timestep=0, goal="")
             elif node_type == NodeType.LEAF:
-                node = LeafEpisodicNode(timestep=0, messages=[])
+                node = LeafEpisodicNode(timestep=0)
             elif node_type == NodeType.COMPRESSED:
-                node = CompressedEpisodicNode(timestep=0, summary="", compressed_timesteps=[])
+                node = CompressionEpisodicNode(timestep=0, compressed_timesteps=[])
             else:
                 raise ValueError(f"Invalid node type: {node_type}")
 

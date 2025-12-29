@@ -1,3 +1,6 @@
+import asyncio
+import warnings
+
 from abc import ABC
 from enum import Enum
 from typing import List, Dict, Any, Optional
@@ -109,28 +112,49 @@ class LeafEpisodicNode(BaseEpisodicNode):
         self.messages = state_dict.get("messages")
         self.message_appendable = state_dict.get("message_appendable")
 
-class CompressedEpisodicNode(BaseEpisodicNode):
+class CompressionEpisodicNode(BaseEpisodicNode):
+    """
+    Compression node that compresses a sequence of episodic nodes.
 
-    summary: str
-    """The summary of the compressed episodic node."""
+    A compression node is created to summarize and compress multiple episodic nodes. The compression 
+    node contains a summary of the compressed nodes and records their timesteps.
+    """
+
+    summary: asyncio.Future[str]
+    """The summary of the compression node, which is one asyncio.Future for async dependency handling."""
 
     compressed_node_timesteps: List[int]
-    """The timesteps of the compressed episodic node."""
+    """The timesteps of the compressed nodes (the nodes that were compressed by this compression node)."""
 
-    def __init__(self, timestep: int, summary: str, compressed_timesteps: Optional[List[int]] = None):
+    def __init__(self, timestep: int, compressed_timesteps: List[int], summary: Optional[str] = None):
         super().__init__(timestep)
-        self.summary = summary
+        self.summary = asyncio.Future()
+        if summary:
+            self.summary.set_result(summary)
         self.compressed_node_timesteps = compressed_timesteps if compressed_timesteps is not None else []
 
     @override
     def dump_to_dict(self) -> Dict[str, Any]:
         result = super().dump_to_dict()
-        result["summary"] = self.summary
+
+        # Future cannot be serialized, so we try to get the result if done, otherwise use empty string
+        if self.summary.done():
+            try:
+                result["summary"] = self.summary.result()
+            except Exception:
+                result["summary"] = ""
+                warnings.warn("Failed to get the result of the summary of the compression episodic node, thus empty summary will be stored.")
+        else:
+            result["summary"] = ""
+            warnings.warn("The summary of the compression episodic node is not ready yet, thus empty summary will be stored.", FutureWarning)
+
+        # Record the timesteps of the nodes that were compressed.
         result["compressed_node_timesteps"] = self.compressed_node_timesteps
         return result
 
     @override
     def load_from_dict(self, state_dict: Dict[str, Any]) -> None:
         super().load_from_dict(state_dict)
-        self.summary = state_dict.get("summary", "")
+        self.summary = asyncio.Future()
+        self.summary.set_result(state_dict.get("summary", ""))
         self.compressed_node_timesteps = state_dict.get("compressed_node_timesteps", [])

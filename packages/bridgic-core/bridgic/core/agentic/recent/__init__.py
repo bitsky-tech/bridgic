@@ -7,16 +7,16 @@ mechanism. In this algorithm, each episodic node will serve as a container of me
 tightly organized together to form a more efficient and reliable memory for the higher agentic system.
 
 There are three types of episodic nodes:
-- GoalEpisodicNode: A goal node that represents the goal of the agent.
-- LeafEpisodicNode: A leaf node that represents a sequence of messages.
-- CompressedEpisodicNode: A compressed node that represents a compressed memory unit.
+- `GoalEpisodicNode`: A goal node that represents the goal of the agent.
+- `LeafEpisodicNode`: A leaf node that represents a sequence of messages.
+- `CompressionEpisodicNode`: A compression node that compresses a sequence of episodic nodes (compressed nodes).
 """
 
 from ._episodic_node import (
     BaseEpisodicNode,
     GoalEpisodicNode,
     LeafEpisodicNode,
-    CompressedEpisodicNode,
+    CompressionEpisodicNode,
     NodeType,
 )
 
@@ -24,7 +24,7 @@ __all__ = [
     "BaseEpisodicNode",
     "GoalEpisodicNode",
     "LeafEpisodicNode",
-    "CompressedEpisodicNode",
+    "CompressionEpisodicNode",
     "NodeType",
 ]
 
