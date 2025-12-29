@@ -114,11 +114,10 @@ class EpisodicNodeTree(Serializable):
 
     def add_goal_node(self, goal: str, guidance: Optional[str] = None) -> int:
         """
-        Add a goal node.
+        Add a new goal node.
 
-        If an old goal node exists, the new goal node's shifted_goal_timestep 
-        will be set to the old goal node's timestep. The tail appendable leaf 
-        node will be closed before adding the new goal node.
+        If a previous goal node exists, its timestep will be linked in the new goal node.
+        The tail appendable leaf node (if exists) will be closed before adding the new goal node.
 
         Parameters
         ----------
@@ -139,12 +138,12 @@ class EpisodicNodeTree(Serializable):
             # Get the next timestep.
             new_timestep = self._get_next_timestep()
 
-            # Create the new goal node.
+            # Create the new goal node and record the timestep of the previous goal node.
             goal_node = GoalEpisodicNode(
                 timestep=new_timestep,
                 goal=goal,
                 guidance=guidance,
-                shifted_goal_node_timestep=self._goal_node_timestep
+                previous_goal_node_timestep=self._goal_node_timestep
             )
 
             # Add the new goal node to the sequence and update the goal timestep.

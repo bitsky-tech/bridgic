@@ -56,34 +56,34 @@ class GoalEpisodicNode(BaseEpisodicNode):
     guidance: str
     """The guidance to achieve the goal."""
 
-    shifted_goal_node_timestep: int
-    """The timestep of the shifted goal node."""
+    previous_goal_node_timestep: int
+    """The timestep of the previous goal node (the goal node that was replaced by this one)."""
 
     def __init__(
         self,
         timestep: int,
         goal: str,
         guidance: Optional[str] = None,
-        shifted_goal_node_timestep: Optional[int] = None,
+        previous_goal_node_timestep: Optional[int] = None,
     ):
         super().__init__(timestep)
         self.node_type = NodeType.GOAL
         self.goal = goal
         self.guidance = guidance if guidance is not None else ""
-        self.shifted_goal_node_timestep = shifted_goal_node_timestep if shifted_goal_node_timestep is not None else -1
+        self.previous_goal_node_timestep = previous_goal_node_timestep if previous_goal_node_timestep is not None else -1
 
     @override
     def dump_to_dict(self) -> Dict[str, Any]:
         result = super().dump_to_dict()
         result["content"] = self.goal
-        result["shifted_goal_node_timestep"] = self.shifted_goal_node_timestep
+        result["previous_goal_node_timestep"] = self.previous_goal_node_timestep
         return result
 
     @override
     def load_from_dict(self, state_dict: Dict[str, Any]) -> None:
         super().load_from_dict(state_dict)
         self.goal = state_dict["content"]
-        self.shifted_goal_node_timestep = state_dict.get("shifted_goal_node_timestep")
+        self.previous_goal_node_timestep = state_dict.get("previous_goal_node_timestep", -1)
 
 class LeafEpisodicNode(BaseEpisodicNode):
 
