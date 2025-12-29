@@ -10,7 +10,7 @@ from bridgic.core.agentic.recent._episodic_node import (
     CompressionEpisodicNode,
 )
 from bridgic.core.agentic.recent._episodic_node_tree import EpisodicNodeTree
-from bridgic.core.agentic.recent._compression_config import CompressionConfig
+from bridgic.core.agentic.recent._recent_memory_config import ReCentMemoryConfig
 
 
 class ReCentContext(TypedDict):
@@ -39,12 +39,12 @@ class ReCentMemoryManager(Serializable):
     _episodic_node_tree: EpisodicNodeTree
     """The episodic node tree instance."""
 
-    _compression_config: CompressionConfig
-    """The compression configuration."""
+    _memory_config: ReCentMemoryConfig
+    """The memory configuration."""
 
-    def __init__(self, compression_config: CompressionConfig):
+    def __init__(self, compression_config: ReCentMemoryConfig):
         self._episodic_node_tree = EpisodicNodeTree()
-        self._compression_config = compression_config
+        self._memory_config = compression_config
 
     def create_goal(self, goal: str, guidance: Optional[str] = None) -> int:
         """
@@ -173,7 +173,7 @@ class ReCentMemoryManager(Serializable):
             compression_messages.append(instruction_message)
 
             # Call the LLM to generate summary.
-            response = await self._compression_config.llm.achat(messages=compression_messages)
+            response = await self._memory_config.llm.achat(messages=compression_messages)
             summary = response.message.content
 
             # Set the result of the summary future.
@@ -257,10 +257,10 @@ class ReCentMemoryManager(Serializable):
     def dump_to_dict(self) -> Dict[str, Any]:
         return {
             "episodic_node_tree": self._episodic_node_tree,
-            "compression_config": self._compression_config,
+            "memory_config": self._memory_config,
         }
 
     @override
     def load_from_dict(self, state_dict: Dict[str, Any]) -> None:
         self._episodic_node_tree = state_dict["episodic_node_tree"]
-        self._compression_config = state_dict["compression_config"]
+        self._memory_config = state_dict["memory_config"]
