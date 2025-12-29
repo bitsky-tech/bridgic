@@ -14,7 +14,7 @@ from bridgic.core.model.types import Message
 class NodeType(str, Enum):
     GOAL = "goal"
     LEAF = "leaf"
-    COMPRESSED = "compressed"
+    COMPRESSION = "compression"
 
 
 class BaseEpisodicNode(Serializable, ABC):
@@ -128,6 +128,7 @@ class CompressionEpisodicNode(BaseEpisodicNode):
 
     def __init__(self, timestep: int, compressed_timesteps: List[int], summary: Optional[str] = None):
         super().__init__(timestep)
+        self.node_type = NodeType.COMPRESSION
         self.summary = asyncio.Future()
         if summary:
             self.summary.set_result(summary)

@@ -107,7 +107,7 @@ class ReCentMemoryManager(Serializable):
             non_goal_nodes = self._episodic_node_tree.get_non_goal_nodes()
 
             if not non_goal_nodes:
-                raise ValueError("No nodes to compress")
+                raise ValueError("There is no node to could be compressed")
 
             # Get the timesteps of nodes that will be compressed (compressed nodes).
             compressed_timesteps = [node.timestep for node in non_goal_nodes]

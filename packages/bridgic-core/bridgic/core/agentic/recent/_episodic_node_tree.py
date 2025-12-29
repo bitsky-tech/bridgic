@@ -267,7 +267,7 @@ class EpisodicNodeTree(Serializable):
                 node = GoalEpisodicNode(timestep=0, goal="")
             elif node_type == NodeType.LEAF:
                 node = LeafEpisodicNode(timestep=0)
-            elif node_type == NodeType.COMPRESSED:
+            elif node_type == NodeType.COMPRESSION:
                 node = CompressionEpisodicNode(timestep=0, compressed_timesteps=[])
             else:
                 raise ValueError(f"Invalid node type: {node_type}")
