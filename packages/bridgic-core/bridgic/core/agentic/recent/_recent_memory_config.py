@@ -5,7 +5,6 @@ from bridgic.core.types._serialization import Serializable
 from bridgic.core.prompt import EjinjaPromptTemplate
 
 
-# Default prompt templates
 DEFAULT_SYSTEM_PROMPT_TEMPLATE = (
     "You are a helpful assistant. Your responsibility is to summarize the messages up to the "
     "present and organize useful information to better make the next step plan and complete "
@@ -24,10 +23,29 @@ DEFAULT_INSTRUCTION_PROMPT_TEMPLATE = (
 
 
 class ReCentMemoryConfig(Serializable):
-    """Configuration for ReCent memory management."""
+    """
+    This configuration class defines the memory management strategy that will compress
+    the conversation history when certain conditions are met.
+
+    Attributes
+    ----------
+    llm : BaseLlm
+        The LLM instance used for memory compression operations.
+    max_node_size : int
+        Maximum number of memory nodes before triggering compression.
+        Defaults to 10.
+    max_token_size : int
+        Maximum number of tokens before triggering compression.
+        Defaults to 8192 (1024 * 8).
+    system_prompt_template : str
+        Jinja2 prompt template for the system prompt used in memory compression, which accepts 
+        parameters: `goal` and `guidance`.
+    instruction_prompt_template : str
+        Jinja2 prompt template for the instruction prompt used in memory compression.
+    """
 
     llm: BaseLlm
-    """LLM model used for memory compression."""
+    """The LLM used for memory compression."""
 
     max_node_size: int
     """Threshold for the number of memory nodes to trigger memory compression."""
@@ -44,8 +62,8 @@ class ReCentMemoryConfig(Serializable):
     def __init__(
         self,
         llm: BaseLlm,
-        max_node_size: int,
-        max_token_size: int,
+        max_node_size: int = 10,
+        max_token_size: int = 1024 * 8,
         system_prompt_template: Optional[str] = DEFAULT_SYSTEM_PROMPT_TEMPLATE,
         instruction_prompt_template: Optional[str] = DEFAULT_INSTRUCTION_PROMPT_TEMPLATE,
     ):

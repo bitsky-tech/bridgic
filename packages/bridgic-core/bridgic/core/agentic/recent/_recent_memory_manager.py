@@ -47,6 +47,11 @@ class ReCentMemoryManager(Serializable):
         self._episodic_node_tree = EpisodicNodeTree()
         self._memory_config = compression_config
 
+    @property
+    def memory_config(self) -> ReCentMemoryConfig:
+        """Get the memory configuration."""
+        return self._memory_config
+
     def create_goal(self, goal: str, guidance: Optional[str] = None) -> int:
         """
         Create a new goal node.
