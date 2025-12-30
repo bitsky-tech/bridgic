@@ -14,6 +14,7 @@ from bridgic.core.agentic.recent._episodic_node import (
 )
 from bridgic.core.model import BaseLlm
 from bridgic.core.model.types import Message, Role, Response
+from bridgic.core.utils._console import printer
 
 
 class MockLlm(BaseLlm):
@@ -121,46 +122,72 @@ class TestReCentMemoryManagerPushMessages:
 class TestReCentMemoryManagerCompression:
     """Test compression node creation in ReCentMemoryManager."""
 
-    @pytest.mark.asyncio
-    async def test_create_compression(self, memory_config, sample_messages):
-        """Test creating compression node (using mock LLM, including with/without goal node)."""
+    def test_create_compression(self, memory_config, sample_messages):
+        """Test creating compression node synchronously (using mock LLM, including with/without goal node)."""
         manager = ReCentMemoryManager(compression_config=memory_config)
         
         # Create some leaf nodes
         manager.push_messages(sample_messages)
         
         # Create compression (without goal node)
-        compression_timestep = await manager.create_compression()
+        compression_timestep = manager.create_compression()
         compression_node = manager._episodic_node_tree.get_node(compression_timestep)
         assert isinstance(compression_node, CompressionEpisodicNode)
         assert compression_node.summary.done()
         assert compression_node.summary.result() == "Mock compression summary"
 
     @pytest.mark.asyncio
-    async def test_create_compression_raises_when_no_nodes(self, memory_config):
-        """Test that creating compression raises ValueError when there are no nodes to compress."""
+    async def test_acreate_compression(self, memory_config, sample_messages):
+        """Test creating compression node asynchronously (using mock LLM, including with/without goal node)."""
+        manager = ReCentMemoryManager(compression_config=memory_config)
+        
+        # Create some leaf nodes
+        manager.push_messages(sample_messages)
+        
+        # Create compression (without goal node)
+        compression_timestep = await manager.acreate_compression()
+        compression_node = manager._episodic_node_tree.get_node(compression_timestep)
+        assert isinstance(compression_node, CompressionEpisodicNode)
+        assert compression_node.summary.done()
+        assert compression_node.summary.result() == "Mock compression summary"
+
+    def test_create_compression_raises_when_no_nodes(self, memory_config):
+        """Test that creating compression synchronously raises ValueError when there are no nodes to compress."""
         manager = ReCentMemoryManager(compression_config=memory_config)
         
         # Try to compress with no nodes
         with pytest.raises(ValueError, match="There is no node to could be compressed"):
-            await manager.create_compression()
+            manager.create_compression()
         
         # Add only goal node (no non-goal nodes)
         manager.create_goal(goal="Goal")
         with pytest.raises(ValueError, match="There is no node to could be compressed"):
-            await manager.create_compression()
+            manager.create_compression()
+
+    @pytest.mark.asyncio
+    async def test_acreate_compression_raises_when_no_nodes(self, memory_config):
+        """Test that creating compression asynchronously raises ValueError when there are no nodes to compress."""
+        manager = ReCentMemoryManager(compression_config=memory_config)
+        
+        # Try to compress with no nodes
+        with pytest.raises(ValueError, match="There is no node to could be compressed"):
+            await manager.acreate_compression()
+        
+        # Add only goal node (no non-goal nodes)
+        manager.create_goal(goal="Goal")
+        with pytest.raises(ValueError, match="There is no node to could be compressed"):
+            await manager.acreate_compression()
 
 
 class TestReCentMemoryManagerBuildContext:
     """Test context building in ReCentMemoryManager."""
 
-    @pytest.mark.asyncio
-    async def test_build_context(self, memory_config, sample_messages):
-        """Test building context (including goal node, leaf nodes, and compression nodes)."""
+    def test_build_context(self, memory_config, sample_messages):
+        """Test building context synchronously (including goal node, leaf nodes, and compression nodes)."""
         manager = ReCentMemoryManager(compression_config=memory_config)
         
         # Build context with no nodes
-        context = await manager.build_context()
+        context = manager.build_context()
         assert isinstance(context, dict)
         assert context["goal_content"] == ""
         assert context["goal_timestep"] == -1
@@ -170,17 +197,81 @@ class TestReCentMemoryManagerBuildContext:
         manager.create_goal(goal="Test goal", guidance="Guidance")
         manager.push_messages(sample_messages[:2])
         
-        context = await manager.build_context()
+        context = manager.build_context()
         assert context["goal_content"] == "Test goal"
         assert context["goal_timestep"] == 0
         assert len(context["memory_messages"]) == 2
         assert context["memory_messages"][0].content == "Hello"
         
         # Add compression node
-        await manager.create_compression()
-        context = await manager.build_context()
+        manager.create_compression()
+        context = manager.build_context()
         assert len(context["memory_messages"]) == 1
         assert "[Stage Summary]" in context["memory_messages"][0].content
+
+    @pytest.mark.asyncio
+    async def test_abuild_context(self, memory_config, sample_messages):
+        """Test building context asynchronously (including goal node, leaf nodes, and compression nodes)."""
+        manager = ReCentMemoryManager(compression_config=memory_config)
+        
+        # Build context with no nodes
+        context = await manager.abuild_context()
+        assert isinstance(context, dict)
+        assert context["goal_content"] == ""
+        assert context["goal_timestep"] == -1
+        assert context["memory_messages"] == []
+        
+        # Add goal and leaf nodes
+        manager.create_goal(goal="Test goal", guidance="Guidance")
+        manager.push_messages(sample_messages[:2])
+        
+        context = await manager.abuild_context()
+        assert context["goal_content"] == "Test goal"
+        assert context["goal_timestep"] == 0
+        assert len(context["memory_messages"]) == 2
+        assert context["memory_messages"][0].content == "Hello"
+        
+        # Add compression node
+        await manager.acreate_compression()
+        context = await manager.abuild_context()
+        assert len(context["memory_messages"]) == 1
+        assert "[Stage Summary]" in context["memory_messages"][0].content
+
+
+class TestReCentMemoryConfigPromptRendering:
+    """Test prompt template rendering in ReCentMemoryConfig."""
+
+    def test_default_system_prompt_render(self, mock_llm):
+        """Test default system prompt template rendering with various goal/guidance combinations."""
+        config = ReCentMemoryConfig(
+            llm=mock_llm,
+            max_node_size=10,
+            max_token_size=1000,
+        )
+        
+        # Test rendering with both goal and guidance
+        message = config.system_prompt_template.format_message(
+            role=Role.SYSTEM,
+            goal="Complete the task",
+            guidance="Follow the steps carefully",
+        )
+        assert message.role == Role.SYSTEM
+        assert len(message.content) > 0
+        # printer.print("\n" + message.content)
+
+    def test_default_instruction_prompt_render(self, mock_llm):
+        """Test default instruction prompt template rendering."""
+        config = ReCentMemoryConfig(
+            llm=mock_llm,
+            max_node_size=10,
+            max_token_size=1000,
+        )
+        
+        # Test rendering instruction prompt
+        message = config.instruction_prompt_template.format_message(role=Role.USER)
+        assert message.role == Role.USER
+        assert len(message.content) > 0
+        # printer.print("\n" + message.content)
 
 
 class TestReCentMemoryManagerSerialization:
@@ -210,4 +301,3 @@ class TestReCentMemoryManagerSerialization:
         
         non_goal_nodes = new_manager._episodic_node_tree.get_non_goal_nodes()
         assert len(non_goal_nodes) == 2  # Two leaf nodes
-

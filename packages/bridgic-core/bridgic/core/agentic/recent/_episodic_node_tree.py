@@ -200,7 +200,7 @@ class EpisodicNodeTree(Serializable):
         compressed_timesteps : List[int]
             List of timesteps of the compressed nodes.
         summary : Optional[str]
-            The compression summary content. If not provided, an unset asyncio.Future of summary will be created.
+            The compression summary content. If not provided, an unset concurrent.futures.Future of summary will be created.
 
         Returns
         -------

@@ -1,4 +1,5 @@
-from typing import List, Dict, Any, Optional, TypedDict
+import asyncio
+from typing import List, Dict, Any, Optional, TypedDict, Tuple
 from typing_extensions import override
 
 from bridgic.core.model import BaseLlm
@@ -80,28 +81,27 @@ class ReCentMemoryManager(Serializable):
         """
         return self._episodic_node_tree.add_leaf_node(messages=[])
 
-    async def create_compression(self) -> int:
+    def _create_compression_node(self) -> Tuple[int, CompressionEpisodicNode, List[BaseEpisodicNode], Optional[BaseEpisodicNode]]:
         """
-        Create a new compression node at the tail for compressing memory.
-
-        If the last node is an appendable leaf (messages can be added), it will be closed first.
-        The nodes pointed to by `_non_goal_node_timesteps` will be compressed and their timesteps 
-        will be removed from `_non_goal_node_timesteps`, but recorded in the new compression node.
-
-        This method is thread-safe and handles async dependencies: if a compression node depends on
-        other compression nodes whose summaries are still being generated, it will await them.
+        Helper method to create a compression node placeholder (Step 1).
+        
+        This method acquires the lock, determines nodes to compress, creates a placeholder
+        compression node, and releases the lock. This keeps the lock holding time minimal.
 
         Returns
         -------
-        int
-            The timestep of the new compression node.
+        Tuple[int, CompressionEpisodicNode, List[BaseEpisodicNode], Optional[BaseEpisodicNode]]
+            A tuple containing:
+            - The timestep of the new compression node
+            - The compression node instance
+            - List of non-goal nodes to be compressed
+            - The goal node (if exists)
 
         Raises
         ------
         ValueError
             If there are no nodes to compress.
         """
-        # Step 1: Acquire lock to determine nodes to compress and create placeholder node
         with self._episodic_node_tree._lock:
             goal_node = self._episodic_node_tree.get_goal_node()
             non_goal_nodes = self._episodic_node_tree.get_non_goal_nodes()
@@ -122,26 +122,44 @@ class ReCentMemoryManager(Serializable):
             compression_node = self._episodic_node_tree.get_node(compression_timestep)
             assert isinstance(compression_node, CompressionEpisodicNode)
 
+        # Return the necessary context to do the summarization.
+        return compression_timestep, compression_node, non_goal_nodes, goal_node
+
+    def create_compression(self) -> int:
+        """
+        Create a new compression node at the tail for compressing memory (synchronous version).
+
+        If the last node is an appendable leaf (messages can be added), it will be closed first.
+        The nodes pointed to by `_non_goal_node_timesteps` will be compressed and their timesteps 
+        will be removed from `_non_goal_node_timesteps`, but recorded in the new compression node.
+
+        This method is thread-safe and handles cross-thread dependencies: if a compression node depends on
+        other compression nodes whose summaries are still being generated, it will wait for them using
+        concurrent.futures.Future.
+
+        Returns
+        -------
+        int
+            The timestep of the new compression node.
+
+        Raises
+        ------
+        ValueError
+            If there are no nodes to compress.
+        """
+        # Step 1: Acquire lock to determine nodes to compress and create placeholder node
+        compression_timestep, compression_node, non_goal_nodes, goal_node = self._create_compression_node()
+
         # Step 2: Release lock, then prompt the LLM to generate the summary.
         try:
             compression_messages = []
 
             # Construct the prompt messages to compress the conversations.
             if goal_node:
-                prompt_text = (
-                    "You are a helpful assistant. Your responsibility is to summarize the messages up to the "
-                    "present and organize useful information to better make the next step plan and complete "
-                    "the task. When the task goal and guidance exist, it is better to refer to them before "
-                    "making your summary."
-                )
-                if goal_node.goal:
-                    prompt_text += f"\n\nTask Goal: {goal_node.goal}"
-                if goal_node.guidance:
-                    prompt_text += f"\n\nTask Guidance: {goal_node.guidance}"
-
-                system_message = Message.from_text(
-                    text=prompt_text,
+                system_message = self._memory_config.system_prompt_template.format_message(
                     role=Role.SYSTEM,
+                    goal=goal_node.goal if goal_node.goal else "",
+                    guidance=goal_node.guidance if goal_node.guidance else "",
                 )
                 compression_messages.append(system_message)
 
@@ -151,8 +169,8 @@ class ReCentMemoryManager(Serializable):
                     # For leaf nodes, use their original messages.
                     compression_messages.extend(node.messages)
                 elif isinstance(node, CompressionEpisodicNode):
-                    # For compression nodes (that compress other nodes), await their summary content.
-                    summary_text = await node.summary
+                    # For compression nodes (that compress other nodes), wait for their summary content.
+                    summary_text = node.summary.result()
                     compression_messages.append(
                         Message.from_text(
                             text=f"[Compressed Memory] {summary_text}",
@@ -161,25 +179,88 @@ class ReCentMemoryManager(Serializable):
                     )
 
             # Append the instruction message.
-            instruction_message = Message.from_text(
-                text=(
-                    "Please summarize all the conversation so far, highlighting the most important and helpful "
-                    "points, facts, details, and conclusions. Organize the key content to support further "
-                    "understanding and progress on the task. You may structure the summary logically and "
-                    "emphasize the crucial information."
-                ),
-                role=Role.USER,
-            )
+            instruction_message = self._memory_config.instruction_prompt_template.format_message(role=Role.USER)
             compression_messages.append(instruction_message)
 
-            # Call the LLM to generate summary.
+            # Step 3: Call the LLM to generate summary (synchronous version).
+            response = self._memory_config.llm.chat(messages=compression_messages)
+            summary = response.message.content
+
+            # Set the result of the summary future.
+            compression_node.summary.set_result(summary)
+        except Exception as e:
+            # If summary generation fails, set exception description as result on the summary future.
+            compression_node.summary.set_result(str(e))
+
+        return compression_timestep
+
+    async def acreate_compression(self) -> int:
+        """
+        Create a new compression node at the tail for compressing memory (asynchronous version).
+
+        If the last node is an appendable leaf (messages can be added), it will be closed first.
+        The nodes pointed to by `_non_goal_node_timesteps` will be compressed and their timesteps 
+        will be removed from `_non_goal_node_timesteps`, but recorded in the new compression node.
+
+        This method is thread-safe and handles cross-thread/event-loop dependencies: if a compression node depends on
+        other compression nodes whose summaries are still being generated, it will non-blockingly await them using
+        asyncio.wrap_future() to convert concurrent.futures.Future to asyncio.Future.
+
+        Returns
+        -------
+        int
+            The timestep of the new compression node.
+
+        Raises
+        ------
+        ValueError
+            If there are no nodes to compress.
+        """
+        # Step 1: Acquire lock to determine nodes to compress and create placeholder node
+        compression_timestep, compression_node, non_goal_nodes, goal_node = self._create_compression_node()
+
+        # Step 2: Release lock, then prompt the LLM to generate the summary.
+        try:
+            compression_messages = []
+
+            # Construct the prompt messages to compress the conversations.
+            if goal_node:
+                system_message = self._memory_config.system_prompt_template.format_message(
+                    role=Role.SYSTEM,
+                    goal=goal_node.goal if goal_node.goal else "",
+                    guidance=goal_node.guidance if goal_node.guidance else "",
+                )
+                compression_messages.append(system_message)
+
+            # Collect messages from nodes that are to be compressed (compressed nodes).
+            for node in non_goal_nodes:
+                if isinstance(node, LeafEpisodicNode):
+                    # For leaf nodes, use their original messages.
+                    compression_messages.extend(node.messages)
+                elif isinstance(node, CompressionEpisodicNode):
+                    # For compression nodes (that compress other nodes), wait for their summary content.
+                    # Convert concurrent.futures.Future to asyncio.Future for non-blocking await
+                    asyncio_future = asyncio.wrap_future(node.summary)
+                    summary_text = await asyncio_future
+                    compression_messages.append(
+                        Message.from_text(
+                            text=f"[Compressed Memory] {summary_text}",
+                            role=Role.AI,
+                        )
+                    )
+
+            # Append the instruction message.
+            instruction_message = self._memory_config.instruction_prompt_template.format_message(role=Role.USER)
+            compression_messages.append(instruction_message)
+
+            # Step 3: Call the LLM to generate summary (asynchronous version).
             response = await self._memory_config.llm.achat(messages=compression_messages)
             summary = response.message.content
 
             # Set the result of the summary future.
             compression_node.summary.set_result(summary)
         except Exception as e:
-            # If summary generation fails, set exception on the summary future.
+            # If summary generation fails, set exception description as result on the summary future.
             compression_node.summary.set_result(str(e))
 
         return compression_timestep
@@ -209,16 +290,16 @@ class ReCentMemoryManager(Serializable):
             # If not, create a new appendable leaf node
             return self._episodic_node_tree.add_leaf_node(messages)
 
-    async def build_context(self) -> ReCentContext:
+    def build_context(self) -> ReCentContext:
         """
         Build context, returning goal information and message list.
 
         The context is built by:
         1. Getting goal node information
         2. Getting directly accessible nodes based on _non_goal_node_timesteps
-        3. For CompressionEpisodicNode, awaiting its summary Future
-        4. For LeafEpisodicNode, using original messages
-        5. Organizing messages in timestep order
+          - For CompressionEpisodicNode, waiting for its summary future
+          - For LeafEpisodicNode, using original messages
+        3. Organizing messages in timestep order
 
         Returns
         -------
@@ -242,7 +323,53 @@ class ReCentMemoryManager(Serializable):
             elif isinstance(node, CompressionEpisodicNode):
                 # Compression node: await its summary future.
                 msg = Message.from_text(
-                    text=f"[Stage Summary] {await node.summary}",
+                    text=f"[Stage Summary] {node.summary.result()}",
+                    role=Role.AI,
+                )
+                memory_messages.append(msg)
+
+        return {
+            "goal_content": goal_content,
+            "goal_timestep": goal_timestep,
+            "memory_messages": memory_messages,
+        }
+
+    async def abuild_context(self) -> ReCentContext:
+        """
+        Build context asynchronously, returning goal information and message list.
+
+        The context is built by:
+        1. Getting goal node information
+        2. Getting directly accessible nodes based on _non_goal_node_timesteps
+          - For CompressionEpisodicNode, waiting for its summary future
+          - For LeafEpisodicNode, using original messages
+        3. Organizing messages in timestep order
+
+        Returns
+        -------
+        ContextDict
+            Dictionary containing goal content, goal timestep, and memory messages.
+        """
+        # 1. Get goal node.
+        goal_node = self._episodic_node_tree.get_goal_node()
+        goal_content = goal_node.goal if goal_node else ""
+        goal_timestep = goal_node.timestep if goal_node else -1
+
+        # 2. Get directly accessible non-goal nodes (sorted by timestep).
+        non_goal_nodes = self._episodic_node_tree.get_non_goal_nodes()
+
+        # 3. Build message list.
+        memory_messages = []
+        for node in non_goal_nodes:
+            if isinstance(node, LeafEpisodicNode):
+                # Leaf node: use original messages.
+                memory_messages.extend(node.messages)
+            elif isinstance(node, CompressionEpisodicNode):
+                # Compression node: wait for its summary future (non-blocking).
+                asyncio_future = asyncio.wrap_future(node.summary)
+                summary_text = await asyncio_future
+                msg = Message.from_text(
+                    text=f"[Stage Summary] {summary_text}",
                     role=Role.AI,
                 )
                 memory_messages.append(msg)

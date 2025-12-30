@@ -96,11 +96,7 @@ class MsgExtension(Extension):
         cm = _chat_message_from_text(role=role, content=caller())
         return cm.model_dump_json(exclude_none=True) + "\n"
 
-env = Environment(
-    trim_blocks=True,
-    lstrip_blocks=True,
-)
-env.add_extension(MsgExtension)
+env = Environment(extensions=[MsgExtension])
 
 class EjinjaPromptTemplate(BasePromptTemplate):
     """

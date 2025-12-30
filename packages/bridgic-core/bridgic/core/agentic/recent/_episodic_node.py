@@ -1,4 +1,3 @@
-import asyncio
 import warnings
 
 from abc import ABC
@@ -6,6 +5,7 @@ from enum import Enum
 from typing import List, Dict, Any, Optional
 from typing_extensions import override
 from datetime import datetime
+from concurrent.futures import Future
 
 from bridgic.core.types._serialization import Serializable
 from bridgic.core.model.types import Message
@@ -120,8 +120,8 @@ class CompressionEpisodicNode(BaseEpisodicNode):
     node contains a summary of the compressed nodes and records their timesteps.
     """
 
-    summary: asyncio.Future[str]
-    """The summary of the compression node, which is one asyncio.Future for async dependency handling."""
+    summary: Future[str]
+    """The summary of the compression node, which is a concurrent.futures.Future for cross-thread/event-loop dependency handling."""
 
     compressed_node_timesteps: List[int]
     """The timesteps of the compressed nodes (the nodes that were compressed by this compression node)."""
@@ -129,7 +129,7 @@ class CompressionEpisodicNode(BaseEpisodicNode):
     def __init__(self, timestep: int, compressed_timesteps: List[int], summary: Optional[str] = None):
         super().__init__(timestep)
         self.node_type = NodeType.COMPRESSION
-        self.summary = asyncio.Future()
+        self.summary = Future()
         if summary:
             self.summary.set_result(summary)
         self.compressed_node_timesteps = compressed_timesteps if compressed_timesteps is not None else []
@@ -156,6 +156,6 @@ class CompressionEpisodicNode(BaseEpisodicNode):
     @override
     def load_from_dict(self, state_dict: Dict[str, Any]) -> None:
         super().load_from_dict(state_dict)
-        self.summary = asyncio.Future()
+        self.summary = Future()
         self.summary.set_result(state_dict.get("summary", ""))
         self.compressed_node_timesteps = state_dict.get("compressed_node_timesteps", [])
