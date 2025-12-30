@@ -1,10 +1,11 @@
 import re
-
-from typing import List, Union
+from typing import List, Union, Dict, Any
 from jinja2 import Environment, Template, nodes
 from jinja2.ext import Extension
 
+from typing_extensions import override
 from bridgic.core.types._error import PromptRenderError, PromptSyntaxError
+from bridgic.core.types._serialization import Serializable
 from bridgic.core.model.types import Message, Role, ContentBlock, TextBlock
 from bridgic.core.prompt._base_template import BasePromptTemplate
 from bridgic.core.utils._cache import MemoryCache
@@ -98,7 +99,7 @@ class MsgExtension(Extension):
 
 env = Environment(extensions=[MsgExtension])
 
-class EjinjaPromptTemplate(BasePromptTemplate):
+class EjinjaPromptTemplate(BasePromptTemplate, Serializable):
     """
     Extended Jinja2-based prompt template with custom message blocks.
     
@@ -164,7 +165,8 @@ class EjinjaPromptTemplate(BasePromptTemplate):
         template_str : str
             The template string using extended Jinja2 syntax.
         """
-        super().__init__(template_str=template_str)
+        super().__init__()
+        self.template_str = template_str
         self._env_template = env.from_string(template_str)
         self._render_cache = MemoryCache()
 
@@ -257,7 +259,8 @@ class EjinjaPromptTemplate(BasePromptTemplate):
         messages: List[Message] = []
         for line in rendered.strip().split("\n"):
             try:
-                messages.append(Message.model_validate_json(line))
+                if len(line.strip()) > 0:
+                    messages.append(Message.model_validate_json(line))
             except Exception:
                 raise PromptRenderError(
                     f"It is required to wrap each content in a {{% msg %}} block when calling the "
@@ -267,3 +270,15 @@ class EjinjaPromptTemplate(BasePromptTemplate):
         if not messages and rendered.strip():
             messages.append(_chat_message_from_text(role="user", content=rendered))
         return messages
+
+    @override
+    def dump_to_dict(self) -> Dict[str, Any]:
+        return {
+            "template_str": self.template_str,
+        }
+
+    @override
+    def load_from_dict(self, state_dict: Dict[str, Any]) -> None:
+        self.template_str = state_dict["template_str"]
+        self._env_template = env.from_string(self.template_str)
+        self._render_cache = MemoryCache()

@@ -69,9 +69,8 @@ class ReCentMemoryConfig(Serializable):
         state_dict["llm"] = self.llm
         state_dict["max_node_size"] = self.max_node_size
         state_dict["max_token_size"] = self.max_token_size
-        # Serialize templates as their template strings
-        state_dict["system_prompt_template"] = self.system_prompt_template.template_str
-        state_dict["instruction_prompt_template"] = self.instruction_prompt_template.template_str
+        state_dict["system_prompt_template"] = self.system_prompt_template
+        state_dict["instruction_prompt_template"] = self.instruction_prompt_template
         return state_dict
 
     @override
@@ -79,17 +78,5 @@ class ReCentMemoryConfig(Serializable):
         self.llm = state_dict["llm"]
         self.max_node_size = state_dict["max_node_size"]
         self.max_token_size = state_dict["max_token_size"]
-        # Deserialize templates from template strings
-        system_template_str = state_dict.get("system_prompt_template")
-        if system_template_str:
-            self.system_prompt_template = EjinjaPromptTemplate(system_template_str)
-        else:
-            # Use default if not found in state dict
-            self.system_prompt_template = EjinjaPromptTemplate(DEFAULT_SYSTEM_PROMPT_TEMPLATE)
-        
-        instruction_template_str = state_dict.get("instruction_prompt_template")
-        if instruction_template_str:
-            self.instruction_prompt_template = EjinjaPromptTemplate(instruction_template_str)
-        else:
-            # Use default if not found in state dict
-            self.instruction_prompt_template = EjinjaPromptTemplate(DEFAULT_INSTRUCTION_PROMPT_TEMPLATE)
+        self.system_prompt_template = state_dict["system_prompt_template"]
+        self.instruction_prompt_template = state_dict["instruction_prompt_template"]
