@@ -1,8 +1,9 @@
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Callable
 from typing_extensions import override
 from bridgic.core.model import BaseLlm
 from bridgic.core.types._serialization import Serializable
 from bridgic.core.prompt import EjinjaPromptTemplate
+from bridgic.core.utils._inspect_tools import load_qualified_class_or_func
 
 
 DEFAULT_SYSTEM_PROMPT_TEMPLATE = (
@@ -20,6 +21,26 @@ DEFAULT_INSTRUCTION_PROMPT_TEMPLATE = (
     "understanding and progress on the task. You may structure the summary logically and "
     "emphasize the crucial information."
 )
+
+
+def estimate_token_count(text: str) -> int:
+    """
+    Estimate token count from text using a simple approximation rule.
+    
+    This function uses a character-based approximation: approximately 1 token ≈ 4 characters
+    for English text. This is a common heuristic used when exact tokenization is not available.
+    
+    Parameters
+    ----------
+    text : str
+        The text content to estimate token count for.
+    
+    Returns
+    -------
+    int
+        The estimated token count.
+    """
+    return len(text) // 4
 
 
 class ReCentMemoryConfig(Serializable):
@@ -42,6 +63,10 @@ class ReCentMemoryConfig(Serializable):
         parameters: `goal` and `guidance`.
     instruction_prompt_template : str
         Jinja2 prompt template for the instruction prompt used in memory compression.
+    token_count_callback : Optional[Callable[[str], int]]
+        Optional callback function to calculate token count from text.
+        If None, defaults to `estimate_token_count` which uses a simple approximation
+        (character_count / 4). The callback should accept a text string and return the token count.
     """
 
     llm: BaseLlm
@@ -59,6 +84,9 @@ class ReCentMemoryConfig(Serializable):
     instruction_prompt_template: EjinjaPromptTemplate
     """Instruction prompt template used in memory compression."""
 
+    token_count_callback: Callable[[str], int]
+    """Callback function to calculate token count from text. Defaults to estimate_token_count."""
+
     def __init__(
         self,
         llm: BaseLlm,
@@ -66,10 +94,12 @@ class ReCentMemoryConfig(Serializable):
         max_token_size: int = 1024 * 8,
         system_prompt_template: Optional[str] = DEFAULT_SYSTEM_PROMPT_TEMPLATE,
         instruction_prompt_template: Optional[str] = DEFAULT_INSTRUCTION_PROMPT_TEMPLATE,
+        token_count_callback: Optional[Callable[[str], int]] = estimate_token_count,
     ):
         self.llm = llm
         self.max_node_size = max_node_size
         self.max_token_size = max_token_size
+        self.token_count_callback = token_count_callback if token_count_callback is not None else estimate_token_count
         
         # Convert string templates to EjinjaPromptTemplate instances
         # If None is explicitly passed, use default templates
@@ -87,6 +117,7 @@ class ReCentMemoryConfig(Serializable):
         state_dict["llm"] = self.llm
         state_dict["max_node_size"] = self.max_node_size
         state_dict["max_token_size"] = self.max_token_size
+        state_dict["token_count_callback"] = self.token_count_callback.__module__ + "." + self.token_count_callback.__qualname__
         state_dict["system_prompt_template"] = self.system_prompt_template
         state_dict["instruction_prompt_template"] = self.instruction_prompt_template
         return state_dict
@@ -96,5 +127,6 @@ class ReCentMemoryConfig(Serializable):
         self.llm = state_dict["llm"]
         self.max_node_size = state_dict["max_node_size"]
         self.max_token_size = state_dict["max_token_size"]
+        self.token_count_callback = load_qualified_class_or_func(state_dict["token_count_callback"])
         self.system_prompt_template = state_dict["system_prompt_template"]
         self.instruction_prompt_template = state_dict["instruction_prompt_template"]

@@ -3,10 +3,11 @@ from typing import List, Dict, Any, Optional, TypedDict, Tuple
 from typing_extensions import override
 
 from bridgic.core.model import BaseLlm
-from bridgic.core.model.types import Message, Role
+from bridgic.core.model.types import Message, Role, TextBlock, ToolCallBlock, ToolResultBlock
 from bridgic.core.types._serialization import Serializable
 from bridgic.core.agentic.recent._episodic_node import (
     BaseEpisodicNode,
+    GoalEpisodicNode,
     LeafEpisodicNode,
     CompressionEpisodicNode,
 )
@@ -294,6 +295,71 @@ class ReCentMemoryManager(Serializable):
         else:
             # If not, create a new appendable leaf node
             return self._episodic_node_tree.add_leaf_node(messages)
+
+    def should_trigger_compression(self) -> bool:
+        """
+        Determine whether memory compression should be triggered based on the compression configuration.
+
+        This method checks two conditions:
+        1. Node count: whether the total number of nodes (non-goal nodes + goal node if exists) exceeds the threshold
+        2. Token count: whether the token count (calculated using `token_count_callback` of configuration) exceeds the threshold
+
+        The text size calculation includes:
+        - Goal node:
+          - GoalEpisodicNode: the text content of goal and guidance
+        - Non-goal nodes:
+          - LeafEpisodicNode: the text content of all messages
+          - CompressionEpisodicNode: the text content of the summary (if available)
+
+        Returns
+        -------
+        bool
+            True if compression should be triggered, False otherwise.
+        """
+        goal_node = self._episodic_node_tree.get_goal_node()
+        non_goal_nodes = self._episodic_node_tree.get_non_goal_nodes()
+
+        node_list = []
+        if goal_node is not None:
+            node_list.append(goal_node)
+        if non_goal_nodes:
+            node_list.extend(non_goal_nodes)
+
+        # Check node count threshold.
+        if len(node_list) >= self._memory_config.max_node_size:
+            return True
+
+        # Collect text parts.
+        text_parts = []
+        for node in node_list:
+            if isinstance(node, GoalEpisodicNode):
+                if node.goal:
+                    text_parts.append(node.goal)
+                if node.guidance:
+                    text_parts.append(node.guidance)
+            elif isinstance(node, LeafEpisodicNode):
+                for message in node.messages:
+                    for block in message.blocks:
+                        if isinstance(block, TextBlock):
+                            text_parts.append(block.text)
+                        elif isinstance(block, ToolCallBlock):
+                            text_parts.append("{"+ f"\"id\": \"{block.id}\", \"name\": \"{block.name}\", \"arguments\": {block.arguments}" + "}")
+                        elif isinstance(block, ToolResultBlock):
+                            text_parts.append(block.content)
+                        else:
+                            raise ValueError(f"Not supported block type: {type(block)}")
+            elif isinstance(node, CompressionEpisodicNode):
+                text_parts.append(node.summary.result())
+
+        # Calculate token count using callback function.
+        total_text = "\n\n".join(text_parts)
+        estimated_token_count = self._memory_config.token_count_callback(total_text)
+
+        # Check token count threshold.
+        if estimated_token_count >= self._memory_config.max_token_size:
+            return True
+
+        return False
 
     def build_context(self) -> ReCentContext:
         """
