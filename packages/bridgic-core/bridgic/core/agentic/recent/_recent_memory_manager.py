@@ -23,6 +23,9 @@ class ReCentContext(TypedDict):
     goal_content: str
     """Goal content."""
 
+    goal_guidance: str
+    """Goal guidance."""
+
     goal_timestep: Optional[int]
     """Goal node timestep, or -1 if no goal node exists."""
 
@@ -52,6 +55,22 @@ class ReCentMemoryManager(Serializable):
     def memory_config(self) -> ReCentMemoryConfig:
         """Get the memory configuration."""
         return self._memory_config
+
+    def get_specified_memory_node(self, timestep: int) -> BaseEpisodicNode:
+        """
+        Get the specified memory node by timestep.
+
+        Parameters
+        ----------
+        timestep : int
+            The timestep of the memory node.
+
+        Returns
+        -------
+        BaseEpisodicNode
+            The specified memory node or None if not found.
+        """
+        return self._episodic_node_tree.get_node(timestep)
 
     def create_goal(self, goal: str, guidance: Optional[str] = None) -> int:
         """
@@ -380,6 +399,7 @@ class ReCentMemoryManager(Serializable):
         # 1. Get goal node.
         goal_node = self._episodic_node_tree.get_goal_node()
         goal_content = goal_node.goal if goal_node else ""
+        goal_guidance = goal_node.guidance if goal_node else ""
         goal_timestep = goal_node.timestep if goal_node else -1
 
         # 2. Get directly accessible non-goal nodes (sorted by timestep).
@@ -401,6 +421,7 @@ class ReCentMemoryManager(Serializable):
 
         return {
             "goal_content": goal_content,
+            "goal_guidance": goal_guidance,
             "goal_timestep": goal_timestep,
             "memory_messages": memory_messages,
         }
@@ -424,6 +445,7 @@ class ReCentMemoryManager(Serializable):
         # 1. Get goal node.
         goal_node = self._episodic_node_tree.get_goal_node()
         goal_content = goal_node.goal if goal_node else ""
+        goal_guidance = goal_node.guidance if goal_node else ""
         goal_timestep = goal_node.timestep if goal_node else -1
 
         # 2. Get directly accessible non-goal nodes (sorted by timestep).
@@ -447,6 +469,7 @@ class ReCentMemoryManager(Serializable):
 
         return {
             "goal_content": goal_content,
+            "goal_guidance": goal_guidance,
             "goal_timestep": goal_timestep,
             "memory_messages": memory_messages,
         }

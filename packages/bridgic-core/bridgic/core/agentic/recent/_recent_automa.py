@@ -1,14 +1,29 @@
 import uuid
+import asyncio
 from typing import Optional, List, Any, Dict, Tuple, Union, Callable
 from typing_extensions import override
 from concurrent.futures import ThreadPoolExecutor
+from pydantic import BaseModel, Field
 
 from bridgic.core.automa import GraphAutoma, Automa, worker, RunningOptions
+from bridgic.core.automa.args import ArgsMappingRule
 from bridgic.core.model import BaseLlm
-from bridgic.core.model.types import Message, Role, ToolCall
-from bridgic.core.agentic.recent._recent_memory_manager import ReCentMemoryManager
-from bridgic.core.agentic.recent._recent_memory_config import ReCentMemoryConfig
+from bridgic.core.model.types import Message, Tool, Role, ToolCall
+from bridgic.core.model.protocols import StructuredOutput, PydanticModel, ToolSelection
 from bridgic.core.agentic.tool_specs import ToolSpec, FunctionToolSpec, AutomaToolSpec
+from bridgic.core.agentic.recent._recent_memory_manager import ReCentMemoryManager, ReCentContext
+from bridgic.core.agentic.recent._recent_memory_config import ReCentMemoryConfig
+from bridgic.core.agentic.recent._episodic_node import CompressionEpisodicNode
+from bridgic.core.prompt import EjinjaPromptTemplate
+from bridgic.core.utils._console import printer
+
+
+class GoalStatus(BaseModel):
+    """
+    Goal achievement status.
+    """
+    brief_thinking: str = Field(..., description="Brief thinking about the current status and whether the goal is achieved.")
+    goal_achieved: bool = Field(..., description="Whether the goal has been achieved.")
 
 
 class ReCentAutoma(GraphAutoma):
@@ -93,53 +108,211 @@ class ReCentAutoma(GraphAutoma):
         guidance : Optional[str]
             The guidance for achieving the task goal.
         """
+        if not goal:
+            raise ValueError("Goal cannot be empty.")
         self._memory_manager.create_goal(goal, guidance)
-        self.ferry_to("think_and_plan")
+
+        # Log task goal initialization in debug mode.
+        if self._running_options.debug:
+            msg = (
+                f"[ReCentAutoma] 🎯 Task Goal\n"
+                f"  Goal: {goal}\n"
+                f"  Guidance: {guidance if guidance else ''}"
+            )
+            printer.print(msg)
+        
+        self.ferry_to("observe")
 
     @worker()
-    async def think_and_plan(self):
+    async def observe(self):
         """
-        Think and plan the next step based on current context.
+        Observe the current state and determine if the goal has been achieved.
 
-        This worker builds the context from the current memory, calls the LLM to decide on
-        the next action (tool call or final answer), and routes accordingly.
+        This worker builds context from memory, uses LLM (with `StructuredOutput` protocol) to 
+        determine if the goal has been achieved, and routes accordingly.
         """
-        # TODO: Implement think and plan logic
-        # 1. Call context = await self._memory_manager.abuild_context() to get context
-        # 2. Build LLM message list (task goal, history messages, tool specifications)
-        # 3. Call LLM: response = await self._llm.achat(messages)
-        # 4. Parse LLM response:
-        #    - If tool_calls exist: extract tool calls list and push Assistant message to memory: self._memory_manager.push_messages([assistant_msg])
-        #    - If no tool_calls: extract final answer text
-        # 5. Dynamic routing:
-        #    - If tool calls:
-        #      a. Match tools: matched_list = self._match_tool_calls_and_tool_specs(tool_calls, self._tool_specs)
-        #      b. Create tool workers dynamically:
-        #         for tool_call, tool_spec in matched_list:
-        #             tool_worker = tool_spec.create_worker()
-        #             tool_worker_key = f"tool_{tool_call.name}_{uuid.uuid4().hex[:8]}"
-        #             self.add_worker(key=tool_worker_key, worker=tool_worker)
-        #             tool_worker_keys.append(tool_worker_key)
-        #             # Push ToolCall message to memory
-        #             self._memory_manager.push_messages([tool_call_message])
-        #             # ferry_to tool worker
-        #             self.ferry_to(tool_worker_key, **tool_call.arguments)
-        #      c. Create collect_results worker dynamically:
-        #         collect_worker_key = f"collect_results_{uuid.uuid4().hex[:8]}"
-        #         self.add_func_as_worker(
-        #             key=collect_worker_key,
-        #             func=self._collect_tools_results,
-        #             dependencies=tool_worker_keys,  # 依赖所有工具 Worker
-        #             args_mapping_rule=ArgsMappingRule.MERGE,
-        #         )
-        #    - If final answer: ferry_to("finalize_answer", answer=final_answer)
+        # 1. Build context from memory.
+        context: ReCentContext = await self._memory_manager.abuild_context()
 
-        # Placeholder implementation
-        # context = await self._memory_manager.abuild_context()
-        # messages = self._build_llm_messages(context)
-        # response = await self._llm.achat(messages)
-        # ... (rest of logic)
-        pass
+        # 2. Build LLM message list for goal status evaluation.
+        messages: List[Message] = []
+
+        # Add system message for goal evaluation.
+        system_template = EjinjaPromptTemplate(
+            "You are an AI assistant that evaluates whether a task goal has been achieved."
+            "{%- if goal_content %}\n\nTask Goal: {{ goal_content }}{% endif %}"
+            "{%- if goal_guidance %}\n\nTask Guidance: {{ goal_guidance }}{% endif %}"
+        )
+        system_message = system_template.format_message(
+            role=Role.SYSTEM,
+            goal_content=context["goal_content"],
+            goal_guidance=context["goal_guidance"],
+        )
+        messages.append(system_message)
+
+        # Add memory messages (observation history).
+        if context["memory_messages"]:
+            messages.extend(context["memory_messages"])
+
+        # Add instruction message.
+        instruction_template = EjinjaPromptTemplate(
+            "Based on the task goal and observation history, determine if the goal has been completed. "
+            "Provide a brief thinking about the current status and whether the goal is achieved."
+        )
+        instruction_message = instruction_template.format_message(role=Role.USER)
+        messages.append(instruction_message)
+
+        # 3. Call LLM with StructuredOutput to get goal status.
+        if not isinstance(self._llm, StructuredOutput):
+            raise TypeError(f"LLM must support StructuredOutput protocol, but {type(self._llm)} does not.")
+
+        goal_status: GoalStatus = await self._llm.astructured_output(
+            messages=messages,
+            constraint=PydanticModel(model=GoalStatus),
+        )
+
+        # Log observation result in debug mode.
+        if self._running_options.debug:
+            msg = (
+                f"[ReCentAutoma] 👀 Observation\n"
+                f"  Brief Thinking: {goal_status.brief_thinking}\n"
+                f"  Goal Achieved: {goal_status.goal_achieved}"
+            )
+            printer.print(msg, color="white")
+
+        # 4. Dynamic routing based on goal status.
+        if goal_status.goal_achieved or not self._tool_specs:
+            # Goal achieved, route to finalize_answer.
+            self.ferry_to("finalize_answer")
+        else:
+            # Goal not achieved, prepare messages and tools, then route to select_tools.
+            tool_select_template = EjinjaPromptTemplate(
+                "You are an AI assistant that selects the appropriate tools to use."
+                "{%- if goal_content %}\n\nTask Goal: {{ goal_content }}{% endif %}"
+                "{%- if goal_guidance %}\n\nTask Guidance: {{ goal_guidance }}{% endif %}"
+            )
+            tool_select_message = tool_select_template.format_message(
+                role=Role.SYSTEM,
+                goal_content=context["goal_content"],
+                goal_guidance=context["goal_guidance"],
+            )
+            tool_select_messages = [tool_select_message] + context["memory_messages"]
+
+            tools = [tool_spec.to_tool() for tool_spec in self._tool_specs]
+
+            # Route to select_tools with messages and tools.
+            self.ferry_to("select_tools", messages=tool_select_messages, tools=tools)
+
+    @worker()
+    async def select_tools(
+        self,
+        messages: List[Message],
+        tools: List[Tool],
+    ) -> Tuple[List[ToolCall], Optional[str]]:
+        """
+        Select tools using LLM's tool selection capability.
+
+        This method calls the LLM's aselect_tool method to select appropriate tools
+        based on the conversation context.
+
+        Parameters
+        ----------
+        messages : List[Message]
+            The conversation history and current context.
+        tools : List[Tool]
+            Available tools that can be selected for use.
+
+        Returns
+        -------
+        Tuple[List[ToolCall], Optional[str]]
+            A tuple containing:
+            - List of selected tool calls with determined parameters
+            - Optional response text from the LLM
+        """
+        # Check if LLM supports ToolSelection protocol.
+        if not isinstance(self._llm, ToolSelection):
+            raise TypeError(f"LLM must support ToolSelection protocol, but {type(self._llm)} does not.")
+
+        # Call LLM's tool selection method.
+        tool_calls, llm_response = await self._llm.aselect_tool(
+            messages=messages,
+            tools=tools,
+        )
+
+        # Log selected tools in debug mode.
+        if self._running_options.debug:
+            tool_info_lines = []
+
+            if tool_calls:
+                for i, tool_call in enumerate(tool_calls, 1):
+                    tool_info_lines.append(f"  Tool {i}: {tool_call.name}")
+                    tool_info_lines.append(f"    id: {tool_call.id}")
+                    tool_info_lines.append(f"    arguments: {tool_call.arguments}")
+            else:
+                tool_info_lines.append("  (No tools selected)")
+
+            if llm_response:
+                tool_info_lines.append(f"  LLM Response: {llm_response}")
+
+            tool_info_lines_str = "\n".join(tool_info_lines)
+
+            msg = (
+                f"[ReCentAutoma] 🔧 Tool Selection\n"
+                f"{tool_info_lines_str}"
+            )
+            printer.print(msg, color="yellow")
+
+        # Push Assistant message with tool calls and response to memory.
+        if tool_calls or llm_response:
+            assistant_message = Message.from_tool_call(tool_calls=tool_calls, text=llm_response)
+            self._memory_manager.push_messages([assistant_message])
+
+        # Match tool calls with tool specs.
+        if tool_calls and self._tool_specs:
+            matched_list = self._match_tool_calls_and_tool_specs(tool_calls, self._tool_specs)
+
+            if matched_list:
+                # Create tool workers dynamically.
+                tool_worker_keys = []
+                matched_tool_calls = []
+
+                for tool_call, tool_spec in matched_list:
+                    # Create the tool worker.
+                    tool_worker_key = f"tool-<{tool_call.name}>-<{tool_call.id}>"
+                    tool_worker_obj = tool_spec.create_worker()
+
+                    # Register the tool worker.
+                    self.add_worker(key=tool_worker_key, worker=tool_worker_obj)
+                    tool_worker_keys.append(tool_worker_key)
+                    matched_tool_calls.append(tool_call)
+
+                    # Execute the tool worker in the next dynamic step (via ferry_to).
+                    self.ferry_to(tool_worker_key, **tool_call.arguments)
+
+                # Create collect_results worker dynamically.
+                def collect_wrapper(tool_results: List[Any]) -> None:
+                    return self._collect_tools_results(matched_tool_calls, tool_results)
+
+                self.add_func_as_worker(
+                    key=f"collect_results-<{uuid.uuid4().hex[:8]}>",
+                    func=collect_wrapper,
+                    dependencies=tool_worker_keys,
+                    args_mapping_rule=ArgsMappingRule.MERGE,
+                )
+
+                tool_selected = True
+            else:
+                tool_selected = False
+        else:
+            tool_selected = False
+
+        if not tool_selected:
+            assistant_message = Message.from_text(
+                text="No tools could be selected to help achieve the task goal.",
+                role=Role.AI,
+            )
+            self._memory_manager.push_messages([assistant_message])
+            self.ferry_to("finalize_answer")
 
     @worker()
     async def check_compression(self):
@@ -147,71 +320,101 @@ class ReCentAutoma(GraphAutoma):
         Check whether memory compression is needed.
 
         This worker checks if the compression conditions are met and decides which nodes to route to.
-        Either compress_memory or think_and_plan will inevitably be chosen to execute in the next step.
+        Either compress_memory or observe will inevitably be chosen to execute in the next step.
         """
-        # TODO: Implement compression check logic
-        # 1. Call should_compress = self._memory_manager.should_trigger_compression() to check if compression is needed
-        # 2. Dynamic routing:
-        #    - If compression needed: self.ferry_to("compress_memory")
-        #    - If not needed: self.ferry_to("think_and_plan")
-
-        # Placeholder implementation
-        # should_compress = self._memory_manager.should_trigger_compression()
-        # if should_compress:
-        #     self.ferry_to("compress_memory")
-        # else:
-        #     self.ferry_to("think_and_plan")
-        pass
+        should_compress = self._memory_manager.should_trigger_compression()
+        
+        # Log compression decision in debug mode.
+        if self._running_options.debug:
+            msg = (
+                f"[ReCentAutoma] 🧭 Memory Check\n"
+                f"  Compression Needed: {should_compress}"
+            )
+            printer.print(msg, color="blue")
+        
+        if should_compress:
+            self.ferry_to("compress_memory")
+        else:
+            self.ferry_to("observe")
 
     @worker()
-    async def compress_memory(self) -> int:
+    async def compress_memory(self):
         """
         Compress early memory nodes.
 
         This worker triggers memory compression by creating a compression node
         that summarizes earlier episodic nodes.
-
-        Returns
-        -------
-        int
-            The timestep of the compression node (optional, not passed to subsequent nodes).
         """
-        # TODO: Implement memory compression logic
-        # 1. Call timestep = await self._memory_manager.create_compression() (async)
-        # 2. Route back to think_and_plan: self.ferry_to("think_and_plan")
-        # 3. Return compression timestep (optional)
+        timestep = await self._memory_manager.acreate_compression()
+        
+        # Log compression summary in debug mode.
+        if self._running_options.debug:
+            node: CompressionEpisodicNode = self._memory_manager.get_specified_memory_node(timestep)
+            summary = await asyncio.wrap_future(node.summary)
+            msg = (
+                f"[ReCentAutoma] 🗄 Memory Compression\n"
+                f"  Compression Timestep: {timestep}\n"
+                f"  Compression Summary: {summary}"
+            )
+            printer.print(msg, color="blue")
 
-        # Placeholder implementation
-        # timestep = await self._memory_manager.create_compression()
-        # self.ferry_to("think_and_plan")
-        # return timestep
-        pass
+        self.ferry_to("observe")
 
     @worker(is_output=True)
-    async def finalize_answer(self, answer: str) -> str:
+    async def finalize_answer(self) -> str:
         """
-        Generate the final answer and complete the workflow.
+        Generate the final answer based on memory and goal using LLM.
 
-        This worker is the output node of the automa. It receives the final answer
-        from think_and_plan and optionally pushes it to memory.
-
-        Parameters
-        ----------
-        answer : str
-            The final answer content (from think_and_plan ferry_to).
+        This worker is the output node of the automa. It builds context from memory,
+        calls LLM to generate a comprehensive final answer based on the goal and
+        conversation history.
 
         Returns
         -------
         str
             The final answer string.
         """
-        # TODO: Implement final answer logic
-        # 1. Optionally push final answer to memory
-        # 2. Return the final answer
+        # 1. Build context from memory.
+        context: ReCentContext = await self._memory_manager.abuild_context()
 
-        # Placeholder implementation
-        # Optionally: self._memory_manager.push_messages([final_answer_msg])
-        return answer
+        # 2. Build LLM message list for final answer generation.
+        messages: List[Message] = []
+
+        # Add system prompt for final answer generation.
+        system_template = EjinjaPromptTemplate(
+            "You are a helpful assistant. Based on the task goal and the entire conversation history, "
+            "provide a clear, complete, and well-structured final answer that addresses the goal."
+            "{%- if goal_content %}\n\nTask Goal: {{ goal_content }}{% endif %}"
+            "{%- if goal_guidance %}\n\nTask Guidance: {{ goal_guidance }}{% endif %}"
+        )
+        system_message = system_template.format_message(
+            role=Role.SYSTEM,
+            goal_content=context["goal_content"],
+            goal_guidance=context["goal_guidance"],
+        )
+        messages.append(system_message)
+
+        # Add memory messages (observation history).
+        if context["memory_messages"]:
+            messages.extend(context["memory_messages"])
+
+        # Add instruction to generate final answer.
+        instruction_template = EjinjaPromptTemplate(
+            "Based on the task goal and observation history above, please provide a comprehensive "
+            "and well-structured final answer that addresses the goal."
+        )
+        instruction_message = instruction_template.format_message(role=Role.USER)
+        messages.append(instruction_message)
+
+        # 3. Call LLM to generate final answer.
+        response = await self._llm.achat(messages=messages)
+        final_answer = response.message.content
+
+        # 4. Push final answer as a Message into the memory
+        final_answer_msg = Message.from_text(text=final_answer, role=Role.AI)
+        self._memory_manager.push_messages([final_answer_msg])
+
+        return final_answer
 
     def _collect_tools_results(
         self,
@@ -221,50 +424,59 @@ class ReCentAutoma(GraphAutoma):
         """
         Collect results from tool executions and push to memory.
 
-        This method is used as a dynamic worker function to collect results from multiple tool workers. 
+        This method is used as a worker function to collect results from multiple tool workers. 
         It converts tool results to ToolResult messages and pushes them to memory.
 
         Parameters
         ----------
-        tool_results : List[Any]
-            List of tool execution results (merged via ArgsMappingRule.MERGE).
         tool_calls : Optional[List[ToolCall]]
             List of tool calls (optional, for building ToolResult messages).
+        tool_results : List[Any]
+            List of tool execution results (merged via ArgsMappingRule.MERGE).
         """
-        # TODO: Implement tool results collection logic
-        # 1. Convert tool results to ToolResult messages
-        # 2. Call self._memory_manager.push_messages([tool_result_messages])
-        # 3. Route to check_compression: self.ferry_to("check_compression")
+        # Convert tool results to ToolResult messages.
+        tool_result_messages: List[Message] = []
 
-        # Placeholder implementation
-        # tool_result_messages = self._convert_results_to_messages(tool_calls, tool_results)
-        # self._memory_manager.push_messages(tool_result_messages)
-        # self.ferry_to("check_compression")
-        pass
+        # Log tool execution results in debug mode.
+        if self._running_options.debug:
+            result_lines = []
+            for i, (tool_call, tool_result) in enumerate(zip(tool_calls, tool_results), 1):
+                result_content = str(tool_result)
+                result_content = result_content[:1000] + "..." if len(result_content) > 1000 else result_content
+                result_lines.append(f"  Tool {i}: {tool_call.name}")
+                result_lines.append(f"    id: {tool_call.id}")
+                result_lines.append(f"    result: {result_content}")
+
+            result_lines_str = "\n".join(result_lines)
+
+            msg = (
+                f"[ReCentAutoma] 🛠 Tool Results\n"
+                f"{result_lines_str}"
+            )
+            printer.print(msg, color="green")
+
+        for tool_call, tool_result in zip(tool_calls, tool_results):
+            # Convert tool result to string
+            result_content = str(tool_result)
+            # Create ToolResult message
+            tool_result_message = Message.from_tool_result(
+                tool_id=tool_call.id,
+                content=result_content,
+            )
+            tool_result_messages.append(tool_result_message)
+
+        # Push tool result messages to memory.
+        if tool_result_messages:
+            self._memory_manager.push_messages(tool_result_messages)
+
+        # Route to check_compression.
+        self.ferry_to("check_compression")
 
     def _match_tool_calls_and_tool_specs(
         self,
         tool_calls: List[ToolCall],
         tool_specs: List[ToolSpec],
     ) -> List[Tuple[ToolCall, ToolSpec]]:
-        """
-        Match tool calls from LLM with available tool specifications.
-
-        Parameters
-        ----------
-        tool_calls : List[ToolCall]
-            List of tool calls from LLM response.
-        tool_specs : List[ToolSpec]
-            List of available tool specifications.
-
-        Returns
-        -------
-        List[Tuple[ToolCall, ToolSpec]]
-            List of matched (tool_call, tool_spec) pairs.
-        """
-        # TODO: Implement tool matching logic
-        # Match tool_call.name with tool_spec.tool_name
-        # Return list of (tool_call, tool_spec) tuples
         matched = []
         for tool_call in tool_calls:
             for tool_spec in tool_specs:
@@ -287,4 +499,3 @@ class ReCentAutoma(GraphAutoma):
         self._llm = state_dict["llm"]
         self._tool_specs = state_dict["tool_specs"]
         self._memory_manager = state_dict["memory_manager"]
-
