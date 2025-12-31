@@ -173,25 +173,28 @@ class ArgsManager:
             data_mode_list = []
             for key, value in self._start_arguments.items():
                 sender_rule = self._worker_rule_dict[key]["sender_rule"]
-                if isinstance(value, InOrder) and value.data is None:
-                    raise ValueError(f"The data of the Dispatching must be `List` or `Tuple`, but got Type `{type(value.data)}`.")
+                is_inorder = isinstance(value, InOrder)
+                
+                if key.startswith('__kwarg') and is_inorder:
+                    raise ValueError(f"Keyword arguments cannot be sent as InOrder, it will be propagated as is, not passed as a parameter.")
+
+                if is_inorder and not isinstance(value.data, (List, Tuple)):
+                    raise ValueError(f"The data of the InOrder to be dispatchedmust be `List` or `Tuple`, but got Type `{type(value.data)}`.")
 
                 data_mode_list.append({
                     'worker_key': key,
                     'data': value.data if isinstance(value, InOrder) else value,
                     'send_rule': sender_rule,
                 })
+
             data = self._args_send(data_mode_list)
-            next_args = tuple([
+
+            next_args_list = [
                 data_item
                 for data_mode, data_item in zip(data_mode_list, data)
                 if data_mode['worker_key'].startswith('__arg')
-            ])
-            next_kwargs = {
-                data_mode['worker_key'].strip('__kwarg_'): data_item
-                for data_mode, data_item in zip(data_mode_list, data)
-                if data_mode['worker_key'].startswith('__kwarg')
-            }
+            ]
+            next_args, next_kwargs = self._args_receive(last_worker_key, current_worker_key, worker_receiver_rule, next_args_list)
             return next_args, next_kwargs
 
         def _dependency_args_binding(
