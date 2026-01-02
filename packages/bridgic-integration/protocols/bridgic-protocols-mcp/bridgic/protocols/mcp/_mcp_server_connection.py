@@ -9,6 +9,7 @@ from mcp.client.session import ClientSession
 from mcp.types import ListPromptsResult, GetPromptResult, ListToolsResult, CallToolResult
 from mcp.client.stdio import stdio_client, StdioServerParameters
 from mcp.client.streamable_http import streamable_http_client
+from mcp.shared.exceptions import McpError
 from bridgic.protocols.mcp._error import McpServerConnectionError
 from bridgic.protocols.mcp._mcp_server_connection_manager import McpServerConnectionManager
 
@@ -273,7 +274,19 @@ class McpServerConnection(ABC):
             raise McpServerConnectionError(
                 f"Connection to MCP server is not established: name={self.name}"
             )
-        return await self._session.list_tools()
+        try:
+            result = await self._session.list_tools()
+        except McpError as e:
+            is_timeout = False
+            for content in ["timed out", "timeout"]:
+                if content in str.lower(e.error.message):
+                    result = ListToolsResult(tools=[])
+                    is_timeout = True
+                    warnings.warn(f"Timeout occurred while listing tools from MCP server: name={self.name}")
+                    break
+            if not is_timeout:
+                raise e
+        return result
 
     async def _call_tool_unsafe(
         self,
