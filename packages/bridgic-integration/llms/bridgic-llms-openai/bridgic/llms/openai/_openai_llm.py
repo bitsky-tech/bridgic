@@ -20,7 +20,7 @@ from bridgic.core.model.types import *
 from bridgic.core.model.protocols import StructuredOutput, ToolSelection, PydanticModel, JsonSchema, Constraint
 from bridgic.core.utils._console import printer
 from bridgic.core.utils._collection import filter_dict, merge_dict, validate_required_params
-from bridgic.core.utils._uuid import generate_tool_id
+from bridgic.core.utils._tool_calling import generate_tool_id
 from bridgic.llms.openai_like import OpenAILikeConfiguration
 
 class OpenAIConfiguration(OpenAILikeConfiguration):

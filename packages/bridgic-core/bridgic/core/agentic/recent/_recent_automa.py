@@ -16,6 +16,7 @@ from bridgic.core.agentic.recent._recent_memory_config import ReCentMemoryConfig
 from bridgic.core.agentic.recent._episodic_node import CompressionEpisodicNode
 from bridgic.core.prompt import EjinjaPromptTemplate
 from bridgic.core.utils._console import printer
+from bridgic.core.utils._tool_calling import stringify_tool_result
 
 
 class GoalStatus(BaseModel):
@@ -90,7 +91,7 @@ class ReCentAutoma(GraphAutoma):
             raise TypeError(f"Invalid tool type: {type(tool)} detected, expected `Callable`, `Automa`, or `ToolSpec`.")
 
     @worker(is_start=True)
-    async def init_task_goal(
+    async def initialize_task_goal(
         self,
         goal: str,
         guidance: Optional[str] = None,
@@ -113,14 +114,14 @@ class ReCentAutoma(GraphAutoma):
         self._memory_manager.create_goal(goal, guidance)
 
         # Log task goal initialization in debug mode.
-        if self._running_options.debug:
+        top_options = self._get_top_running_options()
+        if top_options.debug:
             msg = (
                 f"[ReCentAutoma] 🎯 Task Goal\n"
-                f"  Goal: {goal}\n"
-                f"  Guidance: {guidance if guidance else ''}"
+                f"{goal}" + (f"\n\n{guidance}" if guidance else '')
             )
             printer.print(msg)
-        
+
         self.ferry_to("observe")
 
     @worker()
@@ -170,15 +171,26 @@ class ReCentAutoma(GraphAutoma):
             messages=messages,
             constraint=PydanticModel(model=GoalStatus),
         )
+        observation_template = EjinjaPromptTemplate(
+            "Goal Status:\n"
+            "- Achieved: {%- if goal_status.goal_achieved %}goal_status.goal_achieved{% else %}No{% endif %}\n"
+            "- Thinking: {%- if goal_status.brief_thinking %}{{ goal_status.brief_thinking }}{% else %}(No thinking){% endif %}"
+        )
+        observation_message = observation_template.format_message(
+            role=Role.USER,
+            goal_status=goal_status,
+        )
+        self._memory_manager.push_messages([observation_message])
 
         # Log observation result in debug mode.
-        if self._running_options.debug:
+        top_options = self._get_top_running_options()
+        if top_options.debug:
             msg = (
                 f"[ReCentAutoma] 👀 Observation\n"
-                f"  Brief Thinking: {goal_status.brief_thinking}\n"
-                f"  Goal Achieved: {goal_status.goal_achieved}"
+                f"    Goal Achieved: {goal_status.goal_achieved}\n"
+                f"    Brief Thinking: {goal_status.brief_thinking}"
             )
-            printer.print(msg, color="white")
+            printer.print(msg, color="gray")
 
         # 4. Dynamic routing based on goal status.
         if goal_status.goal_achieved or not self._tool_specs:
@@ -187,7 +199,8 @@ class ReCentAutoma(GraphAutoma):
         else:
             # Goal not achieved, prepare messages and tools, then route to select_tools.
             tool_select_template = EjinjaPromptTemplate(
-                "You are an AI assistant that selects the appropriate tools to use."
+                "You are an AI assistant. You are able to select appropriate tool(s) to help "
+                "complete the next step of the task (if needed)."
                 "{%- if goal_content %}\n\nTask Goal: {{ goal_content }}{% endif %}"
                 "{%- if goal_guidance %}\n\nTask Guidance: {{ goal_guidance }}{% endif %}"
             )
@@ -240,19 +253,20 @@ class ReCentAutoma(GraphAutoma):
         )
 
         # Log selected tools in debug mode.
-        if self._running_options.debug:
+        top_options = self._get_top_running_options()
+        if top_options.debug:
             tool_info_lines = []
 
             if tool_calls:
                 for i, tool_call in enumerate(tool_calls, 1):
-                    tool_info_lines.append(f"  Tool {i}: {tool_call.name}")
-                    tool_info_lines.append(f"    id: {tool_call.id}")
-                    tool_info_lines.append(f"    arguments: {tool_call.arguments}")
+                    tool_info_lines.append(f"    Tool {i}: {tool_call.name}")
+                    tool_info_lines.append(f"      id: {tool_call.id}")
+                    tool_info_lines.append(f"      arguments: {tool_call.arguments}")
             else:
-                tool_info_lines.append("  (No tools selected)")
+                tool_info_lines.append("    (No tools selected)")
 
             if llm_response:
-                tool_info_lines.append(f"  LLM Response: {llm_response}")
+                tool_info_lines.append(f"\n    LLM Response: {llm_response}")
 
             tool_info_lines_str = "\n".join(tool_info_lines)
 
@@ -260,7 +274,7 @@ class ReCentAutoma(GraphAutoma):
                 f"[ReCentAutoma] 🔧 Tool Selection\n"
                 f"{tool_info_lines_str}"
             )
-            printer.print(msg, color="yellow")
+            printer.print(msg, color="orange")
 
         # Push Assistant message with tool calls and response to memory.
         if tool_calls or llm_response:
@@ -289,7 +303,7 @@ class ReCentAutoma(GraphAutoma):
                     # Execute the tool worker in the next dynamic step (via ferry_to).
                     self.ferry_to(tool_worker_key, **tool_call.arguments)
 
-                # Create collect_results worker dynamically.
+                # Create collect_results worker dynamically. In this worker, after collecting, the tool results will be push to memory.
                 def collect_wrapper(tool_results: List[Any]) -> None:
                     return self._collect_tools_results(matched_tool_calls, tool_results)
 
@@ -307,11 +321,6 @@ class ReCentAutoma(GraphAutoma):
             tool_selected = False
 
         if not tool_selected:
-            assistant_message = Message.from_text(
-                text="No tools could be selected to help achieve the task goal.",
-                role=Role.AI,
-            )
-            self._memory_manager.push_messages([assistant_message])
             self.ferry_to("finalize_answer")
 
     @worker()
@@ -323,15 +332,16 @@ class ReCentAutoma(GraphAutoma):
         Either compress_memory or observe will inevitably be chosen to execute in the next step.
         """
         should_compress = self._memory_manager.should_trigger_compression()
-        
+
         # Log compression decision in debug mode.
-        if self._running_options.debug:
+        top_options = self._get_top_running_options()
+        if top_options.debug:
             msg = (
                 f"[ReCentAutoma] 🧭 Memory Check\n"
-                f"  Compression Needed: {should_compress}"
+                f"    Compression Needed: {should_compress}"
             )
-            printer.print(msg, color="blue")
-        
+            printer.print(msg, color="olive")
+
         if should_compress:
             self.ferry_to("compress_memory")
         else:
@@ -345,16 +355,17 @@ class ReCentAutoma(GraphAutoma):
         This worker triggers memory compression by creating a compression node
         that summarizes earlier episodic nodes.
         """
+        # Create the compression node. The summary is now complete.
         timestep = await self._memory_manager.acreate_compression()
-        
+
         # Log compression summary in debug mode.
-        if self._running_options.debug:
+        top_options = self._get_top_running_options()
+        if top_options.debug:
             node: CompressionEpisodicNode = self._memory_manager.get_specified_memory_node(timestep)
             summary = await asyncio.wrap_future(node.summary)
             msg = (
                 f"[ReCentAutoma] 🗄 Memory Compression\n"
-                f"  Compression Timestep: {timestep}\n"
-                f"  Compression Summary: {summary}"
+                f"{summary}"
             )
             printer.print(msg, color="blue")
 
@@ -437,24 +448,6 @@ class ReCentAutoma(GraphAutoma):
         # Convert tool results to ToolResult messages.
         tool_result_messages: List[Message] = []
 
-        # Log tool execution results in debug mode.
-        if self._running_options.debug:
-            result_lines = []
-            for i, (tool_call, tool_result) in enumerate(zip(tool_calls, tool_results), 1):
-                result_content = str(tool_result)
-                result_content = result_content[:1000] + "..." if len(result_content) > 1000 else result_content
-                result_lines.append(f"  Tool {i}: {tool_call.name}")
-                result_lines.append(f"    id: {tool_call.id}")
-                result_lines.append(f"    result: {result_content}")
-
-            result_lines_str = "\n".join(result_lines)
-
-            msg = (
-                f"[ReCentAutoma] 🛠 Tool Results\n"
-                f"{result_lines_str}"
-            )
-            printer.print(msg, color="green")
-
         for tool_call, tool_result in zip(tool_calls, tool_results):
             # Convert tool result to string
             result_content = str(tool_result)
@@ -468,6 +461,26 @@ class ReCentAutoma(GraphAutoma):
         # Push tool result messages to memory.
         if tool_result_messages:
             self._memory_manager.push_messages(tool_result_messages)
+
+        # Log tool execution results in debug mode.
+        top_options = self._get_top_running_options()
+        if top_options.debug:
+            result_lines = []
+            for i, (tool_call, tool_result) in enumerate(zip(tool_calls, tool_results), 1):
+                # Format tool result with MCP support
+                result_content = stringify_tool_result(tool_result, verbose=top_options.verbose)
+                result_content = result_content[:10000] + "..." if len(result_content) > 10000 else result_content
+                result_lines.append(f"    Tool {i}: {tool_call.name}")
+                result_lines.append(f"      id: {tool_call.id}")
+                result_lines.append(f"      result: {result_content}")
+
+            result_lines_str = "\n".join(result_lines)
+
+            msg = (
+                f"[ReCentAutoma] 🚩 Tool Results\n"
+                f"{result_lines_str}"
+            )
+            printer.print(msg, color="green")
 
         # Route to check_compression.
         self.ferry_to("check_compression")

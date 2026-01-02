@@ -221,7 +221,7 @@ class ReCentMemoryManager(Serializable):
 
     async def acreate_compression(self) -> int:
         """
-        Create a new compression node at the tail for compressing memory (asynchronous version).
+        Create a new compression node at the tail for compressing memory asynchronously.
 
         If the last node is an appendable leaf (messages can be added), it will be closed first.
         The nodes pointed to by `_non_goal_node_timesteps` will be compressed and their timesteps 

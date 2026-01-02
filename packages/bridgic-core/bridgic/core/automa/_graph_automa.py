@@ -1367,7 +1367,7 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
             # A new DS started.
             if running_options.debug:
                 kickoff_worker_keys = [kickoff_info.worker_key for kickoff_info in self._current_kickoff_workers]
-                printer.print(f"[DS][Before Tasks Started] kickoff workers: {kickoff_worker_keys}", color="purple")
+                printer.print(f"[Dynamic Step] will execute [{', '.join(kickoff_worker_keys)}]", color="purple")
 
             for kickoff_info in self._current_kickoff_workers:
                 if kickoff_info.run_finished:
