@@ -41,6 +41,7 @@ Example
 ...     automa.add_worker(tool_spec.create_worker())
 """
 
+from importlib.metadata import version
 from bridgic.protocols.mcp._mcp_server_connection import (
     McpServerConnection,
     McpServerConnectionStdio,
@@ -53,6 +54,7 @@ from bridgic.protocols.mcp._mcp_template import McpPromptTemplate
 
 from bridgic.protocols.mcp._error import McpServerConnectionError
 
+__version__ = version("bridgic-protocols-mcp")
 __all__ = [
     "McpServerConnection",
     "McpServerConnectionStdio",
