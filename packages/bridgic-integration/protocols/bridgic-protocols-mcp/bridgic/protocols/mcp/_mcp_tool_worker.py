@@ -1,6 +1,6 @@
 from typing import Any, Dict, Optional, Union
 from typing_extensions import override
-from mcp.types import CallToolResult
+from mcp.types import CallToolResult, TextContent
 
 from bridgic.core.automa.worker import Worker
 from bridgic.protocols.mcp._mcp_server_connection import McpServerConnection
@@ -109,10 +109,17 @@ class McpToolWorker(Worker):
         RuntimeError
             If the connection is not established and cannot be established.
         """
-        result = await self.server_connection.acall_tool(
-            tool_name=self._tool_name,
-            arguments=kwargs if kwargs else None,
-        )
+        try:
+            result = await self.server_connection.acall_tool(
+                tool_name=self._tool_name,
+                arguments=kwargs if kwargs else None,
+            )
+        except Exception as e:
+            result = CallToolResult(
+                content=[TextContent(text=f"[MCP Tool Error] {type(e).__name__}: {str(e)}")],
+                structuredContent=None,
+                isError=True,
+            )
         return result
 
     @override

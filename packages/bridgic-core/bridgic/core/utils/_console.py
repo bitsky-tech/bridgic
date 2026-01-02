@@ -2,22 +2,27 @@
 from threading import Lock
 from typing import Dict, Union, Literal, Callable
 
-legal_colors = ["red", "green", "yellow", "blue", "purple", "cyan", "white", "magenta"]
-
 color_funcs: Dict[str, Callable[[str], str]] = {
-    "red": lambda msg: "\033[91m{}\033[00m".format(msg),
-    "green": lambda msg: "\033[92m{}\033[00m".format(msg), 
-    "yellow": lambda msg: "\033[93m{}\033[00m".format(msg),
-    "blue": lambda msg: "\033[94m{}\033[00m".format(msg),
-    "purple": lambda msg: "\033[95m{}\033[00m".format(msg),
-    "cyan": lambda msg: "\033[96m{}\033[00m".format(msg),
-    "white": lambda msg: "\033[97m{}\033[00m".format(msg),
-    "magenta": lambda msg: "\033[35m{}\033[00m".format(msg)
+    "blue":   lambda msg: "\033[38;5;21m{}\033[0m".format(msg),
+    "cyan":   lambda msg: "\033[38;5;51m{}\033[0m".format(msg),
+    "green":  lambda msg: "\033[38;5;46m{}\033[0m".format(msg),
+    "lime":   lambda msg: "\033[38;5;118m{}\033[0m".format(msg),
+    "olive":  lambda msg: "\033[38;5;100m{}\033[0m".format(msg),
+    "yellow": lambda msg: "\033[38;5;226m{}\033[0m".format(msg),
+    "orange": lambda msg: "\033[38;5;208m{}\033[0m".format(msg),
+    "brown":  lambda msg: "\033[38;5;130m{}\033[0m".format(msg),
+    "red":    lambda msg: "\033[38;5;196m{}\033[0m".format(msg),
+    "pink":   lambda msg: "\033[38;5;213m{}\033[0m".format(msg),
+    "purple": lambda msg: "\033[38;5;129m{}\033[0m".format(msg),
+    "gray":   lambda msg: "\033[38;5;244m{}\033[0m".format(msg),
+    "white":  lambda msg: "\033[38;5;15m{}\033[0m".format(msg),
 }
+
+legal_colors = list(color_funcs.keys())
 
 def colored(
     msg: str,
-    color: Union[Literal["red", "green", "yellow", "blue", "purple", "cyan", "white", "magenta"], None] = None,
+    color: Union[Literal["red", "green", "yellow", "blue", "purple", "cyan", "white", "gray", "orange", "pink", "brown", "lime", "olive"], None] = None,
 ) -> str:
     if color not in legal_colors:
         raise ValueError(f"Invalid color: {color}")
@@ -29,7 +34,7 @@ class Printer:
 
     Parameters
     ----------
-    color : Union[Literal["red", "green", "yellow", "blue", "purple", "cyan", "white", "magenta"], None]
+    color : Union[Literal["red", "green", "yellow", "blue", "purple", "cyan", "white", "gray", "orange", "pink", "brown", "lime", "navy", "teal", "olive"], None]
         The color of the text. If None, the text will be printed in the default color.
     """
     lock: Lock = Lock()
@@ -38,7 +43,7 @@ class Printer:
     def print(
         cls,
         *values,
-        color: Union[Literal["red", "green", "yellow", "blue", "purple", "cyan", "white", "magenta"], None] = None,
+        color: Union[Literal["red", "green", "yellow", "blue", "purple", "cyan", "white", "gray", "orange", "pink", "brown", "lime", "olive"], None] = None,
         **kwargs,
     ):
         if color:
