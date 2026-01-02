@@ -12,6 +12,7 @@ from bridgic.core.model.protocols import StructuredOutput, ToolSelection, Pydant
 from bridgic.llms.openai_like import OpenAILikeLlm, OpenAILikeConfiguration
 from bridgic.core.utils._console import printer
 from bridgic.core.utils._collection import validate_required_params, merge_dict, filter_dict
+from bridgic.core.utils._uuid import generate_tool_id
 
 class VllmServerConfiguration(OpenAILikeConfiguration):
     """
@@ -471,7 +472,7 @@ class VllmServerLlm(OpenAILikeLlm, StructuredOutput, ToolSelection):
     def _convert_tool_calls(self, tool_calls: List[ChatCompletionMessageFunctionToolCall]) -> List[ToolCall]:
         return [
             ToolCall(
-                id=tool_call.id,
+                id=generate_tool_id(),
                 name=tool_call.function.name,
                 arguments=json.loads(tool_call.function.arguments),
             ) for tool_call in tool_calls

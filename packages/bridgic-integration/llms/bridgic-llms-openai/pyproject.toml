@@ -1,6 +1,6 @@
 [project]
 name = "bridgic-llms-openai"
-version = "0.1.1"
+version = "0.1.2.dev1"
 license = {text = "MIT"}
 classifiers = [
     "Programming Language :: Python :: 3",
