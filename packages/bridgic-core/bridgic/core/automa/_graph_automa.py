@@ -1363,8 +1363,10 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
             worker_dict=self._workers
         )
         is_output_worker_keys = set()
+
+        # For each worker scheduled for execution, initiate a corresponding task (within the current event loop).
         while self._current_kickoff_workers:
-            # A new DS started.
+            # A new Dynamic Step is started now.
             if running_options.debug:
                 kickoff_worker_keys = [kickoff_info.worker_key for kickoff_info in self._current_kickoff_workers]
                 printer.print(f"[Dynamic Step] will execute [{', '.join(kickoff_worker_keys)}]", color="purple")
@@ -1373,14 +1375,14 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
                 if kickoff_info.run_finished:
                     # Skip finished workers. Here is the case that the Automa is resumed after a human interaction.
                     if running_options.debug:
-                        printer.print(f"[{kickoff_info.worker_key}] will be skipped - run finished", color="blue")
+                        printer.print(f"[{kickoff_info.worker_key}] will be skipped - run finished", color="cyan")
                     continue
 
                 if running_options.debug:
-                    kickoff_name = kickoff_info.last_kickoff
-                    if kickoff_name == "__automa__":
-                        kickoff_name = f"{kickoff_name}:({self.name})"
-                    printer.print(f"[{kickoff_name}] will kick off [{kickoff_info.worker_key}]", color="cyan")
+                    trigger_name = kickoff_info.last_kickoff
+                    if trigger_name == "__automa__":
+                        trigger_name = f"{trigger_name}:({self.name})"
+                    printer.print(f"[{trigger_name}] will trigger [{kickoff_info.worker_key}]", color="cyan")
 
                 # Arguments Mapping:
                 binding_args, binding_kwargs = args_manager.args_binding(
@@ -1427,6 +1429,7 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
                 else:
                     coro = worker_obj.arun(*next_args, **next_kwargs)
 
+                # Create a task for the current worker and record it.
                 task = asyncio.create_task(
                     # TODO1: arun() may need to be wrapped to support better interrupt...
                     coro,
@@ -1437,7 +1440,7 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
                     task=task,
                 ))
 
-            # Wait until all of the tasks are finished.
+            # Block until all of the running tasks are finished.
             while True:
                 undone_tasks = [t.task for t in self._running_tasks if not t.task.done()]
                 if not undone_tasks:
