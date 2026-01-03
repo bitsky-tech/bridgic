@@ -181,7 +181,7 @@ class ReCentMemoryManager(Serializable):
 
             # Construct the prompt messages to compress the conversations.
             if goal_node:
-                system_message = self._memory_config.system_prompt_template.format_message(
+                system_message = self._memory_config.system_template.format_message(
                     role=Role.SYSTEM,
                     goal=goal_node.goal if goal_node.goal else "",
                     guidance=goal_node.guidance if goal_node.guidance else "",
@@ -204,7 +204,7 @@ class ReCentMemoryManager(Serializable):
                     )
 
             # Append the instruction message.
-            instruction_message = self._memory_config.instruction_prompt_template.format_message(role=Role.USER)
+            instruction_message = self._memory_config.instruction_template.format_message(role=Role.USER)
             compression_messages.append(instruction_message)
 
             # Step 3: Call the LLM to generate summary (synchronous version).
@@ -250,7 +250,7 @@ class ReCentMemoryManager(Serializable):
 
             # Construct the prompt messages to compress the conversations.
             if goal_node:
-                system_message = self._memory_config.system_prompt_template.format_message(
+                system_message = self._memory_config.system_template.format_message(
                     role=Role.SYSTEM,
                     goal=goal_node.goal if goal_node.goal else "",
                     guidance=goal_node.guidance if goal_node.guidance else "",
@@ -275,7 +275,7 @@ class ReCentMemoryManager(Serializable):
                     )
 
             # Append the instruction message.
-            instruction_message = self._memory_config.instruction_prompt_template.format_message(role=Role.USER)
+            instruction_message = self._memory_config.instruction_template.format_message(role=Role.USER)
             compression_messages.append(instruction_message)
 
             # Step 3: Call the LLM to generate summary (asynchronous version).

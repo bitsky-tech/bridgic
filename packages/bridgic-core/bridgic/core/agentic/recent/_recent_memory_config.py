@@ -58,10 +58,10 @@ class ReCentMemoryConfig(Serializable):
     max_token_size : int
         Maximum number of tokens before triggering compression.
         Defaults to 8192 (1024 * 8).
-    system_prompt_template : str
+    system_template : str
         Jinja2 prompt template for the system prompt used in memory compression, which accepts 
         parameters: `goal` and `guidance`.
-    instruction_prompt_template : str
+    instruction_template : str
         Jinja2 prompt template for the instruction prompt used in memory compression.
     token_count_callback : Optional[Callable[[str], int]]
         Optional callback function to calculate token count from text.
@@ -78,10 +78,10 @@ class ReCentMemoryConfig(Serializable):
     max_token_size: int
     """Threshold for the number of tokens to trigger memory compression."""
 
-    system_prompt_template: EjinjaPromptTemplate
+    system_template: EjinjaPromptTemplate
     """Template for system prompt used in memory compression."""
 
-    instruction_prompt_template: EjinjaPromptTemplate
+    instruction_template: EjinjaPromptTemplate
     """Instruction prompt template used in memory compression."""
 
     token_count_callback: Callable[[str], int]
@@ -92,8 +92,8 @@ class ReCentMemoryConfig(Serializable):
         llm: BaseLlm,
         max_node_size: int = 20,
         max_token_size: int = 1024 * 16,
-        system_prompt_template: Optional[str] = DEFAULT_SYSTEM_PROMPT_TEMPLATE,
-        instruction_prompt_template: Optional[str] = DEFAULT_INSTRUCTION_PROMPT_TEMPLATE,
+        system_template: Optional[str] = DEFAULT_SYSTEM_PROMPT_TEMPLATE,
+        instruction_template: Optional[str] = DEFAULT_INSTRUCTION_PROMPT_TEMPLATE,
         token_count_callback: Optional[Callable[[str], int]] = estimate_token_count,
     ):
         self.llm = llm
@@ -103,13 +103,13 @@ class ReCentMemoryConfig(Serializable):
         
         # Convert string templates to EjinjaPromptTemplate instances
         # If None is explicitly passed, use default templates
-        if system_prompt_template is None:
-            system_prompt_template = DEFAULT_SYSTEM_PROMPT_TEMPLATE
-        self.system_prompt_template = EjinjaPromptTemplate(system_prompt_template)
+        if system_template is None:
+            system_template = DEFAULT_SYSTEM_PROMPT_TEMPLATE
+        self.system_template = EjinjaPromptTemplate(system_template)
         
-        if instruction_prompt_template is None:
-            instruction_prompt_template = DEFAULT_INSTRUCTION_PROMPT_TEMPLATE
-        self.instruction_prompt_template = EjinjaPromptTemplate(instruction_prompt_template)
+        if instruction_template is None:
+            instruction_template = DEFAULT_INSTRUCTION_PROMPT_TEMPLATE
+        self.instruction_template = EjinjaPromptTemplate(instruction_template)
 
     @override
     def dump_to_dict(self) -> Dict[str, Any]:
@@ -118,8 +118,8 @@ class ReCentMemoryConfig(Serializable):
         state_dict["max_node_size"] = self.max_node_size
         state_dict["max_token_size"] = self.max_token_size
         state_dict["token_count_callback"] = self.token_count_callback.__module__ + "." + self.token_count_callback.__qualname__
-        state_dict["system_prompt_template"] = self.system_prompt_template
-        state_dict["instruction_prompt_template"] = self.instruction_prompt_template
+        state_dict["system_template"] = self.system_template
+        state_dict["instruction_template"] = self.instruction_template
         return state_dict
 
     @override
@@ -128,5 +128,5 @@ class ReCentMemoryConfig(Serializable):
         self.max_node_size = state_dict["max_node_size"]
         self.max_token_size = state_dict["max_token_size"]
         self.token_count_callback = load_qualified_class_or_func(state_dict["token_count_callback"])
-        self.system_prompt_template = state_dict["system_prompt_template"]
-        self.instruction_prompt_template = state_dict["instruction_prompt_template"]
+        self.system_template = state_dict["system_template"]
+        self.instruction_template = state_dict["instruction_template"]

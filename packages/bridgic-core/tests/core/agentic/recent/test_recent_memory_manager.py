@@ -250,7 +250,7 @@ class TestReCentMemoryConfigPromptRendering:
         )
         
         # Test rendering with both goal and guidance
-        message = config.system_prompt_template.format_message(
+        message = config.system_template.format_message(
             role=Role.SYSTEM,
             goal="Complete the task",
             guidance="Follow the steps carefully",
@@ -268,7 +268,7 @@ class TestReCentMemoryConfigPromptRendering:
         )
         
         # Test rendering instruction prompt
-        message = config.instruction_prompt_template.format_message(role=Role.USER)
+        message = config.instruction_template.format_message(role=Role.USER)
         assert message.role == Role.USER
         assert len(message.content) > 0
         # printer.print("\n" + message.content)
