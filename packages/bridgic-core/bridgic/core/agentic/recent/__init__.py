@@ -5,9 +5,12 @@ The module provides core components for the ReCENT Algorithm.
 address issues such as context explosion and goal drift, by employing a recursive memory compression 
 mechanism.
 
-This module provides an agentic automa and its corresponding memory configuration:
+This module provides an agentic automa and its corresponding memory and task configurations:
 - `ReCentAutoma`: The main automaton that implements the ReCENT algorithm.
 - `ReCentMemoryConfig`: Configuration for ReCENT memory management.
+- `ObservationTaskConfig`: Configuration for the observation task.
+- `ToolTaskConfig`: Configuration for the tool selection task.
+- `AnswerTaskConfig`: Configuration for the answer generation task.
 
 The core data structures are:
 - `EpisodicNodeTree`: Tree of episodic nodes which is the core data structure of ReCENT.
@@ -19,6 +22,11 @@ The core data structures are:
 
 from bridgic.core.agentic.recent._recent_automa import ReCentAutoma
 from bridgic.core.agentic.recent._recent_memory_config import ReCentMemoryConfig
+from bridgic.core.agentic.recent._recent_task_configs import (
+    ObservationTaskConfig,
+    ToolTaskConfig,
+    AnswerTaskConfig,
+)
 from bridgic.core.agentic.recent._episodic_node_tree import EpisodicNodeTree
 from bridgic.core.agentic.recent._episodic_node import (
     BaseEpisodicNode,
@@ -29,8 +37,11 @@ from bridgic.core.agentic.recent._episodic_node import (
 )
 
 __all__ = [
-    "ReCentMemoryConfig",
     "ReCentAutoma",
+    "ReCentMemoryConfig",
+    "ObservationTaskConfig",
+    "ToolTaskConfig",
+    "AnswerTaskConfig",
     "EpisodicNodeTree",
     "BaseEpisodicNode",
     "GoalEpisodicNode",

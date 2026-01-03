@@ -90,8 +90,8 @@ class ReCentMemoryConfig(Serializable):
     def __init__(
         self,
         llm: BaseLlm,
-        max_node_size: int = 10,
-        max_token_size: int = 1024 * 8,
+        max_node_size: int = 20,
+        max_token_size: int = 1024 * 16,
         system_prompt_template: Optional[str] = DEFAULT_SYSTEM_PROMPT_TEMPLATE,
         instruction_prompt_template: Optional[str] = DEFAULT_INSTRUCTION_PROMPT_TEMPLATE,
         token_count_callback: Optional[Callable[[str], int]] = estimate_token_count,

@@ -7,12 +7,19 @@ from pydantic import BaseModel, Field
 
 from bridgic.core.automa import GraphAutoma, Automa, worker, RunningOptions
 from bridgic.core.automa.args import ArgsMappingRule
+from bridgic.core.automa.worker import WorkerCallback, WorkerCallbackBuilder
 from bridgic.core.model import BaseLlm
 from bridgic.core.model.types import Message, Tool, Role, ToolCall
 from bridgic.core.model.protocols import StructuredOutput, PydanticModel, ToolSelection
 from bridgic.core.agentic.tool_specs import ToolSpec, FunctionToolSpec, AutomaToolSpec
+from bridgic.core.agentic.types._llm_task_config import LlmTaskConfig
 from bridgic.core.agentic.recent._recent_memory_manager import ReCentMemoryManager, ReCentContext
 from bridgic.core.agentic.recent._recent_memory_config import ReCentMemoryConfig
+from bridgic.core.agentic.recent._recent_task_configs import (
+    ObservationTaskConfig,
+    ToolTaskConfig,
+    AnswerTaskConfig,
+)
 from bridgic.core.agentic.recent._episodic_node import CompressionEpisodicNode
 from bridgic.core.prompt import EjinjaPromptTemplate
 from bridgic.core.utils._console import printer
@@ -26,6 +33,35 @@ class GoalStatus(BaseModel):
     brief_thinking: str = Field(..., description="Brief thinking about the current status and whether the goal is achieved.")
     goal_achieved: bool = Field(..., description="Whether the goal has been achieved.")
 
+class CollectResultsCleanupCallback(WorkerCallback):
+    """
+    Callback to automatically clean up the following one-time workers:
+    - the completed tool result collecting worker
+    - the completed tool workers that are related to the collecting worker
+    """
+
+    async def on_worker_end(
+        self,
+        key: str,
+        is_top_level: bool = False,
+        parent: Optional["Automa"] = None,
+        arguments: Dict[str, Any] = None,
+        result: Any = None,
+    ) -> None:
+        # Check if the parent is a GraphAutoma.
+        if parent is None or not isinstance(parent, GraphAutoma):
+            return
+
+        # Get all dependencies of the collect_results worker
+        dependencies = parent._get_worker_dependencies(key)
+
+        # Remove all tool workers (those starting with "tool-").
+        for dep_key in dependencies:
+            if dep_key.startswith("tool-") and dep_key in parent.all_workers():
+                parent.remove_worker(dep_key)
+
+        # Remove the collect_results worker itself.
+        parent.remove_worker(key)
 
 class ReCentAutoma(GraphAutoma):
     """
@@ -41,11 +77,20 @@ class ReCentAutoma(GraphAutoma):
     Parameters
     ----------
     llm : BaseLlm
-        LLM instance used for thinking, planning and answering.
+        The LLM that serves as the default LLM for all tasks (if a dedicated LLM is not configured for a specific task).
     tools : Optional[List[Union[Callable, Automa, ToolSpec]]]
         List of tools available to the automa. Can be functions, Automa instances, or ToolSpec instances.
     memory_config : Optional[ReCentMemoryConfig]
         Memory configuration for ReCent memory management. If None, a default config will be created using the provided llm.
+    observation_task_config : Optional[ObservationTaskConfig]
+        Configuration for the observation task. If None, uses default config with the provided `llm`.
+        If provided but system_template or instruction_template is None, will use default templates.
+    tool_task_config : Optional[ToolTaskConfig]
+        Configuration for the tool selection task. If None, uses default config with the provided `llm`.
+        If provided but system_template or instruction_template is None, will use default templates.
+    answer_task_config : Optional[AnswerTaskConfig]
+        Configuration for the answer generation task. If None, uses default config with the provided `llm`.
+        If provided but system_template or instruction_template is None, will use default templates.
     name : Optional[str]
         The name of the automa instance.
     thread_pool : Optional[ThreadPoolExecutor]
@@ -55,7 +100,7 @@ class ReCentAutoma(GraphAutoma):
     """
 
     _llm: BaseLlm
-    """The main LLM which is used for thinking, planning and answering."""
+    """The main LLM which is used as fallback for the essential tasks."""
 
     _tool_specs: Optional[List[ToolSpec]]
     """List of tool specifications available to the automa."""
@@ -63,11 +108,23 @@ class ReCentAutoma(GraphAutoma):
     _memory_manager: ReCentMemoryManager
     """Memory manager instance for managing episodic memory."""
 
+    _observation_task_config: LlmTaskConfig
+    """Configuration for the observation task."""
+
+    _tool_task_config: LlmTaskConfig
+    """Configuration for the tool selection task."""
+
+    _answer_task_config: LlmTaskConfig
+    """Configuration for the answer generation task."""
+
     def __init__(
         self,
         llm: BaseLlm,
         tools: Optional[List[Union[Callable, Automa, ToolSpec]]] = None,
         memory_config: Optional[ReCentMemoryConfig] = None,
+        observation_task_config: Optional[ObservationTaskConfig] = None,
+        tool_task_config: Optional[ToolTaskConfig] = None,
+        answer_task_config: Optional[AnswerTaskConfig] = None,
         name: Optional[str] = None,
         thread_pool: Optional[ThreadPoolExecutor] = None,
         running_options: Optional[RunningOptions] = None,
@@ -76,8 +133,22 @@ class ReCentAutoma(GraphAutoma):
         self._llm = llm
         self._tool_specs = [self._ensure_tool_spec(tool) for tool in tools or []]
 
+        # Initialize memory manager with memory config.
         memory_config = memory_config or ReCentMemoryConfig(llm=llm)
         self._memory_manager = ReCentMemoryManager(compression_config=memory_config)
+
+        # Initialize task-specific configs with defaults if not provided.
+        if observation_task_config is None:
+            observation_task_config = ObservationTaskConfig(llm=self._llm)
+        self._observation_task_config = observation_task_config.to_llm_task_config()
+
+        if tool_task_config is None:
+            tool_task_config = ToolTaskConfig(llm=self._llm)
+        self._tool_task_config = tool_task_config.to_llm_task_config()
+
+        if answer_task_config is None:
+            answer_task_config = AnswerTaskConfig(llm=self._llm)
+        self._answer_task_config = answer_task_config.to_llm_task_config()
 
     def _ensure_tool_spec(self, tool: Union[Callable, Automa, ToolSpec]) -> ToolSpec:
         if isinstance(tool, ToolSpec):
@@ -138,36 +209,30 @@ class ReCentAutoma(GraphAutoma):
         # 2. Build LLM message list for goal status evaluation.
         messages: List[Message] = []
 
-        # Add system message for goal evaluation.
-        system_template = EjinjaPromptTemplate(
-            "You are an AI assistant that evaluates whether a task goal has been achieved."
-            "{%- if goal_content %}\n\nTask Goal: {{ goal_content }}{% endif %}"
-            "{%- if goal_guidance %}\n\nTask Guidance: {{ goal_guidance }}{% endif %}"
-        )
-        system_message = system_template.format_message(
-            role=Role.SYSTEM,
-            goal_content=context["goal_content"],
-            goal_guidance=context["goal_guidance"],
-        )
-        messages.append(system_message)
+        # Add system message for goal evaluation (if configured).
+        if self._observation_task_config.system_template is not None:
+            system_message = self._observation_task_config.system_template.format_message(
+                role=Role.SYSTEM,
+                goal_content=context["goal_content"],
+                goal_guidance=context["goal_guidance"],
+            )
+            messages.append(system_message)
 
         # Add memory messages (observation history).
         if context["memory_messages"]:
             messages.extend(context["memory_messages"])
 
-        # Add instruction message.
-        instruction_template = EjinjaPromptTemplate(
-            "Based on the task goal and observation history, determine if the goal has been completed. "
-            "Provide a brief thinking about the current status and whether the goal is achieved."
-        )
-        instruction_message = instruction_template.format_message(role=Role.USER)
-        messages.append(instruction_message)
+        # Add instruction message (if configured).
+        if self._observation_task_config.instruction_template is not None:
+            instruction_message = self._observation_task_config.instruction_template.format_message(role=Role.USER)
+            messages.append(instruction_message)
 
         # 3. Call LLM with StructuredOutput to get goal status.
-        if not isinstance(self._llm, StructuredOutput):
-            raise TypeError(f"LLM must support StructuredOutput protocol, but {type(self._llm)} does not.")
+        observe_llm = self._observation_task_config.llm
+        if not isinstance(observe_llm, StructuredOutput):
+            raise TypeError(f"LLM must support StructuredOutput protocol, but {type(observe_llm)} does not.")
 
-        goal_status: GoalStatus = await self._llm.astructured_output(
+        goal_status: GoalStatus = await observe_llm.astructured_output(
             messages=messages,
             constraint=PydanticModel(model=GoalStatus),
         )
@@ -198,23 +263,30 @@ class ReCentAutoma(GraphAutoma):
             self.ferry_to("finalize_answer")
         else:
             # Goal not achieved, prepare messages and tools, then route to select_tools.
-            tool_select_template = EjinjaPromptTemplate(
-                "You are an AI assistant. You are able to select appropriate tool(s) to help "
-                "complete the next step of the task (if needed)."
-                "{%- if goal_content %}\n\nTask Goal: {{ goal_content }}{% endif %}"
-                "{%- if goal_guidance %}\n\nTask Guidance: {{ goal_guidance }}{% endif %}"
-            )
-            tool_select_message = tool_select_template.format_message(
-                role=Role.SYSTEM,
-                goal_content=context["goal_content"],
-                goal_guidance=context["goal_guidance"],
-            )
-            tool_select_messages = [tool_select_message] + context["memory_messages"]
+            tool_select_messages = []
+
+            # Add system message (if configured)
+            if self._tool_task_config.system_template is not None:
+                tool_system_message = self._tool_task_config.system_template.format_message(
+                    role=Role.SYSTEM,
+                    goal_content=context["goal_content"],
+                    goal_guidance=context["goal_guidance"],
+                )
+                tool_select_messages.append(tool_system_message)
+
+            # Add memory messages
+            tool_select_messages.extend(context["memory_messages"])
+
+            # Add instruction message (if configured).
+            if self._tool_task_config.instruction_template is not None:
+                tool_instruction_message = self._tool_task_config.instruction_template.format_message(role=Role.USER)
+                tool_select_messages.append(tool_instruction_message)
 
             tools = [tool_spec.to_tool() for tool_spec in self._tool_specs]
 
-            # Route to select_tools with messages and tools.
+            # Concurrently select tools and compress memory.
             self.ferry_to("select_tools", messages=tool_select_messages, tools=tools)
+            self.ferry_to("compress_memory")
 
     @worker()
     async def select_tools(
@@ -243,11 +315,12 @@ class ReCentAutoma(GraphAutoma):
             - Optional response text from the LLM
         """
         # Check if LLM supports ToolSelection protocol.
-        if not isinstance(self._llm, ToolSelection):
-            raise TypeError(f"LLM must support ToolSelection protocol, but {type(self._llm)} does not.")
+        tool_select_llm = self._tool_task_config.llm
+        if not isinstance(tool_select_llm, ToolSelection):
+            raise TypeError(f"LLM must support ToolSelection protocol, but {type(tool_select_llm)} does not.")
 
         # Call LLM's tool selection method.
-        tool_calls, llm_response = await self._llm.aselect_tool(
+        tool_calls, llm_response = await tool_select_llm.aselect_tool(
             messages=messages,
             tools=tools,
         )
@@ -304,14 +377,18 @@ class ReCentAutoma(GraphAutoma):
                     self.ferry_to(tool_worker_key, **tool_call.arguments)
 
                 # Create collect_results worker dynamically. In this worker, after collecting, the tool results will be push to memory.
-                def collect_wrapper(tool_results: List[Any]) -> None:
+                def collect_wrapper(compression_timestep_and_tool_results: List[Any]) -> None:
+                    tool_results = compression_timestep_and_tool_results[1:]
                     return self._collect_tools_results(matched_tool_calls, tool_results)
 
+                # To ensure that compression is performed based on the memory, prior to tool selection, 
+                # the collect_results worker must be started after the compress_memory worker.
                 self.add_func_as_worker(
                     key=f"collect_results-<{uuid.uuid4().hex[:8]}>",
                     func=collect_wrapper,
-                    dependencies=tool_worker_keys,
+                    dependencies=["compress_memory"] + tool_worker_keys,
                     args_mapping_rule=ArgsMappingRule.MERGE,
+                    callback_builders=[WorkerCallbackBuilder(CollectResultsCleanupCallback)],
                 )
 
                 tool_selected = True
@@ -324,17 +401,18 @@ class ReCentAutoma(GraphAutoma):
             self.ferry_to("finalize_answer")
 
     @worker()
-    async def check_compression(self):
+    async def compress_memory(self) -> Optional[int]:
         """
-        Check whether memory compression is needed.
+        Compress memory if necessary.
 
-        This worker checks if the compression conditions are met and decides which nodes to route to.
-        Either compress_memory or observe will inevitably be chosen to execute in the next step.
+        Returns
+        -------
+        Optional[int]
+            The timestep of the compression node if compression is needed, otherwise None.
         """
+        top_options = self._get_top_running_options()
         should_compress = self._memory_manager.should_trigger_compression()
 
-        # Log compression decision in debug mode.
-        top_options = self._get_top_running_options()
         if top_options.debug:
             msg = (
                 f"[ReCentAutoma] 🧭 Memory Check\n"
@@ -343,33 +421,21 @@ class ReCentAutoma(GraphAutoma):
             printer.print(msg, color="olive")
 
         if should_compress:
-            self.ferry_to("compress_memory")
+            # Create the compression node. The summary is now complete.
+            timestep = await self._memory_manager.acreate_compression()
+
+            if top_options.debug:
+                node: CompressionEpisodicNode = self._memory_manager.get_specified_memory_node(timestep)
+                summary = await asyncio.wrap_future(node.summary)
+                msg = (
+                    f"[ReCentAutoma] 🗄 Memory Compression\n"
+                    f"{summary}"
+                )
+                printer.print(msg, color="blue")
+
+            return timestep
         else:
-            self.ferry_to("observe")
-
-    @worker()
-    async def compress_memory(self):
-        """
-        Compress early memory nodes.
-
-        This worker triggers memory compression by creating a compression node
-        that summarizes earlier episodic nodes.
-        """
-        # Create the compression node. The summary is now complete.
-        timestep = await self._memory_manager.acreate_compression()
-
-        # Log compression summary in debug mode.
-        top_options = self._get_top_running_options()
-        if top_options.debug:
-            node: CompressionEpisodicNode = self._memory_manager.get_specified_memory_node(timestep)
-            summary = await asyncio.wrap_future(node.summary)
-            msg = (
-                f"[ReCentAutoma] 🗄 Memory Compression\n"
-                f"{summary}"
-            )
-            printer.print(msg, color="blue")
-
-        self.ferry_to("observe")
+            return None
 
     @worker(is_output=True)
     async def finalize_answer(self) -> str:
@@ -391,34 +457,27 @@ class ReCentAutoma(GraphAutoma):
         # 2. Build LLM message list for final answer generation.
         messages: List[Message] = []
 
-        # Add system prompt for final answer generation.
-        system_template = EjinjaPromptTemplate(
-            "You are a helpful assistant. Based on the task goal and the entire conversation history, "
-            "provide a clear, complete, and well-structured final answer that addresses the goal."
-            "{%- if goal_content %}\n\nTask Goal: {{ goal_content }}{% endif %}"
-            "{%- if goal_guidance %}\n\nTask Guidance: {{ goal_guidance }}{% endif %}"
-        )
-        system_message = system_template.format_message(
-            role=Role.SYSTEM,
-            goal_content=context["goal_content"],
-            goal_guidance=context["goal_guidance"],
-        )
-        messages.append(system_message)
+        # Add system prompt for final answer generation (if configured).
+        if self._answer_task_config.system_template is not None:
+            system_message = self._answer_task_config.system_template.format_message(
+                role=Role.SYSTEM,
+                goal_content=context["goal_content"],
+                goal_guidance=context["goal_guidance"],
+            )
+            messages.append(system_message)
 
         # Add memory messages (observation history).
         if context["memory_messages"]:
             messages.extend(context["memory_messages"])
 
-        # Add instruction to generate final answer.
-        instruction_template = EjinjaPromptTemplate(
-            "Based on the task goal and observation history above, please provide a comprehensive "
-            "and well-structured final answer that addresses the goal."
-        )
-        instruction_message = instruction_template.format_message(role=Role.USER)
-        messages.append(instruction_message)
+        # Add instruction to generate final answer (if configured).
+        if self._answer_task_config.instruction_template is not None:
+            instruction_message = self._answer_task_config.instruction_template.format_message(role=Role.USER)
+            messages.append(instruction_message)
 
         # 3. Call LLM to generate final answer.
-        response = await self._llm.achat(messages=messages)
+        answer_llm = self._answer_task_config.llm
+        response = await answer_llm.achat(messages=messages)
         final_answer = response.message.content
 
         # 4. Push final answer as a Message into the memory
@@ -482,8 +541,8 @@ class ReCentAutoma(GraphAutoma):
             )
             printer.print(msg, color="green")
 
-        # Route to check_compression.
-        self.ferry_to("check_compression")
+        # Route to observe.
+        self.ferry_to("observe")
 
     def _match_tool_calls_and_tool_specs(
         self,
@@ -504,6 +563,9 @@ class ReCentAutoma(GraphAutoma):
         state_dict["llm"] = self._llm
         state_dict["tool_specs"] = self._tool_specs
         state_dict["memory_manager"] = self._memory_manager
+        state_dict["observation_task_config"] = self._observation_task_config
+        state_dict["tool_task_config"] = self._tool_task_config
+        state_dict["answer_task_config"] = self._answer_task_config
         return state_dict
 
     @override
@@ -512,3 +574,16 @@ class ReCentAutoma(GraphAutoma):
         self._llm = state_dict["llm"]
         self._tool_specs = state_dict["tool_specs"]
         self._memory_manager = state_dict["memory_manager"]
+
+        self._observation_task_config = (
+            state_dict.get("observation_task_config")
+            or ObservationTaskConfig(llm=self._llm).to_llm_task_config()
+        )
+        self._tool_task_config = (
+            state_dict.get("tool_task_config")
+            or ToolTaskConfig(llm=self._llm).to_llm_task_config()
+        )
+        self._answer_task_config = (
+            state_dict.get("answer_task_config")
+            or AnswerTaskConfig(llm=self._llm).to_llm_task_config()
+        )
