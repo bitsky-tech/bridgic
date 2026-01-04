@@ -242,7 +242,7 @@ class ReCentAutoma(GraphAutoma):
             "- Thinking: {%- if goal_status.brief_thinking %}{{ goal_status.brief_thinking }}{% else %}(No thinking){% endif %}"
         )
         observation_message = observation_template.format_message(
-            role=Role.USER,
+            role=Role.AI,
             goal_status=goal_status,
         )
         self._memory_manager.push_messages([observation_message])
@@ -319,8 +319,8 @@ class ReCentAutoma(GraphAutoma):
         if not isinstance(tool_select_llm, ToolSelection):
             raise TypeError(f"LLM must support ToolSelection protocol, but {type(tool_select_llm)} does not.")
 
-        # Call LLM's tool selection method.
-        tool_calls, llm_response = await tool_select_llm.aselect_tool(
+        # Call tool selection method.
+        tool_calls, tool_response = await tool_select_llm.aselect_tool(
             messages=messages,
             tools=tools,
         )
@@ -338,8 +338,8 @@ class ReCentAutoma(GraphAutoma):
             else:
                 tool_info_lines.append("    (No tools selected)")
 
-            if llm_response:
-                tool_info_lines.append(f"\n    LLM Response: {llm_response}")
+            if tool_response:
+                tool_info_lines.append(f"\n    LLM Response: {tool_response}")
 
             tool_info_lines_str = "\n".join(tool_info_lines)
 
@@ -348,11 +348,6 @@ class ReCentAutoma(GraphAutoma):
                 f"{tool_info_lines_str}"
             )
             printer.print(msg, color="orange")
-
-        # Push Assistant message with tool calls and response to memory.
-        if tool_calls or llm_response:
-            assistant_message = Message.from_tool_call(tool_calls=tool_calls, text=llm_response)
-            self._memory_manager.push_messages([assistant_message])
 
         # Match tool calls with tool specs.
         if tool_calls and self._tool_specs:
@@ -376,12 +371,13 @@ class ReCentAutoma(GraphAutoma):
                     # Execute the tool worker in the next dynamic step (via ferry_to).
                     self.ferry_to(tool_worker_key, **tool_call.arguments)
 
-                # Create collect_results worker dynamically. In this worker, after collecting, the tool results will be push to memory.
+                # Create collect_results worker dynamically.
+                # After collecting, the tool calls and their results will be pushed to memory.
                 def collect_wrapper(compression_timestep_and_tool_results: List[Any]) -> None:
                     tool_results = compression_timestep_and_tool_results[1:]
-                    return self._collect_tools_results(matched_tool_calls, tool_results)
+                    return self._collect_tools_results(tool_response, matched_tool_calls, tool_results)
 
-                # To ensure that compression is performed based on the memory, prior to tool selection, 
+                # To ensure that compression is performed based on the memory prior to tool selection, 
                 # the collect_results worker must be started after the compress_memory worker.
                 self.add_func_as_worker(
                     key=f"collect_results-<{uuid.uuid4().hex[:8]}>",
@@ -488,6 +484,7 @@ class ReCentAutoma(GraphAutoma):
 
     def _collect_tools_results(
         self,
+        tool_response: Optional[str],
         tool_calls: Optional[List[ToolCall]],
         tool_results: List[Any],
     ) -> None:
@@ -499,11 +496,18 @@ class ReCentAutoma(GraphAutoma):
 
         Parameters
         ----------
+        tool_response : Optional[str]
+            The response from the tool selection task, if any.
         tool_calls : Optional[List[ToolCall]]
             List of tool calls (optional, for building ToolResult messages).
         tool_results : List[Any]
             List of tool execution results (merged via ArgsMappingRule.MERGE).
         """
+        # Push assistant message with tool calls and tool response to memory.
+        if tool_calls or tool_response:
+            assistant_message = Message.from_tool_call(tool_calls=tool_calls, text=tool_response)
+            self._memory_manager.push_messages([assistant_message])
+
         # Convert tool results to ToolResult messages.
         tool_result_messages: List[Message] = []
 
