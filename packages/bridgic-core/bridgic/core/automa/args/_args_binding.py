@@ -186,7 +186,6 @@ class ArgsManager:
                     'data': value.data if isinstance(value, InOrder) else value,
                     'send_rule': sender_rule,
                 })
-
             data = self._args_send(data_mode_list)
 
             next_args_list = [
@@ -755,7 +754,13 @@ def override_func_signature(
     data: Dict[enum.IntEnum, List[Tuple[str, Any]]],
 ) -> None:
     """
-    Override the signature of a function or method, updating only parameters present in data.
+    Record signature override information for a function or method, updating only parameters present in data.
+    
+    This function stores override information in a dictionary (`__signature_overrides__`) on the function
+    object instead of directly modifying the signature. This allows multiple calls with different names
+    to accumulate modifications without overwriting previous changes. The stored information can be
+    retrieved later by accessing `func.__signature_overrides__` dictionary, where each key is the `name`
+    passed to this function and the value is the complete `inspect.Signature` object with modifications applied.
     
     This function preserves the original parameter order and keeps VAR_POSITIONAL and VAR_KEYWORD
     parameters unchanged. It only updates parameters that exist in both the original signature
@@ -764,9 +769,9 @@ def override_func_signature(
     Parameters
     ----------
     name : str
-        The name of the function (used for error messages).
+        The name identifier for this signature override (used as the key in the storage dictionary).
     func : Union[Callable, MethodType]
-        The function or method to override the signature for.
+        The function or method to record signature overrides for.
     data : Dict[enum.IntEnum, List[Tuple[str, Any]]]
         Parameter data from get_param_names_all_kinds, where key is Parameter kind,
         value is list of (param_name, default_value) tuples.
@@ -790,7 +795,7 @@ def override_func_signature(
     if extra_keys:
         raise TypeError(f"{name} has unsupported parameters: {sorted(extra_keys)}")
     
-    # Override the function signature (preserve original order and VAR_POSITIONAL/VAR_KEYWORD)
+    # Build new parameters with overrides applied (preserve original order and VAR_POSITIONAL/VAR_KEYWORD)
     new_params = []
     for param_name, original_param in original_sig.parameters.items():
         if original_param.kind in (Parameter.VAR_POSITIONAL, Parameter.VAR_KEYWORD):
@@ -820,65 +825,17 @@ def override_func_signature(
             # Keep original parameter unchanged
             new_params.append(original_param)
     
+    # Create the new signature with all modifications applied
     new_signature = original_sig.replace(parameters=new_params)
-    setattr(func, "__signature__", new_signature)
-
-
-def set_func_signature(
-    func: Callable,
-    data: Dict[enum.IntEnum, List[Tuple[str, Any]]],
-) -> None:
-    """
-    Set the signature of a function based on provided data from get_param_names_all_kinds.
     
-    Parameters
-    ----------
-    func : Callable
-        The function to set the signature for.
-    data : Dict[enum.IntEnum, List[Tuple[str, Any]]]
-        Parameter data from get_param_names_all_kinds, where key is Parameter kind,
-        value is list of (param_name, default_value) tuples.
-    """
-    # Get original signature to extract type annotations
-    original_sig = inspect.signature(func)
-    original_params_dict = {p.name: p for p in original_sig.parameters.values()}
+    # Initialize or get the signature overrides dictionary
+    if not hasattr(func, "__signature_overrides__"):
+        setattr(func, "__signature_overrides__", {})
     
-    # Process parameters in the correct order: POSITIONAL_ONLY -> POSITIONAL_OR_KEYWORD -> VAR_POSITIONAL -> KEYWORD_ONLY -> VAR_KEYWORD
-    param_kinds_order = [
-        Parameter.POSITIONAL_ONLY,
-        Parameter.POSITIONAL_OR_KEYWORD,
-        Parameter.VAR_POSITIONAL,
-        Parameter.KEYWORD_ONLY,
-        Parameter.VAR_KEYWORD,
-    ]
+    overrides = getattr(func, "__signature_overrides__")
     
-    params = []
-    for param_kind in param_kinds_order:
-        if param_kind not in data:
-            continue
-        
-        param_list = data[param_kind]
-        for param_name, default_value in param_list:
-            # Get annotation from original signature if available
-            annotation = inspect._empty
-            if param_name in original_params_dict:
-                annotation = original_params_dict[param_name].annotation
-            
-            # Convert inspect._empty to Parameter.empty if needed
-            # (they are the same object, but we use Parameter.empty for consistency)
-            if default_value is inspect._empty:
-                default_value = Parameter.empty
-            
-            param = Parameter(
-                name=param_name,
-                kind=param_kind,
-                default=default_value,
-                annotation=annotation,
-            )
-            params.append(param)
-    
-    new_signature = inspect.Signature(parameters=params)
-    setattr(func, "__signature__", new_signature)
+    # Store the complete signature with the name as the key
+    overrides[name] = new_signature
 
 
 def set_method_signature(
