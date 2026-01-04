@@ -9,7 +9,13 @@ These tests require:
 import pytest
 
 from bridgic.core.automa import RunningOptions
-from bridgic.core.agentic.recent import ObservationTaskConfig, ReCentAutoma, ReCentMemoryConfig, ToolTaskConfig
+from bridgic.core.agentic.recent import (
+    ReCentAutoma,
+    StopCondition,
+    ReCentMemoryConfig,
+    ObservationTaskConfig,
+    ToolTaskConfig,
+)
 from bridgic.core.utils._console import printer
 
 
@@ -29,6 +35,7 @@ def recent_automa_with_github_and_browser_use_mcp(
     return ReCentAutoma(
         llm=openai_llm,
         tools=all_tools,
+        stop_condition=StopCondition(max_iteration=1, max_consecutive_no_tool_selected=3),
         memory_config=ReCentMemoryConfig(llm=openai_llm),
         observation_task_config=ObservationTaskConfig(llm=openai_llm),
         tool_task_config=ToolTaskConfig(llm=openai_llm),
@@ -84,10 +91,27 @@ async def test_search_and_summarize_ai_products(
 
     result = await recent_automa_with_github_and_browser_use_mcp.arun(
         goal="Try to research the most popular AI product in 2025 on Google.",
-        guidance=None,
+        guidance=(
+            "## Initial Search\n"
+            "1. Search on Google for \"the most popular AI products in 2025\".\n"
+            "2. Try to determine which is the most popular one among the candidates.\n"
+            "\n"
+            "## Research More\n"
+            "1. Open a new browser tab and then research on \"[The product name] features 2025\".\n"
+            "2. Open a new browser tab and then research on \"[The product name] market performance 2025\".\n"
+            "\n"
+            "## Synthesis\n"
+            "Gather the information and present the summary in a clear, concise format, covering:\n"
+            "a. Overview of the product.\n"
+            "b. Key features.\n"
+            "c. Core technology.\n"
+            "d. Revenue/market highlights.\n"
+            "\n"
+            "## Notes\n"
+            "If human validation is needed, please wait for 3 seconds and then recheck the result."
+        ),
     )
 
     assert bool(result)
     assert isinstance(result, str)
     printer.print(f"\n{result}")
-

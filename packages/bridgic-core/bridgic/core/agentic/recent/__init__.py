@@ -11,6 +11,7 @@ This module provides an agentic automa and its corresponding memory and task con
 - `ObservationTaskConfig`: Configuration for the observation task.
 - `ToolTaskConfig`: Configuration for the tool selection task.
 - `AnswerTaskConfig`: Configuration for the answer generation task.
+- `StopCondition`: Stop condition configuration for ReCentAutoma.
 
 The core data structures are:
 - `EpisodicNodeTree`: Tree of episodic nodes which is the core data structure of ReCENT.
@@ -20,7 +21,7 @@ The core data structures are:
     + `CompressionEpisodicNode`: A compression node that summarizes a sequence of episodic nodes.
 """
 
-from bridgic.core.agentic.recent._recent_automa import ReCentAutoma
+from bridgic.core.agentic.recent._recent_automa import ReCentAutoma, StopCondition
 from bridgic.core.agentic.recent._recent_memory_config import ReCentMemoryConfig
 from bridgic.core.agentic.recent._recent_task_configs import (
     ObservationTaskConfig,
@@ -42,6 +43,7 @@ __all__ = [
     "ObservationTaskConfig",
     "ToolTaskConfig",
     "AnswerTaskConfig",
+    "StopCondition",
     "EpisodicNodeTree",
     "BaseEpisodicNode",
     "GoalEpisodicNode",

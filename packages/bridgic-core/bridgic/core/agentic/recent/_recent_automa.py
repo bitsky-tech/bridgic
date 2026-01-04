@@ -6,7 +6,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pydantic import BaseModel, Field
 
 from bridgic.core.automa import GraphAutoma, Automa, worker, RunningOptions
-from bridgic.core.automa.args import ArgsMappingRule
+from bridgic.core.automa.args import ArgsMappingRule, System
 from bridgic.core.automa.worker import WorkerCallback, WorkerCallbackBuilder
 from bridgic.core.model import BaseLlm
 from bridgic.core.model.types import Message, Tool, Role, ToolCall
@@ -32,6 +32,29 @@ class GoalStatus(BaseModel):
     """
     brief_thinking: str = Field(..., description="Brief thinking about the current status and whether the goal is achieved.")
     goal_achieved: bool = Field(..., description="Whether the goal has been achieved.")
+
+class StopCondition(BaseModel):
+    """
+    Stop condition configuration for ReCentAutoma.
+
+    The different stop conditions below are combined with logic "or". In other words, the process 
+    will stop if any condition is met.
+
+    Attributes
+    ----------
+    max_iteration : int
+        Maximum number of times to enter the observe node before finalizing the answer.
+        Defaults to -1 which means there is no limit to the number of iterations.
+    max_consecutive_no_tool_selected : int
+        Maximum number of consecutive times no tool is selected before finalizing the answer.
+        Defaults to 3.
+    """
+
+    max_iteration: int = Field(default=-1)
+    """Maximum number of times to enter the observe node before finalizing the answer."""
+
+    max_consecutive_no_tool_selected: int = Field(default=3)
+    """Maximum number of consecutive times no tool is selected before finalizing the answer."""
 
 class CollectResultsCleanupCallback(WorkerCallback):
     """
@@ -80,6 +103,10 @@ class ReCentAutoma(GraphAutoma):
         The LLM that serves as the default LLM for all tasks (if a dedicated LLM is not configured for a specific task).
     tools : Optional[List[Union[Callable, Automa, ToolSpec]]]
         List of tools available to the automa. Can be functions, Automa instances, or ToolSpec instances.
+    stop_condition : Optional[StopCondition]
+        Stop condition configuration. If None, uses default configuration:
+        - max_iteration: -1
+        - max_consecutive_no_tool_selected: 3
     memory_config : Optional[ReCentMemoryConfig]
         Memory configuration for ReCent memory management. If None, a default config will be created using the provided llm.
     observation_task_config : Optional[ObservationTaskConfig]
@@ -117,10 +144,14 @@ class ReCentAutoma(GraphAutoma):
     _answer_task_config: LlmTaskConfig
     """Configuration for the answer generation task."""
 
+    _stop_condition: StopCondition
+    """Stop condition configuration."""
+
     def __init__(
         self,
         llm: BaseLlm,
         tools: Optional[List[Union[Callable, Automa, ToolSpec]]] = None,
+        stop_condition: Optional[StopCondition] = None,
         memory_config: Optional[ReCentMemoryConfig] = None,
         observation_task_config: Optional[ObservationTaskConfig] = None,
         tool_task_config: Optional[ToolTaskConfig] = None,
@@ -149,6 +180,9 @@ class ReCentAutoma(GraphAutoma):
         if answer_task_config is None:
             answer_task_config = AnswerTaskConfig(llm=self._llm)
         self._answer_task_config = answer_task_config.to_llm_task_config()
+
+        # Initialize stop condition with defaults if not provided.
+        self._stop_condition = stop_condition or StopCondition()
 
     def _ensure_tool_spec(self, tool: Union[Callable, Automa, ToolSpec]) -> ToolSpec:
         if isinstance(tool, ToolSpec):
@@ -196,13 +230,24 @@ class ReCentAutoma(GraphAutoma):
         self.ferry_to("observe")
 
     @worker()
-    async def observe(self):
+    async def observe(self, rtx = System("runtime_context")):
         """
         Observe the current state and determine if the goal has been achieved.
 
         This worker builds context from memory, uses LLM (with `StructuredOutput` protocol) to 
         determine if the goal has been achieved, and routes accordingly.
         """
+        local_space = self.get_local_space(rtx)
+
+        # 0. If iteration count is bigger than max_iteration, route to finalize_answer and stop.
+        iteration_cnt = local_space.get("iteration_cnt", 0) + 1
+        local_space["iteration_cnt"] = iteration_cnt
+
+        if self._stop_condition.max_iteration >= 0:
+            if iteration_cnt > self._stop_condition.max_iteration:
+                self.ferry_to("finalize_answer")
+                return
+
         # 1. Build context from memory.
         context: ReCentContext = await self._memory_manager.abuild_context()
 
@@ -252,8 +297,9 @@ class ReCentAutoma(GraphAutoma):
         if top_options.debug:
             msg = (
                 f"[ReCentAutoma] 👀 Observation\n"
-                f"    Goal Achieved: {goal_status.goal_achieved}\n"
-                f"    Brief Thinking: {goal_status.brief_thinking}"
+                f"    Iteration: {iteration_cnt}\n"
+                f"    Achieved: {goal_status.goal_achieved}\n"
+                f"    Thinking: {goal_status.brief_thinking}"
             )
             printer.print(msg, color="gray")
 
@@ -291,6 +337,8 @@ class ReCentAutoma(GraphAutoma):
     @worker()
     async def select_tools(
         self,
+        rtx = System("runtime_context"),
+        *,
         messages: List[Message],
         tools: List[Tool],
     ) -> Tuple[List[ToolCall], Optional[str]]:
@@ -393,8 +441,20 @@ class ReCentAutoma(GraphAutoma):
         else:
             tool_selected = False
 
+        local_space = self.get_local_space(rtx)
+
+        # Count the number of times no tool is selected.
         if not tool_selected:
-            self.ferry_to("finalize_answer")
+            no_tool_selected_cnt = local_space.get("no_tool_selected_cnt", 0)
+            no_tool_selected_cnt = no_tool_selected_cnt + 1 if not tool_selected else 0
+            local_space["no_tool_selected_cnt"] = no_tool_selected_cnt
+
+            if no_tool_selected_cnt < self._stop_condition.max_consecutive_no_tool_selected:
+                # If the limit is not exceeded, try one more time.
+                self.ferry_to("observe")
+            else:
+                # If the limit is exceeded, finalize the answer.
+                self.ferry_to("finalize_answer")
 
     @worker()
     async def compress_memory(self) -> Optional[int]:
@@ -570,6 +630,7 @@ class ReCentAutoma(GraphAutoma):
         state_dict["observation_task_config"] = self._observation_task_config
         state_dict["tool_task_config"] = self._tool_task_config
         state_dict["answer_task_config"] = self._answer_task_config
+        state_dict["stop_condition"] = self._stop_condition
         return state_dict
 
     @override
@@ -577,6 +638,7 @@ class ReCentAutoma(GraphAutoma):
         super().load_from_dict(state_dict)
         self._llm = state_dict["llm"]
         self._tool_specs = state_dict["tool_specs"]
+        self._stop_condition = state_dict["stop_condition"]
         self._memory_manager = state_dict["memory_manager"]
 
         self._observation_task_config = (
