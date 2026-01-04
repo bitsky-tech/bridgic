@@ -6,6 +6,7 @@ These tests require:
 - GITHUB_TOKEN and GITHUB_MCP_HTTP_URL environment variables (for GitHub MCP)
 - Chrome browser installed (for Browser-Use MCP)
 """
+from bridgic.core.agentic.tool_specs import AutomaToolSpec, as_tool
 import pytest
 
 from bridgic.core.automa import RunningOptions
@@ -20,22 +21,59 @@ from bridgic.core.utils._console import printer
 
 
 @pytest.fixture
+def research_automa_tool_spec(
+    openai_llm,
+    playwright_mcp_stdio_connection,
+) -> AutomaToolSpec:
+    def deep_search(goal: str, guidance: str):
+        """
+        This tool is a dedicated research agent. It opens a single browser tab and then performs the 
+        searching and browsing process step by step, using web resources interactively to ultimately 
+        solve a given goal.
+
+        Parameters
+        ----------
+        goal : str
+            The concrete research objective or target to achieve which specify what information the research must obtain.
+        guidance : str
+            Additional context, preferences, restrictions, or step-by-step instructions for how the 
+            research should be conducted. This may include preferred sources, search strategies, 
+            comparison criteria, or special constraints.
+        """
+        pass
+
+    @as_tool(deep_search)
+    class ResearchAutoma(ReCentAutoma):
+        pass
+
+    all_tools = playwright_mcp_stdio_connection.list_tools()
+    return AutomaToolSpec.from_raw(
+        ResearchAutoma,
+        llm=openai_llm,
+        tools=all_tools,
+        running_options=RunningOptions(debug=True, verbose=False),
+    )
+
+
+@pytest.fixture
 def recent_automa_with_github_and_browser_use_mcp(
     openai_llm,
     github_mcp_streamable_http_connection,
     playwright_mcp_stdio_connection,
+    research_automa_tool_spec,
 ):
     """Create a ReCentAutoma instance with OpenAI LLM, GitHub MCP tools, and Browser-Use MCP tools."""
     # Get tools from both MCP servers
     github_tools = github_mcp_streamable_http_connection.list_tools()
     browser_use_tools = playwright_mcp_stdio_connection.list_tools()
-    all_tools = github_tools + browser_use_tools
+    # all_tools = github_tools + browser_use_tools + [research_automa_tool_spec]
+    all_tools = [research_automa_tool_spec]
     
     # Create a ReCentAutoma instance with the LLM and combined MCP tools
     return ReCentAutoma(
         llm=openai_llm,
         tools=all_tools,
-        stop_condition=StopCondition(max_iteration=1, max_consecutive_no_tool_selected=3),
+        stop_condition=StopCondition(max_iteration=-1, max_consecutive_no_tool_selected=3),
         memory_config=ReCentMemoryConfig(llm=openai_llm),
         observation_task_config=ObservationTaskConfig(llm=openai_llm),
         tool_task_config=ToolTaskConfig(llm=openai_llm),
