@@ -8,7 +8,7 @@ from typing_extensions import override
 from concurrent.futures import ThreadPoolExecutor
 
 from bridgic.core.automa import GraphAutoma, RunningOptions
-from bridgic.core.automa.worker import Worker, WorkerCallback, WorkerCallbackBuilder
+from bridgic.core.automa.worker import Worker, CallableWorker, WorkerCallback, WorkerCallbackBuilder
 from bridgic.core.automa.args._args_binding import ArgsMappingRule, ResultDispatchingRule, InOrder, override_func_signature, set_method_signature, safely_map_args
 from bridgic.core.automa._graph_automa import GraphMeta
 from bridgic.core.agentic import ConcurrentAutoma
@@ -67,7 +67,6 @@ class TrackingNamespace(dict):
 
         # If the value is a _CanvasObject before the object is registered, it indicates that
         # the corresponding canvas object is a fragment.
-        # TODO: Need Fragment class to handle the fragment logic.
         if isinstance(value, _CanvasObject):
             stack = list[_Canvas](graph_stack.get())
             parent_canvas: _Canvas = stack[-1]
@@ -113,13 +112,9 @@ class TrackingNamespace(dict):
 
         # Register the _CanvasObject to the current canvas.
         if isinstance(value, _CanvasObject):
-            # Update the key, settings and data of the canvas object.
+            # Update the key
             if isinstance(value.key, KeyUnDifined):
                 value.key = key
-            if settings:
-                value.update_settings(settings)
-            if data:
-                value.update_data(data)
             
             # Get the parent canvas and register to the parent canvas.
             stack = list[_Canvas](graph_stack.get())
@@ -145,8 +140,7 @@ class TrackingNamespace(dict):
                     parent_canvas.register(key, value)
                 else:
                     # Check if element is declared outside any canvas
-                    if isinstance(value, _Element):
-                        raise ASLCompilationError("All workers must be written under one graph.")
+                    raise ASLCompilationError("All workers must be written under one graph.")
             elif isinstance(value, _Canvas):
                 if parent_canvas:
                     parent_canvas_namespace = super().__getitem__(parent_canvas.key)
@@ -159,6 +153,12 @@ class TrackingNamespace(dict):
                 current_canvas_namespace = super().__getitem__(key)
                 current_canvas_namespace["__self__"] = value
                 current_canvas_namespace["__fragment__"] = {}
+
+            # Update the settings and data of the canvas object.
+            if settings:
+                value.update_settings(settings)
+            if data:
+                value.update_data(parent_key, value.key, data)
         else:
             # record the normal key-value pair in the tracking namespace
             super().__setitem__(key, value)
@@ -468,6 +468,7 @@ class ASLAutoma(GraphAutoma, metaclass=ASLAutomaMeta):
         ###############################
         for _, element in static_elements.items():
             key = element.key
+            parent_key = element.parent_canvas.key
             worker_material = element.worker_material
             is_start = element.is_start
             is_output = element.is_output
@@ -522,6 +523,48 @@ class ASLAutoma(GraphAutoma, metaclass=ASLAutomaMeta):
                         init_kwargs={"__dynamic_lambda_func__": delegated_dynamic_func, "__param_names__": simplify_param_names(delegated_dynamic_params_names)}
                     ))
 
+            # Update the signature in Data to set the __cached_param_names_of_arun or __cached_param_names_of_run.
+            # Note: Python's name mangling mechanism
+            # In Python, attributes that start with double underscores `__` but don't end with `__`
+            # are subject to name mangling. The actual attribute name becomes `_ClassName__attribute_name`:
+            # - __cached_param_names_of_arun in Worker class → _Worker__cached_param_names_of_arun
+            # - __cached_param_names_of_run in Worker class → _Worker__cached_param_names_of_run
+            # - __cached_param_names_of_callable in CallableWorker class → _CallableWorker__cached_param_names_of_callable
+            # If we directly write `worker_material.__cached_param_names_of_xxx`, Python will interpret it
+            # as a private attribute of the current module or class, not as an attribute of Worker or
+            # CallableWorker. Therefore, we must use setattr() with the correct mangled attribute name.
+            def set_cached_param_names(worker_material: Worker, override_params: Dict):
+                if isinstance(worker_material, CallableWorker):
+                    setattr(worker_material, '_CallableWorker__cached_param_names_of_callable', override_params)
+                else:
+                    if worker_material._is_arun_overridden():
+                        setattr(worker_material, '_Worker__cached_param_names_of_arun', override_params)
+                    else:
+                        setattr(worker_material, '_Worker__cached_param_names_of_run', override_params)
+
+            def get_param_names_dict(sig: inspect.Signature, exclude_default: bool = False) -> Dict:
+                param_names_dict = {}
+                for name, param in sig.parameters.items():
+                    if exclude_default and param.default is not inspect.Parameter.empty:
+                        continue
+                    if param.kind not in param_names_dict:
+                        param_names_dict[param.kind] = []
+                    
+                    if param.default is inspect.Parameter.empty:
+                        param_names_dict[param.kind].append((name, inspect._empty))
+                    else:
+                        param_names_dict[param.kind].append((name, param.default))
+                return param_names_dict
+
+            signature_name = f"{parent_key}.{key}" if parent_key else f"__TOP__.{key}"
+            override_signature = getattr(worker_material, "__signature_overrides__", {}).get(signature_name, None)
+            if override_signature:
+                override_params = get_param_names_dict(override_signature)
+                if isinstance(worker_material, Callable):
+                    worker_material = CallableWorker(func_or_method=worker_material)
+                set_cached_param_names(worker_material, override_params)
+            
+            # Build the automa.
             if isinstance(automa, ConcurrentAutoma):
                 build_concurrent(
                     automa=automa,

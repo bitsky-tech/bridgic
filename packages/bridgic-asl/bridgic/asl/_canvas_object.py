@@ -197,7 +197,7 @@ class _CanvasObject:
             self.result_dispatching_rule = settings.result_dispatching_rule
         return self
 
-    def update_data(self, data: Data) -> None:
+    def update_data(self, parent_key: str, key: str, data: Data) -> None:
         """
         Update the function signature of the worker material based on data configuration.
         
@@ -209,13 +209,12 @@ class _CanvasObject:
         data : Data
             The data configuration containing parameter type and default value information.
         """
+        name = f"{parent_key}.{key}" if parent_key else f"__TOP__.{key}"
         if isinstance(self.worker_material, Worker):
-            worker_name = self.worker_material.__class__.__name__
             override_func = self.worker_material.arun if self.worker_material._is_arun_overridden() else self.worker_material.run
-            override_func_signature(worker_name, override_func, data.data)
+            override_func_signature(name, override_func, data.data)
         elif isinstance(self.worker_material, Callable):
-            func_name = getattr(self.worker_material, "__name__", repr(self.worker_material))
-            override_func_signature(func_name, self.worker_material, data.data)
+            override_func_signature(name, self.worker_material, data.data)
 
     def __rshift__(self, other: Union["_CanvasObject", "_Fragment"]) -> None:
         """

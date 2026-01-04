@@ -6,7 +6,7 @@ This file only covers test cases for custom workers, while test cases for decora
 import pytest
 import re
 
-from bridgic.core.automa import GraphAutoma, WorkerArgsMappingError
+from bridgic.core.automa import GraphAutoma, WorkerArgsMappingError, worker
 from bridgic.core.automa.args import ArgsMappingRule
 from bridgic.core.automa.worker import Worker
 from typing import List
@@ -1803,3 +1803,79 @@ async def test_flow_101_run(flow_101_run):
     # Test case for keyword input arguments.
     result = await flow_101_run.arun(x=2, y=3)
     assert result == (2, 3)
+
+
+class FlowStartWithArgsMapping1(GraphAutoma):
+    # test case for ArgsMappingRule.AS_IS
+    @worker(is_start=True, is_output=True, args_mapping_rule=ArgsMappingRule.AS_IS)
+    def start_1(self, x: int, y: int):
+        assert x == 1
+        assert y == 2
+        return x + 1, y + 2
+
+@pytest.fixture
+def flow_start_with_args_mapping_1():
+    flow = FlowStartWithArgsMapping1()
+    return flow
+
+@pytest.mark.asyncio
+async def test_flow_start_with_args_mapping_1(flow_start_with_args_mapping_1):
+    result = await flow_start_with_args_mapping_1.arun(1, 2)
+    assert result == (2, 4)
+
+
+class FlowStartWithArgsMapping2(GraphAutoma):
+    # test case for ArgsMappingRule.UNPACK for list/tuple
+    @worker(is_start=True, is_output=True, args_mapping_rule=ArgsMappingRule.UNPACK)
+    def start_2(self, x: int, y: int):
+        assert x == 1
+        assert y == 2
+        return x + 1, y + 2
+
+@pytest.fixture
+def flow_start_with_args_mapping_2():
+    flow = FlowStartWithArgsMapping2()
+    return flow
+
+@pytest.mark.asyncio
+async def test_flow_start_with_args_mapping_2(flow_start_with_args_mapping_2):
+    result = await flow_start_with_args_mapping_2.arun([1, 2])
+    assert result == (2, 4)
+
+
+class FlowStartWithArgsMapping3(GraphAutoma):
+    # test case for ArgsMappingRule.UNPACK for dict
+    @worker(is_start=True, is_output=True, args_mapping_rule=ArgsMappingRule.UNPACK)
+    def start_3(self, x: int, y: int):
+        assert x == 1
+        assert y == 2
+        return (2, 4)
+
+@pytest.fixture
+def flow_start_with_args_mapping_3():
+    flow = FlowStartWithArgsMapping3()
+    return flow
+
+@pytest.mark.asyncio
+async def test_flow_start_with_args_mapping_3(flow_start_with_args_mapping_3):
+    result = await flow_start_with_args_mapping_3.arun({"x": 1, "y": 2})
+    assert result == (2, 4)
+
+
+class FlowStartWithArgsMapping4(GraphAutoma):
+    # test case for ArgsMappingRule.MERGE
+    @worker(is_start=True, is_output=True, args_mapping_rule=ArgsMappingRule.MERGE)
+    def start_4(self, inputs: list):
+        assert inputs[0] == 1
+        assert inputs[1] == 2
+        return inputs[0] + 1, inputs[1] + 2
+
+@pytest.fixture
+def flow_start_with_args_mapping_4():
+    flow = FlowStartWithArgsMapping4()
+    return flow
+
+@pytest.mark.asyncio
+async def test_flow_start_with_args_mapping_4(flow_start_with_args_mapping_4):
+    result = await flow_start_with_args_mapping_4.arun(1, 2)
+    assert result == (2, 4)

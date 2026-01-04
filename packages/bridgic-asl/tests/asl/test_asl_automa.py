@@ -174,12 +174,16 @@ class MyGraph(ASLAutoma):
 
             +a >> b >> ~c  # 16
 
-        with graph as sub_graph_4:  # input: 13 -> res: (16, 14)
+        with graph as sub_graph_4:  # input: 13 -> res: ((19, 14), 19)
             a = worker1  # 14
             b = worker2  # 16
-            c = merge *Data(y=From("a"))
+            c = merge *Data(y=From("a"))  # (19, 14)
 
-            +a >> b >> ~c
+            d = worker1  # 17
+            e = worker2  # 19
+            f = merge *Data(y=From("e")) # ((19, 14), 19)
+
+            +a >> b >> d >> e >> c >> ~f
 
         with graph as sub_graph_5:  # input: 14 -> res: [18, 19, 20, 21, 22]
             a = produce_tasks  # [15, 16, 17, 18, 19, 20]
@@ -225,11 +229,11 @@ class MyGraphInteract(MyGraph):
 async def test_asl_run_correctly():
     graph_1 = MyGraph()
     result_1 = await graph_1.arun(user_input=1)
-    assert result_1 == [(34, 35), 13, 16, (16, 14), [18, 19, 20, 21, 22, 23], 18]
+    assert result_1 == [(34, 35), 13, 16, ((19, 14), 19), [18, 19, 20, 21, 22, 23], 18]
 
     graph_2 = MyGraph()
     result_2 = await graph_2.arun(user_input=1)
-    assert result_2 == [(34, 35), 13, 16, (16, 14), [18, 19, 20, 21, 22, 23], 18]
+    assert result_2 == [(34, 35), 13, 16, ((19, 14), 19), [18, 19, 20, 21, 22, 23], 18]
 
 
 # - - - - - - - - - - - - - - -
@@ -250,7 +254,7 @@ async def test_asl_interact_with_user_correctly_serialization(request, db_base_p
         result = await graph.arun(user_input=1)
     except InteractionException as e:
         assert e.interactions[0].event.event_type == "if_add"
-        assert e.interactions[0].event.data["prompt_to_user"] == "Current value is [(34, 35), 13, 16, (16, 14), [18, 19, 20, 21, 22, 23], 18], do you want to add another 200 to them (yes/no) ?"
+        assert e.interactions[0].event.data["prompt_to_user"] == "Current value is [(34, 35), 13, 16, ((19, 14), 19), [18, 19, 20, 21, 22, 23], 18], do you want to add another 200 to them (yes/no) ?"
         assert type(e.snapshot.serialized_bytes) is bytes
         # Send e.interactions to human. Here is a simulation.
         interaction_id = e.interactions[0].interaction_id

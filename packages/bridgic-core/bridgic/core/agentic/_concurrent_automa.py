@@ -8,6 +8,7 @@ from bridgic.core.automa.worker import Worker
 from bridgic.core.types._error import AutomaRuntimeError
 from bridgic.core.types._common import AutomaType, ArgsMappingRule
 from bridgic.core.automa.interaction import InteractionFeedback
+from bridgic.core.automa.worker._worker_callback import WorkerCallbackBuilder
 
 class ConcurrentAutoma(GraphAutoma):
     """
@@ -74,6 +75,8 @@ class ConcurrentAutoma(GraphAutoma):
         self,
         key: str,
         worker: Worker,
+        args_mapping_rule: ArgsMappingRule = ArgsMappingRule.AS_IS,
+        callback_builders: List[WorkerCallbackBuilder] = [],
     ) -> None:
         """
         Add a concurrent worker to the concurrent automa. This worker will be concurrently executed with other concurrent workers.
@@ -84,12 +87,16 @@ class ConcurrentAutoma(GraphAutoma):
             The key of the worker.
         worker : Worker
             The worker instance to be registered.
+        args_mapping_rule : ArgsMappingRule, default ArgsMappingRule.AS_IS
+            The rule for mapping input arguments to the worker.
+        callback_builders : List[WorkerCallbackBuilder], default []
+            The list of callback builders to be registered for the worker.
         """
         if key == self._MERGER_WORKER_KEY:
             raise AutomaRuntimeError(f"the reserved key `{key}` is not allowed to be used by `add_worker()`")
         # Implementation notes:
         # Concurrent workers are implemented as start workers in the underlying graph automa.
-        super().add_worker(key=key, worker=worker, is_start=True)
+        super().add_worker(key=key, worker=worker, is_start=True, args_mapping_rule=args_mapping_rule, callback_builders=callback_builders)
         super().add_dependency(self._MERGER_WORKER_KEY, key)
 
     @override
@@ -97,6 +104,8 @@ class ConcurrentAutoma(GraphAutoma):
         self,
         key: str,
         func: Callable,
+        args_mapping_rule: ArgsMappingRule = ArgsMappingRule.AS_IS,
+        callback_builders: List[WorkerCallbackBuilder] = [],
     ) -> None:
         """
         Add a function or method as a concurrent worker to the concurrent automa. This worker will be concurrently executed with other concurrent workers.
@@ -107,12 +116,16 @@ class ConcurrentAutoma(GraphAutoma):
             The key of the function worker.
         func : Callable
             The function to be added as a concurrent worker to the automa.
+        args_mapping_rule : ArgsMappingRule, default ArgsMappingRule.AS_IS
+            The rule for mapping input arguments to the worker.
+        callback_builders : List[WorkerCallbackBuilder], default []
+            The list of callback builders to be registered for the worker.
         """
         if key == self._MERGER_WORKER_KEY:
             raise AutomaRuntimeError(f"the reserved key `{key}` is not allowed to be used by `add_func_as_worker()`")
         # Implementation notes:
         # Concurrent workers are implemented as start workers in the underlying graph automa.
-        super().add_func_as_worker(key=key, func=func, is_start=True)
+        super().add_func_as_worker(key=key, func=func, is_start=True, args_mapping_rule=args_mapping_rule, callback_builders=callback_builders)
         super().add_dependency(self._MERGER_WORKER_KEY, key)
 
     @override
@@ -120,6 +133,8 @@ class ConcurrentAutoma(GraphAutoma):
         self,
         *,
         key: Optional[str] = None,
+        args_mapping_rule: ArgsMappingRule = ArgsMappingRule.AS_IS,
+        callback_builders: List[WorkerCallbackBuilder] = [],
     ) -> Callable:
         """
         This is a decorator to mark a function or method as a concurrent worker of the concurrent automa. This worker will be concurrently executed with other concurrent workers.
@@ -128,13 +143,17 @@ class ConcurrentAutoma(GraphAutoma):
         ----------
         key : str
             The key of the worker. If not provided, the name of the decorated callable will be used.
+        args_mapping_rule : ArgsMappingRule, default ArgsMappingRule.AS_IS
+            The rule for mapping input arguments to the worker.
+        callback_builders : List[WorkerCallbackBuilder], default []
+            The list of callback builders to be registered for the worker.
         """
         if key == self._MERGER_WORKER_KEY:
             raise AutomaRuntimeError(f"the reserved key `{key}` is not allowed to be used by `automa.worker()`")
 
         super_automa = super()
         def wrapper(func: Callable):
-            super_automa.add_func_as_worker(key=key, func=func, is_start=True)
+            super_automa.add_func_as_worker(key=key, func=func, is_start=True, args_mapping_rule=args_mapping_rule, callback_builders=callback_builders)
             super_automa.add_dependency(self._MERGER_WORKER_KEY, key)
 
         return wrapper

@@ -143,7 +143,7 @@ def args_inject_and_callback_graph():
 
 @pytest.mark.asyncio
 async def test_args_inject_and_callback(args_inject_and_callback_graph: GraphAutoma, capsys):
-    result = await args_inject_and_callback_graph.arun(user_input=InOrder([1, 2]))
+    result = await args_inject_and_callback_graph.arun(InOrder([1, 2]))
     assert result == 13
 
     outputs = capsys.readouterr()
@@ -273,7 +273,7 @@ def automa_with_args_mapping_and_from():
 
 @pytest.mark.asyncio
 async def test_automa_with_args_mapping_and_from(automa_with_args_mapping_and_from: GraphAutoma):
-    result = await automa_with_args_mapping_and_from.arun(user_input=InOrder([1, 2]))
+    result = await automa_with_args_mapping_and_from.arun(InOrder([1, 2]))
     assert result == 5
 
 
