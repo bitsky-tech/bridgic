@@ -65,6 +65,7 @@ def browser_task_automa_tool_spec(
         tools_builders=[
             playwright_mcp_stdio_connection_toolset_builder,
         ],
+        stop_condition=StopCondition(max_iteration=1, max_consecutive_no_tool_selected=3),
         running_options=RunningOptions(debug=True, verbose=False),
     )
 
