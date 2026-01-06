@@ -1352,7 +1352,7 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
             rx_feedbacks = _match_ongoing_interaction_and_feedbacks(rx_feedbacks)
 
         if running_options.debug:
-            printer.print(f"\n{type(self).__name__}-[{self.name}] is getting started.", color="green")
+            printer.print(f"\natm-[{type(self).__name__}]-[{self.name}] is started.", color="green")
 
         # Task loop divided into many dynamic steps (DS).
         args_manager = ArgsManager(
@@ -1369,20 +1369,20 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
             # A new Dynamic Step is started now.
             if running_options.debug:
                 kickoff_worker_keys = [kickoff_info.worker_key for kickoff_info in self._current_kickoff_workers]
-                printer.print(f"[Dynamic Step] will execute [{', '.join(kickoff_worker_keys)}]", color="purple")
+                printer.print(f"[{type(self).__name__}]-[{self.name}] [__dy-step__] driving [{', '.join(kickoff_worker_keys)}]", color="purple")
 
             for kickoff_info in self._current_kickoff_workers:
                 if kickoff_info.run_finished:
                     # Skip finished workers. Here is the case that the Automa is resumed after a human interaction.
                     if running_options.debug:
-                        printer.print(f"[{kickoff_info.worker_key}] will be skipped - run finished", color="cyan")
+                        printer.print(f"[{type(self).__name__}]-[{self.name}] [{kickoff_info.worker_key}] will be skipped - run finished", color="cyan")
                     continue
 
                 if running_options.debug:
                     trigger_name = kickoff_info.last_kickoff
                     if trigger_name == "__automa__":
-                        trigger_name = f"{trigger_name}:({self.name})"
-                    printer.print(f"[{trigger_name}] will trigger [{kickoff_info.worker_key}]", color="cyan")
+                        trigger_name = "__automa__"
+                    printer.print(f"[{type(self).__name__}]-[{self.name}] [{trigger_name}] triggers [{kickoff_info.worker_key}]", color="cyan")
 
                 # Arguments Mapping:
                 binding_args, binding_kwargs = args_manager.args_binding(
@@ -1592,7 +1592,7 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
             self._topology_change_deferred_tasks.clear()
 
         if running_options.debug:
-            printer.print(f"{type(self).__name__}-[{self.name}] is finished.", color="green")
+            printer.print(f"[{type(self).__name__}]-[{self.name}] is finished.", color="green")
 
         # After a complete run, reset all necessary states to allow the automa to re-run.
         self._input_buffer = _AutomaInputBuffer()
