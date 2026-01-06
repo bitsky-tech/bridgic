@@ -11,7 +11,13 @@ from bridgic.core.automa.worker import WorkerCallback, WorkerCallbackBuilder
 from bridgic.core.model import BaseLlm
 from bridgic.core.model.types import Message, Tool, Role, ToolCall
 from bridgic.core.model.protocols import StructuredOutput, PydanticModel, ToolSelection
-from bridgic.core.agentic.tool_specs import ToolSpec, FunctionToolSpec, AutomaToolSpec
+from bridgic.core.agentic.tool_specs import (
+    ToolSpec,
+    FunctionToolSpec,
+    AutomaToolSpec,
+    ToolSetBuilder,
+    ToolSetResponse,
+)
 from bridgic.core.agentic.types._llm_task_config import LlmTaskConfig
 from bridgic.core.agentic.recent._recent_memory_manager import ReCentMemoryManager, ReCentContext
 from bridgic.core.agentic.recent._recent_memory_config import ReCentMemoryConfig
@@ -103,6 +109,8 @@ class ReCentAutoma(GraphAutoma):
         The LLM that serves as the default LLM for all tasks (if a dedicated LLM is not configured for a specific task).
     tools : Optional[List[Union[Callable, Automa, ToolSpec]]]
         List of tools available to the automa. Can be functions, Automa instances, or ToolSpec instances.
+    tools_builders : Optional[List[ToolSetBuilder]]
+        List of `ToolSetBuilder` instances used to dynamically create `ToolSpec` instances at initialization.
     stop_condition : Optional[StopCondition]
         Stop condition configuration. If None, uses default configuration:
         - max_iteration: -1
@@ -132,6 +140,9 @@ class ReCentAutoma(GraphAutoma):
     _tool_specs: Optional[List[ToolSpec]]
     """List of tool specifications available to the automa."""
 
+    _tools_builders: Optional[List[ToolSetBuilder]]
+    """List of builders used to dynamically create ToolSpec instances."""
+
     _memory_manager: ReCentMemoryManager
     """Memory manager instance for managing episodic memory."""
 
@@ -151,6 +162,7 @@ class ReCentAutoma(GraphAutoma):
         self,
         llm: BaseLlm,
         tools: Optional[List[Union[Callable, Automa, ToolSpec]]] = None,
+        tools_builders: Optional[List[ToolSetBuilder]] = None,
         stop_condition: Optional[StopCondition] = None,
         memory_config: Optional[ReCentMemoryConfig] = None,
         observation_task_config: Optional[ObservationTaskConfig] = None,
@@ -162,7 +174,16 @@ class ReCentAutoma(GraphAutoma):
     ):
         super().__init__(name=name, thread_pool=thread_pool, running_options=running_options)
         self._llm = llm
+
+        # Initialize tool specs from direct tools.
         self._tool_specs = [self._ensure_tool_spec(tool) for tool in tools or []]
+
+        # Initialize tools_builders and create ToolSpec instances from them.
+        self._tools_builders = tools_builders or []
+        if self._tools_builders:
+            for builder in self._tools_builders:
+                response = builder.build()
+                self._tool_specs.extend(response.get("tool_specs", []))
 
         # Initialize memory manager with memory config.
         memory_config = memory_config or ReCentMemoryConfig(llm=llm)
@@ -222,7 +243,7 @@ class ReCentAutoma(GraphAutoma):
         top_options = self._get_top_running_options()
         if top_options.debug:
             msg = (
-                f"[ReCentAutoma] 🎯 Task Goal\n"
+                f"[{type(self).__name__}]-[{self.name}] 🎯 Task Goal\n"
                 f"{goal}" + (f"\n\n{guidance}" if guidance else '')
             )
             printer.print(msg)
@@ -296,7 +317,7 @@ class ReCentAutoma(GraphAutoma):
         top_options = self._get_top_running_options()
         if top_options.debug:
             msg = (
-                f"[ReCentAutoma] 👀 Observation\n"
+                f"[{type(self).__name__}]-[{self.name}] 👀 Observation\n"
                 f"    Iteration: {iteration_cnt}\n"
                 f"    Achieved: {goal_status.goal_achieved}\n"
                 f"    Thinking: {goal_status.brief_thinking}"
@@ -392,7 +413,7 @@ class ReCentAutoma(GraphAutoma):
             tool_info_lines_str = "\n".join(tool_info_lines)
 
             msg = (
-                f"[ReCentAutoma] 🔧 Tool Selection\n"
+                f"[{type(self).__name__}]-[{self.name}] 🔧 Tool Selection\n"
                 f"{tool_info_lines_str}"
             )
             printer.print(msg, color="orange")
@@ -471,7 +492,7 @@ class ReCentAutoma(GraphAutoma):
 
         if top_options.debug:
             msg = (
-                f"[ReCentAutoma] 🧭 Memory Check\n"
+                f"[{type(self).__name__}]-[{self.name}] 🧭 Memory Check\n"
                 f"    Compression Needed: {should_compress}"
             )
             printer.print(msg, color="olive")
@@ -484,7 +505,7 @@ class ReCentAutoma(GraphAutoma):
                 node: CompressionEpisodicNode = self._memory_manager.get_specified_memory_node(timestep)
                 summary = await asyncio.wrap_future(node.summary)
                 msg = (
-                    f"[ReCentAutoma] 🗄 Memory Compression\n"
+                    f"[{type(self).__name__}]-[{self.name}] 📂 Memory Compression\n"
                     f"{summary}"
                 )
                 printer.print(msg, color="blue")
@@ -556,8 +577,10 @@ class ReCentAutoma(GraphAutoma):
 
         Parameters
         ----------
+        tool_select_messages : List[Message]
+            The input messages from the tool selection task.
         tool_response : Optional[str]
-            The response from the tool selection task, if any.
+            The output response from the tool selection task, if any.
         tool_calls : Optional[List[ToolCall]]
             List of tool calls (optional, for building ToolResult messages).
         tool_results : List[Any]
@@ -600,7 +623,7 @@ class ReCentAutoma(GraphAutoma):
             result_lines_str = "\n".join(result_lines)
 
             msg = (
-                f"[ReCentAutoma] 🚩 Tool Results\n"
+                f"[{type(self).__name__}]-[{self.name}] 🚩 Tool Results\n"
                 f"{result_lines_str}"
             )
             printer.print(msg, color="green")
@@ -625,7 +648,16 @@ class ReCentAutoma(GraphAutoma):
     def dump_to_dict(self) -> Dict[str, Any]:
         state_dict = super().dump_to_dict()
         state_dict["llm"] = self._llm
-        state_dict["tool_specs"] = self._tool_specs
+
+        # Only serialize ToolSpec instances that are not from builders.
+        tool_specs_to_serialize = [
+            tool_spec for tool_spec in self._tool_specs if not tool_spec._from_builder
+        ]
+        state_dict["tool_specs"] = tool_specs_to_serialize
+
+        # Serialize tools_builders so they can be used to recreate ToolSpec instances during deserialization.
+        state_dict["tools_builders"] = self._tools_builders or []
+
         state_dict["memory_manager"] = self._memory_manager
         state_dict["observation_task_config"] = self._observation_task_config
         state_dict["tool_task_config"] = self._tool_task_config
@@ -637,7 +669,19 @@ class ReCentAutoma(GraphAutoma):
     def load_from_dict(self, state_dict: Dict[str, Any]) -> None:
         super().load_from_dict(state_dict)
         self._llm = state_dict["llm"]
-        self._tool_specs = state_dict["tool_specs"]
+
+        # Load ToolSpec instances that were directly serialized.
+        self._tool_specs = state_dict.get("tool_specs") or []
+
+        # Load tools_builders.
+        self._tools_builders = state_dict.get("tools_builders") or []
+
+        # Recreate ToolSpec instances from the deserialized builders.
+        if self._tools_builders:
+            for builder in self._tools_builders:
+                response = builder.build()
+                self._tool_specs.extend(response.get("tool_specs", []))
+
         self._stop_condition = state_dict["stop_condition"]
         self._memory_manager = state_dict["memory_manager"]
 

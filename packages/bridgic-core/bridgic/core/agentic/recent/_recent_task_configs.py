@@ -79,16 +79,9 @@ DEFAULT_TOOL_SELECTION_SYSTEM_TEMPLATE = (
     "6. If multiple tools are needed, prioritize based on dependencies and logical flow."
 )
 
-DEFAULT_TOOL_SELECTION_INSTRUCTION_TEMPLATE = None
-(
+DEFAULT_TOOL_SELECTION_INSTRUCTION_TEMPLATE = (
     "Based on the task goal and the complete observation history above (including any stage summaries), "
-    "analyze what has been accomplished and what remains to be done, then select the appropriate tool(s) to proceed:\n\n"
-    "1. What is the current state of progress toward the goal?\n"
-    "2. What is the next logical step needed to advance toward the goal?\n"
-    "3. Which tool(s) can best execute this next step?\n"
-    "4. Are there any dependencies or prerequisites that need to be considered?\n\n"
-    "Select one or more tools that will most effectively help you take the next step toward achieving the goal. "
-    "If no suitable tool exists or the goal cannot be advanced further with available tools, you may choose not to select any tools."
+    "select the appropriate tool(s) to proceed if it is needed."
 )
 
 class ToolTaskConfig:
