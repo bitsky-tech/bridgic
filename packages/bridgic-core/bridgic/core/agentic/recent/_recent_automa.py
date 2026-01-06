@@ -111,6 +111,7 @@ class ReCentAutoma(GraphAutoma):
         List of tools available to the automa. Can be functions, Automa instances, or ToolSpec instances.
     tools_builders : Optional[List[ToolSetBuilder]]
         List of `ToolSetBuilder` instances used to dynamically create `ToolSpec` instances at initialization.
+        This is useful when the automa needs to exclusive access to a resource-like tool set, like browser, terminal, etc.
     stop_condition : Optional[StopCondition]
         Stop condition configuration. If None, uses default configuration:
         - max_iteration: -1
