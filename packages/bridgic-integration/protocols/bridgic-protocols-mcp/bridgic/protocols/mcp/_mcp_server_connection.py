@@ -1,6 +1,8 @@
 import asyncio
 import warnings
 import httpx
+import enum
+
 from abc import ABC, abstractmethod
 from datetime import timedelta
 from typing import List, Dict, Optional, Union, Any, TYPE_CHECKING
@@ -16,6 +18,10 @@ from bridgic.protocols.mcp._mcp_server_connection_manager import McpServerConnec
 if TYPE_CHECKING:
     from bridgic.protocols.mcp._mcp_template import McpPromptTemplate
     from bridgic.protocols.mcp._mcp_tool_spec import McpToolSpec
+
+class McpServerConnectionType(str, enum.Enum):
+    STDIO = "stdio"
+    STREAMABLE_HTTP = "streamable_http"
 
 class McpServerConnection(ABC):
     """

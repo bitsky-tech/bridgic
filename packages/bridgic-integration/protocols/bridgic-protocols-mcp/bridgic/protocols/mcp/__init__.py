@@ -16,6 +16,7 @@ Core Components
 - `McpServerConnectionStreamableHttp`: Connection implementation using streamable HTTP
 - `McpServerConnectionManager`: Manager for multiple MCP connections with shared event loop
 - `McpToolSpec`: Tool specification for MCP tools
+- `McpToolSetBuilder`: Builder for creating exclusive McpToolSpec instances for ReCentAutoma
 - `McpToolWorker`: Worker implementation for executing MCP tools
 - `McpPromptTemplate`: Prompt template implementation for MCP prompts
 
@@ -49,6 +50,7 @@ from bridgic.protocols.mcp._mcp_server_connection import (
 )
 from bridgic.protocols.mcp._mcp_server_connection_manager import McpServerConnectionManager
 from bridgic.protocols.mcp._mcp_tool_spec import McpToolSpec
+from bridgic.protocols.mcp._mcp_tool_set_builder import McpToolSetBuilder
 from bridgic.protocols.mcp._mcp_tool_worker import McpToolWorker
 from bridgic.protocols.mcp._mcp_template import McpPromptTemplate
 
@@ -61,6 +63,7 @@ __all__ = [
     "McpServerConnectionStreamableHttp",
     "McpServerConnectionManager",
     "McpToolSpec",
+    "McpToolSetBuilder",
     "McpToolWorker",
     "McpPromptTemplate",
     "McpServerConnectionError",
