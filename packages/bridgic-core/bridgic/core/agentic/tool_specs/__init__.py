@@ -6,7 +6,7 @@ This module contains various tool specification classes that support transformin
 enabling callable objects to be seamlessly used in agentic systems.
 """
 
-from ._base_tool_spec import ToolSpec
+from ._base_tool_spec import ToolSpec, ToolSetResponse, ToolSetBuilder
 from ._function_tool_spec import FunctionToolSpec
 from ._automa_tool_spec import AutomaToolSpec, as_tool
 
@@ -16,4 +16,6 @@ __all__ = [
     "FunctionToolSpec",
     "AutomaToolSpec",
     "as_tool",
+    "ToolSetResponse",
+    "ToolSetBuilder",
 ]

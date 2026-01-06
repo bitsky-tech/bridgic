@@ -1,5 +1,6 @@
-from typing import Optional, Union, Dict, Any
-from abc import abstractmethod
+from typing import Optional, Union, List, Dict, Any, TypedDict
+
+from abc import ABC, abstractmethod
 from bridgic.core.types._serialization import Serializable
 from bridgic.core.model.types import Tool
 from bridgic.core.automa.worker import Worker
@@ -15,8 +16,6 @@ class ToolSpec(Serializable):
     3. Serialization and Deserialization.
     4. ToolSpec initialization from raw resources: `from_raw`.
     """
-    _tool_id: Optional[Union[str, int]]
-    """The unique ID of the tool, used to uniquely identify a tool across the entire system. This tool can be of various types."""
     _tool_name: Optional[str]
     """The name of the tool to be called"""
     _tool_description: Optional[str]
@@ -24,16 +23,20 @@ class ToolSpec(Serializable):
     _tool_parameters: Optional[Dict[str, Any]]
     """The JSON schema of the tool's parameters"""
 
+    _from_builder: Optional[bool]
+    """Whether this ToolSpec is created from a `ToolSetBuilder`."""
+
     def __init__(
         self,
         tool_name: Optional[str] = None,
         tool_description: Optional[str] = None,
         tool_parameters: Optional[Dict[str, Any]] = None,
+        from_builder: Optional[bool] = False,
     ):
-        self._tool_id = None
         self._tool_name = tool_name
         self._tool_description = tool_description
         self._tool_parameters = tool_parameters
+        self._from_builder = from_builder
 
     @property
     def tool_name(self) -> Optional[str]:
@@ -93,8 +96,6 @@ class ToolSpec(Serializable):
     @override
     def dump_to_dict(self) -> Dict[str, Any]:
         state_dict = {}
-        if self._tool_id:
-            state_dict["tool_id"] = self._tool_id
         if self._tool_name:
             state_dict["tool_name"] = self._tool_name
         if self._tool_description:
@@ -105,7 +106,6 @@ class ToolSpec(Serializable):
 
     @override
     def load_from_dict(self, state_dict: Dict[str, Any]) -> None:
-        self._tool_id = state_dict.get("tool_id")
         self._tool_name = state_dict.get("tool_name")
         self._tool_description = state_dict.get("tool_description")
         self._tool_parameters = state_dict.get("tool_parameters")
@@ -115,3 +115,51 @@ class ToolSpec(Serializable):
     ######## ToolSpec initialization from raw resources ###########
     ######## `from(...)`: See subclasses for details ##############
     ###############################################################
+
+
+class ToolSetResponse(TypedDict):
+    """
+    Response from a ToolSetBuilder containing the built tools and optional extras.
+
+    Attributes
+    ----------
+    tool_specs : List[ToolSpec]
+        List of ToolSpec instances created by the builder.
+    extras : Dict[str, Any]
+        Optional additional data returned by the builder.
+    """
+    tool_specs: List[ToolSpec]
+    """List of ToolSpec instances created by the builder."""
+    extras: Dict[str, Any]
+    """Optional additional data returned by the builder."""
+
+
+class ToolSetBuilder(ABC, Serializable):
+    """
+    Abstract base class for building `ToolSpec` instances dynamically.
+
+    This pattern is useful for tools that need to be dynamically created based on runtime 
+    conditions or external resources that may not be serializable. Subclasses must implement 
+    the `build` method to return a `ToolSetResponse`.
+    """
+
+    @abstractmethod
+    def build(self) -> ToolSetResponse:
+        """
+        Generate and return a collection of `ToolSpec` instances. Each element in `tool_specs` 
+        must have `_from_builder=True` set.
+
+        Returns
+        -------
+        ToolSetResponse
+            A response containing the list of `ToolSpec` instances along with optional extras.
+        """
+        ...
+
+    @override
+    def dump_to_dict(self) -> Dict[str, Any]:
+        return {}
+
+    @override
+    def load_from_dict(self, state_dict: Dict[str, Any]) -> None:
+        pass
