@@ -6,7 +6,6 @@ These tests require:
 - GITHUB_TOKEN and GITHUB_MCP_HTTP_URL environment variables (for GitHub MCP)
 - Chrome browser installed (for Playwright MCP Server)
 """
-from bridgic.core.agentic.tool_specs import AutomaToolSpec, as_tool
 import pytest
 
 from bridgic.core.automa import RunningOptions
@@ -18,6 +17,7 @@ from bridgic.core.agentic.recent import (
     ToolTaskConfig,
 )
 from bridgic.core.utils._console import printer
+from bridgic.core.agentic.tool_specs import AutomaToolSpec, as_tool
 
 
 @pytest.fixture
