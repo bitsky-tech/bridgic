@@ -12,7 +12,7 @@ from bridgic.core.model.protocols import StructuredOutput, ToolSelection, Pydant
 from bridgic.llms.openai_like import OpenAILikeLlm, OpenAILikeConfiguration
 from bridgic.core.utils._console import printer
 from bridgic.core.utils._collection import validate_required_params, merge_dict, filter_dict
-from bridgic.core.utils._uuid import generate_tool_id
+from bridgic.core.utils._tool_calling import generate_tool_id
 
 class VllmServerConfiguration(OpenAILikeConfiguration):
     """

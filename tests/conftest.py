@@ -10,9 +10,14 @@ import pytest
 import pytest_asyncio
 import shutil
 
+from bridgic.core.config import HttpClientConfig, HttpClientAuthConfig, HttpClientTimeoutConfig
 from bridgic.llms.openai import OpenAILlm, OpenAIConfiguration
 from bridgic.llms.vllm import VllmServerLlm, VllmServerConfiguration
-from bridgic.protocols.mcp import McpServerConnectionStdio, McpServerConnectionStreamableHttp
+from bridgic.protocols.mcp import (
+    McpServerConnectionStdio,
+    McpServerConnectionStreamableHttp,
+    McpToolSetBuilder,
+)
 
 
 # ============================================================================
@@ -143,7 +148,7 @@ def vllm_llm(vllm_api_base, vllm_api_key, vllm_model_name):
 
 
 # ============================================================================
-# MCP Server fixtures
+# MCP Server Connection fixtures
 # ============================================================================
 
 @pytest_asyncio.fixture
@@ -186,7 +191,7 @@ async def github_mcp_streamable_http_connection(github_mcp_url, github_token):
         name="github-mcp-streamable-http",
         url=github_mcp_url,
         http_client=http_client,
-        request_timeout=10,
+        request_timeout=15,
     )
     
     connection.connect()
@@ -203,7 +208,7 @@ async def playwright_mcp_stdio_connection(has_npx, has_chrome):
         pytest.skip("Chrome is not available")
 
     connection = McpServerConnectionStdio(
-        name="browser-use-mcp-stdio",
+        name="playwright-mcp-stdio",
         command="npx",
         args=[
             "@playwright/mcp@latest",
@@ -214,6 +219,34 @@ async def playwright_mcp_stdio_connection(has_npx, has_chrome):
     connection.connect()
     yield connection
     connection.close()
+
+
+# ============================================================================
+# MCP Tool Set Builder fixtures
+# ============================================================================
+
+@pytest_asyncio.fixture
+def github_mcp_streamable_http_connection_toolset_builder(github_mcp_url, github_token):
+    return McpToolSetBuilder.streamable_http(
+        url=github_mcp_url,
+        http_client_config=HttpClientConfig(
+            # timeout=HttpClientTimeoutConfig(read=15),
+            auth=HttpClientAuthConfig(
+                type="bearer",
+                token=github_token,
+            ),
+        ),
+        request_timeout=15,
+    )
+
+
+@pytest_asyncio.fixture
+async def playwright_mcp_stdio_connection_toolset_builder():
+    return McpToolSetBuilder.stdio(
+        command="npx",
+        args=["@playwright/mcp@latest", "--isolated"],
+        request_timeout=60,
+    )
 
 
 # ============================================================================

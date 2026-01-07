@@ -1,8 +1,9 @@
-from typing import List, Protocol, Any, Dict, Type, Literal, Union, Optional, ClassVar, Tuple
+from typing import List, Protocol, Any, Dict, Type, Literal, Union, Optional, ClassVar, Tuple, runtime_checkable
 from pydantic import BaseModel, Field
 
 from bridgic.core.model.types import Message, Tool, ToolCall
 
+@runtime_checkable
 class ToolSelection(Protocol):
     """
     Protocol for LLM providers that support tool selection and parameter determination.
