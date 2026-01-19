@@ -3,7 +3,7 @@ from pydantic import BaseModel, Field
 
 from bridgic.core.model.types import Message, Role
 
-class BasePromptTemplate(BaseModel):
+class BasePromptTemplate:
     """
     Abstract base class for prompt templates.
     """

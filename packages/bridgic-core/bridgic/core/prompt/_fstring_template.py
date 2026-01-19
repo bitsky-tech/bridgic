@@ -1,13 +1,14 @@
 import re
+from typing import List, Union, Dict, Any
 
-from typing import List, Union
-
+from typing_extensions import override
 from bridgic.core.model.types import Message, Role
 from bridgic.core.types._error import PromptRenderError
+from bridgic.core.types._serialization import Serializable
 from bridgic.core.prompt._base_template import BasePromptTemplate
 from bridgic.core.utils._collection import unique_list_in_order
 
-class FstringPromptTemplate(BasePromptTemplate):
+class FstringPromptTemplate(BasePromptTemplate, Serializable):
     """    
     This template implementation uses Python's f-string syntax (braces `{}`).
     
@@ -53,7 +54,8 @@ class FstringPromptTemplate(BasePromptTemplate):
     template_str: str
 
     def __init__(self, template_str: str):
-        super().__init__(template_str=template_str)
+        super().__init__()
+        self.template_str = template_str
 
     def format_message(self, role: Union[Role, str], **kwargs) -> Message:
         """
@@ -104,3 +106,13 @@ class FstringPromptTemplate(BasePromptTemplate):
         var_list = re.findall(r'{([^}]+)}', self.template_str)
         var_list = [var.strip() for var in var_list]
         return unique_list_in_order(var_list)
+
+    @override
+    def dump_to_dict(self) -> Dict[str, Any]:
+        return {
+            "template_str": self.template_str,
+        }
+
+    @override
+    def load_from_dict(self, state_dict: Dict[str, Any]) -> None:
+        self.template_str = state_dict["template_str"]

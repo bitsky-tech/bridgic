@@ -1,0 +1,54 @@
+"""
+The module provides core components for the ReCENT Algorithm.
+
+**ReCENT Algorithm** (Recursive Compressed Episodic Node Tree Algorithm) is an algorithm designed to 
+address issues such as context explosion and goal drift, by employing a recursive memory compression 
+mechanism.
+
+This module provides an agentic automa and its corresponding memory and task configurations:
+- `ReCentAutoma`: The main automaton that implements the ReCENT algorithm.
+- `ReCentMemoryConfig`: Configuration for ReCENT memory management.
+- `ObservationTaskConfig`: Configuration for the observation task.
+- `ToolTaskConfig`: Configuration for the tool selection task.
+- `AnswerTaskConfig`: Configuration for the answer generation task.
+- `StopCondition`: Stop condition configuration for ReCentAutoma.
+
+The core data structures are:
+- `EpisodicNodeTree`: Tree of episodic nodes which is the core data structure of ReCENT.
+- `BaseEpisodicNode`: Base class for all episodic nodes. It is inherited by:
+    + `GoalEpisodicNode`: A goal node that represents the goal of the agent.
+    + `LeafEpisodicNode`: A leaf node that represents a sequence of messages.
+    + `CompressionEpisodicNode`: A compression node that summarizes a sequence of episodic nodes.
+"""
+
+from bridgic.core.agentic.recent._recent_automa import ReCentAutoma, StopCondition
+from bridgic.core.agentic.recent._recent_memory_config import ReCentMemoryConfig
+from bridgic.core.agentic.recent._recent_task_configs import (
+    ObservationTaskConfig,
+    ToolTaskConfig,
+    AnswerTaskConfig,
+)
+from bridgic.core.agentic.recent._episodic_node_tree import EpisodicNodeTree
+from bridgic.core.agentic.recent._episodic_node import (
+    BaseEpisodicNode,
+    GoalEpisodicNode,
+    LeafEpisodicNode,
+    CompressionEpisodicNode,
+    NodeType,
+)
+
+__all__ = [
+    "ReCentAutoma",
+    "ReCentMemoryConfig",
+    "ObservationTaskConfig",
+    "ToolTaskConfig",
+    "AnswerTaskConfig",
+    "StopCondition",
+    "EpisodicNodeTree",
+    "BaseEpisodicNode",
+    "GoalEpisodicNode",
+    "LeafEpisodicNode",
+    "CompressionEpisodicNode",
+    "NodeType",
+]
+

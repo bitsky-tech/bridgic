@@ -7,6 +7,7 @@ allowing developers to build agentic systems using different models.
 """
 
 from bridgic.core.agentic.types._chat_message import *
+from bridgic.core.agentic.types._llm_task_config import LlmTaskConfig
 
 __all__ = [
     "Function",
@@ -18,4 +19,5 @@ __all__ = [
     "SystemMessage",
     "UserTextMessage",
     "AssistantTextMessage",
+    "LlmTaskConfig",
 ]
