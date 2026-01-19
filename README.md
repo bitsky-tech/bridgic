@@ -437,7 +437,7 @@ Albert Einstein was born on March 14, 1879, in Ulm, in the Kingdom of Württembe
 ### 5. ReAct in Bridgic
 
 ```python
-from bridgic.core.agentic import ReActAutoma
+from bridgic.core.agentic.recent import ReCentAutoma
 
 async def get_weather(
     city: str,
@@ -459,12 +459,11 @@ async def get_weather(
     return f"The weather in {city} is sunny today and the temperature is 20 degrees Celsius."
 
 async def main():
-    react = ReActAutoma(
+    react = ReCentAutoma(
         llm=llm,
         tools=[get_weather],
-        system_prompt="You are a weatherman that is good at forecasting weather by using tools.",
     )
-    result = await react.arun(user_msg="What is the weather in Tokyo?")
+    result = await react.arun(goal="Get the weather in Tokyo.")
     print(f"Final response: \n{result}")
 
 if __name__ == "__main__":
@@ -477,12 +476,12 @@ Final response:
 The weather in Tokyo is sunny today, with a temperature of 20 degrees Celsius.
 ```
 
-In Bridgic, an automa can be resued as a tool by [`ReActAutoma`](https://docs.bridgic.ai/latest/reference/bridgic-core/bridgic/core/agentic/#bridgic.core.agentic.ReActAutoma), in a component-oriented fashion.
+In Bridgic, an automa can be resued as a tool by [`ReCentAutoma`](https://docs.bridgic.ai/latest/reference/bridgic-core/bridgic/core/agentic/recent/#bridgic.core.agentic.recent.ReCentAutoma), in a component-oriented fashion.
 
 ```python
 from bridgic.asl import ASLAutoma, graph
 from bridgic.core.agentic.tool_specs import as_tool
-from bridgic.core.agentic import ReActAutoma
+from bridgic.core.agentic.recent import ReCentAutoma
 
 def multiply(x: int, y: int) -> int:
     """
@@ -509,25 +508,11 @@ class MultiplyAutoma(ASLAutoma):
         +start, ~start
 
 async def main():
-    react = ReActAutoma(
+    react = ReCentAutoma(
         llm=llm,
-        system_prompt="You are a helpful assistant that is good at calculating by using tools.",
-    )
-    result = await react.arun(
-        user_msg="What is 235 * 4689?",
-        chat_history=[
-            {
-                "role": "user",
-                "content": "Could you help me to do some calculations?",
-            },
-            {
-                "role": "assistant",
-                "content": "Of course, I can help you with that.",
-            }
-        ],
-        # tools may be provided at runtime in Bridgic `ReActAutoma`.
         tools=[MultiplyAutoma],
     )
+    result = await react.arun(goal="Get the result of 235 * 4689.")
     print(f"Final response: \n{result}")
 
 if __name__ == "__main__":
@@ -539,11 +524,6 @@ if __name__ == "__main__":
 Final response: 
 The result of multiplying 235 by 4689 is 1,101,915.
 ```
-
-**Key points:**
-
-- **`tools=[MultiplyAutoma]`** - **Automa as a tool!**
-- **`tools=[MultiplyAutoma]`** - The `tools` argument can be passed either to `react.arun` at runtime or during the initialization of `ReActAutoma`.
 
 ## 🤖 Building Complex Agentic System
 

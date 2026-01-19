@@ -41,7 +41,7 @@ for tool in tools:
 
 ### Using MCP Tools in an Automa
 
-MCP tools can be integrated into Bridgic automas as workers in `GraphAutoma`. Furthermore, in `ReActAutoma`, these tools can be used in a more advanced LLM-driven agents to select and invoke them dynamically.
+MCP tools can be integrated into Bridgic automas as workers in `GraphAutoma`. Furthermore, in `ReCentAutoma`, these tools can be used in a more advanced LLM-driven agents to select and invoke them dynamically.
 
 #### Using MCP Tools as Workers in GraphAutoma
 
@@ -65,12 +65,12 @@ for tool_spec in connection.list_tools():
 
 ```
 
-#### Using MCP Tools with ReActAutoma
+#### Using MCP Tools with ReCentAutoma
 
-MCP tools can also be used directly with `ReActAutoma`, where the LLM can autonomously select and call tools based on the user's request. This enables building intelligent agents that can interact with MCP servers through natural language.
+MCP tools can also be used directly with `ReCentAutoma`, where the LLM can autonomously select and call tools based on the user's request. This enables building intelligent agents that can interact with MCP servers through natural language.
 
 ```python
-from bridgic.core.agentic import ReActAutoma
+from bridgic.core.agentic.recent import ReCentAutoma
 from bridgic.protocols.mcp import McpServerConnectionStreamableHttp
 from bridgic.llms.openai import OpenAILlm, OpenAIConfiguration
 import os
@@ -79,10 +79,9 @@ import os
 connection = ...
 connection.connect()
 
-# Create ReActAutoma with MCP tools
-react_automa = ReActAutoma(
+# Create ReCentAutoma with MCP tools
+react_automa = ReCentAutoma(
     llm=llm,
-    system_prompt="You are a helpful assistant that can help users query information about GitHub repositories.",
     tools=connection.list_tools(),
 )
 ```

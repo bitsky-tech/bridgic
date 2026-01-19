@@ -46,14 +46,14 @@ def worker(
     """
     ...
 
-@mark_overload("__automa_type__", [AutomaType.Concurrent, AutomaType.ReAct])
+@mark_overload("__automa_type__", AutomaType.Concurrent)
 def worker(
     *,
     key: Optional[str] = None,
     callback_builders: List[WorkerCallbackBuilder] = [],
 ) -> Callable:
     """
-    A decorator for designating a method as a worker node in a `ConcurrentAutoma` or `ReActAutoma` subclass.
+    A decorator for designating a method as a worker node in a `ConcurrentAutoma` subclass.
 
     Parameters
     ----------
