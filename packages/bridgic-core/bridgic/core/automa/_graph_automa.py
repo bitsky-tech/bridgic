@@ -114,7 +114,13 @@ class _GraphAdaptedWorker(Worker):
             )
 
         try:
-            result = await self._decorated_worker.arun(*args, **kwargs)
+            # Check if arun is an async generator function.
+            if inspect.isasyncgenfunction(self._decorated_worker.arun):
+                # For async generator functions, call directly and return the generator.
+                result = self._decorated_worker.arun(*args, **kwargs)
+            else:
+                # For regular async functions, await the result.
+                result = await self._decorated_worker.arun(*args, **kwargs)
         except Exception as e:
             # Try to handle the exception with callbacks
             handled = await try_handle_error_with_callbacks(
@@ -687,9 +693,9 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
                     f"but got {type(worker_obj)} for worker '{key}'"
                 )
 
-            if not asyncio.iscoroutinefunction(worker_obj.arun):
+            if not (asyncio.iscoroutinefunction(worker_obj.arun) or inspect.isasyncgenfunction(worker_obj.arun)):
                 raise WorkerSignatureError(
-                    f"arun of Worker must be an async method, "
+                    f"arun of Worker must be an async method or async generator, "
                     f"but got {type(worker_obj.arun)} for worker '{key}'"
                 )
 
@@ -1425,7 +1431,15 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
                         **next_kwargs,
                     )
                 else:
-                    coro = worker_obj.arun(*next_args, **next_kwargs)
+                    # The result of `worker_obj.arun()` may be a coroutine or an async generator.
+                    arun_result = worker_obj.arun(*next_args, **next_kwargs)
+
+                    if inspect.isasyncgen(arun_result):
+                        async def _wrap_async_gen():
+                            return arun_result
+                        coro = _wrap_async_gen()
+                    else:
+                        coro = arun_result
 
                 task = asyncio.create_task(
                     # TODO1: arun() may need to be wrapped to support better interrupt...

@@ -205,4 +205,3 @@ async def test_adder_automa_deserialized_rerun_to_end(feedback_no, adder_automa_
         feedback_data=feedback_no
     )
     assert result == 16 + 2
-
