@@ -21,18 +21,26 @@ nav:
         - Human in the loop: tutorials/items/core_mechanism/human_in_the_loop.ipynb
         - Worker Callback: tutorials/items/core_mechanism/worker_callback.ipynb
         - Modularity: tutorials/items/core_mechanism/modularity.ipynb
-      - Model:
+      - Agentic Module:
+        - Agentic: tutorials/items/agentic_module/index.md
+        - ReCentAutoma: tutorials/items/agentic_module/recent_quick_start.ipynb
+      - Agent Structure Language: tutorials/items/asl/quick_start.ipynb
+      - Model Integration:
         - Model: tutorials/items/model_integration/index.md
-        - LLM Integration: tutorials/items/model_integration/llm_integration.ipynb
-      - Observability:
-        - Observability: tutorials/items/observability/index.md
-        - Opik Integration: tutorials/items/observability/opik_integration.md
-        - LangWatch Integration: tutorials/items/observability/lang_watch_integration.md
-      - ASL: tutorials/items/asl/quick_start.ipynb
+        - LLM: tutorials/items/model_integration/llm_integration.ipynb
+      - Protocol Integration:
+        - Protocol: tutorials/items/protocol_integration/index.md
+        - MCP: tutorials/items/protocol_integration/mcp_quick_start.ipynb
+      - Observability Integration:
+        - Observability: tutorials/items/observability_integration/index.md
+        - Opik Integration: tutorials/items/observability_integration/opik_integration.md
+        - LangWatch Integration: tutorials/items/observability_integration/lang_watch_integration.md
   - Understanding:
-    - Introduction: home/introduction.md
-    - Basics: home/basics.md
-    # - Concepts: home/concepts.md
+    - Introduction: understanding/introduction.md
+    - Basics: understanding/basics.md
+    # - Concepts: understanding/concepts.md
+    - MCP Integration: understanding/mcp_integration.md
+    - ReCentAutoma: understanding/recent_automa.md
   - API Reference:
 {{API_REFERENCE_CONTENT}}
 
@@ -162,6 +170,7 @@ plugins:
             - ../packages/bridgic-integration/llms/bridgic-llms-vllm
             - ../packages/bridgic-integration/traces/bridgic-traces-opik
             - ../packages/bridgic-integration/traces/bridgic-traces-langwatch
+            - ../packages/bridgic-integration/protocols/bridgic-protocols-mcp
   - mike
 
 markdown_extensions:

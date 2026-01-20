@@ -23,23 +23,22 @@ class McpToolSetBuilder(ToolSetBuilder):
     exclusive and not shared with other instances. This is important for stateful connections that 
     should not be shared to different owners.
 
-    Example
-    -------
-    >>> from bridgic.protocols.mcp import McpToolSetBuilder
-    >>> from bridgic.core.agentic.recent import ReCentAutoma
-    >>> 
-    >>> # Create a builder for stdio connection
+    Examples
+    --------
+    Create a builder for stdio connection and build a tool set:
     >>> builder = McpToolSetBuilder.stdio(
     ...     command="npx",
     ...     args=["-y", "@modelcontextprotocol/server-filesystem", "/path/to/dir"],
     ...     tool_names=["read_file", "write_file"]  # Optional: filter specific tools
     ... )
-    >>> 
-    >>> # Or create a builder for streamable HTTP connection
+    >>> tool_set = builder.build()["tool_specs"]
+
+    Create a builder for streamable HTTP connection and build a tool set:
     >>> builder = McpToolSetBuilder.streamable_http(
     ...     url="http://localhost:8000",
     ...     tool_names=["get_weather"]  # Optional: filter specific tools
     ... )
+    >>> tool_set = builder.build()["tool_specs"]
     """
 
     _connection_type: Literal[McpServerConnectionType.STDIO, McpServerConnectionType.STREAMABLE_HTTP]
