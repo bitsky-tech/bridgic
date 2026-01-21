@@ -1,6 +1,6 @@
 [project]
 name = "bridgic-core"
-version = "0.2.2.dev8"
+version = "0.2.2.dev9"
 license = {text = "MIT"}
 classifiers = [
     "Programming Language :: Python :: 3",
@@ -20,6 +20,7 @@ dependencies = [
     "msgpack>=1.1.1",
     "pydantic>=2.11.0,<2.12.0",
     "jinja2>=3.1.0",
+    "httpx>=0.24.0",
     "docstring-parser>=0.16.0",
     "cloudpickle>=3.1.2",
 ]
