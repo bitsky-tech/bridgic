@@ -96,7 +96,8 @@ class CallableWorker(Worker):
     @override
     def dump_to_dict(self) -> Dict[str, Any]:
         state_dict = super().dump_to_dict()
-        state_dict["is_async"] = self._is_coro_func
+        state_dict["is_coro_func"] = self._is_coro_func
+        state_dict["is_agen_func"] = self._is_agen_func
         # Note: Not to use pickle to serialize the callable here.
         # We customize the serialization method of the callable to avoid creating instance multiple times and to minimize side effects.
         bounded = isinstance(self._callable, MethodType)
@@ -114,7 +115,8 @@ class CallableWorker(Worker):
     def load_from_dict(self, state_dict: Dict[str, Any]) -> None:
         super().load_from_dict(state_dict)
         # Deserialize from the state_dict.
-        self._is_coro_func = state_dict["is_async"]
+        self._is_coro_func = state_dict["is_coro_func"]
+        self._is_agen_func = state_dict["is_agen_func"]
         bounded = state_dict["bounded"]
         if bounded:
             pickled_callable = state_dict.get("pickled_callable", None)
