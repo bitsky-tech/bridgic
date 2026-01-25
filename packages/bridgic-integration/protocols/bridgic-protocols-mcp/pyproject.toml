@@ -1,6 +1,6 @@
 [project]
 name = "bridgic-protocols-mcp"
-version = "0.1.1.dev2"
+version = "0.1.1.dev3"
 license = {text = "MIT"}
 classifiers = [
     "Programming Language :: Python :: 3",

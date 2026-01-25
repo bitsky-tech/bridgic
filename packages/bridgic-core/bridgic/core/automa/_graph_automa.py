@@ -308,7 +308,7 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
     #   1. Records of Workers that are going to be kicked off: self._current_kickoff_workers
     #   2. Records of running or deferred tasks:
     #      - self._running_tasks
-    #      - self._topology_change_deferred_tasks
+    #      - self._topology_deferred_tasks
     #      - self._ferry_deferred_tasks
     #      - self._set_output_worker_deferred_task
     #   3. Buffers of automa inputs: self._input_buffer
@@ -335,7 +335,7 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
 
     # TODO: The following deferred task structures need to be thread-safe.
     # TODO: Need to be refactored when parallelization features are added.
-    _topology_change_deferred_tasks: List[Union[_AddWorkerDeferredTask, _RemoveWorkerDeferredTask]]
+    _topology_deferred_tasks: List[Union[_AddWorkerDeferredTask, _RemoveWorkerDeferredTask]]
     _ferry_deferred_tasks: List[_FerryDeferredTask]
 
     def __init__(
@@ -379,7 +379,7 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
         # The list of the tasks that are currently being executed.
         self._running_tasks = []
         # deferred tasks
-        self._topology_change_deferred_tasks = []
+        self._topology_deferred_tasks = []
         self._ferry_deferred_tasks = []
 
     def _normal_init(self):
@@ -476,7 +476,7 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
         # The list of the tasks that are currently being executed.
         self._running_tasks = []
         # Deferred tasks
-        self._topology_change_deferred_tasks = []
+        self._topology_deferred_tasks = []
         self._set_output_worker_deferred_task = None
         self._ferry_deferred_tasks = []
 
@@ -749,9 +749,8 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
                 result_dispatching_rule=result_dispatching_rule,
                 callback_builders=callback_builders,
             )
-            # Note1: the execution order of topology change deferred tasks is important and is determined by the order of the calls of add_worker(), remove_worker() and add_dependency() in one DS.
-            # Note2: add_worker() and remove_worker() may be called in a new thread. But _topology_change_deferred_tasks is not necessary to be thread-safe due to Visibility Guarantees of the Bridgic Concurrency Model.
-            self._topology_change_deferred_tasks.append(deferred_task)
+            # The order of topology deferred tasks is determined by the order of the calls of topology changing methods.
+            self._topology_deferred_tasks.append(deferred_task)
 
     def _add_func_as_worker_internal(
         self,
@@ -982,7 +981,7 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
                 worker_key=key,
             )
             # Note: the execution order of topology change deferred tasks is important and is determined by the order of the calls of add_worker(), remove_worker() and add_dependency() in one DS.
-            self._topology_change_deferred_tasks.append(deferred_task)
+            self._topology_deferred_tasks.append(deferred_task)
 
     def add_dependency(
         self,
@@ -1012,7 +1011,7 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
                 dependency=dependency,
             )
             # Note: the execution order of topology change deferred tasks is important and is determined by the order of the calls of add_worker(), remove_worker() and add_dependency() in one DS.
-            self._topology_change_deferred_tasks.append(deferred_task)
+            self._topology_deferred_tasks.append(deferred_task)
 
     def _validate_canonical_graph(self):
         """
@@ -1125,6 +1124,35 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
         for worker_obj in self._workers.values():
             worker_obj.local_space = {}
 
+    def _clear_task_level_state(self) -> None:
+        """
+        Clear task-level state which is built during each dynamic step (DS) of the execution.
+        Used when:
+
+        - (1) ending a DS and proceeding to the next DS
+        - (2) going to raise due to interaction exceptions, to leave the automa in a consistent and pausable state
+        """
+        self._running_tasks.clear()
+        self._topology_deferred_tasks.clear()
+        self._ferry_deferred_tasks.clear()
+
+    def _clear_interaction_indices(self) -> None:
+        """
+        Clear _worker_interaction_indices so the next interact_with_human in a worker uses index 0.
+        """
+        self._worker_interaction_indices.clear()
+
+    def _clear_run_level_state(self) -> None:
+        """
+        Clear run-level state after a complete run. Enables the automa instance to be run again.
+        """
+        self._input_buffer = _AutomaInputBuffer()
+        if self.should_reset_local_space():
+            self._clean_all_worker_local_space()
+        self._clear_interaction_indices()
+        self._ongoing_interactions.clear()
+        self._automa_running = False
+
     async def arun(
         self,
         *args: Tuple[Any, ...],
@@ -1227,7 +1255,12 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
         the latest structure, ensuring that worker execution always follows the current graph.
         """
 
-        def _reinit_current_kickoff_workers_if_needed():
+        def _init_input_buffer_if_needed(args: Tuple[Any, ...], kwargs: Dict[str, Any]):
+            if not self._current_kickoff_workers:
+                self._input_buffer.args = args
+                self._input_buffer.kwargs = kwargs
+
+        def _init_start_kickoff_workers_if_needed():
             # Note: After deserialization, the _current_kickoff_workers must not be empty!
             # Therefore, _current_kickoff_workers will only be reinitialized when the Automa is run for the first time or rerun.
             # It is guaranteed that _current_kickoff_workers will not be reinitialized when the Automa is resumed after deserialization.
@@ -1239,11 +1272,6 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
                     ) for worker_key, worker_obj in self._workers.items()
                     if getattr(worker_obj, "is_start", False)
                 ]
-        
-        def _reinit_input_buffer_if_needed(args: Tuple[Any, ...], kwargs: Dict[str, Any]):
-            if not self._current_kickoff_workers:
-                self._input_buffer.args = args
-                self._input_buffer.kwargs = kwargs
 
         def _execute_topology_change_deferred_tasks(tc_tasks: List[Union[_AddWorkerDeferredTask, _RemoveWorkerDeferredTask, _AddDependencyDeferredTask]]):
             # update the control flow topology
@@ -1277,7 +1305,7 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
             feedback_data: Optional[Union[InteractionFeedback, List[InteractionFeedback]]] = None,
             interaction_feedback: Optional[InteractionFeedback] = None,
             interaction_feedbacks: Optional[List[InteractionFeedback]] = None,
-        ):
+        ) -> List[InteractionFeedback]:
             if feedback_data:
                 if isinstance(feedback_data, list):
                     rx_feedbacks = feedback_data
@@ -1305,9 +1333,9 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
                     for interaction_and_feedback in interaction_and_feedbacks:
                         if interaction_and_feedback.interaction.interaction_id == feedback.interaction_id:
                             matched = True
-                            # Note: Only one feedback is allowed for each interaction. Here we assume that only the first feedback is valid, which is a choice of implementation.
+                            # Set the feedback to its corresponding interaction which is maintained in self._ongoing_interactions
+                            # Note: Only one feedback is allowed for each interaction.
                             if interaction_and_feedback.feedback is None:
-                                # Set feedback to self._ongoing_interactions
                                 interaction_and_feedback.feedback = feedback
                             break
                     if matched:
@@ -1316,8 +1344,7 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
                     match_left_feedbacks.append(feedback)
             return match_left_feedbacks
 
-        _reinit_input_buffer_if_needed(args, kwargs)
-        running_options = self._get_top_running_options()
+        _init_input_buffer_if_needed(args, kwargs)
 
         self._main_loop = asyncio.get_running_loop()
         self._main_thread_id = threading.get_ident()
@@ -1325,6 +1352,7 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
             self.thread_pool = ThreadPoolExecutor(thread_name_prefix="bridgic-thread")
 
         is_top_level = self.is_top_level()
+        running_options = self._get_top_running_options()
 
         # If this is the top-level automa, execute its callbacks separately.
         if is_top_level:
@@ -1341,14 +1369,14 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
                         "feedback_data": feedback_data,
                     },
                 )
-        
+
         if not self._automa_running:
             # Here is the last chance to compile and check the DDG in the end of the [Initialization Phase] (phase 1 just before the first DS).
             self._compile_graph_and_detect_risks()
             self._automa_running = True
 
         # An Automa needs to be re-run with _current_kickoff_workers reinitialized.
-        _reinit_current_kickoff_workers_if_needed()
+        _init_start_kickoff_workers_if_needed()
 
         # For backward compatibility with old parameter names. To be removed in the future.
         interaction_feedback = kwargs.get("interaction_feedback")
@@ -1468,7 +1496,7 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
                     # Refer to: https://docs.python.org/3/library/asyncio-task.html#task-object
 
             # Process graph topology change deferred tasks triggered by add_worker() and remove_worker().
-            _execute_topology_change_deferred_tasks(self._topology_change_deferred_tasks)
+            _execute_topology_change_deferred_tasks(self._topology_deferred_tasks)
 
             # Handle exceptions raised by all running tasks.
             interaction_exceptions: List[_InteractionEventException] = []
@@ -1498,24 +1526,19 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
                 except Exception as e:
                     if isinstance(e, _InteractionEventException):
                         interaction_exceptions.append(e)
-                        if task.worker_key in self._workers and not self._workers[task.worker_key].is_automa():
-                            if task.worker_key not in self._ongoing_interactions:
-                                self._ongoing_interactions[task.worker_key] = []
-                            interaction=e.args[0]
-                            # Make sure the interaction_id is unique for each human interaction.
-                            found = False
-                            for iaf in self._ongoing_interactions[task.worker_key]:
-                                if iaf.interaction.interaction_id == interaction.interaction_id:
-                                    found = True
-                                    break
-                            if not found:
-                                self._ongoing_interactions[task.worker_key].append(_InteractionAndFeedback(
-                                    interaction=interaction,
-                                ))
+                        if (
+                            task.worker_key in self._workers 
+                            and not self._workers[task.worker_key].is_automa()
+                        ):
+                            interactions = self._ongoing_interactions.setdefault(task.worker_key, [])
+                            current_interaction = e.args[0]
+                            # Ensure unique interaction_id for each human interaction.
+                            if all(iaf.interaction.interaction_id != current_interaction.interaction_id for iaf in interactions):
+                                interactions.append(_InteractionAndFeedback(interaction=current_interaction))
                     else:
                         non_interaction_exceptions.append(e)
 
-            if len(self._topology_change_deferred_tasks) > 0:
+            if len(self._topology_deferred_tasks) > 0:
                 # Graph topology validation and risk detection. Only needed when topology changes.
                 # Guarantee the graph topology is valid and consistent after each DS.
                 # 1. Validate the canonical graph.
@@ -1548,6 +1571,10 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
 
             # For inner interaction exceptions, collect them and throw an InteractionException as a whole.
             if len(interaction_exceptions) > 0:
+                # Ensure the automa's task and interaction states are clean when resuming.
+                self._clear_task_level_state()
+                self._clear_interaction_indices()
+
                 all_interactions: List[Interaction] = [interaction for e in interaction_exceptions for interaction in e.args]
                 if self.is_top_level():
                     # This is the top-level Automa. Serialize the Automa and raise InteractionException to the application layer.
@@ -1566,6 +1593,7 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
 
             # For non-interaction exceptions, immediately raise the first one directly, since none of them are meant to be suppressed.
             if len(non_interaction_exceptions) > 0:
+                self._clear_run_level_state()
                 raise non_interaction_exceptions[0]
 
             # Find next kickoff workers and rebuild _current_kickoff_workers
@@ -1600,21 +1628,12 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
                             ))
                         successor_keys.add(successor_key)
 
-            # Clear running tasks after all finished.
-            self._running_tasks.clear()
-            self._ferry_deferred_tasks.clear()
-            self._topology_change_deferred_tasks.clear()
+            self._clear_task_level_state()
 
         if running_options.debug:
             printer.print(f"[{type(self).__name__}]-[{self.name}] is finished.", color="green")
 
-        # After a complete run, reset all necessary states to allow the automa to re-run.
-        self._input_buffer = _AutomaInputBuffer()
-        if self.should_reset_local_space():
-            self._clean_all_worker_local_space()
-        self._ongoing_interactions.clear()
-        self._worker_interaction_indices.clear()
-        self._automa_running = False
+        self._clear_run_level_state()
 
         # Get result before calling callbacks
         if is_output_worker_keys:

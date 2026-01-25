@@ -574,11 +574,7 @@ class Automa(Worker):
             return matched_feedback.feedback
 
     def _get_and_increment_interaction_index(self, worker_key: str) -> int:
-        if worker_key not in self._worker_interaction_indices:
-            cur_index = 0
-            self._worker_interaction_indices[worker_key] = 0
-        else:
-            cur_index = self._worker_interaction_indices[worker_key]
+        cur_index = self._worker_interaction_indices.setdefault(worker_key, 0)
         self._worker_interaction_indices[worker_key] += 1
         return cur_index
 
