@@ -23,7 +23,9 @@ nav:
         - Modularity: tutorials/items/core_mechanism/modularity.ipynb
       - Agentic Module:
         - Agentic: tutorials/items/agentic_module/index.md
-        - ReCentAutoma: tutorials/items/agentic_module/recent_quick_start.ipynb
+        - SequentialAutoma: tutorials/items/agentic_module/about_sequential_automa.ipynb
+        - ConcurrentAutoma: tutorials/items/agentic_module/about_concurrent_automa.ipynb
+        - ReCentAutoma: tutorials/items/agentic_module/about_recent_automa.ipynb
       - Agent Structure Language: tutorials/items/asl/quick_start.ipynb
       - Model Integration:
         - Model: tutorials/items/model_integration/index.md
@@ -39,8 +41,6 @@ nav:
     - Introduction: understanding/introduction.md
     - Basics: understanding/basics.md
     # - Concepts: understanding/concepts.md
-    - MCP Integration: understanding/mcp_integration.md
-    - ReCentAutoma: understanding/recent_automa.md
   - API Reference:
 {{API_REFERENCE_CONTENT}}
 
@@ -129,6 +129,7 @@ plugins:
       minify_css: true
       htmlmin_opts:
         remove_comments: true
+  - mkdocs-video
   - mkdocs-jupyter:
       execute: false
       include_source: true
