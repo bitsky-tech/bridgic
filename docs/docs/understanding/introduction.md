@@ -12,3 +12,4 @@
 * **Serialization**: Bridgic employs a scalable serialization and deserialization mechanism to achieve state persistence and recovery, enabling human-in-the-loop in long-running AI systems.
 * **Systematic Integration**: A wide range of tools, LLMs and tracing functionalities can be seamlessly integrated into the Bridgic world, in a systematic way.
 * **Customization**: What Bridgic provides is not a "black box" approach. You have full control over every aspect of your AI applications, such as prompts, context windows, the control flow, and more.
+

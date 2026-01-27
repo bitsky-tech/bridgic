@@ -24,6 +24,7 @@ logger = logging.getLogger(__name__)
 
 LLM_OVERVIEW_PATH = "extras/llms/index.md"
 TRACES_OVERVIEW_PATH = "extras/traces/index.md"
+PROTOCOLS_OVERVIEW_PATH = "extras/protocols/index.md"
 
 class DocumentationConfig:
     """Documentation generation configuration class"""
@@ -416,14 +417,12 @@ class SafeMkDocsConfigUpdater:
                     suffix = pkg_name.replace('bridgic-llms-', '')
                     dotted_suffix = suffix.replace('-', '_')
                     dotted = f"bridgic.llms.{dotted_suffix}"
-                    # Build expected index path
-                    index_path = f"reference/{pkg_name}/bridgic/llms/{dotted_suffix}/index.md"
+                    index_rel_path = dotted_suffix.replace('.', '/')
+                    index_path = f"reference/{pkg_name}/bridgic/llms/{index_rel_path}/index.md"
                     integration_entries.append((dotted, index_path))
 
             if integration_entries:
-                section_entries: List[Tuple[str, str]] = []
-                # Insert overview as first entry to avoid promotion of first LLM package
-                section_entries.append(("llms", LLM_OVERVIEW_PATH))
+                section_entries: List[Tuple[str, str]] = [("llms", LLM_OVERVIEW_PATH)]
                 section_entries.extend(integration_entries)
                 integration_sections["llms"] = section_entries
 
@@ -431,7 +430,7 @@ class SafeMkDocsConfigUpdater:
             for pkg_name in nav_structure.keys():
                 if pkg_name.startswith('bridgic-traces-'):
                     suffix = pkg_name.replace('bridgic-traces-', '')
-                    dotted_suffix = suffix.replace('-', '.')
+                    dotted_suffix = suffix.replace('-', '_')
                     dotted = f"bridgic.traces.{dotted_suffix}"
                     index_rel_path = dotted_suffix.replace('.', '/')
                     index_path = f"reference/{pkg_name}/bridgic/traces/{index_rel_path}/index.md"
@@ -442,9 +441,24 @@ class SafeMkDocsConfigUpdater:
                 section_entries.extend(traces_entries)
                 integration_sections["traces"] = section_entries
 
+            protocols_entries: List[Tuple[str, str]] = []
+            for pkg_name in nav_structure.keys():
+                if pkg_name.startswith('bridgic-protocols-'):
+                    suffix = pkg_name.replace('bridgic-protocols-', '')
+                    dotted_suffix = suffix.replace('-', '_')
+                    dotted = f"bridgic.protocols.{dotted_suffix}"
+                    index_rel_path = dotted_suffix.replace('.', '/')
+                    index_path = f"reference/{pkg_name}/bridgic/protocols/{index_rel_path}/index.md"
+                    protocols_entries.append((dotted, index_path))
+
+            if protocols_entries:
+                section_entries = [("protocols", PROTOCOLS_OVERVIEW_PATH)]
+                section_entries.extend(protocols_entries)
+                integration_sections["protocols"] = section_entries
+
             if integration_sections:
                 lines.append("    - Bridgic-Integration:")
-                section_order = ["llms", "traces"]
+                section_order = ["llms", "traces", "protocols"]
                 processed_sections: Set[str] = set()
                 for section_name in section_order:
                     if section_name in integration_sections:

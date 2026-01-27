@@ -1,4 +1,4 @@
-# Observability
+# Observability Integration
 
 ## Why Observability Matters
 
@@ -21,7 +21,7 @@ In the Bridgic framework, each task execution happens at the **Worker** granular
 
 ### Callback Mechanism
 
-Bridgic provides a flexible callback mechanism that hooks into worker execution at key lifecycle points. This callback system is designed to be non-intrusive—callbacks observe and instrument execution without modifying your core business logic. Refer to [Worker Callback Mechanism](../core_mechanism/worker_callback.md) for more about how this mechanism works in detail.
+Bridgic provides a flexible callback mechanism that hooks into worker execution at key lifecycle points. This callback system is designed to be non-intrusive—callbacks observe and instrument execution without modifying your core business logic. Refer to [Worker Callback Mechanism](../core_mechanism/worker_callback.ipynb) for more about how this mechanism works in detail.
 
 
 ## Available Third-Party Integrations

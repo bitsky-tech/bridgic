@@ -97,15 +97,15 @@ def create_http_client_from_config(
     ValueError
         If the auth configuration is invalid (missing required fields or unsupported type).
     
-    Example
-    -------
-    >>> # Create async client with custom headers
+    Examples
+    --------
+    Create async client with custom headers:
     >>> config = {
     ...     "headers": {"Authorization": "Bearer token123"}
     ... }
     >>> client = create_http_client_from_config(config, is_async=True)
-    >>> 
-    >>> # Create async client with custom timeout
+
+    Create async client with custom timeout:
     >>> config = {
     ...     "timeout": {
     ...         "connect": 10.0,

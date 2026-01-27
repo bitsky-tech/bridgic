@@ -22,7 +22,7 @@ class Worker:
 The [`arun`](../../reference/bridgic-core/bridgic/core/automa/worker/#bridgic.core.automa.worker.Worker.arun) method of the [`Worker`](../../reference/bridgic-core/bridgic/core/automa/worker/#bridgic.core.automa.worker.Worker) class is called to execute a task. You can pass any required arguments to `arun`, and it will return a value as the result of the task.
 
 !!! hint "Tips"
-    In fact, in addition to the `arun` method, a `Worker` also has a [`run`](../../reference/bridgic-core/bridgic/core/automa/worker/#bridgic.core.automa.worker.Worker.run) method. This relates to Bridgic's [concurrency mode](../../../../tutorials/items/core_mechanism/concurrency_mode/). Please refer to the relevant sections for more details.
+    In fact, in addition to the `arun` method, a `Worker` also has a [`run`](../../reference/bridgic-core/bridgic/core/automa/worker/#bridgic.core.automa.worker.Worker.run) method. This relates to Bridgic's [concurrency mode](../../tutorials/items/core_mechanism/concurrency_mode/). Please refer to the relevant sections for more details.
 
 Besides worker, "automa" is another core concept in Bridgic. An automa acts as a container for a group of workers. Instead of performing tasks by itself, an automa schedules and orchestrates the workers it contains, running them according to a predefined or dynamic execution flow in order to accomplish the overall task.
 
@@ -156,7 +156,7 @@ class MyFlow(GraphAutoma):
 
 In this code, `worker_3` decides whether to run `worker_2` or `worker_4` next based on different conditions.
 
-It’s important to note that when `ferry_to("worker_2", x)` is called, `worker_2` will execute immediately in the next event loop iteration, without waiting for its predefined dependency `worker_1` to complete. This behavior arises from the interplay between dynamic routing and predefined dependencies—an approach that allows Bridgic to seamlessly combine static orchestration with flexible, dynamic control flow.
+It's important to note that when `ferry_to("worker_2", x)` is called, `worker_2` will execute immediately in the next event loop iteration, without waiting for its predefined dependency `worker_1` to complete. This behavior arises from the interplay between dynamic routing and predefined dependencies—an approach that allows Bridgic to seamlessly combine static orchestration with flexible, dynamic control flow.
 
 ### API
 
@@ -166,7 +166,7 @@ It’s important to note that when `ferry_to("worker_2", x)` is called, `worker_
 
 * **The declarative API**: [`@worker` decorator](../../reference/bridgic-core/bridgic/core/automa/#bridgic.core.automa.worker._worker_decorator.worker).
 
-For more code examples, please refer to the [Tutorials](../tutorials/items/quick_start/quick_start.ipynb) section.
+For more code examples, please refer to the [Tutorials](../../tutorials/items/quick_start/quick_start.ipynb) section.
 
 ## Dynamic Directed Graph
 
@@ -191,3 +191,4 @@ Taking the above diagram as an example, the entire execution is divided into thr
 In Bridgic, an automa itself is also a worker, allowing one automa to be added into another. This design enables the construction of complex agentic systems by reusing components through hierarchical nesting, introducing a new paradigm of modular and component-based programming in agent-based development.
 
 For more code examples on modularity, please refer to the "[Modularity](../../tutorials/items/core_mechanism/modularity/)" section in the Tutorials.
+

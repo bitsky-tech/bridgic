@@ -1,11 +1,12 @@
 """
-The module provides core components for the ReCENT Algorithm.
+The module provides core components for the ReCENT memory management Algorithm.
 
-**ReCENT Algorithm** (Recursive Compressed Episodic Node Tree Algorithm) is an algorithm designed to 
-address issues such as context explosion and goal drift, by employing a recursive memory compression 
-mechanism.
+**ReCENT Algorithm** (*Recursive Compressed Episodic Node Tree Algorithm*) is an algorithm 
+designed to address issues such as context explosion and goal drift, by employing a recursive 
+memory compression mechanism to compress the memory when necessary.
 
 This module provides an agentic automa and its corresponding memory and task configurations:
+
 - `ReCentAutoma`: The main automaton that implements the ReCENT algorithm.
 - `ReCentMemoryConfig`: Configuration for ReCENT memory management.
 - `ObservationTaskConfig`: Configuration for the observation task.
@@ -14,6 +15,7 @@ This module provides an agentic automa and its corresponding memory and task con
 - `StopCondition`: Stop condition configuration for ReCentAutoma.
 
 The core data structures are:
+
 - `EpisodicNodeTree`: Tree of episodic nodes which is the core data structure of ReCENT.
 - `BaseEpisodicNode`: Base class for all episodic nodes. It is inherited by:
     + `GoalEpisodicNode`: A goal node that represents the goal of the agent.

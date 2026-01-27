@@ -542,7 +542,7 @@ More features will be added in the near future. :)
 For more about development skills of Bridgic, see:
 
 - [Tutorials](https://docs.bridgic.ai/latest/tutorials/)
-- [Understanding](https://docs.bridgic.ai/latest/home/introduction/)
+- [Understanding](https://docs.bridgic.ai/latest/understanding/introduction/)
 - [ASL Syntax Learning](https://docs.bridgic.ai/latest/tutorials/items/asl/quick_start/)
 - [Model Integration](https://docs.bridgic.ai/latest/tutorials/items/model_integration/)
 - [Observability](https://docs.bridgic.ai/latest/tutorials/items/observability/)

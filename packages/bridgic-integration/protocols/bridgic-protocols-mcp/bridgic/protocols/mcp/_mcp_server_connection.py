@@ -106,8 +106,9 @@ class McpServerConnection(ABC):
         Therefore, it is required to register the connection to the desired manager *before* calling `connect()`.
         Otherwise, the connection will be registered to the default manager. All registrations could not be changed later.
 
-        Example
-        -------
+        Examples
+        --------
+        Create a connection to a streamable HTTP MCP server and register it to a manager:
         >>> connection = McpServerConnectionStreamableHttp(
         ...     name="streamable-http-server-connection",
         ...     url="http://localhost:8000",

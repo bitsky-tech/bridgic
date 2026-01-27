@@ -20,8 +20,9 @@ Core Components
 - `McpToolWorker`: Worker implementation for executing MCP tools
 - `McpPromptTemplate`: Prompt template implementation for MCP prompts
 
-Example
--------
+Examples
+--------
+Create a connection to an MCP server using stdio transport and list available tools:
 >>> from bridgic.protocols.mcp import McpServerConnectionStdio
 >>> from bridgic.core.automa import GraphAutoma
 >>>

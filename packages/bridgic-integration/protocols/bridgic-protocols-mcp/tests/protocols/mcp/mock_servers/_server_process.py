@@ -30,8 +30,8 @@ class McpHttpServerProcess:
     wait for it to be ready, and ensure it is properly cleaned up when
     the context exits, even if an exception occurs.
 
-    Example
-    -------
+    Examples
+    --------
     >>> with McpHttpServerProcess(
     ...     server_script="path/to/server.py",
     ...     transport="streamable_http",
