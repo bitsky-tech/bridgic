@@ -375,10 +375,11 @@ class ASLAutoma(GraphAutoma, metaclass=ASLAutomaMeta):
         running_options : RunningOptions, optional
             The running options for the automa. If None, a default running options will be used.
         """
+        self._running_options = running_options or RunningOptions()
         super().__init__(name=name, thread_pool=thread_pool, running_options=running_options)
         self._dynamic_workers = {}
         if not self._top_canvas:
-            self.automa = GraphAutoma(name=name, thread_pool=thread_pool, running_options=running_options)
+            self.automa = None
         else:
             top_canvas = self._top_canvas[-1]
             self.automa: GraphAutoma = self._build_graph(top_canvas)
@@ -637,7 +638,7 @@ class ASLAutoma(GraphAutoma, metaclass=ASLAutomaMeta):
             The result of the automa execution.
         """
         if not self.automa:
-            return 
+            return super().arun(*args, feedback_data=feedback_data, **kwargs)
 
         res = await self.automa.arun(*args, feedback_data=feedback_data, **kwargs)
         return res
