@@ -375,7 +375,7 @@ class ASLAutoma(GraphAutoma, metaclass=ASLAutomaMeta):
         running_options : RunningOptions, optional
             The running options for the automa. If None, a default running options will be used.
         """
-        self._running_options = running_options or RunningOptions()
+        self.running_options = running_options or RunningOptions()
         super().__init__(name=name, thread_pool=thread_pool, running_options=running_options)
         self._dynamic_workers = {}
         if not self._top_canvas:
@@ -457,7 +457,13 @@ class ASLAutoma(GraphAutoma, metaclass=ASLAutomaMeta):
                 self._dynamic_workers[parent_key][current_canvas_key].append(element)
             
         # Make the automa.
-        canvas.make_automa(running_options=RunningOptions(callback_builders=running_options_callback))
+        
+        canvas.make_automa(running_options=RunningOptions(
+            debug=self.running_options.debug,
+            verbose=self.running_options.verbose,
+            callback_builders=self.running_options.callback_builders + running_options_callback,
+            model_config=self.running_options.model_config
+        ))
         automa = canvas.worker_material
         if canvas.is_top_level():
             params_data = canvas.worker_material.get_input_param_names()
@@ -495,14 +501,24 @@ class ASLAutoma(GraphAutoma, metaclass=ASLAutomaMeta):
                     worker_material = asl_automa_class(
                         name=getattr(worker_material, "name", None), 
                         thread_pool=getattr(worker_material, "thread_pool", None), 
-                        running_options=getattr(worker_material, "running_options", None)
+                        running_options=RunningOptions(
+                            debug=self.running_options.debug,
+                            verbose=self.running_options.verbose,
+                            callback_builders=getattr(worker_material, "running_options", None).callback_builders + self.running_options.callback_builders,
+                            model_config=self.running_options.model_config
+                        )
                     )
                 elif isinstance(worker_material, GraphAutoma):
                     graph_automa_class = type(worker_material)
                     worker_material = graph_automa_class(
                         name=getattr(worker_material, "name", None), 
                         thread_pool=getattr(worker_material, "thread_pool", None), 
-                        running_options=getattr(worker_material, "running_options", None)
+                        running_options=RunningOptions(
+                            debug=self.running_options.debug,
+                            verbose=self.running_options.verbose,
+                            callback_builders=getattr(worker_material, "running_options", None).callback_builders + self.running_options.callback_builders,
+                            model_config=self.running_options.model_config
+                        )
                     )
                 elif isinstance(worker_material, Worker):
                     worker_material = _copy_worker_safely(worker_material)
