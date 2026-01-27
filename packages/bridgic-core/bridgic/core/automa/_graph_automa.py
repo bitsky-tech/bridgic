@@ -1386,7 +1386,7 @@ class GraphAutoma(Automa, metaclass=GraphMeta):
             rx_feedbacks = _match_ongoing_interaction_and_feedbacks(rx_feedbacks)
 
         if running_options.debug:
-            printer.print(f"\n[{type(self).__name__}]-[{self.name}] is started.", color="green")
+            printer.print(f"[{type(self).__name__}]-[{self.name}] is started.", color="green")
 
         # Task loop divided into many dynamic steps (DS).
         args_manager = ArgsManager(
