@@ -1,35 +1,95 @@
-**Bridgic** is an agentic programming framework built around a novel **dynamic topology** orchestration model and a **component-oriented paradigm** that is realized through **ASL (Agent Structure Language)**—a powerful declarative DSL for composing, reusing, and nesting agentic structures. Together, these elements make it possible to develop the entire spectrum of agentic systems, ranging from deterministic workflows to autonomous agents.
+# Bridgic
 
-> ✨ The name "**Bridgic**" is inspired by the idea of *"Bridging Logic and Magic"*. It means seamlessly uniting the precision of *logic* (deterministic execution flows) with the creativity of *magic* (highly autonomous AI).
+[![License MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
+[![Python Version](https://img.shields.io/badge/python-3.9%2B-blue.svg)](https://www.python.org/)
+[![PyPI Version](https://img.shields.io/pypi/v/bridgic.svg)](https://pypi.org/search/?q=bridgic)
+[![PyPI Downloads](https://img.shields.io/pypi/dm/bridgic.svg)](https://pypi.org/search/?q=bridgic)
 
+**Bridgic** is the next-generation agent development framework for building intelligent systems effortless.
 
-## 🔗 Features
+By fundamentally rethinking this relationship, Bridgic establishes a unified orchestration pattern and runtime model, which enables developers to seamlessly transition between structured predictable workflows and creative autonomous agentic systems within a single framework.
 
-* **Orchestration**: Bridgic introduces a novel orchestration model based on DDG (Dynamic Directed Graph).
-* **Dynamic Routing**: Bridgic enables conditional branching and dynamic orchestration through an easy-to-use `ferry_to()` API.
-* **Dynamic Topology**: The DDG-based orchestration topology can be changed at runtime in Bridgic to support highly autonomous AI applications.
-* **ASL**: ASL (Agent Structure Language) is a powerful declarative DSL that embodies a component-oriented paradigm and is even capable of supporting dynamic topologies.
-* **Modularity & Componentization**: In Bridgic, a complex agentic system can be composed by reusing components through hierarchical nesting.
-* **Parameter Resolving**: Two mechanisms are designed to pass data among workers/automas—thereby eliminating the complexity of global state management whenever necessary.
-* **Human-in-the-Loop**: A Bridgic-style agentic system can request feedback from human whenever needed to dynamically adjust its execution logic.
-* **Serialization**: Bridgic employs a scalable serialization and deserialization mechanism to achieve state persistence and recovery, enabling human-in-the-loop in long-running AI systems.
-* **Systematic Integration**: A wide range of tools, LLMs and tracing functionalities can be seamlessly integrated into the Bridgic world, in a systematic way.
-* **Customization**: What Bridgic provides is not a "black box" approach. You have full control over every aspect of your AI applications, such as prompts, context windows, the control flow, and more.
+> ✨ The name "**Bridgic**" embodies our core philosophy: **"Bridging Logic and Magic"** where:
+>   - *Logic* represents structured and predictable execution flows, forming the foundation of reliable systems.
+>   - *Magic* refers to the autonomous parts that can make dynamic decisions and solve problems creatively.
 
+<div align="center">
+
+```mermaid
+graph LR
+    subgraph " "
+        A["Deterministic Workflows<br/>(Logic)"]
+        B["Autonomous Agents<br/>(Magic)"]
+    end
+    
+    A ----> B
+    B ----> A
+    
+    style A fill:#f9f9f9,stroke:#333,stroke-width:2px
+    style B fill:#f9f9f9,stroke:#333,stroke-width:2px
+```
+
+</div>
+
+## 🔗 Key Features
+
+### 🌀 Core Runtime Engine
+
+* **Unified DDG Foundation**: Both deterministic workflows and autonomous agents are orchestrated through the same [Dynamic Directed Graph](https://docs.bridgic.ai/latest/tutorials/items/core_mechanism/dynamic_topology/) runtime model, providing a unified foundation for intelligent systems
+* **Dual Orchestration Modes**: Bridgic supports both declarative graph definitions and programmatic worker orchestration, giving developers flexibility in how they structure their code
+* **Dynamic Topology & Routing**: The mechanism of [dynamic topology](https://docs.bridgic.ai/latest/tutorials/items/core_mechanism/dynamic_topology/) allows graph structure to be modified at runtime, while [dynamic routing](https://docs.bridgic.ai/latest/tutorials/items/core_mechanism/dynamic_routing/) enables conditional branching through an intuitive [`ferry_to()`](https://docs.bridgic.ai/latest/reference/bridgic-core/bridgic/core/automa/#bridgic.core.automa.GraphAutoma.ferry_to) API
+
+### 🚀 Consistent Development Experience for Workflows and Agents
+
+* **Program-defined Execution Mode**: Build deterministic workflows with explicit control flow, where execution paths are defined by your code structure
+* **Model-driven Autonomous Execution Mode**: Leverage [ReCentAutoma](https://docs.bridgic.ai/latest/tutorials/items/agentic_module/about_recent_automa.ipynb) and other autonomous agent modules where LLMs make dynamic decisions about tool selection and execution paths
+
+### 🧩 Modular Development Support
+
+* **Modular Application Building**: Complex intelligent systems can be composed through [modularity](https://docs.bridgic.ai/latest/tutorials/items/core_mechanism/modularity/), enabling component reusing and hierarchical nesting
+* **Parameter Resolving & Binding**: The mechanism of [parameter resolving](https://docs.bridgic.ai/latest/tutorials/items/core_mechanism/parameter_resolving/) enables passing data among workers/automas, eliminating the complexity of global state management
+* **Higher Information Density Agent Structure Language**: [Agent Structure Language (ASL)](https://docs.bridgic.ai/latest/tutorials/items/asl/quick_start/) is a Python-native DSL that enables developers to express sophisticated agentic structures within a limited amount of code, optimized for AI-assisted development
+
+### 👥 Powerful Human-in-the-Loop Support
+
+* **Human Interaction Based on Asynchronous Awaiting**: Systems can pause execution and [await human feedback](https://docs.bridgic.ai/latest/tutorials/items/core_mechanism/human_in_the_loop.ipynb) asynchronously, enabling seamless integration of human judgment into automated workflows
+* **Human Interaction Based on Interruption & Resuming**: Long-running systems can be interrupted at any point, request external feedback, and seamlessly resume execution with state persistence and recovery
+
+### 🔌 Seamless Third-Party Integration
+
+* **Technology-neutral Model Integration**: Seamlessly integrate with any LLM provider through a unified interface. See [Model Integration](https://docs.bridgic.ai/latest/tutorials/items/model_integration/) for details
+* **Systematic MCP Integration**: Transform tool integration into composition opportunities through [seamless Model Context Protocol integration](https://docs.bridgic.ai/latest/tutorials/items/protocol_integration/mcp_quick_start.ipynb), allowing you to connect to MCP servers and use their tools as first-class workers
+* **Seamless Enterprise Observability Integration**: Built-in support for leading observability platforms ([Opik](https://docs.bridgic.ai/latest/tutorials/items/observability_integration/opik_integration.md), [LangWatch](https://docs.bridgic.ai/latest/tutorials/items/observability_integration/lang_watch_integration.md)) ensures your agentic systems are transparent, debuggable, and optimizable
 
 ## 📦 Installation
 
-Python 3.9 or higher version is required.
+Bridgic requires Python 3.9 or newer. Make sure your environment meets this requirement before installing.
 
-```bash
-pip install -U bridgic
-```
+=== "pip"
 
-To run the following examples, the `bridgic-llms-openai` module also needs to be installed.
+    ```bash
+    pip install bridgic
+    ```
 
-```bash
-pip install -U bridgic-llms-openai
-```
+=== "uv"
+
+    ```bash
+    uv add bridgic
+    ```
+
+After installation, verify that Bridgic is installed correctly:
+
+=== "pip"
+
+    ```bash
+    python -c "from bridgic.core import __version__; print(f'Bridgic version: {__version__}')"
+    ```
+
+=== "uv"
+
+    ```bash
+    uv run python -c "from bridgic.core import __version__; print(f'Bridgic version: {__version__}')"
+    ```
 
 ## 🚀 Code Examples
 
