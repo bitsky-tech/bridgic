@@ -118,6 +118,8 @@ Each example in this part provides two implementations:
 - the declarative API approach helps you understand how Bridgic works under the hood
 - the ASL approach shows how it simplifies workflow definition with declarative syntax.
 
+<img src="./docs/images/bridgic_api_hierarchy.png" alt="Bridgic API Hierarchy" width="620"/>
+
 ### Example 1: Build Your First Chatbot Using Bridgic
 
 **Core Features:**
@@ -595,6 +597,8 @@ ls /bin
 - Dynamic worker instantiation
 - Result aggregation from dynamic nodes by `ArgsMappingRule`
 
+<img src="./docs/docs/tutorials/imgs/dynamic_topo.png" alt="Dynamic Topology Demo" width="400"/>
+
 <details>
 <summary>Build with Normal API</summary>
 
@@ -730,6 +734,8 @@ Result: [1, 2, 3]
 - Arguments mapping and merging
 - Parameter injection with `From()`
 - Concurrent execution result aggregation
+
+<img src="./docs/images/parameter_resolving_demo.png" alt="Parameter Resolving Demo" width="400"/>
 
 <details>
 <summary>Build with Normal API</summary>
@@ -901,17 +907,458 @@ Albert Einstein was born on March 14, 1879, in Ulm, in the Kingdom of Württembe
 
 ## Part II: Building Complex Agentic Systems
 
-These examples demonstrate how to combine multiple Bridgic features to build production-ready agentic systems.
+The examples in this part demonstrate how to develop more complex intelligent systems in a relaxed and natural way, using Bridgic's powerful mechanisms and components. With the underlying unified DDG runtime model, powerful third-party integrations, and appropriate programming techniques, you can easily build more complex workflows and agents.
 
 ### Example 5: Interactive CLI Automa with MCP Integration
+
+**Core Features:**
+- Human-in-the-loop interactions with interrupt-resume mechanism
+- MCP integration for CLI tool access
+- Dynamic worker creation for multi-turn interactions
+- Connection reuse across execution cycles
+
+<details>
+<summary>View Code</summary>
+
+[View full code](https://github.com/bitsky-tech/bridgic-examples/blob/main/agentic/cli_automa_mcp.py)
+
+```python
+import os
+import uuid
+import tempfile
+
+import mcp
+
+from bridgic.core.automa import GraphAutoma, worker, RunningOptions
+from bridgic.core.automa.interaction import Event, InteractionFeedback, InteractionException
+from bridgic.core.utils._console import printer
+from bridgic.protocols.mcp import (
+    McpServerConnectionStdio,
+    McpServerConnectionManager,
+)
+
+# Create a temporary directory for the CLI MCP server
+temp_dir = os.path.realpath(tempfile.mkdtemp())
+print(f"Using temporary directory: {temp_dir}")
+
+# Create a file with written content for demonstration
+with open(os.path.join(temp_dir, "dream.txt"), "w", encoding="utf-8") as f:
+    f.write("Bridging Logic and Magic")
+
+# Connect to CLI MCP server
+# Note: This requires uvx to be installed (or use npx with @modelcontextprotocol/server-cli)
+cli_connection = McpServerConnectionStdio(
+    name="connection-cli-stdio",
+    command="uvx",
+    args=["cli-mcp-server"],
+    env={
+        "ALLOWED_DIR": temp_dir,
+        "ALLOWED_COMMANDS": "ls,cat,wc,pwd,echo,touch",
+        "ALLOWED_FLAGS": "all",
+        "ALLOW_SHELL_OPERATORS": "true",
+    },
+)
+
+# Register the connection with a dedicated manager
+McpServerConnectionManager.get_instance("terminal-use").register_connection(cli_connection)
+cli_connection.connect()
+
+print(f"✓ Connected to CLI MCP server: {cli_connection.name}\n")
+
+
+class CliAutoma(GraphAutoma):
+    """
+    An interactive CLI automa that supports human-in-the-loop interactions.
+    
+    The automa:
+    - Welcomes the user
+    - Requests commands via interact_with_human()
+    - Executes commands using MCP CLI tools
+    - Supports interrupt-resume cycles for multi-turn interactions
+    - Reuses the same MCP connection across all cycles
+    """
+    
+    @worker(is_start=True)
+    def start(self):
+        """Start the CLI automa and request the first command."""
+        printer.print(f"Welcome to the example CLI Automa.", color="gray")
+        self.ferry_to("human_input")
+
+    @worker()
+    def human_input(self):
+        """
+        Handle human input through interrupt-resume mechanism.
+        
+        - On first run: pauses (raising InteractionException)
+        - On resume: receives feedback (the human command) and continues
+        """
+        event = Event(event_type="get_human_command")
+        feedback: InteractionFeedback = self.interact_with_human(event)
+        human_command = feedback.data
+
+        printer.print(f"> {human_command}")
+
+        if human_command in ["quit", "exit"]:
+            self.ferry_to("end")
+        else:
+            # Generate unique keys for dynamic workers
+            tool_key = f"tool-<{uuid.uuid4().hex[:8]}>"
+            collect_key = f"collect-<{uuid.uuid4().hex[:8]}>"
+
+            async def _collect_command_result(command_result: mcp.types.CallToolResult):
+                """Collect and display the command result, then request next command."""
+                printer.print(f"{command_result.content[0].text.strip()}\n", color="gray")
+                self.ferry_to("human_input")
+
+            # Reuse the same connection across all interrupt-resume cycles
+            real_connection = McpServerConnectionManager.get_connection("connection-cli-stdio")
+
+            # Filter the "run_command" tool spec from cli-mcp-server
+            command_tool = next(t for t in real_connection.list_tools() if t.tool_name == "run_command")
+
+            # Use the tool specification to create worker instance and then add it dynamically
+            self.add_worker(tool_key, command_tool.create_worker())
+            self.add_func_as_worker(collect_key, _collect_command_result, dependencies=[tool_key])
+            self.ferry_to(tool_key, command=human_command)
+
+    @worker(is_output=True)
+    def end(self):
+        """End the CLI automa session."""
+        printer.print(f"See you again.\n", color="gray")
+
+
+async def main():
+    """
+    Main function demonstrating the CliAutoma usage.
+    
+    The lifecycle of an MCP server connection is independent from the execution
+    of an automa. Once a connection is established and managed by a connection
+    manager, it remains open until you close it.
+    """
+    hi_automa = CliAutoma(
+        name="human-interaction-automa",
+        running_options=RunningOptions(debug=False)
+    )
+
+    interaction_id = None
+
+    async def continue_automa(feedback_data=None) -> str:
+        """Helper function to run or resume the automa."""
+        try:
+            await hi_automa.arun(feedback_data=feedback_data)
+        except InteractionException as e:
+            interaction_id = e.interactions[0].interaction_id
+            return interaction_id
+
+    # First run: automa reaches human_input, calls interact_with_human, pauses
+    interaction_id = await continue_automa()
+
+    # Each iteration we send the human command as feedback to resume the execution
+    commands = [
+        "pwd",
+        "ls -l",
+        "wc -l ./dream.txt",
+        "cat ./dream.txt",
+        "exit",
+    ]
+    
+    for command in commands:
+        interaction_feedback = InteractionFeedback(
+            interaction_id=interaction_id,
+            data=command
+        )
+        interaction_id = await continue_automa(interaction_feedback)
+
+    # Close the connection when done
+    cli_connection.close()
+    print(f"✓ Connection closed: {not cli_connection.is_connected}")
+
+
+if __name__ == "__main__":
+    import asyncio
+    asyncio.run(main())
+```
+
+**Execution Result:**
+
+The execution result will be like:
+
+```text
+Using temporary directory: /private/var/folders/9t/5r9fms9s5q33p6xty_0_k1mw0000gn/T/tmptuak4y7n
+✓ Connected to CLI MCP server: connection-cli-stdio
+  Connection status: True
+
+Welcome to the example CLI Automa.
+> pwd
+/private/var/folders/9t/5r9fms9s5q33p6xty_0_k1mw0000gn/T/tmptuak4y7n
+
+> ls -l
+total 8
+-rw-r--r--  1 xushili  staff  24 Jan 28 02:32 dream.txt
+
+> wc -l ./dream.txt
+0 /private/var/folders/9t/5r9fms9s5q33p6xty_0_k1mw0000gn/T/tmptuak4y7n/dream.txt
+
+> cat ./dream.txt
+Bridging Logic and Magic
+
+> exit
+See you again.
+
+✓ Connection closed: True
+```
+
+</details>
 
 ---
 
 ### Example 6: BMI Weight Management Assistant
 
+**Core Features:**
+- ReCentAutoma for goal-oriented autonomous execution
+- Custom tool integration
+- Built-in memory management and goal tracking
+- Multi-step task planning and execution
+
+<details>
+<summary>View Code</summary>
+
+[View full code](https://github.com/bitsky-tech/bridgic-examples/blob/main/agentic/bmi_weight_assistant.py)
+
+```python
+from bridgic.core.automa import RunningOptions
+from bridgic.core.agentic.recent import ReCentAutoma, StopCondition
+
+
+async def calculate_bmi(weight_kg: float, height_m: float) -> str:
+    """
+    Calculate Body Mass Index (BMI) from weight and height.
+
+    Parameters
+    ----------
+    weight_kg : float
+        Weight in kilograms. Must be a positive number.
+    height_m : float
+        Height in meters. Must be a positive number.
+
+    Returns
+    -------
+    str
+        A formatted string containing the BMI value and its interpretation. BMI categories:
+        - Underweight: < 18.5
+        - Normal: 18.5 - 24.9
+        - Overweight: 25 - 29.9
+        - Obese: >= 30
+    """
+    if weight_kg <= 0 or height_m <= 0:
+        return "Error: Weight and height must be positive numbers."
+
+    bmi = weight_kg / (height_m ** 2)
+
+    if bmi < 18.5:
+        category = "Underweight"
+    elif bmi < 25:
+        category = "Normal"
+    elif bmi < 30:
+        category = "Overweight"
+    else:
+        category = "Obese"
+
+    return f"BMI: {bmi:.2f} ({category}). Weight: {weight_kg} kg, Height: {height_m} m."
+
+
+async def main():
+    # Create an agent with the custom tools
+    weight_assistant = ReCentAutoma(
+        llm=llm,
+        tools=[calculate_bmi],
+        stop_condition=StopCondition(max_iteration=5, max_consecutive_no_tool_selected=1),
+        running_options=RunningOptions(debug=False),
+    )
+
+    # Example person data
+    person_weight = 82
+    person_height = 1.70
+    person_name = "John Smith"
+    person_gender = "male"
+
+    result = await weight_assistant.arun(
+        goal=(
+            f"Calculate a person's BMI and provide personalized suggestions for effective weight management."
+            f"\n- Name: {person_name}"
+            f"\n- Gender: {person_gender}"
+            f"\n- Weight: {person_weight} kg"
+            f"\n- Height: {person_height} m"
+        ),
+        guidance=(
+            "First calculate the BMI of the person and then give out a suggestion about the weight management."
+        ),
+    )
+    print(result)
+
+
+if __name__ == "__main__":
+    import asyncio
+    asyncio.run(main())
+```
+
+**Execution Result:**
+
+The execution result will be like:
+
+```text
+### Comprehensive BMI Calculation and Weight Management Suggestions for John Smith
+
+**Personal Information:**
+- **Name:** John Smith
+- **Gender:** Male
+- **Weight:** 82 kg
+- **Height:** 1.7 m
+
+**BMI Calculation:**
+- **BMI Result:** 28.37
+- **BMI Category:** Overweight
+
+**Weight Management Suggestions:**
+To effectively manage weight and improve overall health, here are some personalized suggestions for John Smith:
+
+1. **Dietary Adjustments:**
+   - **Balanced Diet:** Focus on a diet rich in whole foods, including fruits, vegetables, lean proteins, and whole grains. 
+   - **Caloric Deficit:** Aim to consume fewer calories than the body expends to promote weight loss. A modest deficit of 500 calories per day can result in approximately 0.5 kg weight loss per week.
+   - **Hydration:** Increase water intake while reducing sugary drinks and alcohol.
+
+2. **Physical Activity:**
+   - **Regular Exercise:** Aim for at least 150 minutes of moderate-intensity aerobic activity per week, such as brisk walking, cycling, or swimming.
+   - **Strength Training:** Incorporate strength training exercises at least twice a week to build muscle and boost metabolism.
+
+3. **Healthy Lifestyle Choices:**
+   - **Sleep:** Ensure 7-9 hours of quality sleep each night, as inadequate sleep can affect weight management and overall health.
+   - **Stress Management:** Practice stress-reducing techniques such as yoga, meditation, or mindfulness, as stress can lead to unhealthy eating habits.
+
+4. **Regular Monitoring:**
+   - **Track Progress:** Keep a journal of food intake and physical activity to monitor progress and stay accountable.
+   - **Consult a Professional:** Consider working with a registered dietitian or nutritionist for personalized dietary advice and support.
+
+By implementing these suggestions, John Smith can work towards achieving a healthier weight, improving his overall health and well-being.
+```
+
+</details>
+
 ---
 
-### Example 7: Browser Gold Price Agent
+### Example 7: Autonomous Browser Agent for Gold Price Query
+
+**Core Features:**
+- `ReCentAutoma` with Playwright MCP integration for browser automation
+- Goal-oriented task execution with memory management
+- Guidance-enabled control on the behavior of agents
+
+<details>
+<summary>View Code</summary>
+
+[View full code](https://github.com/bitsky-tech/bridgic-examples/blob/main/agentic/browser_gold_price_agent.py)
+
+```python
+import os
+import tempfile
+
+from bridgic.core.automa import RunningOptions
+from bridgic.core.agentic.recent import ReCentAutoma, ReCentMemoryConfig, StopCondition
+from bridgic.protocols.mcp import (
+    McpServerConnectionStdio,
+    McpServerConnectionManager,
+)
+
+
+async def main():
+    """
+    Main function demonstrating browser automation with ReCentAutoma and Playwright MCP.
+    
+    In this example, the agent autonomously uses a browser to navigate to the
+    Hong Kong Gold Exchange website and search for the gold price. The entire
+    execution process is fully recorded during the execution of ReCentAutoma.
+    """
+    # Create a temporary directory for Playwright output (videos, screenshots, etc.)
+    temp_dir = os.path.realpath(tempfile.mkdtemp())
+    print(f"✓ Using temporary directory: {temp_dir}")
+
+    # Connect to Playwright MCP server
+    # Note: This requires Node.js and npx to be installed
+    playwright_connection = McpServerConnectionStdio(
+        name="connection-playwright-stdio",
+        command="npx",
+        args=[
+            "@playwright/mcp@latest",
+            f"--output-dir={temp_dir}",
+            "--viewport-size=1920x1080",
+            "--save-video=1920x1080",
+        ],
+        request_timeout=60,
+    )
+
+    # Register the connection with a dedicated manager
+    # This allows isolation from other MCP connections (e.g., CLI, filesystem)
+    McpServerConnectionManager.get_instance("browser-use").register_connection(playwright_connection)
+
+    # Establish the connection and verify connection and list available tools
+    # Note: registration must be done before calling connect()
+    playwright_connection.connect()
+    print(f"✓ Connected to Playwright MCP server: {playwright_connection.name}")
+    print(f"  Connection status: {playwright_connection.is_connected}")
+
+    # List tools
+    tools = playwright_connection.list_tools()
+    print(f"✓ Found {len(tools)} available browser tools\n")
+
+    # Create a browser automation agent with Playwright MCP tools
+    browser_agent = ReCentAutoma(
+        llm=llm,
+        tools=tools,
+        memory_config=ReCentMemoryConfig(
+            llm=llm,
+            max_node_size=8,
+            max_token_size=1024 * 32,
+        ),
+        stop_condition=StopCondition(max_iteration=20, max_consecutive_no_tool_selected=1),
+        running_options=RunningOptions(debug=False),
+    )
+
+    # Use the agent to find recent gold prices on Hong Kong Gold Exchange website
+    result = await browser_agent.arun(
+        goal=(
+            "Find the recent gold prices on Hong Kong Gold Exchange website."
+        ),
+        guidance=(
+            "Do the following steps one by one:\n"
+            "1. Navigate to https://hkgx.com.hk/en\n"
+            "2. Hover on the 'Market & Data' button to show more button options\n"
+            "3. Click the 'History Price' button to access the historical price page\n"
+            "4. Since the current date was selected, only need to select the option of RMB-denominated kilo gold\n"
+            "5. Click the search button and have a look at the recent gold price trends\n"
+            "6. Close the browser and give out a summary of recent gold price trends\n"
+        ),
+    )
+
+    print("Final Result:\n\n")
+    print(result)
+
+    # Close the connection when done
+    playwright_connection.close()
+    print(f"\n✓ Connection closed: {not playwright_connection.is_connected}")
+
+
+if __name__ == "__main__":
+    import asyncio
+    asyncio.run(main())
+```
+
+**Execution Result:**
+
+The agent autonomously interact with the browser, navigates the Hong Kong Gold Exchange website and search for gold price information. The entire browser automation process is demonstrated as below.
+
+</details>
+
+![Browser Automation Demo](./docs/images/HKGX-browser-screen.gif)
 
 ---
 
