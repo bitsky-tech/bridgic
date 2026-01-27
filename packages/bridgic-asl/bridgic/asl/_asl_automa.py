@@ -498,25 +498,35 @@ class ASLAutoma(GraphAutoma, metaclass=ASLAutomaMeta):
             elif isinstance(element, _Element):
                 if isinstance(worker_material, ASLAutoma):
                     asl_automa_class = type(worker_material)
+                    running_options_callback = (
+                        getattr(worker_material, "running_options", None).callback_builders
+                        if getattr(worker_material, "running_options", None) 
+                        else []
+                    ) + self.running_options.callback_builders
                     worker_material = asl_automa_class(
                         name=getattr(worker_material, "name", None), 
                         thread_pool=getattr(worker_material, "thread_pool", None), 
                         running_options=RunningOptions(
                             debug=self.running_options.debug,
                             verbose=self.running_options.verbose,
-                            callback_builders=getattr(worker_material, "running_options", None).callback_builders + self.running_options.callback_builders,
+                            callback_builders=running_options_callback,
                             model_config=self.running_options.model_config
                         )
                     )
                 elif isinstance(worker_material, GraphAutoma):
                     graph_automa_class = type(worker_material)
+                    running_options_callback = (
+                        getattr(worker_material, "running_options", None).callback_builders
+                        if getattr(worker_material, "running_options", None) 
+                        else []
+                    ) + self.running_options.callback_builders
                     worker_material = graph_automa_class(
                         name=getattr(worker_material, "name", None), 
                         thread_pool=getattr(worker_material, "thread_pool", None), 
                         running_options=RunningOptions(
                             debug=self.running_options.debug,
                             verbose=self.running_options.verbose,
-                            callback_builders=getattr(worker_material, "running_options", None).callback_builders + self.running_options.callback_builders,
+                            callback_builders=running_options_callback,
                             model_config=self.running_options.model_config
                         )
                     )
