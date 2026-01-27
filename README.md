@@ -81,44 +81,167 @@ uv run python -c "from bridgic.core import __version__; print(f'Bridgic version:
 * **Systematic MCP Integration**: [MCP integration](https://docs.bridgic.ai/latest/tutorials/items/protocol_integration/mcp_quick_start.ipynb) transforms tool integration into composition opportunities, allowing you to connect to MCP servers and use their tools as first-class workers
 * **Seamless Enterprise Observability Integration**: Support for integrating the leading observability platforms (like [Opik](https://docs.bridgic.ai/latest/tutorials/items/observability_integration/opik_integration.md), [LangWatch](https://docs.bridgic.ai/latest/tutorials/items/observability_integration/lang_watch_integration.md)) ensures your agentic systems are transparent, debuggable, and optimizable
 
-## 🚀 Code Examples
+## 🚀 Get Started
 
-Here are simple examples demonstrating each key feature.
+This section demonstrates Bridgic's core capabilities through practical examples.
 
-### 0. LLM Setup
+You'll learn how to build an intelligent system with Bridgic, from a simple chatbot to autonomous agentic system. In these cases, you will see features such as worker orchestration, dynamic routing, dynamic topology changing, and parameter resolving.
 
-First of all, create a LLM instance for later use.
+Part-I examples includes both implementations in normal APIs and ASL, showing how ASL simplifies workflow definition with declarative syntax.
+
+### LLM Setup
+
+Before diving into the examples, set up your LLM instance.
 
 ```python
 import os
 from bridgic.llms.openai import OpenAILlm, OpenAIConfiguration
-from bridgic.core.model.types import Message
 
-# Get the API key and model name from environment variables.
 _api_key = os.environ.get("OPENAI_API_KEY")
+_api_base = os.environ.get("OPENAI_API_BASE")
 _model_name = os.environ.get("OPENAI_MODEL_NAME")
 
 llm = OpenAILlm(
     api_key=_api_key,
-    timeout=5,
+    api_base=_api_base,
     configuration=OpenAIConfiguration(model=_model_name),
+    timeout=120,
 )
 ```
 
-### 1. ASL (Agent Structure Language)
+---
 
-Let's start with a simple workflow example that demonstrates the use of [ASL](https://docs.bridgic.ai/latest/tutorials/items/asl/quick_start/): a text generation agent that breaks down a user query into multiple sub-queries and generates answers for each one.
+## Part I: Workflow Orchestration
 
-Prepare two Python functions that respectively execute each step:
+Each example in this part provides two implementations:
+
+- the declarative API approach helps you understand how Bridgic works under the hood
+- the ASL approach shows how it simplifies workflow definition with declarative syntax.
+
+### Example 1: Build Your First Chatbot Using Bridgic
+
+**Core Features:**
+- Declare static dependencies between workflow steps
+- Mark start and output workers within the workflow
+- Reuse already implemented Automa components
+
+<details>
+<summary>Build with Normal API</summary>
+
+[View full code](https://github.com/bitsky-tech/bridgic-examples/blob/main/orchestration/question_solver_bot.py)
+
+```python
+from typing import List, Dict, Optional
+
+from bridgic.core.model.types import Message
+from bridgic.core.automa import GraphAutoma, worker, RunningOptions
+
+class DivideConquerWorkflow(GraphAutoma):
+    """Break down a query into sub-queries and answer each one."""
+    
+    @worker(is_start=True)
+    async def break_down_query(self, user_input: str) -> List[str]:
+        """Break down the query into a list of sub-queries."""
+        llm_response = await llm.achat(
+            messages=[
+                Message.from_text(
+                    text="Break down the query into multiple sub-queries and only return the sub-queries",
+                    role="system"
+                ),
+                Message.from_text(text=user_input, role="user"),
+            ]
+        )
+        return [item.strip() for item in llm_response.message.content.split("\n") if item.strip()]
+
+    @worker(dependencies=["break_down_query"], is_output=True)
+    async def query_answer(self, queries: List[str]) -> Dict[str, str]:
+        """Generate answers for each sub-query."""
+        answers = []
+        for query in queries:
+            response = await llm.achat(
+                messages=[
+                    Message.from_text(text="Answer the given query briefly", role="system"),
+                    Message.from_text(text=query, role="user"),
+                ]
+            )
+            answers.append(response.message.content)
+        
+        return {
+            query: answer
+            for query, answer in zip(queries, answers)
+        }
+
+class QuestionSolverBot(GraphAutoma):
+    """A bot that solves questions by breaking them down and merging answers."""
+    
+    def __init__(self, name: Optional[str] = None, running_options: Optional[RunningOptions] = None):
+        super().__init__(name=name, running_options=running_options)
+        # Add DivideConquerWorkflow as a sub-automa
+        divide_conquer = DivideConquerWorkflow()
+        self.add_worker(
+            key="divide_conquer_workflow",
+            worker=divide_conquer,
+            is_start=True
+        )
+        # Set dependency: merge_answers depends on divide_conquer_workflow
+        self.add_dependency("merge_answers", "divide_conquer_workflow")
+    
+    @worker(is_output=True)
+    async def merge_answers(self, qa_pairs: Dict[str, str], user_input: str) -> str:
+        """Merge individual answers into a unified response."""
+        answers = "\n".join([v for v in qa_pairs.values()])
+        llm_response = await llm.achat(
+            messages=[
+                Message.from_text(text="Answer the question in bullet points.", role="system"),
+                Message.from_text(text=f"Question: {user_input}\nAnswers: {answers}", role="user"),
+            ]
+        )
+        return llm_response.message.content
+
+# Run the chatbot
+async def main():
+    chatbot = QuestionSolverBot(running_options=RunningOptions(debug=False))
+    answer = await chatbot.arun(user_input="When and where was Einstein born?")
+    print(answer)
+
+if __name__ == "__main__":
+    import asyncio
+    asyncio.run(main())
+```
+
+**Execution Result:**
+
+The execution result will be like:
+
+```text
+- Albert Einstein was born on March 14, 1879.
+- He was born in Ulm.
+- Ulm is located in the Kingdom of Württemberg.
+- At the time of his birth, it was part of the German Empire.
+```
+
+</details>
+
+<details>
+<summary>Build in ASL</summary>
+
+[View full code](https://github.com/bitsky-tech/bridgic-examples/blob/main/orchestration/question_solver_bot_asl.py)
 
 ```python
 from typing import List, Dict
+
+from bridgic.core.automa import RunningOptions
+from bridgic.core.model.types import Message
+from bridgic.asl import ASLAutoma, graph
 
 # Break down the query into a list of sub-queries.
 async def break_down_query(user_input: str) -> List[str]:
     llm_response = await llm.achat(
         messages=[
-            Message.from_text(text="Break down the query into multiple sub-queries and only return the sub-queries", role="system"),
+            Message.from_text(
+                text="Break down the query into multiple sub-queries and only return the sub-queries",
+                role="system"
+            ),
             Message.from_text(text=user_input, role="user"),
         ]
     )
@@ -136,82 +259,39 @@ async def query_answer(queries: List[str]) -> Dict[str, str]:
         )
         answers.append(response.message.content)
     
-    res = {
+    return {
         query: answer
         for query, answer in zip(queries, answers)
     }
-    return res
-```
 
-Then, use ASL to orchestrate this workflow:
-
-```python
-from bridgic.asl import ASLAutoma, graph
-
-class SplitSolveAgent(ASLAutoma):
+class DivideConquerWorkflow(ASLAutoma):
     with graph as g:
         a = break_down_query
         b = query_answer
-
         +a >> ~b
-```
 
-**Key points:**
-
-- **`with graph as g:`** - Opens a graph context.
-- **`a = break_down_query`** - Declares a worker named `a` that corresponds to the `break_down_query` function.
-- **`b = query_answer`** - Declares a worker named `b` that corresponds to the `query_answer` function.
-- **`a >> b`** - Defines a dependency: `b` depends on `a`.
-- **`+a`** - Marks `a` as a start worker.
-- **`~b`** - Marks `b` as an output worker.
-
-Create an instance of `SplitSolveAgent` and run it:
-
-```python
-async def main():
-    text_generation_agent = SplitSolveAgent()
-    query = "When and where was Einstein born?"
-    sub_qas = await text_generation_agent.arun(query)
-    print(sub_qas)
-
-if __name__ == "__main__":
-    import asyncio
-    asyncio.run(main())
-```
-
-```
-{'1. What is the date of birth of Albert Einstein?': 'Albert Einstein was born on March 14, 1879.', '2. In which city was Albert Einstein born?': 'Albert Einstein was born in Ulm, in the Kingdom of Württemberg in the German Empire.', '3. In which country was Albert Einstein born?': 'Albert Einstein was born in Germany.'}
-```
-
-Suppose we are going to develop a chatbot that merges these individual answers into a unified response. `SplitSolveAgent` can be reused in ASL:
-
-```python
 async def merge_answers(qa_pairs: Dict[str, str], user_input: str) -> str:
+    """Merge individual answers into a unified response."""
     answers = "\n".join([v for v in qa_pairs.values()])
     llm_response = await llm.achat(
         messages=[
-            Message.from_text(text=f"Merge the given answers into a unified response to the original question", role="system"),
-            Message.from_text(text=f"Query: {user_input}\nAnswers: {answers}", role="user"),
+            Message.from_text(text="Answer the question in bullet points.", role="system"),
+            Message.from_text(text=f"Question: {user_input}\nAnswers: {answers}", role="user"),
         ]
     )
     return llm_response.message.content
 
-# Define the Chatbot agent, reuse `SplitSolveAgent` in a component-oriented fashion.
-class Chatbot(ASLAutoma):
+# Define the QuestionSolverBot agent, reuse DivideConquerWorkflow in a component-oriented fashion.
+class QuestionSolverBot(ASLAutoma):
     with graph as g:
-        a = SplitSolveAgent()
+        a = DivideConquerWorkflow()  # Component reuse
         b = merge_answers
-
         +a >> ~b
-```
 
-Create an instance of `Chatbot` and run it:
-
-```python
+# Run the chatbot
 async def main():
-    chatbot = Chatbot()
-    query = "When and where was Einstein born?"
-    answer = await chatbot.arun(query)
+    chatbot = QuestionSolverBot(running_options=RunningOptions(debug=False))
+    answer = await chatbot.arun(user_input="When and where was Einstein born?")
     print(answer)
 
 if __name__ == "__main__":
@@ -219,218 +299,564 @@ if __name__ == "__main__":
     asyncio.run(main())
 ```
 
-```
-Albert Einstein was born on March 14, 1879, in Ulm, which is located in the Kingdom of Württemberg, within the German Empire.
+**Execution Result:**
+
+The execution result will be like:
+
+```text
+- Albert Einstein was born on March 14, 1879.
+- He was born in Ulm.
+- Ulm is located in the Kingdom of Württemberg.
+- At the time of his birth, it was part of the German Empire.
 ```
 
-Note that the preceding `Chatbot` agent can alternatively be expressed in a nested form in ASL:
+</details>
+
+---
+
+### Example 2: Go Beyond Chatbots by Dynamic Routing
+
+**Core Features:**
+- Runtime conditional branching via `ferry_to` API
+- Intelligent decision making by LLM
+- Multiple output workers (but only one will be)
+
+<details>
+<summary>Build with Normal API</summary>
+
+[View full code](https://github.com/bitsky-tech/bridgic-examples/blob/main/orchestration/dynamic_routing.py)
 
 ```python
-class Chatbot(ASLAutoma):
-    with graph as g:
-        # Define the `split_solve` sub-graph
-        with graph as split_solve:
-            a = break_down_query
-            b = query_answer    
-            +a >> ~b
+from pydantic import BaseModel
+from bridgic.core.model.types import Message
+from bridgic.core.model.protocols import PydanticModel
+from bridgic.core.automa import GraphAutoma, worker, RunningOptions
 
-        end = merge_answers
-        +split_solve >> ~end
+class QueryCategory(BaseModel):
+    category: str
+
+class SimpleAssistant(GraphAutoma):
+    @worker(is_start=True)
+    async def router(self, request: str) -> str:
+        """Classify the request and route to the corresponding handler."""
+        print(f"Routing request: {request}")
+        
+        classification: QueryCategory = await llm.astructured_output(
+            constraint=PydanticModel(model=QueryCategory),
+            messages=[
+                Message.from_text(
+                    text=(
+                        "You are a classifier. Given a single user request, decide whether it is:\n"
+                        "- 'questionn_answer': a factual or explanatory question;\n"
+                        "- 'createive_writing': a creative writing instruction;\n"
+                        "- 'code_writing': a request to write or modify code;\n"
+                        "- 'unknown': anything else.\n"
+                    ),
+                    role="system",
+                ),
+                Message.from_text(text=request, role="user"),
+            ],
+        )
+        
+        category = classification.category
+        if category == "questionn_answer":
+            self.ferry_to("hq", question=request)
+        elif category == "createive_writing":
+            self.ferry_to("creative", instruction=request)
+        elif category == "code_writing":
+            self.ferry_to("code", instruction=request)
+        else:
+            self.ferry_to("unknown", original=request)
+    
+    @worker(key="hq", is_output=True)
+    async def handle_question(self, question: str) -> str:
+        print("❓ QUESTION")
+        llm_response = await llm.achat(
+            messages=[
+                Message.from_text(
+                    text="You answer factual or explanatory questions. Give a concise, accurate answer.",
+                    role="system",
+                ),
+                Message.from_text(text=question, role="user"),
+            ]
+        )
+        return llm_response.message.content
+    
+    @worker(key="creative", is_output=True)
+    async def handle_creative(self, instruction: str) -> str:
+        print("🎨 CREATIVE")
+        llm_response = await llm.achat(
+            messages=[
+                Message.from_text(
+                    text="You are a creative writer. Follow the user's instruction and create vivid, engaging content.",
+                    role="system",
+                ),
+                Message.from_text(text=instruction, role="user"),
+            ]
+        )
+        return llm_response.message.content
+    
+    @worker(key="code", is_output=True)
+    async def handle_code(self, instruction: str) -> str:
+        print("💻 CODE")
+        llm_response = await llm.achat(
+            messages=[
+                Message.from_text(
+                    text="You are a code assistant. Write correct, minimal code that satisfies the user's request.",
+                    role="system",
+                ),
+                Message.from_text(text=instruction, role="user"),
+            ]
+        )
+        return llm_response.message.content
+    
+    @worker(key="unknown", is_output=True)
+    async def handle_unknown(self, original: str) -> str:
+        print("⚪ UNKNOWN")
+        return original
+
+# Run the router
+async def main():
+    router = SimpleAssistant(running_options=RunningOptions(debug=False))
+    response = await router.arun(request="When and where was Einstein born?")
+    print(response)
+
+if __name__ == "__main__":
+    import asyncio
+    asyncio.run(main())
 ```
 
-The code examples above use ASL to define agents. It is worth noting that, besides ASL, Bridgic provides multiple types of programming APIs. An overview of Bridgic’s API hierarchy is illustrated in the figure below. Developers can invoke the core API directly, use the declarative API built on top of it, or create agents using ASL.
+**Execution Result:**
 
-<div align="center">
-    <img src="docs/images/bridgic_api_hierarchy.png" alt="Bridgic API Hierarchy Overview" width="50%"/>
-</div>
+The execution and result will be like:
 
+```text
+================================================================================
+Routing request: When and where was Einstein born?
+❓ QUESTION
+Albert Einstein was born on March 14, 1879, in Ulm, in the Kingdom of Württemberg, German Empire.
 
-In all subsequent examples in this README, we consistently use ASL to present the code. If you are interested in defining these examples using the declarative API, please refer to [here](docs/auxiliaries/declarative_api_examples.md).
+================================================================================
+Routing request: Create a one-sentence poem about the spring season.
+🎨 CREATIVE
+In a gentle whisper of blooms and dew, spring unfurls like laughter across the waking earth.
 
-### 2. Dynamic Routing
+================================================================================
+Routing request: Write a shell command to list all files in /bin directory.
+💻 CODE
+```sh
+ls /bin
+```
 
-The `ferry_to()` API enables an automa to dynamically decide which worker should run next, allowing the workflow to adapt its execution path based on runtime conditions. This capability works hand in hand with static dependency declarations, making the execution process much more adaptive and intelligent. With [dynamic routing](https://docs.bridgic.ai/latest/tutorials/items/core_mechanism/dynamic_routing/) powered by `ferry_to()`, you can easily build agentic systems that adjust their behavior at runtime.
+</details>
+
+<details>
+<summary>Build in ASL</summary>
+
+[View full code](https://github.com/bitsky-tech/bridgic-examples/blob/main/orchestration/dynamic_routing_asl.py)
 
 ```python
+from pydantic import BaseModel
+from bridgic.core.model.types import Message
+from bridgic.core.model.protocols import PydanticModel
 from bridgic.core.automa import GraphAutoma
 from bridgic.core.automa.args import System
 from bridgic.asl import ASLAutoma, graph
 
-async def routing_request(
-    request: str,
-    automa: GraphAutoma = System("automa"),
-) -> str:
-    print(f"Routing request: {request}")
-    if "?" in request:  # Route using a simple rule that checks for "?"
-        automa.ferry_to("hq", question=request)
-    else:
-        automa.ferry_to("hg", question=request)
+class QueryCategory(BaseModel):
+    category: str
 
 async def handle_question(question: str) -> str:
-    print("❓ QUESTION: Processing question")
+    print("❓ QUESTION")
     llm_response = await llm.achat(
         messages=[
-            Message.from_text(text="You are a helpful assistant", role="system"),
+            Message.from_text(
+                text="You answer factual or explanatory questions. Give a concise, accurate answer.",
+                role="system",
+            ),
             Message.from_text(text=question, role="user"),
         ]
     )
     return llm_response.message.content
 
-async def handle_general(question: str) -> str:
-    print("📝 GENERAL: Processing general input")
+async def handle_creative(instruction: str) -> str:
+    print("🎨 CREATIVE")
     llm_response = await llm.achat(
         messages=[
-            Message.from_text(text="Carry out the user's instructions faithfully and briefly", role="system"),
-            Message.from_text(text=question, role="user"),
+            Message.from_text(
+                text="You are a creative writer. Follow the user's instruction and create vivid, engaging content.",
+                role="system",
+            ),
+            Message.from_text(text=instruction, role="user"),
         ]
     )
     return llm_response.message.content
 
-class SimpleRouter(ASLAutoma):
+async def handle_code(instruction: str) -> str:
+    print("💻 CODE")
+    llm_response = await llm.achat(
+        messages=[
+            Message.from_text(
+                text="You are a code assistant. Write correct, minimal code that satisfies the user's request.",
+                role="system",
+            ),
+            Message.from_text(text=instruction, role="user"),
+        ]
+    )
+    return llm_response.message.content
+
+async def handle_unknown(original: str) -> str:
+    print("⚪ UNKNOWN")
+    return original
+
+async def router(
+    request: str,
+    automa: GraphAutoma = System("automa")
+) -> str:
+    """Classify the request and route to the corresponding handler."""
+    print(f"Routing request: {request}")
+    
+    classification: QueryCategory = await llm.astructured_output(
+        constraint=PydanticModel(model=QueryCategory),
+        messages=[
+            Message.from_text(
+                text=(
+                    "You are a classifier. Given a single user request, decide whether it is:\n"
+                    "- 'questionn_answer': a factual or explanatory question;\n"
+                    "- 'createive_writing': a creative writing instruction;\n"
+                    "- 'code_writing': a request to write or modify code;\n"
+                    "- 'unknown': anything else.\n"
+                ),
+                role="system",
+            ),
+            Message.from_text(text=request, role="user"),
+        ],
+    )
+    
+    category = classification.category
+    if category == "questionn_answer":
+        automa.ferry_to("hq", question=request)
+    elif category == "createive_writing":
+        automa.ferry_to("creative", instruction=request)
+    elif category == "code_writing":
+        automa.ferry_to("code", instruction=request)
+    else:
+        automa.ferry_to("unknown", original=request)
+
+class SimpleAssistant(ASLAutoma):
     with graph as g:
-        start = routing_request
+        start = router
         hq = handle_question
-        hg = handle_general
+        creative = handle_creative
+        code = handle_code
+        unknown = handle_unknown
+        
+        +start, ~hq, ~creative, ~code, ~unknown
 
-        +start, ~hq, ~hg
-```
-
-Create an instance of `SimpleRouter` and run it:
-
-```python
+# Run the router
 async def main():
-    router = SimpleRouter()
-    test_requests = [
-        "When and where was Einstein born?",
-        "Create a poem about love."
-    ]
-    for request in test_requests:
-        print(f"\n--- Processing: {request} ---")
-        response = await router.arun(request=request)
-        print(f"--- Response: \n{response}")
+    router = SimpleAssistant()
+    response = await router.arun(request="When and where was Einstein born?")
+    print(response)
 
 if __name__ == "__main__":
     import asyncio
     asyncio.run(main())
 ```
 
-```
---- Processing: When and where was Einstein born? ---
+**Execution Result:**
+
+```text
+================================================================================
 Routing request: When and where was Einstein born?
-❓ QUESTION: Processing question
---- Response: 
-Albert Einstein was born on March 14, 1879, in the city of Ulm, in the Kingdom of Württemberg in the German Empire.
+❓ QUESTION
+Albert Einstein was born on March 14, 1879, in Ulm, in the Kingdom of Württemberg, German Empire.
 
---- Processing: Create a poem about love. ---
-Routing request: Create a poem about love.
-📝 GENERAL: Processing general input
---- Response: 
-In whispers soft as twilight's breeze,  
-Two souls entwined, a dance with ease.  
-Hearts beat in rhythm, a timeless song,  
-In love's embrace, where we belong.  
-...
+================================================================================
+Routing request: Create a one-sentence poem about the spring season.
+🎨 CREATIVE
+In a gentle whisper of blooms and dew, spring unfurls like laughter across the waking earth.
+
+================================================================================
+Routing request: Write a shell command to list all files in /bin directory.
+💻 CODE
+```sh
+ls /bin
 ```
 
-The smart router example showcases how `ferry_to()` enables conditional execution paths. The system analyzes each request and dynamically chooses the appropriate handler, demonstrating how agents can make dynamic routing decisions based on the nature of incoming data.
+</details>
 
-### 3. Dynamic Topology
+---
 
-Bridgic introduces a novel orchestration model built on a DDG ([Dynamic Directed Graph](https://docs.bridgic.ai/latest/tutorials/items/core_mechanism/dynamic_topology/)), in which the graph topology can be modified at runtime. A typical use case is dynamically instantiating workers based on the number of items in a list returned by a previous task. Each item requires its own handler, but the number of required handlers is not known until runtime.
+### Example 3: Let Runtime Decision Making Affect the Topology
 
-ASL provides the ability to declare such dynamic behaviors using lambda functions. Here's an example:
+**Core Features:**
+- Runtime graph topology changing
+- Dynamic worker instantiation
+- Result aggregation from dynamic nodes by `ArgsMappingRule`
+
+<details>
+<summary>Build with Normal API</summary>
+
+[View full code](https://github.com/bitsky-tech/bridgic-examples/blob/main/orchestration/dynamic_topology.py)
 
 ```python
 from typing import List
+
+from bridgic.core.automa import GraphAutoma, worker, RunningOptions
+from bridgic.core.automa.args import ArgsMappingRule
+
+class DynamicGraph(GraphAutoma):
+    """A dynamic graph that creates handlers based on the number of tasks."""
+    
+    @worker(is_start=True)
+    async def produce_task(self, user_input: int) -> List[int]:
+        """Produce a list of tasks and dynamically create handlers for each task."""
+        tasks = [i for i in range(user_input)]
+        handler_keys = []
+        
+        # Dynamically create handlers for each task
+        for task in tasks:
+            handler_key = f"handler_{task}"
+            self.add_func_as_worker(
+                key=handler_key,
+                func=self.task_handler
+            )
+            # Use ferry_to to trigger each handler with its corresponding task
+            self.ferry_to(handler_key, sub_task=task)
+            handler_keys.append(handler_key)
+        
+        # Create collector that depends on all dynamic handlers
+        self.add_func_as_worker(
+            key="collect",
+            func=self.collect,
+            dependencies=handler_keys,
+            args_mapping_rule=ArgsMappingRule.MERGE,
+            is_output=True
+        )
+        return tasks
+    
+    async def task_handler(self, sub_task: int) -> int:
+        """Handle a single sub-task."""
+        res = sub_task + 1
+        return res
+    
+    async def collect(self, res_list: List[int]) -> List[int]:
+        """Collect results from all task handlers."""
+        return res_list
+
+# Run the dynamic graph
+async def main():
+    dynamic_graph = DynamicGraph(running_options=RunningOptions(debug=False))
+    result = await dynamic_graph.arun(user_input=3)
+    print(f"Result: {result}")
+
+if __name__ == "__main__":
+    import asyncio
+    asyncio.run(main())
+```
+
+**Execution Result:**
+
+```text
+Result: [1, 2, 3]
+```
+
+</details>
+
+<details>
+<summary>Build in ASL</summary>
+
+[View full code](https://github.com/bitsky-tech/bridgic-examples/blob/main/orchestration/dynamic_topology_asl.py)
+
+```python
+from typing import List
+
 from bridgic.core.automa.args import ResultDispatchingRule
 from bridgic.asl import ASLAutoma, graph, concurrent, Settings, ASLField
 
-
 async def produce_task(user_input: int) -> List[int]:
+    """Produce a list of tasks based on user input."""
     tasks = [i for i in range(user_input)]
     return tasks
 
 async def task_handler(sub_task: int) -> int:
+    """Handle a single sub-task."""
     res = sub_task + 1
     return res
-
 
 class DynamicGraph(ASLAutoma):
     with graph(user_input=ASLField(type=int)) as g:
         producer = produce_task
-
-        with concurrent(tasks = ASLField(type=list, dispatching_rule=ResultDispatchingRule.IN_ORDER)) as c:
+        
+        with concurrent(
+            tasks=ASLField(
+                type=list,
+                dispatching_rule=ResultDispatchingRule.IN_ORDER
+            )
+        ) as c:
+            # Lambda expression dynamically creates handlers for each task
             dynamic_handler = lambda tasks: (
                 task_handler *Settings(key=f"handler_{task}")
                 for task in tasks
             )
-
+        
         +producer >> ~c
-```
 
-In this example, the `producer` worker generates a dynamic list based on `user_input`. Each element in the list is assigned to a `task_handler` worker for processing. A `concurrent` container is used to represent a graph structure in which all internal workers execute concurrently.
-
-<div align="center">
-    <img src="docs/docs/tutorials/imgs/dynamic_topo.png" alt="Dynamic Topology Example" width="35%"/>
-</div>
-
-Create an instance of `DynamicGraph` and run it:
-
-```python
+# Run the dynamic graph
 async def main():
     dynamic_graph = DynamicGraph()
     result = await dynamic_graph.arun(user_input=3)
-    print(f"--- Result: \n{result}")
+    print(f"Result: {result}")
 
 if __name__ == "__main__":
     import asyncio
     asyncio.run(main())
 ```
 
-```
---- Result: 
-[1, 2, 3]
+**Execution Result:**
+
+```text
+Result: [1, 2, 3]
 ```
 
-### 4. Parameter Resolving
+</details>
 
-The following example demonstrates the capability of [parameter resolving](https://docs.bridgic.ai/latest/tutorials/items/core_mechanism/parameter_resolving/). Suppose we are building a RAG-based question-answering system: the user input is processed through two concurrent retrieval paths—keyword search and semantic search. Each path retrieves a set of chunks, which are then merged and used to generate a retrieval-augmented response.
+---
+
+### Example 4: Simplify Input Acquisition by Parameter Resolving Mechanism
+
+**Core Features:**
+- Arguments mapping and merging
+- Parameter injection with `From()`
+- Concurrent execution result aggregation
+
+<details>
+<summary>Build with Normal API</summary>
+
+[View full code](https://github.com/bitsky-tech/bridgic-examples/blob/main/orchestration/parameter_resolving.py)
 
 ```python
-
 from typing import List, Tuple
+
+from bridgic.core.model.types import Message
+from bridgic.core.automa import GraphAutoma, worker, RunningOptions
+from bridgic.core.automa.args import ArgsMappingRule, From
+
+class RAGProcessor(GraphAutoma):
+    """A RAG processor that uses keyword and semantic search, then synthesizes the results."""
+    
+    @worker(is_start=True)
+    async def pre_process(self, user_input: str) -> str:
+        """Pre-process the user input."""
+        return user_input.strip()
+    
+    @worker(dependencies=["pre_process"])
+    async def keyword_search(self, query: str) -> List[str]:
+        """Simulate keyword search by returning a fixed list of chunks."""
+        chunks = [
+            "Albert Einstein was born on March 14, 1879, in Ulm, in the Kingdom of Württemberg, Germany.",
+            "Einstein was born into a secular Jewish family.",
+            "Einstein had one sister, Maja, who was born two years after him.",
+        ]
+        return chunks
+    
+    @worker(dependencies=["pre_process"])
+    async def semantic_search(self, query: str) -> List[str]:
+        """Simulate semantic search by returning a fixed list of chunks."""
+        chunks = [
+            "Albert Einstein was born on March 14, 1879, in Ulm, in the Kingdom of Württemberg in the German Empire.",
+            "Shortly after his birth, his family moved to Munich, where he spent most of his childhood.",
+            "Einstein excelled at physics and mathematics from an early age.",
+        ]
+        return chunks
+    
+    @worker(
+        dependencies=["keyword_search", "semantic_search"],
+        args_mapping_rule=ArgsMappingRule.MERGE,
+        is_output=True
+    )
+    async def synthesize_response(
+        self,
+        search_results: Tuple[List[str], List[str]],
+        query: str = From("pre_process")  # Inject from pre_process
+    ) -> str:
+        """Synthesize a response from the search results."""
+        chunks_by_keyword, chunks_by_semantic = search_results
+        all_chunks = chunks_by_keyword + chunks_by_semantic
+        prompt = f"{query}\n---\nAnswer the above question based on the following references.\n{all_chunks}"
+        llm_response = await llm.achat(
+            messages=[
+                Message.from_text(text="You are a helpful assistant", role="system"),
+                Message.from_text(text=prompt, role="user"),
+            ]
+        )
+        return llm_response.message.content
+
+# Run the RAG processor
+async def main():
+    rag = RAGProcessor(running_options=RunningOptions(debug=False))
+    result = await rag.arun(user_input="When and where was Einstein born?")
+    print(result)
+
+if __name__ == "__main__":
+    import asyncio
+    asyncio.run(main())
+```
+
+**Execution Result:**
+
+The answer will be like:
+
+```text
+Albert Einstein was born on March 14, 1879, in Ulm, in the Kingdom of Württemberg, Germany (now part of modern Germany).
+```
+
+</details>
+
+<details>
+<summary>Build in ASL</summary>
+
+[View full code](https://github.com/bitsky-tech/bridgic-examples/blob/main/orchestration/parameter_resolving_asl.py)
+
+```python
+from typing import List, Tuple
+
+from bridgic.core.model.types import Message
 from bridgic.asl import ASLAutoma, graph, Settings
+from bridgic.core.automa import RunningOptions
 from bridgic.core.automa.args import ArgsMappingRule, From
 
 async def pre_process(user_input: str) -> str:
+    """Pre-process the user input."""
     return user_input.strip()
 
 async def keyword_search(query: str) -> List[str]:
-    # Simulate keyword search by returning a fixed list of chunks.
+    """Simulate keyword search by returning a fixed list of chunks."""
     chunks = [
-        "Albert Einstein was born on March 14, 1879, in Ulm, in the Kingdom of Württemberg, Germany  (now simply part of modern Germany).",
-        "Einstein was born into a secular Jewish family Biography.",
+        "Albert Einstein was born on March 14, 1879, in Ulm, in the Kingdom of Württemberg, Germany.",
+        "Einstein was born into a secular Jewish family.",
         "Einstein had one sister, Maja, who was born two years after him.",
     ]
     return chunks
 
 async def semantic_search(query: str) -> List[str]:
-    # Simulate semantic search by returning a fixed list of chunks.
+    """Simulate semantic search by returning a fixed list of chunks."""
     chunks = [
-        "Albert Einstein was born on March 14, 1879, in Ulm, in the Kingdom of Württemberg in the German Empire (now part of Germany).",
+        "Albert Einstein was born on March 14, 1879, in Ulm, in the Kingdom of Württemberg in the German Empire.",
         "Shortly after his birth, his family moved to Munich, where he spent most of his childhood.",
-        "Einstein excelled at physics and mathematics from an early age, teaching himself algebra, calculus, and Euclidean geometry by age twelve.",
+        "Einstein excelled at physics and mathematics from an early age.",
     ]
     return chunks
 
 async def synthesize_response(
     search_results: Tuple[List[str], List[str]], 
-    query: str = From("pre_process")
+    query: str = From("pre_process")  # Inject from pre_process
 ) -> str:
+    """Synthesize a response from the search results."""
     chunks_by_keyword, chunks_by_semantic = search_results
     all_chunks = chunks_by_keyword + chunks_by_semantic
     prompt = f"{query}\n---\nAnswer the above question based on the following references.\n{all_chunks}"
-    print(f"{prompt}\n------------------\n")
     llm_response = await llm.achat(
         messages=[
             Message.from_text(text="You are a helpful assistant", role="system"),
@@ -444,148 +870,50 @@ class RAGProcessor(ASLAutoma):
         pre_process = pre_process
         k = keyword_search
         s = semantic_search
-        output = synthesize_response *Settings(args_mapping_rule=ArgsMappingRule.MERGE)
+        output = synthesize_response *Settings(
+            args_mapping_rule=ArgsMappingRule.MERGE
+        )
         
         +pre_process >> (k & s) >> ~output
-```
 
-<div align="center">
-    <img src="docs/images/parameter_resolving_demo.png" alt="Bridgic Prameter Resolving Example" width="50%"/>
-</div>
-
-
-**Key points:**
-
-- **`query` argument** - The `query` arguments of `keyword_search` and `semantic_search` are received from the result of `pre_process` through the **Arguments Mapping** mechanism.
-- **`*Settings(args_mapping_rule=ArgsMappingRule.MERGE)`** - the `MERGE` mode of the **Arguments Mapping** rule is specified, which makes the results of `keyword_search` and `semantic_search` merged into the `search_results` argument of `synthesize_response`.
-- **`From("pre_process")`** - Injects the result of `pre_process` into the `query` argument of `synthesize_response`.
-
-Create an instance of `RAGProcessor` and run it:
-
-```python
+# Run the RAG processor
 async def main():
-    rag = RAGProcessor()
+    rag = RAGProcessor(running_options=RunningOptions(debug=False))
     result = await rag.arun(user_input="When and where was Einstein born?")
-    print(f"Final response: \n{result}")
+    print(result)
 
 if __name__ == "__main__":
     import asyncio
     asyncio.run(main())
 ```
 
-```
-When and where was Einstein born?
----
-Answer the above question based on the following references.
-['Albert Einstein was born on March 14, 1879, in Ulm, in the Kingdom of Württemberg, Germany  (now simply part of modern Germany).', 'Einstein was born into a secular Jewish family Biography.', 'Einstein had one sister, Maja, who was born two years after him.', 'Albert Einstein was born on March 14, 1879, in Ulm, in the Kingdom of Württemberg in the German Empire (now part of Germany).', 'Shortly after his birth, his family moved to Munich, where he spent most of his childhood.', 'Einstein excelled at physics and mathematics from an early age, teaching himself algebra, calculus, and Euclidean geometry by age twelve.']
-------------------
+**Execution Result:**
 
-Final response: 
+The answer will be like:
+
+```text
 Albert Einstein was born on March 14, 1879, in Ulm, in the Kingdom of Württemberg, Germany (now part of modern Germany).
 ```
 
-### 5. ReAct in Bridgic
+</details>
 
-```python
-from bridgic.core.agentic.recent import ReCentAutoma
+---
 
-async def get_weather(
-    city: str,
-) -> str:
-    """
-    Retrieves current weather for the given city.
+## Part II: Building Complex Agentic Systems
 
-    Parameters
-    ----------
-    city : str
-        The city to get the weather of, e.g. New York.
-    
-    Returns
-    -------
-    str
-        The weather for the given city.
-    """
-    # Mock the weather API call.
-    return f"The weather in {city} is sunny today and the temperature is 20 degrees Celsius."
+These examples demonstrate how to combine multiple Bridgic features to build production-ready agentic systems.
 
-async def main():
-    react = ReCentAutoma(
-        llm=llm,
-        tools=[get_weather],
-    )
-    result = await react.arun(goal="Get the weather in Tokyo.")
-    print(f"Final response: \n{result}")
+### Example 5: Interactive CLI Automa with MCP Integration
 
-if __name__ == "__main__":
-    import asyncio
-    asyncio.run(main())
-```
+---
 
-```
-Final response: 
-The weather in Tokyo is sunny today, with a temperature of 20 degrees Celsius.
-```
+### Example 6: BMI Weight Management Assistant
 
-In Bridgic, an automa can be resued as a tool by [`ReCentAutoma`](https://docs.bridgic.ai/latest/reference/bridgic-core/bridgic/core/agentic/recent/#bridgic.core.agentic.recent.ReCentAutoma), in a component-oriented fashion.
+---
 
-```python
-from bridgic.asl import ASLAutoma, graph
-from bridgic.core.agentic.tool_specs import as_tool
-from bridgic.core.agentic.recent import ReCentAutoma
+### Example 7: Browser Gold Price Agent
 
-def multiply(x: int, y: int) -> int:
-    """
-    This function is used to multiply two numbers.
-
-    Parameters
-    ----------
-    x : int
-        The first number to multiply
-    y : int
-        The second number to multiply
-
-    Returns
-    -------
-    int
-        The product of the two numbers
-    """
-    return x * y
-
-@as_tool(multiply)
-class MultiplyAutoma(ASLAutoma):
-    with graph as g:
-        start = multiply
-        +start, ~start
-
-async def main():
-    react = ReCentAutoma(
-        llm=llm,
-        tools=[MultiplyAutoma],
-    )
-    result = await react.arun(goal="Get the result of 235 * 4689.")
-    print(f"Final response: \n{result}")
-
-if __name__ == "__main__":
-    import asyncio
-    asyncio.run(main())
-```
-
-```
-Final response: 
-The result of multiplying 235 by 4689 is 1,101,915.
-```
-
-## 🤖 Building Complex Agentic System
-
-By combining these features, you can build a Bridgic-style agentic system that can:
-
-- **Execute well-defined workflows** through static dependencies (ASL or `@worker`);
-- **Adapt intelligently** to different situations according to runtime conditions (`ferry_to` or Dynamic Topology);
-- **Process complex data** across multiple steps.
-
-Whether you're building simple workflows or complex autonomous agents, Bridgic provides the dev tools to define your logic clearly while retaining the flexibility required for intelligent, adaptive behavior.
-
-More features will be added in the near future. :)
+---
 
 ## 📚 Documents
 
@@ -593,9 +921,13 @@ For more about development skills of Bridgic, see:
 
 - [Tutorials](https://docs.bridgic.ai/latest/tutorials/)
 - [Understanding](https://docs.bridgic.ai/latest/understanding/introduction/)
-- [ASL Syntax Learning](https://docs.bridgic.ai/latest/tutorials/items/asl/quick_start/)
+- [Learning ASL](https://docs.bridgic.ai/latest/tutorials/items/asl/quick_start/)
 - [Model Integration](https://docs.bridgic.ai/latest/tutorials/items/model_integration/)
-- [Observability](https://docs.bridgic.ai/latest/tutorials/items/observability/)
+- [Protocol Integration](https://docs.bridgic.ai/latest/tutorials/items/protocol_integration/)
+- [Observability Integration](https://docs.bridgic.ai/latest/tutorials/items/observability/)
+
+Want to explore more examples? Check out the [bridgic-examples](https://github.com/bitsky-tech/bridgic-examples) repository.
+
 
 ## 📄 License
 
