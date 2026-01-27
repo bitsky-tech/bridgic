@@ -16,7 +16,7 @@ By fundamentally rethinking this relationship, Bridgic establishes a unified orc
 <div align="center">
 
 ```mermaid
-graph LR
+graph
     subgraph " "
         A["Deterministic Workflows<br/>(Logic)"]
         B["Autonomous Agents<br/>(Magic)"]
@@ -30,6 +30,26 @@ graph LR
 ```
 
 </div>
+
+
+## 📦 Installation
+
+Bridgic requires Python 3.9 or newer.
+
+### Using pip
+
+```bash
+pip install bridgic
+python -c "from bridgic.core import __version__; print(f'Bridgic version: {__version__}')"
+```
+
+### Using uv
+
+```bash
+uv add bridgic
+uv run python -c "from bridgic.core import __version__; print(f'Bridgic version: {__version__}')"
+```
+
 
 ## 🔗 Key Features
 
@@ -57,39 +77,9 @@ graph LR
 
 ### 🔌 Seamless Third-Party Integration
 
-* **Technology-neutral Model Integration**: Seamlessly integrate with any LLM provider through a unified interface. See [Model Integration](https://docs.bridgic.ai/latest/tutorials/items/model_integration/) for details
-* **Systematic MCP Integration**: Transform tool integration into composition opportunities through [seamless Model Context Protocol integration](https://docs.bridgic.ai/latest/tutorials/items/protocol_integration/mcp_quick_start.ipynb), allowing you to connect to MCP servers and use their tools as first-class workers
-* **Seamless Enterprise Observability Integration**: Built-in support for leading observability platforms ([Opik](https://docs.bridgic.ai/latest/tutorials/items/observability_integration/opik_integration.md), [LangWatch](https://docs.bridgic.ai/latest/tutorials/items/observability_integration/lang_watch_integration.md)) ensures your agentic systems are transparent, debuggable, and optimizable
-
-## 📦 Installation
-
-Bridgic requires Python 3.9 or newer. Make sure your environment meets this requirement before installing.
-
-=== "pip"
-
-    ```bash
-    pip install bridgic
-    ```
-
-=== "uv"
-
-    ```bash
-    uv add bridgic
-    ```
-
-After installation, verify that Bridgic is installed correctly:
-
-=== "pip"
-
-    ```bash
-    python -c "from bridgic.core import __version__; print(f'Bridgic version: {__version__}')"
-    ```
-
-=== "uv"
-
-    ```bash
-    uv run python -c "from bridgic.core import __version__; print(f'Bridgic version: {__version__}')"
-    ```
+* **Technology-neutral Model Integration**: [Model integration](https://docs.bridgic.ai/latest/tutorials/items/model_integration/) allows seamlessly integration with any LLM provider through a unified abstraction
+* **Systematic MCP Integration**: [MCP integration](https://docs.bridgic.ai/latest/tutorials/items/protocol_integration/mcp_quick_start.ipynb) transforms tool integration into composition opportunities, allowing you to connect to MCP servers and use their tools as first-class workers
+* **Seamless Enterprise Observability Integration**: Support for integrating the leading observability platforms (like [Opik](https://docs.bridgic.ai/latest/tutorials/items/observability_integration/opik_integration.md), [LangWatch](https://docs.bridgic.ai/latest/tutorials/items/observability_integration/lang_watch_integration.md)) ensures your agentic systems are transparent, debuggable, and optimizable
 
 ## 🚀 Code Examples
 
