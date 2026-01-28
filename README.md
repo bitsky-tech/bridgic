@@ -22,8 +22,8 @@ graph
         B["Autonomous Agents<br/>(Magic)"]
     end
     
-    A ----> B
-    B ----> A
+    A ---> B
+    B ---> A
     
     style A fill:#f9f9f9,stroke:#333,stroke-width:2px
     style B fill:#f9f9f9,stroke:#333,stroke-width:2px
@@ -909,7 +909,7 @@ Albert Einstein was born on March 14, 1879, in Ulm, in the Kingdom of Württembe
 
 The examples in this part demonstrate how to develop more complex intelligent systems in a relaxed and natural way, using Bridgic's powerful mechanisms and components. With the underlying unified DDG runtime model, powerful third-party integrations, and appropriate programming techniques, you can easily build more complex workflows and agents.
 
-### Example 5: Interactive CLI Automa with MCP Integration
+### Example 5: Interactive CLI with MCP Integration
 
 **Core Features:**
 - Human-in-the-loop interactions with interrupt-resume mechanism
@@ -1376,6 +1376,13 @@ For more about development skills of Bridgic, see:
 Want to explore more examples? Check out the [bridgic-examples](https://github.com/bitsky-tech/bridgic-examples) repository.
 
 
+## 👥 Community
+
+Join our WeChat group to connect with other developers and get support:
+
+<img src="./docs/images/WeChat-Group-QR.png" alt="WeChat Group QR Code" width="180"/>
+
+
 ## 📄 License
 
 This repository is licensed under the [MIT License](/LICENSE).
@@ -1383,4 +1390,4 @@ This repository is licensed under the [MIT License](/LICENSE).
 
 ## 🤝 Contributing
 
-For contribution guidelines and instructions, please see [CONTRIBUTING](/CONTRIBUTING.md).
+Feel free to report bugs or submit feature requests on the [Issues Page](https://github.com/bitsky-tech/bridgic/issues). If you are interested in contributing, check out [CONTRIBUTING](/CONTRIBUTING.md) for information and guidelines.
