@@ -375,10 +375,11 @@ class ASLAutoma(GraphAutoma, metaclass=ASLAutomaMeta):
         running_options : RunningOptions, optional
             The running options for the automa. If None, a default running options will be used.
         """
+        self.running_options = running_options or RunningOptions()
         super().__init__(name=name, thread_pool=thread_pool, running_options=running_options)
         self._dynamic_workers = {}
         if not self._top_canvas:
-            self.automa = GraphAutoma(name=name, thread_pool=thread_pool, running_options=running_options)
+            self.automa = None
         else:
             top_canvas = self._top_canvas[-1]
             self.automa: GraphAutoma = self._build_graph(top_canvas)
@@ -456,7 +457,13 @@ class ASLAutoma(GraphAutoma, metaclass=ASLAutomaMeta):
                 self._dynamic_workers[parent_key][current_canvas_key].append(element)
             
         # Make the automa.
-        canvas.make_automa(running_options=RunningOptions(callback_builders=running_options_callback))
+        
+        canvas.make_automa(running_options=RunningOptions(
+            debug=self.running_options.debug,
+            verbose=self.running_options.verbose,
+            callback_builders=self.running_options.callback_builders + running_options_callback,
+            model_config=self.running_options.model_config
+        ))
         automa = canvas.worker_material
         if canvas.is_top_level():
             params_data = canvas.worker_material.get_input_param_names()
@@ -491,17 +498,37 @@ class ASLAutoma(GraphAutoma, metaclass=ASLAutomaMeta):
             elif isinstance(element, _Element):
                 if isinstance(worker_material, ASLAutoma):
                     asl_automa_class = type(worker_material)
+                    running_options_callback = (
+                        getattr(worker_material, "running_options", None).callback_builders
+                        if getattr(worker_material, "running_options", None) 
+                        else []
+                    ) + self.running_options.callback_builders
                     worker_material = asl_automa_class(
                         name=getattr(worker_material, "name", None), 
                         thread_pool=getattr(worker_material, "thread_pool", None), 
-                        running_options=getattr(worker_material, "running_options", None)
+                        running_options=RunningOptions(
+                            debug=self.running_options.debug,
+                            verbose=self.running_options.verbose,
+                            callback_builders=running_options_callback,
+                            model_config=self.running_options.model_config
+                        )
                     )
                 elif isinstance(worker_material, GraphAutoma):
                     graph_automa_class = type(worker_material)
+                    running_options_callback = (
+                        getattr(worker_material, "running_options", None).callback_builders
+                        if getattr(worker_material, "running_options", None) 
+                        else []
+                    ) + self.running_options.callback_builders
                     worker_material = graph_automa_class(
                         name=getattr(worker_material, "name", None), 
                         thread_pool=getattr(worker_material, "thread_pool", None), 
-                        running_options=getattr(worker_material, "running_options", None)
+                        running_options=RunningOptions(
+                            debug=self.running_options.debug,
+                            verbose=self.running_options.verbose,
+                            callback_builders=running_options_callback,
+                            model_config=self.running_options.model_config
+                        )
                     )
                 elif isinstance(worker_material, Worker):
                     worker_material = _copy_worker_safely(worker_material)
@@ -637,7 +664,7 @@ class ASLAutoma(GraphAutoma, metaclass=ASLAutomaMeta):
             The result of the automa execution.
         """
         if not self.automa:
-            return 
+            return super().arun(*args, feedback_data=feedback_data, **kwargs)
 
         res = await self.automa.arun(*args, feedback_data=feedback_data, **kwargs)
         return res
