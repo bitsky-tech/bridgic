@@ -7,32 +7,38 @@ edit_uri: edit/main/docs/docs/
 
 nav:
   - Home: index.md
-  - Get Started:
-    - Installation: tutorials/installation.md
-    - Tutorials:
-      - Tutorials: tutorials/index.md
-      - Quick Start: tutorials/items/quick_start/quick_start.ipynb
-      - Core Mechanism: 
-        - Core Mechanism: tutorials/items/core_mechanism/index.md
-        - Concurrency Mode: tutorials/items/core_mechanism/concurrency_mode.ipynb
-        - Parameter Resolving: tutorials/items/core_mechanism/parameter_resolving.ipynb
-        - Dynamic Routing: tutorials/items/core_mechanism/dynamic_routing.ipynb
-        - Dynamic Topology: tutorials/items/core_mechanism/dynamic_topology.ipynb
-        - Human in the loop: tutorials/items/core_mechanism/human_in_the_loop.ipynb
-        - Worker Callback: tutorials/items/core_mechanism/worker_callback.ipynb
-        - Modularity: tutorials/items/core_mechanism/modularity.ipynb
-      - Model:
-        - Model: tutorials/items/model_integration/index.md
-        - LLM Integration: tutorials/items/model_integration/llm_integration.ipynb
-      - Observability:
-        - Observability: tutorials/items/observability/index.md
-        - Opik Integration: tutorials/items/observability/opik_integration.md
-        - LangWatch Integration: tutorials/items/observability/lang_watch_integration.md
-      - ASL: tutorials/items/asl/quick_start.ipynb
+  - Tutorials:
+    - Tutorials: tutorials/index.md
+    - Quick Start: tutorials/items/quick_start/quick_start.ipynb
+    - Core Mechanism: 
+      - Core Mechanism: tutorials/items/core_mechanism/index.md
+      - Concurrency Mode: tutorials/items/core_mechanism/concurrency_mode.ipynb
+      - Parameter Resolving: tutorials/items/core_mechanism/parameter_resolving.ipynb
+      - Dynamic Routing: tutorials/items/core_mechanism/dynamic_routing.ipynb
+      - Dynamic Topology: tutorials/items/core_mechanism/dynamic_topology.ipynb
+      - Human in the loop: tutorials/items/core_mechanism/human_in_the_loop.ipynb
+      - Worker Callback: tutorials/items/core_mechanism/worker_callback.ipynb
+      - Modularity: tutorials/items/core_mechanism/modularity.ipynb
+    - Agentic Module:
+      - Agentic: tutorials/items/agentic_module/index.md
+      - SequentialAutoma: tutorials/items/agentic_module/about_sequential_automa.ipynb
+      - ConcurrentAutoma: tutorials/items/agentic_module/about_concurrent_automa.ipynb
+      - ReCentAutoma: tutorials/items/agentic_module/about_recent_automa.ipynb
+    - Agent Structure Language: tutorials/items/asl/quick_start.ipynb
+    - Model Integration:
+      - Model: tutorials/items/model_integration/index.md
+      - LLM: tutorials/items/model_integration/llm_integration.ipynb
+    - Protocol Integration:
+      - Protocol: tutorials/items/protocol_integration/index.md
+      - MCP: tutorials/items/protocol_integration/mcp_quick_start.ipynb
+    - Observability Integration:
+      - Observability: tutorials/items/observability_integration/index.md
+      - Opik Integration: tutorials/items/observability_integration/opik_integration.md
+      - LangWatch Integration: tutorials/items/observability_integration/lang_watch_integration.md
   - Understanding:
-    - Introduction: home/introduction.md
-    - Basics: home/basics.md
-    # - Concepts: home/concepts.md
+    - Introduction: understanding/introduction.md
+    - Basics: understanding/basics.md
+    # - Concepts: understanding/concepts.md
   - API Reference:
 {{API_REFERENCE_CONTENT}}
 
@@ -121,6 +127,7 @@ plugins:
       minify_css: true
       htmlmin_opts:
         remove_comments: true
+  - mkdocs-video
   - mkdocs-jupyter:
       execute: false
       include_source: true
@@ -162,6 +169,7 @@ plugins:
             - ../packages/bridgic-integration/llms/bridgic-llms-vllm
             - ../packages/bridgic-integration/traces/bridgic-traces-opik
             - ../packages/bridgic-integration/traces/bridgic-traces-langwatch
+            - ../packages/bridgic-integration/protocols/bridgic-protocols-mcp
   - mike
 
 markdown_extensions:

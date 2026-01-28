@@ -110,6 +110,35 @@ def adder_automa():
     return AdderAutoma()
 
 @pytest.mark.asyncio
+async def test_adder_automa_rerun_from_current(adder_automa: AdderAutoma):
+    try:
+        await adder_automa.arun(x=5)
+    except InteractionException as e:
+        feedback_yes = InteractionFeedback(
+            interaction_id=e.interactions[0].interaction_id,
+            data="yes",
+        )
+        result = await adder_automa.arun(feedback_data=feedback_yes)
+        assert result == 6 + 200 + 2
+
+@pytest.mark.asyncio
+async def test_adder_automa_rerun_from_snapshot(adder_automa: AdderAutoma):
+    try:
+        await adder_automa.arun(x=5)
+    except InteractionException as e:
+        feedback_yes = InteractionFeedback(
+            interaction_id=e.interactions[0].interaction_id,
+            data="yes",
+        )
+        snapshot = Snapshot(
+            serialized_bytes=e.snapshot.serialized_bytes,
+            serialization_version=e.snapshot.serialization_version,
+        )
+        adder_automa = AdderAutoma.load_from_snapshot(snapshot)
+        result = await adder_automa.arun(feedback_data=feedback_yes)
+        assert result == 6 + 200 + 2
+
+@pytest.mark.asyncio
 async def test_adder_automa_to_run(adder_automa: AdderAutoma, request, db_base_path):
     try:
         result = await adder_automa.arun(x=5)
@@ -205,4 +234,3 @@ async def test_adder_automa_deserialized_rerun_to_end(feedback_no, adder_automa_
         feedback_data=feedback_no
     )
     assert result == 16 + 2
-

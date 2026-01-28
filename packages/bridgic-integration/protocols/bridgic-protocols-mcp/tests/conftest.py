@@ -64,4 +64,29 @@ async def mock_crawler_streamable_http_connection():
         connection.close()
 
 
+@pytest_asyncio.fixture(scope="session")
+async def mock_crawler_http_server():
+    """Start a mock crawler MCP server via HTTP for testing (returns server process, not connection)."""
+    with McpHttpServerProcess(
+        server_script="tests/protocols/mcp/mock_servers/mcp_server_crawler.py",
+        transport="streamable_http",
+        host="127.0.0.1",
+        port=1999,
+        startup_timeout=5.0,
+    ) as server:
+        yield server
+
+
+@pytest_asyncio.fixture(scope="session")
+async def mock_writer_http_server():
+    """Start a mock writer MCP server via HTTP for testing (returns server process, not connection)."""
+    with McpHttpServerProcess(
+        server_script="tests/protocols/mcp/mock_servers/mcp_server_writer.py",
+        transport="streamable_http",
+        host="127.0.0.1",
+        port=2999,
+        startup_timeout=5.0,
+    ) as server:
+        yield server
+
 

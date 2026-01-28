@@ -28,6 +28,7 @@ packages:
   - name: "bridgic-core"
     path: "packages/bridgic-core"
     description: "Bridgic Core"
+  # LLMs
   - name: "bridgic-llms-openai-like"
     path: "packages/bridgic-integration/llms/bridgic-llms-openai-like"
     description: "OpenAI-compatible LLM Integration"
@@ -37,12 +38,17 @@ packages:
   - name: "bridgic-llms-vllm"
     path: "packages/bridgic-integration/llms/bridgic-llms-vllm"
     description: "vLLM Integration"
+  # Traces
   - name: "bridgic-traces-opik"
     path: "packages/bridgic-integration/traces/bridgic-traces-opik"
     description: "Opik Observability Integration"
   - name: "bridgic-traces-langwatch"
     path: "packages/bridgic-integration/traces/bridgic-traces-langwatch"
     description: "LangWatch Observability Integration"
+  # Protocols
+  - name: "bridgic-protocols-mcp"
+    path: "packages/bridgic-integration/protocols/bridgic-protocols-mcp"
+    description: "Model Context Protocol (MCP) Integration"
 
 # Documentation generation options
 generation_options:

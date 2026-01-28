@@ -1,4 +1,4 @@
-from typing import List, Any, Protocol, Literal, Union, Dict, Type, ClassVar
+from typing import List, Any, Protocol, Literal, Union, Dict, Type, ClassVar, runtime_checkable
 from pydantic import BaseModel, Field
 
 from bridgic.core.model.types import Message
@@ -79,6 +79,7 @@ class LarkGrammar(BaseModel):
 Constraint = Union[PydanticModel, JsonSchema, EbnfGrammar, LarkGrammar, Regex, Choice]
 """The constraint type for structured LLM output."""
 
+@runtime_checkable
 class StructuredOutput(Protocol):
     """
     Protocol for LLM providers that support structured output generation.

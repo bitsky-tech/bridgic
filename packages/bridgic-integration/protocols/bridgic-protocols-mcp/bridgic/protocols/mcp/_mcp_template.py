@@ -26,7 +26,9 @@ class McpPromptTemplate(BasePromptTemplate):
         prompt_info: Prompt,
         server_connection: Union[str, McpServerConnection],
     ):
-        super().__init__(prompt_name=prompt_name, prompt_info=prompt_info)
+        super().__init__()
+        self.prompt_name = prompt_name
+        self.prompt_info = prompt_info
         
         # Try to associate with the real connection object.
         if isinstance(server_connection, str):

@@ -43,12 +43,14 @@ class AutomaToolSpec(ToolSpec):
         tool_name: Optional[str] = None,
         tool_description: Optional[str] = None,
         tool_parameters: Optional[Dict[str, Any]] = None,
+        from_builder: Optional[bool] = False,
         **automa_init_kwargs: Dict[str, Any],
     ):
         super().__init__(
             tool_name=tool_name,
             tool_description=tool_description,
-            tool_parameters=tool_parameters
+            tool_parameters=tool_parameters,
+            from_builder=from_builder,
         )
         self._automa_cls = automa_cls
         self._automa_init_kwargs = automa_init_kwargs

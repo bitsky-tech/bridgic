@@ -1,6 +1,8 @@
 import asyncio
 import warnings
 import httpx
+import enum
+
 from abc import ABC, abstractmethod
 from datetime import timedelta
 from typing import List, Dict, Optional, Union, Any, TYPE_CHECKING
@@ -9,12 +11,17 @@ from mcp.client.session import ClientSession
 from mcp.types import ListPromptsResult, GetPromptResult, ListToolsResult, CallToolResult
 from mcp.client.stdio import stdio_client, StdioServerParameters
 from mcp.client.streamable_http import streamable_http_client
+from mcp.shared.exceptions import McpError
 from bridgic.protocols.mcp._error import McpServerConnectionError
 from bridgic.protocols.mcp._mcp_server_connection_manager import McpServerConnectionManager
 
 if TYPE_CHECKING:
     from bridgic.protocols.mcp._mcp_template import McpPromptTemplate
     from bridgic.protocols.mcp._mcp_tool_spec import McpToolSpec
+
+class McpServerConnectionType(str, enum.Enum):
+    STDIO = "stdio"
+    STREAMABLE_HTTP = "streamable_http"
 
 class McpServerConnection(ABC):
     """
@@ -99,8 +106,9 @@ class McpServerConnection(ABC):
         Therefore, it is required to register the connection to the desired manager *before* calling `connect()`.
         Otherwise, the connection will be registered to the default manager. All registrations could not be changed later.
 
-        Example
-        -------
+        Examples
+        --------
+        Create a connection to a streamable HTTP MCP server and register it to a manager:
         >>> connection = McpServerConnectionStreamableHttp(
         ...     name="streamable-http-server-connection",
         ...     url="http://localhost:8000",
@@ -273,7 +281,19 @@ class McpServerConnection(ABC):
             raise McpServerConnectionError(
                 f"Connection to MCP server is not established: name={self.name}"
             )
-        return await self._session.list_tools()
+        try:
+            result = await self._session.list_tools()
+        except McpError as e:
+            is_timeout = False
+            for content in ["timed out", "timeout"]:
+                if content in str.lower(e.error.message):
+                    result = ListToolsResult(tools=[])
+                    is_timeout = True
+                    warnings.warn(f"Timeout occurred while listing tools from MCP server: name={self.name}")
+                    break
+            if not is_timeout:
+                raise e
+        return result
 
     async def _call_tool_unsafe(
         self,

@@ -20,6 +20,7 @@ from bridgic.core.model.types import *
 from bridgic.core.model.protocols import StructuredOutput, ToolSelection, PydanticModel, JsonSchema, Constraint
 from bridgic.core.utils._console import printer
 from bridgic.core.utils._collection import filter_dict, merge_dict, validate_required_params
+from bridgic.core.utils._tool_calling import generate_tool_id
 from bridgic.llms.openai_like import OpenAILikeConfiguration
 
 class OpenAIConfiguration(OpenAILikeConfiguration):
@@ -1077,7 +1078,7 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
     def _convert_tool_calls(self, tool_calls: List[ChatCompletionMessageFunctionToolCall]) -> List[ToolCall]:
         return [] if tool_calls is None else [
             ToolCall(
-                id=tool_call.id,
+                id=generate_tool_id(),
                 name=tool_call.function.name,
                 arguments=json.loads(tool_call.function.arguments),
             ) for tool_call in tool_calls

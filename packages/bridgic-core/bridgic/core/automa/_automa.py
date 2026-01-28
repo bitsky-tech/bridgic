@@ -26,6 +26,7 @@ class RunningOptions(BaseModel):
 
     1. **Runtime-configurable fields**: Can be set at any time via `set_running_options()`.
        - `debug`: Whether to enable debug mode.
+       - `verbose`: Whether to print more verbose runtime debug information. Only takes effect when `debug=True`.
 
     2. **Initialization-only fields**: Must be set during Automa instantiation via the `running_options` parameter.
        - `callback_builders`: Callback builders at the Automa instance level. These will be merged with 
@@ -33,6 +34,9 @@ class RunningOptions(BaseModel):
     """
     debug: bool = False
     """Whether to enable debug mode. Can be set at runtime via set_running_options()."""
+
+    verbose: bool = False
+    """Whether to print more verbose runtime debug information. Only takes effect when debug=True. Can be set at runtime via set_running_options()."""
 
     callback_builders: List[WorkerCallbackBuilder] = []
     """A list of callback builders specific to this Automa instance."""
@@ -213,6 +217,7 @@ class Automa(Worker):
     def set_running_options(
         self,
         debug: Optional[bool] = None,
+        verbose: Optional[bool] = None,
     ):
         """
         Set runtime-configurable running options for this Automa instance.
@@ -232,9 +237,14 @@ class Automa(Worker):
         debug : bool, optional
             Whether to enable debug mode. If None, the current value is not changed.
             This field is subject to the Setting Penetration Mechanism.
+        verbose : bool, optional
+            Whether to print more verbose runtime debug information. Only takes effect when `debug=True`.
+            This field is subject to the Setting Penetration Mechanism.
         """
         if debug is not None:
             self._running_options.debug = debug
+        if verbose is not None:
+            self._running_options.verbose = verbose
 
     def _get_top_running_options(self) -> RunningOptions:
         if self.is_top_level():
@@ -564,11 +574,7 @@ class Automa(Worker):
             return matched_feedback.feedback
 
     def _get_and_increment_interaction_index(self, worker_key: str) -> int:
-        if worker_key not in self._worker_interaction_indices:
-            cur_index = 0
-            self._worker_interaction_indices[worker_key] = 0
-        else:
-            cur_index = self._worker_interaction_indices[worker_key]
+        cur_index = self._worker_interaction_indices.setdefault(worker_key, 0)
         self._worker_interaction_indices[worker_key] += 1
         return cur_index
 

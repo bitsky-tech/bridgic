@@ -51,7 +51,22 @@ class GraphMeta(_ProtocolMeta):
                                 f"Use WorkerCallbackBuilder(callback_type, init_kwargs) instead of callback instances."
                             )
                 setattr(func, "__callback_builders__", callback_builders)
-        
+
+        for base in bases:
+            for worker_key, worker_func in getattr(base, "_registered_worker_funcs", {}).items():
+                if worker_key not in registered_worker_funcs.keys():
+                    registered_worker_funcs[worker_key] = worker_func
+                else:
+                    raise AutomaDeclarationError(
+                        f"worker is defined in multiple base classes: "
+                        f"base={base}, worker={worker_key}"
+                    )
+
+            for current, forward_list in getattr(base, "_worker_static_forwards", {}).items():
+                if current not in worker_static_forwards.keys():
+                    worker_static_forwards[current] = []
+                worker_static_forwards[current].extend(forward_list)
+
         for attr_name, attr_value in dct.items():
             # Attributes with __is_worker__ will be registered as workers.
             if hasattr(attr_value, "__is_worker__"):

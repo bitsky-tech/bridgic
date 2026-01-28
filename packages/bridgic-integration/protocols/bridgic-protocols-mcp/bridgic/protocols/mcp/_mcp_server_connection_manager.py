@@ -62,7 +62,7 @@ class McpServerConnectionManager:
             The manager instance with the specified name.
         """
         if manager_name not in cls._instances:
-            return cls(name=manager_name)
+            cls._instances[manager_name] = cls(name=manager_name)
         return cls._instances[manager_name]
 
     @classmethod

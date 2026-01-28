@@ -22,8 +22,11 @@ class CallableWorker(Worker):
         The callable to be wrapped by the worker. If `func_or_method` is None, 
         `state_dict` must be provided.
     """
-    _is_async: bool
+    _is_coro_func: bool
+    _is_agen_func: bool
+
     _callable: Callable
+
     # Used to deserialization.
     _expected_bound_parent: bool
 
@@ -42,10 +45,11 @@ class CallableWorker(Worker):
             `state_dict` must be provided.
         """
         super().__init__()
-        self._is_async = inspect.iscoroutinefunction(func_or_method)
+        self._is_coro_func = inspect.iscoroutinefunction(func_or_method)
+        self._is_agen_func = inspect.isasyncgenfunction(func_or_method)
         self._callable = func_or_method
         self._expected_bound_parent = False
-        
+
         # Cached method signatures, with no need for serialization.
         self.__cached_param_names_of_callable = None
 
@@ -55,12 +59,16 @@ class CallableWorker(Worker):
                 f"The callable is expected to be bound to the parent, "
                 f"but not bounded yet: {self._callable}"
             )
-        if self._is_async:
+
+        if self._is_coro_func:
             return await self._callable(*args, **kwargs)
+        if self._is_agen_func:
+            return self._callable(*args, **kwargs)
+
         return await super().arun(*args, **kwargs)
 
     def run(self, *args: Tuple[Any, ...], **kwargs: Dict[str, Any]) -> Any:
-        assert self._is_async is False
+        assert self._is_coro_func is False
         return self._callable(*args, **kwargs)
 
     @override
@@ -88,7 +96,8 @@ class CallableWorker(Worker):
     @override
     def dump_to_dict(self) -> Dict[str, Any]:
         state_dict = super().dump_to_dict()
-        state_dict["is_async"] = self._is_async
+        state_dict["is_coro_func"] = self._is_coro_func
+        state_dict["is_agen_func"] = self._is_agen_func
         # Note: Not to use pickle to serialize the callable here.
         # We customize the serialization method of the callable to avoid creating instance multiple times and to minimize side effects.
         bounded = isinstance(self._callable, MethodType)
@@ -106,7 +115,8 @@ class CallableWorker(Worker):
     def load_from_dict(self, state_dict: Dict[str, Any]) -> None:
         super().load_from_dict(state_dict)
         # Deserialize from the state_dict.
-        self._is_async = state_dict["is_async"]
+        self._is_coro_func = state_dict["is_coro_func"]
+        self._is_agen_func = state_dict["is_agen_func"]
         bounded = state_dict["bounded"]
         if bounded:
             pickled_callable = state_dict.get("pickled_callable", None)
