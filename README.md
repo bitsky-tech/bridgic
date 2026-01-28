@@ -57,7 +57,7 @@ uv run python -c "from bridgic.core import __version__; print(f'Bridgic version:
 
 * **Unified DDG Foundation**: Both deterministic workflows and autonomous agents are orchestrated through the same [Dynamic Directed Graph](https://docs.bridgic.ai/latest/tutorials/items/core_mechanism/dynamic_topology/) runtime model, providing a unified foundation for intelligent systems.
 * **Dynamic Topology & Routing**: The mechanism of [dynamic topology](https://docs.bridgic.ai/latest/tutorials/items/core_mechanism/dynamic_topology/) allows graph structure to be modified at runtime, while [dynamic routing](https://docs.bridgic.ai/latest/tutorials/items/core_mechanism/dynamic_routing/) enables conditional branching through an intuitive [`ferry_to()`](https://docs.bridgic.ai/latest/reference/bridgic-core/bridgic/core/automa/#bridgic.core.automa.GraphAutoma.ferry_to) API.
-* **Multi-Layered Orchestration APIs**: Bridgic supports both a **Declarative API** and **[ASL (Agent Structure Language)](https://docs.bridgic.ai/latest/tutorials/items/asl/quick_start/)**, both powered by a unified DDG-based orchestration model, giving developers flexibility in how they structure their code.
+* **Multi-Layered Orchestration APIs**: Unified under DDG, Bridgic provides a **Declarative API** and **[ASL (Agent Structure Language)](https://docs.bridgic.ai/latest/tutorials/items/asl/quick_start/)**, which gives developers flexibility in structuring their code.
 
 ### 🚀 Consistent Development Experience for Workflows and Agents
 
@@ -68,7 +68,7 @@ uv run python -c "from bridgic.core import __version__; print(f'Bridgic version:
 
 * **Modular Application Building**: Complex intelligent systems can be composed through [modularity](https://docs.bridgic.ai/latest/tutorials/items/core_mechanism/modularity/), enabling component reusing and hierarchical nesting.
 * **Parameter Resolving & Binding**: The mechanism of [parameter resolving](https://docs.bridgic.ai/latest/tutorials/items/core_mechanism/parameter_resolving/) enables passing data among workers/automas, eliminating the complexity of global state management.
-* **Agent Structure Language**: [ASL (Agent Structure Language)](https://docs.bridgic.ai/latest/tutorials/items/asl/quick_start/) is a Python-native DSL that enables developers to express sophisticated agentic structures within a limited amount of code, optimized for AI-assisted development.
+* **Agent Structure Language**: [ASL](https://docs.bridgic.ai/latest/tutorials/items/asl/quick_start/) is a Python-native DSL that enables developers to express sophisticated agentic structures within a limited amount of code, optimized for AI-assisted development.
 
 ### 👥 Powerful Human-in-the-Loop Support
 
