@@ -5,12 +5,12 @@
 [![PyPI Version](https://img.shields.io/pypi/v/bridgic.svg)](https://pypi.org/search/?q=bridgic)
 [![PyPI Downloads](https://img.shields.io/pypi/dm/bridgic.svg)](https://pypi.org/search/?q=bridgic)
 
-**Bridgic** is the next-generation agent development framework for building intelligent systems effortless.
+**Bridgic** is the next-generation agent development framework for building intelligent systems.
 
-By fundamentally rethinking this relationship, Bridgic establishes a unified orchestration pattern and runtime model, which enables developers to seamlessly transition between structured predictable workflows and creative autonomous agentic systems within a single framework.
+By redefining the boundary between workflows and agents, Bridgic introduces a unified orchestration and runtime model which enables developers to seamlessly transition between predictable workflows and autonomous, creative agents within one system.
 
-> ✨ The name "**Bridgic**" embodies our core philosophy: **"Bridging Logic and Magic"** where:
->   - *Logic* represents structured and predictable execution flows, forming the foundation of reliable systems.
+> ✨ The name "**Bridgic**" embodies our core philosophy — **"Bridging Logic and Magic"**, where:
+>   - *Logic* represents deterministic and predictable execution flows, forming the foundation of reliable systems.
 >   - *Magic* refers to the autonomous parts that can make dynamic decisions and solve problems creatively.
 
 <div align="center">
@@ -55,31 +55,31 @@ uv run python -c "from bridgic.core import __version__; print(f'Bridgic version:
 
 ### 🌀 Core Runtime Engine
 
-* **Unified DDG Foundation**: Both deterministic workflows and autonomous agents are orchestrated through the same [Dynamic Directed Graph](https://docs.bridgic.ai/latest/tutorials/items/core_mechanism/dynamic_topology/) runtime model, providing a unified foundation for intelligent systems
-* **Dual Orchestration Modes**: Bridgic supports both declarative graph definitions and programmatic worker orchestration, giving developers flexibility in how they structure their code
-* **Dynamic Topology & Routing**: The mechanism of [dynamic topology](https://docs.bridgic.ai/latest/tutorials/items/core_mechanism/dynamic_topology/) allows graph structure to be modified at runtime, while [dynamic routing](https://docs.bridgic.ai/latest/tutorials/items/core_mechanism/dynamic_routing/) enables conditional branching through an intuitive [`ferry_to()`](https://docs.bridgic.ai/latest/reference/bridgic-core/bridgic/core/automa/#bridgic.core.automa.GraphAutoma.ferry_to) API
+* **Unified DDG Foundation**: Both deterministic workflows and autonomous agents are orchestrated through the same [Dynamic Directed Graph](https://docs.bridgic.ai/latest/tutorials/items/core_mechanism/dynamic_topology/) runtime model, providing a unified foundation for intelligent systems.
+* **Dynamic Topology & Routing**: The mechanism of [dynamic topology](https://docs.bridgic.ai/latest/tutorials/items/core_mechanism/dynamic_topology/) allows graph structure to be modified at runtime, while [dynamic routing](https://docs.bridgic.ai/latest/tutorials/items/core_mechanism/dynamic_routing/) enables conditional branching through an intuitive [`ferry_to()`](https://docs.bridgic.ai/latest/reference/bridgic-core/bridgic/core/automa/#bridgic.core.automa.GraphAutoma.ferry_to) API.
+* **Multi-Layered Orchestration APIs**: Bridgic supports both a **Declarative API** and **[ASL (Agent Structure Language)](https://docs.bridgic.ai/latest/tutorials/items/asl/quick_start/)**, both powered by a unified DDG-based orchestration model, giving developers flexibility in how they structure their code.
 
 ### 🚀 Consistent Development Experience for Workflows and Agents
 
-* **Program-defined Execution Mode**: Build deterministic workflows with explicit control flow, where execution paths are defined by your code structure
-* **Model-driven Autonomous Execution Mode**: Leverage [ReCentAutoma](https://docs.bridgic.ai/latest/tutorials/items/agentic_module/about_recent_automa.ipynb) and other autonomous agent modules where LLMs make dynamic decisions about tool selection and execution paths
+* **Program-defined Execution Mode**: Build deterministic workflows with explicit control flow, where execution paths are defined by your code structure.
+* **Model-driven Autonomous Execution Mode**: Leverage [ReCentAutoma](https://docs.bridgic.ai/latest/tutorials/items/agentic_module/about_recent_automa.ipynb) and other autonomous agent modules where LLMs make dynamic decisions about tool selection and execution paths.
 
 ### 🧩 Modular Development Support
 
-* **Modular Application Building**: Complex intelligent systems can be composed through [modularity](https://docs.bridgic.ai/latest/tutorials/items/core_mechanism/modularity/), enabling component reusing and hierarchical nesting
-* **Parameter Resolving & Binding**: The mechanism of [parameter resolving](https://docs.bridgic.ai/latest/tutorials/items/core_mechanism/parameter_resolving/) enables passing data among workers/automas, eliminating the complexity of global state management
-* **Higher Information Density Agent Structure Language**: [Agent Structure Language (ASL)](https://docs.bridgic.ai/latest/tutorials/items/asl/quick_start/) is a Python-native DSL that enables developers to express sophisticated agentic structures within a limited amount of code, optimized for AI-assisted development
+* **Modular Application Building**: Complex intelligent systems can be composed through [modularity](https://docs.bridgic.ai/latest/tutorials/items/core_mechanism/modularity/), enabling component reusing and hierarchical nesting.
+* **Parameter Resolving & Binding**: The mechanism of [parameter resolving](https://docs.bridgic.ai/latest/tutorials/items/core_mechanism/parameter_resolving/) enables passing data among workers/automas, eliminating the complexity of global state management.
+* **Agent Structure Language**: [ASL (Agent Structure Language)](https://docs.bridgic.ai/latest/tutorials/items/asl/quick_start/) is a Python-native DSL that enables developers to express sophisticated agentic structures within a limited amount of code, optimized for AI-assisted development.
 
 ### 👥 Powerful Human-in-the-Loop Support
 
-* **Human Interaction Based on Asynchronous Awaiting**: Systems can pause execution and [await human feedback](https://docs.bridgic.ai/latest/tutorials/items/core_mechanism/human_in_the_loop.ipynb) asynchronously, enabling seamless integration of human judgment into automated workflows
-* **Human Interaction Based on Interruption & Resuming**: Long-running systems can be interrupted at any point, request external feedback, and seamlessly resume execution with state persistence and recovery
+* **Human Interaction Based on Asynchronous Awaiting**: Systems can pause execution and [await human feedback](https://docs.bridgic.ai/latest/tutorials/items/core_mechanism/human_in_the_loop/) asynchronously, enabling seamless integration of human judgment into automated workflows / agents.
+* **Human Interaction Based on Interruption & Resuming**: Long-running systems can be [interrupted at any point](https://docs.bridgic.ai/latest/tutorials/items/core_mechanism/human_in_the_loop/#reimbursement-workflow) , request external feedbacks, and seamlessly resume execution with state persistence and recovery.
 
 ### 🔌 Seamless Third-Party Integration
 
-* **Technology-neutral Model Integration**: [Model integration](https://docs.bridgic.ai/latest/tutorials/items/model_integration/) allows seamlessly integration with any LLM provider through a unified abstraction
-* **Systematic MCP Integration**: [MCP integration](https://docs.bridgic.ai/latest/tutorials/items/protocol_integration/mcp_quick_start.ipynb) transforms tool integration into composition opportunities, allowing you to connect to MCP servers and use their tools as first-class workers
-* **Seamless Enterprise Observability Integration**: Support for integrating the leading observability platforms (like [Opik](https://docs.bridgic.ai/latest/tutorials/items/observability_integration/opik_integration.md), [LangWatch](https://docs.bridgic.ai/latest/tutorials/items/observability_integration/lang_watch_integration.md)) ensures your agentic systems are transparent, debuggable, and optimizable
+* **Technology-neutral Model Integration**: [Model integration](https://docs.bridgic.ai/latest/tutorials/items/model_integration/) allows seamlessly integration with any LLM provider through a unified abstraction.
+* **Systematic MCP Integration**: [MCP integration](https://docs.bridgic.ai/latest/tutorials/items/protocol_integration/mcp_quick_start/) allows your application to connect to MCP servers and to use their tools as first-class workers, in a systematic way in Bridgic.
+* **Seamless Enterprise Observability Integration**: Support for integrating the leading observability platforms (like [Opik](https://docs.bridgic.ai/latest/tutorials/items/observability/opik_integration/), [LangWatch](https://docs.bridgic.ai/latest/tutorials/items/observability/lang_watch_integration/)) ensures your agentic systems are transparent, debuggable, and optimizable.
 
 ## 🚀 Get Started
 
