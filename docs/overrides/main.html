@@ -1,5 +1,50 @@
 {% extends "base.html" %}
 
+{% block extrahead %}
+<link rel="icon" id="bridgic-favicon" href="{{ 'assets/favicon.ico' | url }}" type="image/x-icon">
+<script>
+  (function () {
+    var lightHref = "{{ 'assets/favicon.ico' | url }}";
+    var darkHref = "{{ 'assets/favicon_dark.ico' | url }}";
+
+    function getScheme() {
+      var el = document.body || document.documentElement;
+      return (el && el.getAttribute("data-md-color-scheme")) || "";
+    }
+
+    function setFavicon(href) {
+      var link = document.getElementById("bridgic-favicon");
+      if (!link) return;
+      if (link.getAttribute("href") === href) return;
+      link.setAttribute("href", href);
+    }
+
+    function sync() {
+      var scheme = getScheme();
+      setFavicon(scheme === "slate" ? darkHref : lightHref);
+    }
+
+    function initObserver() {
+      if (!window.MutationObserver) {
+        sync();
+        return;
+      }
+      var target = document.body || document.documentElement;
+      if (!target) return;
+      sync();
+      var obs = new MutationObserver(sync);
+      obs.observe(target, { attributes: true, attributeFilter: ["data-md-color-scheme"] });
+    }
+
+    if (document.readyState === "loading") {
+      document.addEventListener("DOMContentLoaded", initObserver, { once: true });
+    } else {
+      initObserver();
+    }
+  })();
+</script>
+{% endblock %}
+
 {% block outdated %}
   You're not viewing the latest version.
   <a href="{{ '../' ~ base_url }}">
