@@ -20,7 +20,6 @@ import traceback
 from enum import Enum
 from typing import Any, Dict, List, Optional, Tuple, Union
 
-import tiktoken
 from pydantic import BaseModel, Field, ConfigDict
 
 from bridgic.core.model import BaseLlm
@@ -32,8 +31,7 @@ from bridgic.core.automa.interaction import InteractionFeedback
 from bridgic.core.agentic import ConcurrentAutoma
 from bridgic.core.agentic.tool_specs import ToolSpec
 from bridgic.core.utils._console import printer
-
-from .context import Step, CognitiveContext
+from bridgic.core.cognitive.context import Step, CognitiveContext
 
 
 #############################################################################
@@ -1119,9 +1117,8 @@ class CognitiveWorker(GraphAutoma):
         return matched
 
     def _count_tokens(self, text: str) -> int:
-        """Estimate token count using cl100k_base encoding."""
-        encoding = tiktoken.get_encoding("cl100k_base")
-        return len(encoding.encode(text))
+        """Estimate token count. Rough approximation: ~4 chars per token (typical for English/UTF-8)."""
+        return (len(text) + 3) // 4
 
     ############################################################################
     # Template methods (override by user to customize the behavior)
