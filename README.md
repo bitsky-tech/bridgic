@@ -3,12 +3,18 @@
 </p>
 
 <p align="center" dir="auto">
-
-[![License MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
-[![Python Version](https://img.shields.io/badge/python-3.9%2B-blue.svg)](https://www.python.org/)
-[![PyPI Version](https://img.shields.io/pypi/v/bridgic.svg)](https://pypi.org/search/?q=bridgic)
-[![PyPI Downloads](https://img.shields.io/pypi/dm/bridgic.svg)](https://pypi.org/search/?q=bridgic)
-
+  <a href="https://opensource.org/licenses/MIT">
+    <img src="https://img.shields.io/badge/License-MIT-green.svg" alt="License MIT" />
+  </a>
+  <a href="https://www.python.org/">
+    <img src="https://img.shields.io/badge/python-3.9%2B-blue.svg" alt="Python Version 3.9+" />
+  </a>
+  <a href="https://pypi.org/search/?q=bridgic">
+    <img src="https://img.shields.io/pypi/v/bridgic.svg" alt="PyPI Version" />
+  </a>
+  <a href="https://pypi.org/search/?q=bridgic">
+    <img src="https://img.shields.io/pypi/dm/bridgic.svg" alt="PyPI Downloads" />
+  </a>
 </p>
 
 ---
