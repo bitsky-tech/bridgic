@@ -15,9 +15,14 @@ name: Docs Patch Pages
 on:
   push:
     tags:
-      # This pattern matches pre-release patch tags (e.g., v1.2.3rc1.post1, v2.0.0b2.post3)
-      # These tags are used for patching existing documentation versions based on pre-release tags
-      - 'v[0-9]+.[0-9]+.[0-9]+[a-z]+[0-9]+.post[0-9]+'
+      # Normal post-release
+      - 'v[0-9]+.[0-9]+.[0-9]+.post[0-9]+'
+      # Alpha pre-release post-release
+      - 'v[0-9]+.[0-9]+.[0-9]+a[0-9]+.post[0-9]+'
+      # Beta pre-release post-release
+      - 'v[0-9]+.[0-9]+.[0-9]+b[0-9]+.post[0-9]+'
+      # Release candidate post-release
+      - 'v[0-9]+.[0-9]+.[0-9]+rc[0-9]+.post[0-9]+'
 
 jobs:
   deploy:
