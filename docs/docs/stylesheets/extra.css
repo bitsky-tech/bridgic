@@ -261,6 +261,9 @@
   .md-typeset .hero p {
     font-size: 1rem;
   }
+  .md-nav--primary .md-nav__title {
+    height: 3.6rem;
+  }
 }
 
 /* ========================================== */
