@@ -1,3 +1,5 @@
+<img src="./docs/docs/assets/logo.svg" alt="Bridgic Logo" width="620" />
+
 # Bridgic
 
 [![License MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
