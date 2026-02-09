@@ -251,14 +251,27 @@ class Context(BaseModel):
             if field_name not in exposure_fields:
                 value = getattr(self, field_name)
                 if value is not None:
-                    result[field_name] = f"{field_name}: {value}"
+                    # Get field description if available
+                    field_info = self.__class__.model_fields.get(field_name)
+                    description = field_info.description if field_info and field_info.description else None
+                    
+                    if description:
+                        result[field_name] = f"{field_name} ({description}):\n {value}"
+                    else:
+                        result[field_name] = f"{field_name}:\n {value}"
 
         # Add Exposure field summaries
         for field_name in exposure_fields:
             field_value = getattr(self, field_name)
             if field_value and len(field_value) > 0:
+                # Get field description if available
+                field_info = self.__class__.model_fields.get(field_name)
+                description = field_info.description if field_info and field_info.description else None
                 summaries = field_value.summary()
-                result[field_name] = f"{field_name}:\n" + "\n".join(f"  {s}" for s in summaries)
+                if description:
+                    result[field_name] = f"{field_name} ({description}):\n" + "\n".join(f"  {s}" for s in summaries)
+                else:
+                    result[field_name] = f"{field_name}:\n" + "\n".join(f"  {s}" for s in summaries)
 
         return result
 
@@ -1017,7 +1030,7 @@ class CognitiveContext(Context):
             - cognitive_history: formatted history with indices
             - disclosed_details: previously disclosed details (if any)
         """
-        result = {}
+        result = super().summary()
 
         # Format goal
         result['goal'] = f"Goal: {self.goal}"
