@@ -28,6 +28,9 @@ packages:
   - name: "bridgic-core"
     path: "packages/bridgic-core"
     description: "Bridgic Core"
+  - name: "bridgic-asl"
+    path: "packages/bridgic-asl"
+    description: "Bridgic ASL"
   # LLMs
   - name: "bridgic-llms-openai-like"
     path: "packages/bridgic-integration/llms/bridgic-llms-openai-like"
