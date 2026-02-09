@@ -1,6 +1,6 @@
 <img src="./docs/docs/assets/logo.svg" alt="Bridgic Logo" width="620" />
 
-# Bridgic
+---
 
 [![License MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
 [![Python Version](https://img.shields.io/badge/python-3.9%2B-blue.svg)](https://www.python.org/)
