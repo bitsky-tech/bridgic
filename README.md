@@ -1,4 +1,4 @@
-<img src="./docs/docs/assets/logo.svg" alt="Bridgic Logo" width="620" />
+<img src="https://raw.githubusercontent.com/bitsky-tech/bridgic/refs/heads/main/docs/docs/assets/logo_white_bg.svg" alt="Bridgic Logo" width="620" />
 
 ---
 
