@@ -621,13 +621,17 @@ class TestCtxInit:
         tools = get_travel_planning_tools()
 
         # 1. Via arun(goal=...) — framework creates context, ctx_init applied
+        skill_file = os.path.join(SKILLS_DIR, "travel-planning", "SKILL.md")
+
         class SimpleAgent(AgentAutoma[CognitiveContext]):
             step = think_step(worker)
             async def cognition(self, ctx):
                 await self.step
 
-        result = await SimpleAgent(ctx_init={"tools": tools}).arun(goal="test")
+        result = await SimpleAgent(ctx_init={"tools": tools, "skills": [skill_file]}).arun(goal="test")
         assert len(result.tools) == len(tools)
+        assert len(result.skills) == 1
+        assert result.skills[0].name == "travel-planning"
         assert result.finish is True
 
         # 2. Via arun(context=...) — pre-created context, ctx_init still applied

@@ -497,11 +497,47 @@ class CognitiveSkills(LayeredExposure[Skill]):
 
     Methods
     -------
+    add(item)
+        Add a skill from Skill object, file path, or SKILL.md markdown text.
     add_from_markdown(markdown_text)
         Parse and add a skill from SKILL.md format.
     get_by_name(name)
         Get a skill by its name.
     """
+
+    def add(self, item) -> int:
+        """
+        Add a skill from various input types.
+
+        Parameters
+        ----------
+        item : Union[Skill, str]
+            - Skill object: added directly.
+            - str: if the string is an existing file path, loaded via add_from_file();
+              otherwise parsed as SKILL.md markdown text via add_from_markdown().
+
+        Returns
+        -------
+        int
+            Index of the newly added skill.
+
+        Raises
+        ------
+        TypeError
+            If item is not a Skill or str.
+        """
+        if isinstance(item, Skill):
+            return super().add(item)
+        elif isinstance(item, str):
+            from pathlib import Path
+            if Path(item).is_file():
+                return self.add_from_file(item)
+            return self.add_from_markdown(item)
+        else:
+            raise TypeError(
+                f"CognitiveSkills.add() expected Skill or str, "
+                f"got {type(item).__name__}"
+            )
 
     def add_from_markdown(self, markdown_text: str) -> int:
         """

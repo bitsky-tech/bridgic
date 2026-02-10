@@ -56,7 +56,7 @@ Example
 >>>
 >>> result = await MyAgent(llm=llm).arun(goal="Complete the task")
 """
-from .context import (
+from ._context import (
     # Abstraction layer
     Exposure,
     LayeredExposure,
@@ -70,7 +70,7 @@ from .context import (
     CognitiveHistory,
     CognitiveContext,
 )
-from .cognitive_worker import (
+from ._cognitive_worker import (
     # Worker
     CognitiveWorker,
     ThinkingMode,
@@ -85,7 +85,7 @@ from .cognitive_worker import (
     ActionResult,
     ActionStepResult,
 )
-from .agent_automa import (
+from ._agent_automa import (
     # Orchestration
     AgentAutoma,
     think_step,

@@ -1,11 +1,12 @@
-"""Tests for CognitiveContext: summary, format_summary, disclosed_details."""
+"""Tests for CognitiveContext: summary, format_summary, disclosed_details, skills.add()."""
 import os
 import pytest
 
-from bridgic.core.cognitive import CognitiveContext, Step
+from bridgic.core.cognitive import CognitiveContext, CognitiveSkills, Skill, Step
 from .tools import get_travel_planning_tools
 
 SKILLS_DIR = os.path.join(os.path.dirname(__file__), "skills")
+TRAVEL_SKILL_FILE = os.path.join(SKILLS_DIR, "travel-planning", "SKILL.md")
 
 
 def _make_context() -> CognitiveContext:
@@ -77,3 +78,34 @@ class TestCognitiveContext:
         summary_after = ctx.summary()
         assert "disclosed_details" in summary_after
         assert "Previously Disclosed Details" in summary_after["disclosed_details"]
+
+    def test_skills_add_unified(self):
+        """CognitiveSkills.add() accepts Skill object, file path, or markdown text."""
+        skills = CognitiveSkills()
+
+        # --- Skill object ---
+        skill = Skill(name="test", description="A test skill", content="Do things.")
+        idx = skills.add(skill)
+        assert idx == 0
+        assert skills[0].name == "test"
+
+        # --- File path string ---
+        idx = skills.add(TRAVEL_SKILL_FILE)
+        assert idx == 1
+        assert skills[1].name == "travel-planning"
+
+        # --- Markdown text ---
+        markdown = (
+            "---\n"
+            "name: inline-skill\n"
+            "description: An inline skill\n"
+            "---\n"
+            "# Instructions\nDo something inline."
+        )
+        idx = skills.add(markdown)
+        assert idx == 2
+        assert skills[2].name == "inline-skill"
+
+        # --- Wrong type → TypeError ---
+        with pytest.raises(TypeError, match="expected Skill or str"):
+            skills.add(123)

@@ -5,8 +5,8 @@ from typing import Any, Dict, Generic, List, Optional, Tuple, Type, TypeVar, get
 from bridgic.core.automa import GraphAutoma, worker
 from bridgic.core.automa._graph_meta import GraphMeta
 
-from .context import CognitiveContext, CognitiveTools, CognitiveSkills, Exposure
-from .cognitive_worker import CognitiveWorker
+from bridgic.core.cognitive._context import CognitiveContext, CognitiveTools, CognitiveSkills, Exposure
+from bridgic.core.cognitive._cognitive_worker import CognitiveWorker
 
 
 ################################################################################################################

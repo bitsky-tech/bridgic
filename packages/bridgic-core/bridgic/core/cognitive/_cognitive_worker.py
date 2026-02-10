@@ -31,7 +31,7 @@ from bridgic.core.automa.interaction import InteractionFeedback
 from bridgic.core.agentic import ConcurrentAutoma
 from bridgic.core.agentic.tool_specs import ToolSpec
 from bridgic.core.utils._console import printer
-from bridgic.core.cognitive.context import Step, CognitiveContext
+from bridgic.core.cognitive._context import Step, CognitiveContext
 
 
 #############################################################################
