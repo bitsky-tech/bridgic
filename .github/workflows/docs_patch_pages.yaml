@@ -1,7 +1,15 @@
 # Docs Patch Pages Workflow
 # This workflow patches existing documentation versions by deleting and rebuilding them with mike.
-# It is triggered when pushing tags matching pre-release patch tags like v1.2.3rc1.post1.
-# The workflow extracts the base pre-release version (e.g., v1.2.3rc1 from v1.2.3rc1.post1) and rebuilds that documentation version.
+# It is triggered when pushing tags matching post-release patterns (*.postN), including:
+#   - Normal post-release:              v1.2.3.post1
+#   - Alpha pre-release post-release:   v1.2.3a1.post1
+#   - Beta pre-release post-release:    v1.2.3b1.post1
+#   - Release candidate post-release:   v1.2.3rc1.post1
+#
+# The workflow strips the .postN suffix to extract the base version (e.g., v1.2.3 from v1.2.3.post1,
+# or v1.2.3b1 from v1.2.3b1.post1), then deletes and rebuilds that documentation version.
+# Finally, it ensures the CNAME file exists on the gh-pages branch for custom domain support.
+#
 # Reference documentation:
 # - GitHub Actions: https://docs.github.com/en/actions
 # - uv package manager: https://docs.astral.sh/uv/
