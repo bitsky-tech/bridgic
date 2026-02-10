@@ -34,7 +34,7 @@
 }
 
 /* Hide site title text in top-left header (keep logo) */
-.md-header__title .md-header__topic:first-child {
+.md-header__title .md-header__topic:first-child > span {
   display: none !important;
 }
 
