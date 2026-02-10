@@ -754,7 +754,7 @@ class CognitiveHistory(LayeredExposure[Step]):
     def __init__(
         self,
         working_memory_size: int = 5,
-        short_term_size: int = 5,
+        short_term_size: int = 20,
     ):
         super().__init__()
         self.working_memory_size = working_memory_size
