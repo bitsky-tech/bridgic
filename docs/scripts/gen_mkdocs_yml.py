@@ -66,6 +66,8 @@ class DocumentationConfig:
             "conftest.py",
             "version.py"
         }
+        # Module identifiers (e.g. "bridgic.core") for which index.md should NOT be generated
+        self.exclude_index_modules = set()
         
         # Package directories to process
         self.packages = ["bridgic-core", "bridgic-asl"]
@@ -135,6 +137,8 @@ class DocumentationConfig:
                 self.docstring_style = gen_opts.get('docstring_style', self.docstring_style)
                 self.only_index_pages = gen_opts.get('only_index_pages', self.only_index_pages)
                 self.single_entry_as_group = gen_opts.get('single_entry_as_group', self.single_entry_as_group)
+                if 'exclude_index_modules' in gen_opts:
+                    self.exclude_index_modules = set(gen_opts['exclude_index_modules'])
             
             # mkdocstrings_options now governed by mkdocs_template.yml; ignore here
                     
@@ -688,6 +692,12 @@ class DocumentationGenerator:
                         if self.config.verbose:
                             logger.debug(f"Skipping {path} - no __all__ defined")
                         continue
+                    # Skip index pages for modules in exclude_index_modules (e.g. bridgic.core)
+                    identifier = self.generate_module_identifier(parts)
+                    if identifier in self.config.exclude_index_modules:
+                        if self.config.verbose:
+                            logger.debug(f"Skipping index for excluded module: {identifier}")
+                        continue
                 elif parts[-1] == "__main__":
                     continue
                 elif self.config.only_index_pages:
@@ -847,6 +857,12 @@ class DocumentationGenerator:
                     if not has_all:
                         if self.config.verbose:
                             logger.debug(f"Skipping {path} - no __all__ defined")
+                        continue
+                    # Skip nav/node for modules listed in exclude_index_modules (e.g. bridgic.core)
+                    identifier = self.generate_module_identifier(parts)
+                    if identifier in self.config.exclude_index_modules:
+                        if self.config.verbose:
+                            logger.debug(f"Skipping nav for excluded index module: {identifier}")
                         continue
                 elif parts[-1] == "__main__":
                     continue
