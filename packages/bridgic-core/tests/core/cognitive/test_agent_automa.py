@@ -651,60 +651,80 @@ class TestCtxInit:
 
 
 # ============================================================================
-# Tests: LLM Injection
+# Tests: Agent Runtime (LLM injection, verbose propagation, usage stats)
 # ============================================================================
 
-class TestLlmInjection:
-    """Test that agent's default LLM is injected into workers that don't have one."""
+class TestAgentRuntime:
+    """Test agent runtime behavior: LLM/verbose injection, override priority, and usage stats."""
 
     @pytest.mark.asyncio
-    async def test_worker_without_llm_uses_agent_default(self):
-        """Worker created without LLM gets agent's default LLM injected at execution time."""
+    async def test_injection_override_and_stats(self):
+        """LLM injection, LLM override, verbose inheritance/override, stats tracking/reset."""
+        # --- 1. Worker without LLM/verbose inherits from agent, stats accumulated ---
         llm = StatefulMockLLM(structured_responses=[
             _fast_search_flights(),
             _fast_finish(),
         ])
-
-        # Worker created WITHOUT llm
         worker = ReactThinkingWorker(mode=ThinkingMode.FAST)
         assert worker._llm is None
+        assert worker._verbose is None
 
-        class LlmInjectionAgent(AgentAutoma[TravelPlanningContext]):
+        class InjectAgent(AgentAutoma[TravelPlanningContext]):
             step = think_step(worker)
             async def cognition(self, ctx):
                 await self.step
                 await self.step
 
-        # Agent provides the default LLM
-        result = await LlmInjectionAgent(llm=llm).arun(goal="test")
-        assert result.finish is True
-        assert worker._llm is llm  # LLM was injected
+        agent = InjectAgent(llm=llm, verbose=True)
+        assert agent.spend_tokens == 0
+        assert agent.spend_time == 0.0
 
-    @pytest.mark.asyncio
-    async def test_worker_with_own_llm_not_overridden(self):
-        """Worker that already has an LLM keeps its own; agent's default is not injected."""
-        agent_llm = StatefulMockLLM()
-        worker_llm = StatefulMockLLM(structured_responses=[
-            FastThinkResult(
-                finish=True, step_content="Done", calls=[], reasoning="done",
-                details_needed=[]
-            ),
+        result = await agent.arun(goal="test")
+        assert result.finish is True
+        assert worker._llm is llm          # LLM was injected (persists)
+        assert worker._verbose is None      # Verbose restored to None after execution
+        tokens_first = agent.spend_tokens
+        assert tokens_first > 0
+        assert agent.spend_time > 0.0
+
+        # --- 2. Worker with own LLM/verbose keeps them; stats reset per run ---
+        own_llm = StatefulMockLLM(structured_responses=[
+            FastThinkResult(finish=True, step_content="Done", calls=[], reasoning="done", details_needed=[]),
         ])
+        worker2 = ReactThinkingWorker(llm=own_llm, mode=ThinkingMode.FAST, verbose=False)
 
-        worker = ReactThinkingWorker(llm=worker_llm, mode=ThinkingMode.FAST)
-        assert worker._llm is worker_llm
-
-        class OwnLlmAgent(AgentAutoma[TravelPlanningContext]):
-            step = think_step(worker)
+        class OverrideAgent(AgentAutoma[TravelPlanningContext]):
+            step = think_step(worker2)
             async def cognition(self, ctx):
                 await self.step
 
-        result = await OwnLlmAgent(llm=agent_llm).arun(goal="test")
+        agent2 = OverrideAgent(llm=llm, verbose=True)
+        result = await agent2.arun(goal="test")
         assert result.finish is True
-        assert worker._llm is worker_llm  # Worker kept its own LLM
+        assert worker2._llm is own_llm     # Worker kept its own LLM
+        assert worker2._verbose is False    # Worker kept its own verbose=False
+        assert agent2.spend_tokens > 0
+
+        # --- 3. Stats reset: re-run with same-shape work, tokens should not double ---
+        own_llm2 = StatefulMockLLM(structured_responses=[
+            FastThinkResult(finish=True, step_content="Done", calls=[], reasoning="done", details_needed=[]),
+            FastThinkResult(finish=True, step_content="Done", calls=[], reasoning="done", details_needed=[]),
+        ])
+        worker3 = ReactThinkingWorker(llm=own_llm2, mode=ThinkingMode.FAST)
+
+        class StatsAgent(AgentAutoma[CognitiveContext]):
+            step = think_step(worker3)
+            async def cognition(self, ctx):
+                await self.step
+
+        agent3 = StatsAgent()
+        await agent3.arun(goal="run1")
+        tokens_run1 = agent3.spend_tokens
+        await agent3.arun(goal="run2")
+        assert agent3.spend_tokens == tokens_run1  # Reset, not accumulated
 
     @pytest.mark.asyncio
-    async def test_worker_without_llm_and_no_agent_llm_raises(self):
+    async def test_no_llm_raises(self):
         """Worker without LLM and agent without LLM raises RuntimeError."""
         worker = ReactThinkingWorker(mode=ThinkingMode.FAST)
 

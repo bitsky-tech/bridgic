@@ -441,15 +441,15 @@ class CognitiveWorker(GraphAutoma):
         llm: Optional[BaseLlm] = None,
         mode: ThinkingMode = ThinkingMode.DEFAULT,
         max_detail_rounds: int = 1,
-        verbose: bool = False,
-        verbose_prompt: bool = False,
+        verbose: Optional[bool] = None,
+        verbose_prompt: Optional[bool] = None,
     ):
         super().__init__()
         self._llm = llm
         self.mode = mode
         self.max_detail_rounds = max_detail_rounds
 
-        # Logging runtime
+        # Logging runtime (None = inherit from AgentAutoma)
         self._verbose = verbose
         self._verbose_prompt = verbose_prompt
 

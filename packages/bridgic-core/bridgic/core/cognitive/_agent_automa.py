@@ -1,9 +1,12 @@
+import time
+
 from abc import abstractmethod
 from enum import Enum
 from typing import Any, Dict, Generic, List, Optional, Tuple, Type, TypeVar, get_args, get_origin
 
 from bridgic.core.automa import GraphAutoma, worker
 from bridgic.core.automa._graph_meta import GraphMeta
+from bridgic.core.utils._console import printer
 
 from bridgic.core.cognitive._context import CognitiveContext, CognitiveTools, CognitiveSkills, Exposure
 from bridgic.core.cognitive._cognitive_worker import CognitiveWorker
@@ -85,6 +88,16 @@ class ThinkStepDescriptor:
         if self.worker._llm is None and agent._llm is not None:
             self.worker.set_llm(agent._llm)
 
+        # Inject agent's verbose if worker doesn't have its own
+        injected_verbose = False
+        injected_verbose_prompt = False
+        if self.worker._verbose is None:
+            self.worker._verbose = agent._verbose
+            injected_verbose = True
+        if self.worker._verbose_prompt is None:
+            self.worker._verbose_prompt = agent._verbose
+            injected_verbose_prompt = True
+
         # Apply tool/skill filtering if configured
         original_tools = None
         original_skills = None
@@ -105,9 +118,21 @@ class ThinkStepDescriptor:
                     filtered_skills.add(skill)
             context.skills = filtered_skills
 
+        # Track worker token delta
+        tokens_before = self.worker.spend_tokens
+
         try:
             await self._run_with_error_handling(context)
         finally:
+            # Accumulate token delta to agent
+            agent.spend_tokens += self.worker.spend_tokens - tokens_before
+
+            # Restore injected verbose
+            if injected_verbose:
+                self.worker._verbose = None
+            if injected_verbose_prompt:
+                self.worker._verbose_prompt = None
+
             # Restore original tools/skills
             if original_tools is not None:
                 context.tools = original_tools
@@ -306,6 +331,10 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT], metaclass=AgentAutoma
         Individual think_step workers can specify their own LLM.
     name : Optional[str]
         Optional name for the agent instance.
+    ctx_init : Optional[Dict[str, Any]]
+        Context field initialization dict. Keys match context model fields.
+    verbose : bool
+        Enable logging of execution summary (tokens, time). Default is False.
 
     Examples
     --------
@@ -335,11 +364,22 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT], metaclass=AgentAutoma
     _declared_steps: Dict[str, ThinkStepDescriptor] = {}
     _context_class: Optional[Type[CognitiveContext]] = None
 
-    def __init__(self, llm: Optional[Any] = None, name: Optional[str] = None, ctx_init: Optional[Dict[str, Any]] = None):
+    def __init__(
+        self,
+        llm: Optional[Any] = None,
+        name: Optional[str] = None,
+        ctx_init: Optional[Dict[str, Any]] = None,
+        verbose: bool = False,
+    ):
         super().__init__(name=name)
-        self._current_context: Optional[CognitiveContextT] = None
         self._llm = llm  # Default LLM for auxiliary tasks
         self._ctx_init = ctx_init
+        self._current_context: Optional[CognitiveContextT] = None
+        self._verbose = verbose
+
+        # Usage stats (reset per arun call)
+        self.spend_tokens: int = 0
+        self.spend_time: float = 0.0
 
     ############################################################################
     # Worker methods (GraphAutoma execution flow)
@@ -475,11 +515,15 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT], metaclass=AgentAutoma
         ValueError
             If CognitiveContext type is not specified in generic parameter.
         """
+        # Reset stats for this run
+        self.spend_tokens = 0
+        self.spend_time = 0.0
+
         if context is not None:
             # Set LLM for history compression if available
             if self._llm is not None:
                 context.cognitive_history.set_llm(self._llm)
-            return await super().arun(context=context)
+            return await self._run_and_report(context=context)
 
         if goal is None:
             raise ValueError("Must provide either 'goal' or 'context'")
@@ -496,7 +540,30 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT], metaclass=AgentAutoma
         if self._llm is not None:
             context.cognitive_history.set_llm(self._llm)
 
-        return await super().arun(context=context)
+        return await self._run_and_report(context=context)
+
+    async def _run_and_report(self, context: CognitiveContextT) -> CognitiveContextT:
+        """Run the agent, measure time, and log summary."""
+        start_time = time.time()
+        result = await super().arun(context=context)
+        self.spend_time = time.time() - start_time
+
+        if self._verbose:
+            agent_name = self.name or self.__class__.__name__
+            steps_count = len(result.cognitive_history) if hasattr(result, 'cognitive_history') else 0
+            status = "Completed" if getattr(result, 'finish', False) else "In Progress"
+            separator = "=" * 50
+            printer.print(separator, color="cyan")
+            printer.print(
+                f"  {agent_name} | {status}\n"
+                f"  Steps: {steps_count} | "
+                f"Tokens: {self.spend_tokens} | "
+                f"Time: {self.spend_time:.2f}s",
+                color="cyan"
+            )
+            printer.print(separator, color="cyan")
+
+        return result
 
     @property
     def ctx(self) -> Optional[CognitiveContextT]:
