@@ -81,6 +81,10 @@ class ThinkStepDescriptor:
                 "This step must be called within a cognition method."
             )
 
+        # Inject agent's default LLM if worker doesn't have one
+        if self.worker._llm is None and agent._llm is not None:
+            self.worker.set_llm(agent._llm)
+
         # Apply tool/skill filtering if configured
         original_tools = None
         original_skills = None

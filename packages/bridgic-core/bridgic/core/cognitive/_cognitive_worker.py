@@ -378,8 +378,8 @@ class CognitiveWorker(GraphAutoma):
 
     Parameters
     ----------
-    llm : BaseLlm
-        LLM used for thinking.
+    llm : Optional[BaseLlm]
+        LLM used for thinking. Can be None if the agent will inject one via set_llm().
     mode : ThinkingMode, optional
         Thinking mode: FAST or DEFAULT. Default is DEFAULT.
         - FAST: Single call (step + tools + details check in one)
@@ -438,7 +438,7 @@ class CognitiveWorker(GraphAutoma):
 
     def __init__(
         self,
-        llm: BaseLlm,
+        llm: Optional[BaseLlm] = None,
         mode: ThinkingMode = ThinkingMode.DEFAULT,
         max_detail_rounds: int = 1,
         verbose: bool = False,
@@ -456,6 +456,17 @@ class CognitiveWorker(GraphAutoma):
         # Usage stats
         self.spend_tokens = 0
         self.spend_time = 0
+
+    def set_llm(self, llm: BaseLlm) -> None:
+        """
+        Set the LLM used for thinking and tool selection.
+
+        Parameters
+        ----------
+        llm : BaseLlm
+            LLM instance to use. Replaces any previously set LLM.
+        """
+        self._llm = llm
 
     ############################################################################
     # Worker methods (GraphAutoma execution flow)
@@ -490,6 +501,12 @@ class CognitiveWorker(GraphAutoma):
         Dispatches to fast (thinking + tool selection in one call) or
         default (thinking only; tool selection per step later) based on thinking mode.
         """
+        if self._llm is None:
+            raise RuntimeError(
+                "CognitiveWorker has no LLM set. Either pass llm= in __init__ "
+                "or use set_llm() before running."
+            )
+
         if self.mode == ThinkingMode.FAST:
             await self._fast_thinking(observation, context)
         else:

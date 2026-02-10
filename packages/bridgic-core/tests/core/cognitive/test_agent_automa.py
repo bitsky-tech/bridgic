@@ -648,3 +648,70 @@ class TestCtxInit:
         result = await PostInitAgent(ctx_init={"finish": True}).arun(goal="test")
         assert len(result.tools) == len(get_travel_planning_tools())  # from __post_init__
         assert result.finish is True  # from ctx_init
+
+
+# ============================================================================
+# Tests: LLM Injection
+# ============================================================================
+
+class TestLlmInjection:
+    """Test that agent's default LLM is injected into workers that don't have one."""
+
+    @pytest.mark.asyncio
+    async def test_worker_without_llm_uses_agent_default(self):
+        """Worker created without LLM gets agent's default LLM injected at execution time."""
+        llm = StatefulMockLLM(structured_responses=[
+            _fast_search_flights(),
+            _fast_finish(),
+        ])
+
+        # Worker created WITHOUT llm
+        worker = ReactThinkingWorker(mode=ThinkingMode.FAST)
+        assert worker._llm is None
+
+        class LlmInjectionAgent(AgentAutoma[TravelPlanningContext]):
+            step = think_step(worker)
+            async def cognition(self, ctx):
+                await self.step
+                await self.step
+
+        # Agent provides the default LLM
+        result = await LlmInjectionAgent(llm=llm).arun(goal="test")
+        assert result.finish is True
+        assert worker._llm is llm  # LLM was injected
+
+    @pytest.mark.asyncio
+    async def test_worker_with_own_llm_not_overridden(self):
+        """Worker that already has an LLM keeps its own; agent's default is not injected."""
+        agent_llm = StatefulMockLLM()
+        worker_llm = StatefulMockLLM(structured_responses=[
+            FastThinkResult(
+                finish=True, step_content="Done", calls=[], reasoning="done",
+                details_needed=[]
+            ),
+        ])
+
+        worker = ReactThinkingWorker(llm=worker_llm, mode=ThinkingMode.FAST)
+        assert worker._llm is worker_llm
+
+        class OwnLlmAgent(AgentAutoma[TravelPlanningContext]):
+            step = think_step(worker)
+            async def cognition(self, ctx):
+                await self.step
+
+        result = await OwnLlmAgent(llm=agent_llm).arun(goal="test")
+        assert result.finish is True
+        assert worker._llm is worker_llm  # Worker kept its own LLM
+
+    @pytest.mark.asyncio
+    async def test_worker_without_llm_and_no_agent_llm_raises(self):
+        """Worker without LLM and agent without LLM raises RuntimeError."""
+        worker = ReactThinkingWorker(mode=ThinkingMode.FAST)
+
+        class NoLlmAgent(AgentAutoma[CognitiveContext]):
+            step = think_step(worker)
+            async def cognition(self, ctx):
+                await self.step
+
+        with pytest.raises(RuntimeError, match="no LLM set"):
+            await NoLlmAgent().arun(goal="test")
