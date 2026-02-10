@@ -44,7 +44,8 @@ nav:
 
 theme: 
   name: material
-  logo: assets/logo.png
+  logo: assets/logo.svg
+  logo_dark: assets/logo_dark.svg
   favicon: assets/favicon.ico
   custom_dir: overrides
   features:

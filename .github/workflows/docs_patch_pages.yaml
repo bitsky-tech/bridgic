@@ -1,7 +1,7 @@
 # Docs Patch Pages Workflow
-# This workflow patches existing documentation versions by deleting and rebuilding them with mike
-# It is triggered when pushing tags matching the pattern v[0-9]*.[0-9]*.[0-9]*.post[0-9]+
-# The workflow extracts the base version (e.g., v1.0.0 from v1.0.0.post1) and rebuilds that documentation version
+# This workflow patches existing documentation versions by deleting and rebuilding them with mike.
+# It is triggered when pushing tags matching pre-release patch tags like v1.2.3rc1.post1.
+# The workflow extracts the base pre-release version (e.g., v1.2.3rc1 from v1.2.3rc1.post1) and rebuilds that documentation version.
 # Reference documentation:
 # - GitHub Actions: https://docs.github.com/en/actions
 # - uv package manager: https://docs.astral.sh/uv/
@@ -15,9 +15,14 @@ name: Docs Patch Pages
 on:
   push:
     tags:
-      # This pattern matches post-release version tags (e.g., v1.2.3.post1, v2.0.0.post2)
-      # These tags are used for patching existing documentation versions
-      - 'v[0-9]*.[0-9]*.[0-9]*.post[0-9]+'
+      # Normal post-release
+      - 'v[0-9]+.[0-9]+.[0-9]+.post[0-9]+'
+      # Alpha pre-release post-release
+      - 'v[0-9]+.[0-9]+.[0-9]+a[0-9]+.post[0-9]+'
+      # Beta pre-release post-release
+      - 'v[0-9]+.[0-9]+.[0-9]+b[0-9]+.post[0-9]+'
+      # Release candidate post-release
+      - 'v[0-9]+.[0-9]+.[0-9]+rc[0-9]+.post[0-9]+'
 
 jobs:
   deploy:
