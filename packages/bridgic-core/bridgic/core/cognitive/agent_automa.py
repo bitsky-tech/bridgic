@@ -5,7 +5,7 @@ from typing import Any, Dict, Generic, List, Optional, Tuple, Type, TypeVar, get
 from bridgic.core.automa import GraphAutoma, worker
 from bridgic.core.automa._graph_meta import GraphMeta
 
-from .context import CognitiveContext, CognitiveTools, CognitiveSkills
+from .context import CognitiveContext, CognitiveTools, CognitiveSkills, Exposure
 from .cognitive_worker import CognitiveWorker
 
 
@@ -320,15 +320,22 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT], metaclass=AgentAutoma
     >>> # Option 2: Create context manually
     >>> ctx = MyContext(goal="...")
     >>> result = await MyAgent(llm=llm).arun(context=ctx)
+    ...
+    >>> # Option 3: Use ctx_init to initialize context fields without subclassing
+    >>> result = await MyAgent(
+    ...     llm=llm,
+    ...     ctx_init={"tools": [tool1, tool2], "skills": [skill1]}
+    ... ).arun(goal="...")
     """
 
     _declared_steps: Dict[str, ThinkStepDescriptor] = {}
     _context_class: Optional[Type[CognitiveContext]] = None
 
-    def __init__(self, llm: Optional[Any] = None, name: Optional[str] = None):
+    def __init__(self, llm: Optional[Any] = None, name: Optional[str] = None, ctx_init: Optional[Dict[str, Any]] = None):
         super().__init__(name=name)
         self._current_context: Optional[CognitiveContextT] = None
         self._llm = llm  # Default LLM for auxiliary tasks
+        self._ctx_init = ctx_init
 
     ############################################################################
     # Worker methods (GraphAutoma execution flow)
@@ -353,8 +360,57 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT], metaclass=AgentAutoma
             The context after cognition completes.
         """
         self._current_context = context
+        self._apply_ctx_init(context)
         await self.cognition(context)
         return self._current_context
+
+    def _apply_ctx_init(self, ctx: CognitiveContextT) -> None:
+        """
+        Apply ctx_init configuration to the context.
+
+        For each key-value pair in ctx_init:
+        - If key is not a model field on the context, skip it.
+        - If key is an Exposure field, value must be a list/tuple; items are added via add().
+        - Otherwise, value type must match the field annotation; assigned via setattr.
+
+        Raises
+        ------
+        TypeError
+            If value type doesn't match the field type.
+        """
+        if not self._ctx_init:
+            return
+
+        exposure_fields = type(ctx)._exposure_fields or {}
+
+        for key, value in self._ctx_init.items():
+            if key not in type(ctx).model_fields:
+                continue
+
+            if key in exposure_fields:
+                # Exposure field: value must be a list/tuple
+                if not isinstance(value, (list, tuple)):
+                    raise TypeError(
+                        f"ctx_init['{key}']: expected a list for Exposure field, "
+                        f"got {type(value).__name__}"
+                    )
+                attr = getattr(ctx, key)
+                for item in value:
+                    attr.add(item)
+            else:
+                # Regular field: type check
+                field_annotation = type(ctx).model_fields[key].annotation
+                expected_type = field_annotation
+                if not isinstance(expected_type, type):
+                    expected_type = get_origin(expected_type)
+
+                if isinstance(expected_type, type) and not isinstance(value, expected_type):
+                    type_name = getattr(field_annotation, '__name__', str(field_annotation))
+                    raise TypeError(
+                        f"ctx_init['{key}']: expected {type_name}, "
+                        f"got {type(value).__name__}"
+                    )
+                setattr(ctx, key, value)
 
     ############################################################################
     # Template methods (override by user to customize the behavior)
