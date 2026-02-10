@@ -741,24 +741,34 @@ class CognitiveHistory(LayeredExposure[Step]):
     Memory layers:
     - Working memory (most recent N steps): Full details displayed directly
     - Short-term memory (next N steps): Summary only, details available on request
-    - Long-term memory (older steps): Compressed into a single summary
+    - Long-term memory (older steps):
+        - Pending buffer: brief summaries, waiting for batch compression
+        - Compressed summary: LLM-generated concise summary
+
+    Compression is batched: LLM is only called when the pending buffer reaches
+    compress_threshold, reducing LLM calls by a factor of compress_threshold.
 
     Parameters
     ----------
     working_memory_size : int
         Number of recent steps to show with full details (default: 5).
     short_term_size : int
-        Number of steps to show as summary before working memory (default: 5).
+        Number of steps to show as summary before working memory (default: 20).
+    compress_threshold : int
+        Number of pending long-term steps to accumulate before triggering
+        one batch LLM compression (default: 5).
     """
 
     def __init__(
         self,
         working_memory_size: int = 5,
         short_term_size: int = 20,
+        compress_threshold: int = 10,
     ):
         super().__init__()
         self.working_memory_size = working_memory_size
         self.short_term_size = short_term_size
+        self.compress_threshold = compress_threshold
 
         # Compression state
         self.compressed_summary: str = ""
@@ -819,8 +829,8 @@ class CognitiveHistory(LayeredExposure[Step]):
         return True
 
     def needs_compression(self) -> bool:
-        """Check if there are steps that need to be compressed."""
-        return len(self._get_steps_to_compress()) > 0
+        """Check if pending long-term steps have reached the compression threshold."""
+        return len(self._get_steps_to_compress()) >= self.compress_threshold
 
     def _get_steps_to_compress(self) -> List[Step]:
         """Get steps that should be compressed."""
@@ -907,7 +917,8 @@ class CognitiveHistory(LayeredExposure[Step]):
         -------
         List[str]
             Formatted strings for each memory layer:
-            - Long-term: compressed summary (if exists)
+            - Long-term compressed: LLM-generated summary (if exists)
+            - Long-term pending: brief summaries of steps awaiting compression
             - Short-term: step summaries with indices (queryable)
             - Working: full step details with indices
         """
@@ -922,13 +933,19 @@ class CognitiveHistory(LayeredExposure[Step]):
         if self.compressed_summary:
             result.append(f"[History Summary] {self.compressed_summary}")
 
-        # 2. Short-term memory: summary only, queryable for details
+        # 2. Long-term memory: pending (uncompressed, awaiting batch compression)
+        for i in range(self.compressed_count, short_term_start):
+            step = self._items[i]
+            summary = self._format_step_summary(step)
+            result.append(f"{summary}")
+
+        # 3. Short-term memory: summary only, queryable for details
         for i in range(short_term_start, working_start):
             step = self._items[i]
             summary = self._format_step_summary(step)
             result.append(f"{summary}")
 
-        # 3. Working memory: full details
+        # 4. Working memory: full details
         for i in range(working_start, total):
             step = self._items[i]
             detail = self._format_step_detail(step)
