@@ -165,6 +165,7 @@ plugins:
             show_symbol_type_toc: true
           paths: 
             - ../packages/bridgic-core
+            - ../packages/bridgic-asl
             - ../packages/bridgic-integration/llms/bridgic-llms-openai
             - ../packages/bridgic-integration/llms/bridgic-llms-openai-like
             - ../packages/bridgic-integration/llms/bridgic-llms-vllm
