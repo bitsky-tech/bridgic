@@ -1,7 +1,15 @@
 # Docs Patch Pages Workflow
-# This workflow patches existing documentation versions by deleting and rebuilding them with mike
-# It is triggered when pushing tags matching the pattern v[0-9]*.[0-9]*.[0-9]*.post[0-9]+
-# The workflow extracts the base version (e.g., v1.0.0 from v1.0.0.post1) and rebuilds that documentation version
+# This workflow patches existing documentation versions by deleting and rebuilding them with mike.
+# It is triggered when pushing tags matching post-release patterns (*.postN), including:
+#   - Normal post-release:              v1.2.3.post1
+#   - Alpha pre-release post-release:   v1.2.3a1.post1
+#   - Beta pre-release post-release:    v1.2.3b1.post1
+#   - Release candidate post-release:   v1.2.3rc1.post1
+#
+# The workflow strips the .postN suffix to extract the base version (e.g., v1.2.3 from v1.2.3.post1,
+# or v1.2.3b1 from v1.2.3b1.post1), then deletes and rebuilds that documentation version.
+# Finally, it ensures the CNAME file exists on the gh-pages branch for custom domain support.
+#
 # Reference documentation:
 # - GitHub Actions: https://docs.github.com/en/actions
 # - uv package manager: https://docs.astral.sh/uv/
@@ -15,9 +23,14 @@ name: Docs Patch Pages
 on:
   push:
     tags:
-      # This pattern matches post-release version tags (e.g., v1.2.3.post1, v2.0.0.post2)
-      # These tags are used for patching existing documentation versions
-      - 'v[0-9]*.[0-9]*.[0-9]*.post[0-9]+'
+      # Normal post-release
+      - 'v[0-9]+.[0-9]+.[0-9]+.post[0-9]+'
+      # Alpha pre-release post-release
+      - 'v[0-9]+.[0-9]+.[0-9]+a[0-9]+.post[0-9]+'
+      # Beta pre-release post-release
+      - 'v[0-9]+.[0-9]+.[0-9]+b[0-9]+.post[0-9]+'
+      # Release candidate post-release
+      - 'v[0-9]+.[0-9]+.[0-9]+rc[0-9]+.post[0-9]+'
 
 jobs:
   deploy:

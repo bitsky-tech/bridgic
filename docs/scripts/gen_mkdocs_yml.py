@@ -68,7 +68,7 @@ class DocumentationConfig:
         }
         
         # Package directories to process
-        self.packages = ["bridgic-core"]
+        self.packages = ["bridgic-core", "bridgic-asl"]
         self.package_info = {}
         
         # Base path for documentation generation
@@ -342,7 +342,7 @@ class SafeMkDocsConfigUpdater:
         replacements = {
             'Llm': 'LLM', 'Api': 'API', 'Ai': 'AI', 'Http': 'HTTP',
             'Json': 'JSON', 'Xml': 'XML', 'Url': 'URL', 'Uri': 'URI',
-            'Uuid': 'UUID', 'Id': 'ID'
+            'Uuid': 'UUID', 'Id': 'ID', 'Asl': 'ASL'
         }
         
         for old, new in replacements.items():
@@ -387,22 +387,24 @@ class SafeMkDocsConfigUpdater:
 
             lines: List[str] = []
 
-            # 1) Bridgic-Core (keep as-is if present)
-            core_key_candidates = [k for k in nav_structure.keys() if k.lower() == 'bridgic-core']
-            if core_key_candidates:
-                core_key = core_key_candidates[0]
-                core_nav = self._build_api_reference_nav({core_key: nav_structure[core_key]})
-                for item in core_nav:
-                    for key, value in item.items():
-                        # 4 spaces under "- API Reference:"
-                        lines.append(f"    - {self._format_display_name(key)}:")
-                        if isinstance(value, list):
-                            # Children start at 6 spaces
-                            sub_yaml = self._nav_to_yaml_string(value, indent=6)
-                            if sub_yaml:
-                                for sub_line in sub_yaml.split('\n'):
-                                    if sub_line.strip():
-                                        lines.append(sub_line)
+            # 1) Top-level packages (bridgic-core, bridgic-asl, etc.)
+            top_level_names = ['bridgic-core', 'bridgic-asl']
+            for top_level_name in top_level_names:
+                top_key_candidates = [k for k in nav_structure.keys() if k.lower() == top_level_name]
+                if top_key_candidates:
+                    top_key = top_key_candidates[0]
+                    top_nav = self._build_api_reference_nav({top_key: nav_structure[top_key]})
+                    for item in top_nav:
+                        for key, value in item.items():
+                            # 4 spaces under "- API Reference:"
+                            lines.append(f"    - {self._format_display_name(key)}:")
+                            if isinstance(value, list):
+                                # Children start at 6 spaces
+                                sub_yaml = self._nav_to_yaml_string(value, indent=6)
+                                if sub_yaml:
+                                    for sub_line in sub_yaml.split('\n'):
+                                        if sub_line.strip():
+                                            lines.append(sub_line)
 
             # 2) Bridgic-Integration > llms
             # Derive entries from known integration packages present in nav_structure
@@ -720,6 +722,17 @@ class DocumentationGenerator:
                     self.nav_structure[package_name] = {}
 
                 nodes = self.package_nodes[package_name]
+                # Handle short-level packages (fewer than 3 parts, e.g., bridgic.asl)
+                for parts_tuple, index_path in nodes.items():
+                    if len(parts_tuple) < 3:
+                        display_key = '.'.join(parts_tuple)
+                        if self.config.single_entry_as_group:
+                            # Wrap as a group with a child entry for collapsible nav
+                            label = parts_tuple[-1]
+                            self.nav_structure[package_name][display_key] = [{label: index_path}]
+                        else:
+                            self.nav_structure[package_name][display_key] = index_path
+
                 # Group by first three parts (e.g., bridgic.core.automa)
                 groups: Dict[Tuple[str, ...], Dict[str, Any]] = {}
                 for parts_tuple, index_path in nodes.items():
@@ -778,7 +791,7 @@ class DocumentationGenerator:
                         self.nav_structure[package_name][display_key] = group_items
         except Exception as e:
             logger.error(f"Failed to build nav structure for package {package_name}: {e}")
-    
+
     def _build_nav_structure_only(self, package_path: str) -> None:
         """Build navigation structure without generating documentation files"""
         code_src = self.root / package_path
@@ -857,6 +870,17 @@ class DocumentationGenerator:
                     self.nav_structure[package_name] = {}
 
                 nodes = self.package_nodes[package_name]
+                # Handle short-level packages (fewer than 3 parts, e.g., bridgic.asl)
+                for parts_tuple, index_path in nodes.items():
+                    if len(parts_tuple) < 3:
+                        display_key = '.'.join(parts_tuple)
+                        if self.config.single_entry_as_group:
+                            # Wrap as a group with a child entry for collapsible nav
+                            label = parts_tuple[-1]
+                            self.nav_structure[package_name][display_key] = [{label: index_path}]
+                        else:
+                            self.nav_structure[package_name][display_key] = index_path
+
                 # Group by first three parts (e.g., bridgic.core.automa)
                 groups: Dict[Tuple[str, ...], Dict[str, Any]] = {}
                 for parts_tuple, index_path in nodes.items():
