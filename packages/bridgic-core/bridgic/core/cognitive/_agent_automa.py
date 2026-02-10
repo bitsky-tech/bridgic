@@ -90,13 +90,9 @@ class ThinkStepDescriptor:
 
         # Inject agent's verbose if worker doesn't have its own
         injected_verbose = False
-        injected_verbose_prompt = False
         if self.worker._verbose is None:
             self.worker._verbose = agent._verbose
             injected_verbose = True
-        if self.worker._verbose_prompt is None:
-            self.worker._verbose_prompt = agent._verbose
-            injected_verbose_prompt = True
 
         # Apply tool/skill filtering if configured
         original_tools = None
@@ -130,8 +126,6 @@ class ThinkStepDescriptor:
             # Restore injected verbose
             if injected_verbose:
                 self.worker._verbose = None
-            if injected_verbose_prompt:
-                self.worker._verbose_prompt = None
 
             # Restore original tools/skills
             if original_tools is not None:
