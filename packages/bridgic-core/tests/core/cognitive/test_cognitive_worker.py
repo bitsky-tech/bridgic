@@ -62,60 +62,92 @@ def _make_context() -> CognitiveContext:
 
 
 # ---------------------------------------------------------------------------
-# Template method defaults
+# Custom workers
 # ---------------------------------------------------------------------------
 
-class TestThinkingNotImplemented:
-    @pytest.mark.asyncio
-    async def test_thinking_not_implemented(self):
-        llm = MockLLM()
-        worker = CognitiveWorker(llm=llm)
-        with pytest.raises(NotImplementedError):
-            await worker.thinking()
+class _FastWorker(CognitiveWorker):
+    async def thinking(self):
+        return "Plan ONE immediate next step."
 
 
-class TestObservationDefault:
+class _DefaultWorker(CognitiveWorker):
+    async def thinking(self):
+        return "Create a step-by-step plan."
+
+
+class _PromptCustomWorker(CognitiveWorker):
+    """Worker with observation + build_thinking_prompt overrides."""
+    async def thinking(self):
+        return "Plan ONE step"
+
+    async def observation(self, context):
+        return "Custom observation: environment is ready"
+
+    async def build_thinking_prompt(self, think_prompt, tools_description, output_instructions, context_info):
+        extra = "EXTRA_INSTRUCTION: Always prefer cheapest option."
+        system = f"{think_prompt}\n\n{extra}\n\n{tools_description}\n\n{output_instructions}"
+        return system, context_info
+
+
+class _ActionPipelineWorker(CognitiveWorker):
+    """Worker with verify_tools + consequence overrides."""
+    async def thinking(self):
+        return "Plan ONE step"
+
+    async def verify_tools(self, matched_list, context):
+        return [(tc, spec) for tc, spec in matched_list if spec.tool_name != "book_flight"]
+
+    async def consequence(self, action_results):
+        return "; ".join(r.tool_result for r in action_results)
+
+
+class _OverrideSelectToolsWorker(CognitiveWorker):
+    """Worker with custom select_tools (DEFAULT mode only)."""
+    async def thinking(self):
+        return "Plan steps"
+
+    async def select_tools(self, step_content, context):
+        return [ToolCall(id="fixed_1", name="search_flights", arguments={
+            "origin": "Beijing", "destination": "Tokyo", "date": "2025-06-01"
+        })]
+
+
+# ---------------------------------------------------------------------------
+# Tests
+# ---------------------------------------------------------------------------
+
+class TestCognitiveWorker:
+
     @pytest.mark.asyncio
-    async def test_observation_default(self):
+    async def test_template_method_defaults(self):
+        """Default template methods: thinking raises, observation/consequence/verify_tools
+        passthrough, build_thinking_prompt assembles, non-context rejected."""
         llm = MockLLM()
         worker = CognitiveWorker(llm=llm)
         ctx = _make_context()
-        result = await worker.observation(ctx)
-        assert result is None
 
+        # thinking() → NotImplementedError
+        with pytest.raises(NotImplementedError):
+            await worker.thinking()
 
-class TestConsequenceDefault:
-    @pytest.mark.asyncio
-    async def test_consequence_default(self):
-        llm = MockLLM()
-        worker = CognitiveWorker(llm=llm)
+        # observation() → None
+        assert await worker.observation(ctx) is None
+
+        # consequence() → passthrough
         test_results = [
             ActionStepResult(
                 tool_id="1", tool_name="search_flights",
                 tool_arguments={"origin": "Beijing"}, tool_result="found"
             )
         ]
-        result = await worker.consequence(test_results)
-        assert result is test_results
+        assert await worker.consequence(test_results) is test_results
 
-
-class TestVerifyToolsDefault:
-    @pytest.mark.asyncio
-    async def test_verify_tools_default(self):
-        llm = MockLLM()
-        worker = CognitiveWorker(llm=llm)
-        ctx = _make_context()
+        # verify_tools() → passthrough
         tools = get_travel_planning_tools()
         matched = [(ToolCall(id="1", name="search_flights", arguments={}), tools[0])]
-        result = await worker.verify_tools(matched, ctx)
-        assert result is matched
+        assert await worker.verify_tools(matched, ctx) is matched
 
-
-class TestBuildThinkingPromptDefault:
-    @pytest.mark.asyncio
-    async def test_build_thinking_prompt_default(self):
-        llm = MockLLM()
-        worker = CognitiveWorker(llm=llm)
+        # build_thinking_prompt() → standard assembly
         system, user = await worker.build_thinking_prompt(
             think_prompt="Plan next step",
             tools_description="Tool A, Tool B",
@@ -127,83 +159,42 @@ class TestBuildThinkingPromptDefault:
         assert "Output JSON" in system
         assert user == "Goal: test"
 
+        # Type check: rejects non-CognitiveContext
+        class SimpleWorker(CognitiveWorker):
+            async def thinking(self):
+                return "Plan"
 
-# ---------------------------------------------------------------------------
-# Template method overrides
-# ---------------------------------------------------------------------------
+        llm2 = MockLLM()
+        llm2.structured_output_response = FastThinkResult(
+            finish=True, step_content="", calls=[], details_needed=[]
+        )
+        w = SimpleWorker(llm=llm2, mode=ThinkingMode.FAST)
+        with pytest.raises(TypeError, match="Expected CognitiveContext"):
+            await w.arun(context="not a context")
 
-class _OverrideObservationWorker(CognitiveWorker):
-    async def thinking(self):
-        return "Plan ONE step"
-
-    async def observation(self, context):
-        return "Custom observation: environment is ready"
-
-
-class TestOverrideObservation:
     @pytest.mark.asyncio
-    async def test_override_observation(self):
+    async def test_override_prompt_customization(self):
+        """Override observation + build_thinking_prompt: custom text appears in LLM messages."""
         llm = MockLLM()
         llm.structured_output_response = FastThinkResult(
-            finish=True, step_content="Done", calls=[], reasoning="All done",
+            finish=True, step_content="Done", calls=[], reasoning="done",
             details_needed=[]
         )
-        worker = _OverrideObservationWorker(llm=llm, mode=ThinkingMode.FAST)
+        worker = _PromptCustomWorker(llm=llm, mode=ThinkingMode.FAST)
         ctx = _make_context()
         await worker.arun(context=ctx)
 
-        # The LLM should have received the custom observation in user_prompt
+        # Custom observation appears in user prompt
         user_msg = llm.captured_messages[-1]
         assert "Custom observation: environment is ready" in user_msg.content
 
+        # EXTRA_INSTRUCTION appears in system prompt
+        system_msg = llm.captured_messages[0]
+        assert "EXTRA_INSTRUCTION: Always prefer cheapest option" in system_msg.content
 
-class _OverrideConsequenceWorker(CognitiveWorker):
-    async def thinking(self):
-        return "Plan ONE step"
-
-    async def consequence(self, action_results):
-        return "; ".join(r.tool_result for r in action_results)
-
-
-class TestOverrideConsequence:
     @pytest.mark.asyncio
-    async def test_override_consequence(self):
-        llm = MockLLM()
-        llm.structured_output_response = FastThinkResult(
-            finish=False,
-            step_content="Search flights",
-            calls=[StepToolCall(
-                tool="search_flights",
-                tool_arguments=[
-                    ToolArgument(name="origin", value="Beijing"),
-                    ToolArgument(name="destination", value="Tokyo"),
-                    ToolArgument(name="date", value="2025-06-01"),
-                ]
-            )],
-            reasoning="Search first",
-            details_needed=[]
-        )
-        worker = _OverrideConsequenceWorker(llm=llm, mode=ThinkingMode.FAST)
-        ctx = _make_context()
-        await worker.arun(context=ctx)
-
-        # History should contain the formatted consequence (joined string), not raw list
-        last_step = ctx.cognitive_history[-1]
-        assert isinstance(last_step.result, str)
-        assert "Found 3 available flights" in last_step.result
-
-
-class _OverrideVerifyToolsWorker(CognitiveWorker):
-    async def thinking(self):
-        return "Plan ONE step"
-
-    async def verify_tools(self, matched_list, context):
-        return [(tc, spec) for tc, spec in matched_list if spec.tool_name != "book_flight"]
-
-
-class TestOverrideVerifyTools:
-    @pytest.mark.asyncio
-    async def test_override_verify_tools(self):
+    async def test_override_action_pipeline(self):
+        """Override verify_tools + consequence: book_flight filtered, result formatted as string."""
         llm = MockLLM()
         llm.structured_output_response = FastThinkResult(
             finish=False,
@@ -227,124 +218,26 @@ class TestOverrideVerifyTools:
             reasoning="Do both",
             details_needed=[]
         )
-        worker = _OverrideVerifyToolsWorker(llm=llm, mode=ThinkingMode.FAST)
+        worker = _ActionPipelineWorker(llm=llm, mode=ThinkingMode.FAST)
         ctx = _make_context()
         await worker.arun(context=ctx)
 
         last_step = ctx.cognitive_history[-1]
-        tool_calls_in_history = last_step.metadata.get("tool_calls", [])
-        assert "book_flight" not in tool_calls_in_history
-        assert "search_flights" in tool_calls_in_history
+        # verify_tools filtered out book_flight
+        assert "book_flight" not in last_step.metadata.get("tool_calls", [])
+        assert "search_flights" in last_step.metadata.get("tool_calls", [])
+        # consequence formatted as joined string
+        assert isinstance(last_step.result, str)
+        assert "Found 3 available flights" in last_step.result
 
-
-class _OverrideBuildThinkingPromptWorker(CognitiveWorker):
-    async def thinking(self):
-        return "Plan ONE step"
-
-    async def build_thinking_prompt(self, think_prompt, tools_description, output_instructions, context_info):
-        extra = "EXTRA_INSTRUCTION: Always prefer cheapest option."
-        system = f"{think_prompt}\n\n{extra}\n\n{tools_description}\n\n{output_instructions}"
-        return system, context_info
-
-
-class TestOverrideBuildThinkingPrompt:
     @pytest.mark.asyncio
-    async def test_override_build_thinking_prompt(self):
+    async def test_fast_mode_cycle(self):
+        """FAST mode full cycle: tool execution → finish."""
         llm = MockLLM()
-        llm.structured_output_response = FastThinkResult(
-            finish=True, step_content="Done", calls=[], reasoning="done",
-            details_needed=[]
-        )
-        worker = _OverrideBuildThinkingPromptWorker(llm=llm, mode=ThinkingMode.FAST)
         ctx = _make_context()
-        await worker.arun(context=ctx)
-
-        system_msg = llm.captured_messages[0]
-        assert "EXTRA_INSTRUCTION: Always prefer cheapest option" in system_msg.content
-
-
-class _OverrideSelectToolsWorker(CognitiveWorker):
-    async def thinking(self):
-        return "Plan steps"
-
-    async def select_tools(self, step_content, context):
-        return [ToolCall(id="fixed_1", name="search_flights", arguments={
-            "origin": "Beijing", "destination": "Tokyo", "date": "2025-06-01"
-        })]
-
-
-class TestOverrideSelectTools:
-    @pytest.mark.asyncio
-    async def test_override_select_tools(self):
-        llm = MockLLM()
-        llm.structured_output_response = DefaultThinkResult(
-            finish=False,
-            steps=["Search for flights to Tokyo"],
-            reasoning="Need flights",
-            details_needed=[]
-        )
-        worker = _OverrideSelectToolsWorker(llm=llm, mode=ThinkingMode.DEFAULT)
-        ctx = _make_context()
-        await worker.arun(context=ctx)
-
-        last_step = ctx.cognitive_history[-1]
-        tool_calls_in_history = last_step.metadata.get("tool_calls", [])
-        assert "search_flights" in tool_calls_in_history
-
-
-# ---------------------------------------------------------------------------
-# Type checks
-# ---------------------------------------------------------------------------
-
-class TestObservationRejectsNonContext:
-    @pytest.mark.asyncio
-    async def test_observation_rejects_non_context(self):
-        llm = MockLLM()
-        llm.structured_output_response = FastThinkResult(
-            finish=True, step_content="", calls=[], details_needed=[]
-        )
-
-        class SimpleWorker(CognitiveWorker):
-            async def thinking(self):
-                return "Plan"
-
-        worker = SimpleWorker(llm=llm, mode=ThinkingMode.FAST)
-        with pytest.raises(TypeError, match="Expected CognitiveContext"):
-            await worker.arun(context="not a context")
-
-
-# ---------------------------------------------------------------------------
-# Full cycle (mocked LLM)
-# ---------------------------------------------------------------------------
-
-class _FastWorker(CognitiveWorker):
-    async def thinking(self):
-        return "Plan ONE immediate next step."
-
-
-class _DefaultWorker(CognitiveWorker):
-    async def thinking(self):
-        return "Create a step-by-step plan."
-
-
-class TestFastModeFinish:
-    @pytest.mark.asyncio
-    async def test_fast_mode_finish(self):
-        llm = MockLLM()
-        llm.structured_output_response = FastThinkResult(
-            finish=True, step_content="Task complete", calls=[], reasoning="All done",
-            details_needed=[]
-        )
         worker = _FastWorker(llm=llm, mode=ThinkingMode.FAST)
-        ctx = _make_context()
-        await worker.arun(context=ctx)
-        assert ctx.finish is True
 
-
-class TestFastModeToolExecution:
-    @pytest.mark.asyncio
-    async def test_fast_mode_tool_execution(self):
-        llm = MockLLM()
+        # 1. Tool execution
         llm.structured_output_response = FastThinkResult(
             finish=False,
             step_content="Search flights from Beijing to Tokyo",
@@ -359,34 +252,29 @@ class TestFastModeToolExecution:
             reasoning="Search first",
             details_needed=[]
         )
-        worker = _FastWorker(llm=llm, mode=ThinkingMode.FAST)
-        ctx = _make_context()
         await worker.arun(context=ctx)
 
-        assert len(ctx.cognitive_history) > 0
-        last_step = ctx.cognitive_history[-1]
-        assert last_step.status is True
-        assert "search_flights" in last_step.metadata.get("tool_calls", [])
+        assert len(ctx.cognitive_history) == 1
+        assert ctx.cognitive_history[-1].status is True
+        assert "search_flights" in ctx.cognitive_history[-1].metadata.get("tool_calls", [])
+        assert ctx.finish is False
 
-
-class TestDefaultModeFinish:
-    @pytest.mark.asyncio
-    async def test_default_mode_finish(self):
-        llm = MockLLM()
-        llm.structured_output_response = DefaultThinkResult(
-            finish=True, steps=[], reasoning="Goal achieved",
-            details_needed=[]
+        # 2. Finish
+        llm.structured_output_response = FastThinkResult(
+            finish=True, step_content="Task complete", calls=[],
+            reasoning="All done", details_needed=[]
         )
-        worker = _DefaultWorker(llm=llm, mode=ThinkingMode.DEFAULT)
-        ctx = _make_context()
         await worker.arun(context=ctx)
         assert ctx.finish is True
 
-
-class TestDefaultModeToolExecution:
     @pytest.mark.asyncio
-    async def test_default_mode_tool_execution(self):
+    async def test_default_mode_cycle(self):
+        """DEFAULT mode full cycle: tool selection + execution → finish, plus select_tools override."""
         llm = MockLLM()
+        ctx = _make_context()
+        worker = _DefaultWorker(llm=llm, mode=ThinkingMode.DEFAULT)
+
+        # 1. Tool execution with tool selection
         llm.structured_output_response = DefaultThinkResult(
             finish=False,
             steps=["Search for available flights from Beijing to Tokyo"],
@@ -399,11 +287,31 @@ class TestDefaultModeToolExecution:
             })],
             None
         )
-        worker = _DefaultWorker(llm=llm, mode=ThinkingMode.DEFAULT)
-        ctx = _make_context()
         await worker.arun(context=ctx)
 
-        assert len(ctx.cognitive_history) > 0
-        last_step = ctx.cognitive_history[-1]
-        assert last_step.status is True
-        assert "search_flights" in last_step.metadata.get("tool_calls", [])
+        assert len(ctx.cognitive_history) == 1
+        assert ctx.cognitive_history[-1].status is True
+        assert "search_flights" in ctx.cognitive_history[-1].metadata.get("tool_calls", [])
+        assert ctx.finish is False
+
+        # 2. Finish
+        llm.structured_output_response = DefaultThinkResult(
+            finish=True, steps=[], reasoning="Goal achieved",
+            details_needed=[]
+        )
+        await worker.arun(context=ctx)
+        assert ctx.finish is True
+
+        # 3. Custom select_tools override bypasses LLM tool selection
+        llm2 = MockLLM()
+        llm2.structured_output_response = DefaultThinkResult(
+            finish=False,
+            steps=["Search for flights to Tokyo"],
+            reasoning="Need flights",
+            details_needed=[]
+        )
+        override_worker = _OverrideSelectToolsWorker(llm=llm2, mode=ThinkingMode.DEFAULT)
+        ctx2 = _make_context()
+        await override_worker.arun(context=ctx2)
+
+        assert "search_flights" in ctx2.cognitive_history[-1].metadata.get("tool_calls", [])

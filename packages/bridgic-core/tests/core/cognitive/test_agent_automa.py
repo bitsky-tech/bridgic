@@ -134,6 +134,12 @@ class PlanThinkingWorker(CognitiveWorker):
         )
 
 
+class _FailingWorker(CognitiveWorker):
+    """Worker that always raises during thinking."""
+    async def thinking(self):
+        raise RuntimeError("Worker failed")
+
+
 # ============================================================================
 # Helper: common mock tool calls
 # ============================================================================
@@ -218,6 +224,15 @@ def _select_tool_call(name: str, arguments: dict) -> Tuple[List[ToolCall], None]
     return ([ToolCall(id=f"tc_{name}", name=name, arguments=arguments)], None)
 
 
+def _assert_tool_sequence(result, expected_tools: List[str]):
+    """Assert that cognitive_history steps executed the expected tool sequence."""
+    steps = result.cognitive_history.get_all()
+    assert len(steps) == len(expected_tools)
+    for step, tool_name in zip(steps, expected_tools):
+        assert tool_name in step.metadata["tool_calls"]
+    assert all(s.status for s in steps)
+
+
 # ============================================================================
 # Agents (from idea_practice)
 # ============================================================================
@@ -300,51 +315,37 @@ def _make_react_then_plan_agent(react_llm, plan_llm):
 
 
 # ============================================================================
-# Tests: Full Agent Workflows
+# Tests: Agent Workflows
 # ============================================================================
 
-class TestReactAgent:
-    """ReactAgent: react loop until finish — simulates full travel planning."""
+class TestAgentWorkflows:
+    """Full agent workflow integration tests — each pattern runs a complete travel planning scenario."""
 
     @pytest.mark.asyncio
     async def test_react_agent(self):
+        """ReactAgent: FAST-mode react loop until finish (5 iterations)."""
         llm = StatefulMockLLM(structured_responses=[
-            _fast_search_flights(),   # iteration 1: search flights
-            _fast_book_flight(),      # iteration 2: book flight
-            _fast_search_hotels(),    # iteration 3: search hotels
-            _fast_book_hotel(),       # iteration 4: book hotel
-            _fast_finish(),           # iteration 5: finish
+            _fast_search_flights(),
+            _fast_book_flight(),
+            _fast_search_hotels(),
+            _fast_book_hotel(),
+            _fast_finish(),
         ])
 
         ReactAgent = _make_react_agent(llm)
-        agent = ReactAgent()
-        result = await agent.arun(
+        result = await ReactAgent().arun(
             goal="I'm currently in Beijing and I want to go to Kunming tomorrow. "
                  "Could you help me plan the route and hotel?"
         )
 
         assert result.finish is True
-        assert len(result.cognitive_history) == 4
-
-        # Verify each step executed the correct tool
-        steps = result.cognitive_history.get_all()
-        assert "search_flights" in steps[0].metadata["tool_calls"]
-        assert "book_flight" in steps[1].metadata["tool_calls"]
-        assert "search_hotels" in steps[2].metadata["tool_calls"]
-        assert "book_hotel" in steps[3].metadata["tool_calls"]
-
-        # Verify all steps succeeded
-        assert all(s.status for s in steps)
-
-
-class TestPlanAgent:
-    """PlanAgent: single plan step — plans and executes all steps at once."""
+        _assert_tool_sequence(result, ["search_flights", "book_flight", "search_hotels", "book_hotel"])
 
     @pytest.mark.asyncio
     async def test_plan_agent(self):
+        """PlanAgent: DEFAULT-mode single plan step — plans and executes all steps at once."""
         llm = StatefulMockLLM(
             structured_responses=[
-                # Plan thinking: return 4 steps
                 DefaultThinkResult(
                     finish=False,
                     steps=[
@@ -358,13 +359,10 @@ class TestPlanAgent:
                 ),
             ],
             select_tool_responses=[
-                # Tool selection for each step
                 _select_tool_call("search_flights", {
                     "origin": "Beijing", "destination": "Kunming", "date": "2025-06-01"
                 }),
-                _select_tool_call("book_flight", {
-                    "flight_number": "MU456"
-                }),
+                _select_tool_call("book_flight", {"flight_number": "MU456"}),
                 _select_tool_call("search_hotels", {
                     "city": "Kunming", "check_in": "2025-06-01", "check_out": "2025-06-03"
                 }),
@@ -376,43 +374,26 @@ class TestPlanAgent:
         )
 
         PlanAgent = _make_plan_agent(llm)
-        agent = PlanAgent()
-        result = await agent.arun(
+        result = await PlanAgent().arun(
             goal="I'm currently in Beijing and I want to go to Kunming. "
                  "Could you help me plan the route?"
         )
 
-        assert len(result.cognitive_history) == 4
-
-        steps = result.cognitive_history.get_all()
-        assert "search_flights" in steps[0].metadata["tool_calls"]
-        assert "book_flight" in steps[1].metadata["tool_calls"]
-        assert "search_hotels" in steps[2].metadata["tool_calls"]
-        assert "book_hotel" in steps[3].metadata["tool_calls"]
-
-        assert all(s.status for s in steps)
-
-
-class TestMixAgent:
-    """MixAgent: react twice, then plan — mixing FAST and DEFAULT modes."""
+        _assert_tool_sequence(result, ["search_flights", "book_flight", "search_hotels", "book_hotel"])
 
     @pytest.mark.asyncio
     async def test_mix_agent(self):
-        # React worker LLM: 2 FAST calls
+        """MixAgent: react twice (FAST), then plan (DEFAULT) — mixing modes."""
         react_llm = StatefulMockLLM(structured_responses=[
-            _fast_search_flights(),   # react 1: search flights
-            _fast_book_flight(),      # react 2: book flight
+            _fast_search_flights(),
+            _fast_book_flight(),
         ])
 
-        # Plan worker LLM: 1 DEFAULT thinking + 2 tool selections
         plan_llm = StatefulMockLLM(
             structured_responses=[
                 DefaultThinkResult(
                     finish=False,
-                    steps=[
-                        "Search for hotels in Kunming",
-                        "Book the cheapest hotel",
-                    ],
+                    steps=["Search for hotels in Kunming", "Book the cheapest hotel"],
                     reasoning="Continue with accommodation after flights are done",
                     details_needed=[]
                 ),
@@ -429,38 +410,22 @@ class TestMixAgent:
         )
 
         MixAgent = _make_mix_agent(react_llm, plan_llm)
-        agent = MixAgent()
-        result = await agent.arun(
+        result = await MixAgent().arun(
             goal="I'm currently in Beijing and I want to go to Kunming. "
                  "Could you help me plan the route?"
         )
 
-        assert len(result.cognitive_history) == 4
-
-        steps = result.cognitive_history.get_all()
-        # React steps
-        assert "search_flights" in steps[0].metadata["tool_calls"]
-        assert "book_flight" in steps[1].metadata["tool_calls"]
-        # Plan steps
-        assert "search_hotels" in steps[2].metadata["tool_calls"]
-        assert "book_hotel" in steps[3].metadata["tool_calls"]
-
-        assert all(s.status for s in steps)
-
-
-class TestReactThenPlanAgent:
-    """ReactThenPlanAgent: react up to 3 times, then plan if not finished."""
+        _assert_tool_sequence(result, ["search_flights", "book_flight", "search_hotels", "book_hotel"])
 
     @pytest.mark.asyncio
     async def test_react_then_plan_agent(self):
-        # React worker LLM: 3 FAST calls (exits loop when history >= 3)
+        """ReactThenPlanAgent: react up to 3 times, then plan if not finished."""
         react_llm = StatefulMockLLM(structured_responses=[
-            _fast_search_flights(),   # react 1
-            _fast_book_flight(),      # react 2
-            _fast_search_hotels(),    # react 3 → len(history)=3, break loop
+            _fast_search_flights(),
+            _fast_book_flight(),
+            _fast_search_hotels(),
         ])
 
-        # Plan worker LLM: 1 DEFAULT thinking + 1 tool selection
         plan_llm = StatefulMockLLM(
             structured_responses=[
                 DefaultThinkResult(
@@ -479,36 +444,28 @@ class TestReactThenPlanAgent:
         )
 
         ReactThenPlanAgent = _make_react_then_plan_agent(react_llm, plan_llm)
-        agent = ReactThenPlanAgent()
-        result = await agent.arun(
+        result = await ReactThenPlanAgent().arun(
             goal="I'm currently in Beijing and I want to go to Kunming tomorrow. "
                  "Could you help me plan the route and hotel?"
         )
 
-        assert len(result.cognitive_history) == 4
-
-        steps = result.cognitive_history.get_all()
-        # React steps
-        assert "search_flights" in steps[0].metadata["tool_calls"]
-        assert "book_flight" in steps[1].metadata["tool_calls"]
-        assert "search_hotels" in steps[2].metadata["tool_calls"]
-        # Plan step
-        assert "book_hotel" in steps[3].metadata["tool_calls"]
-
-        assert all(s.status for s in steps)
+        _assert_tool_sequence(result, ["search_flights", "book_flight", "search_hotels", "book_hotel"])
 
 
 # ============================================================================
-# Tests: Tool/Skill Filtering
+# Tests: Tool/Skill Filtering + Error Strategies
 # ============================================================================
 
-class TestToolFiltering:
+class TestAgentFeatures:
+    """Test think_step features: tool/skill filtering, error strategies."""
+
     @pytest.mark.asyncio
-    async def test_tool_filtering(self):
-        llm = StatefulMockLLM(structured_responses=[
+    async def test_tool_and_skill_filtering(self):
+        """think_step tool/skill filtering temporarily hides items, then restores."""
+        # --- Tool filtering: only search_flights visible ---
+        llm1 = StatefulMockLLM(structured_responses=[
             FastThinkResult(
-                finish=False,
-                step_content="Search flights",
+                finish=False, step_content="Search flights",
                 calls=[StepToolCall(
                     tool="search_flights",
                     tool_arguments=[
@@ -517,123 +474,173 @@ class TestToolFiltering:
                         ToolArgument(name="date", value="2025-06-01"),
                     ]
                 )],
-                reasoning="Search",
-                details_needed=[]
+                reasoning="Search", details_needed=[]
             ),
         ])
-        worker = ReactThinkingWorker(llm=llm, mode=ThinkingMode.FAST)
+        worker1 = ReactThinkingWorker(llm=llm1, mode=ThinkingMode.FAST)
 
-        class TestAgent(AgentAutoma[TravelPlanningContext]):
-            filtered_step = think_step(worker, tools=["search_flights"])
-
+        class ToolFilterAgent(AgentAutoma[TravelPlanningContext]):
+            filtered_step = think_step(worker1, tools=["search_flights"])
             async def cognition(self, ctx):
                 await self.filtered_step
 
-        agent = TestAgent()
-        result = await agent.arun(
-            goal="Search flights only"
-        )
-
-        # After step execution, all original tools should be restored
+        result = await ToolFilterAgent().arun(goal="Search flights only")
+        # After step, all original tools restored
         assert len(result.tools) == len(get_travel_planning_tools())
 
-
-class TestSkillFiltering:
-    @pytest.mark.asyncio
-    async def test_skill_filtering(self):
-        llm = StatefulMockLLM(structured_responses=[
+        # --- Skill filtering: only travel-planning visible during execution ---
+        llm2 = StatefulMockLLM(structured_responses=[
             FastThinkResult(
                 finish=True, step_content="Done", calls=[], reasoning="done",
                 details_needed=[]
             ),
         ])
-        worker = ReactThinkingWorker(llm=llm, mode=ThinkingMode.FAST)
+        worker2 = ReactThinkingWorker(llm=llm2, mode=ThinkingMode.FAST)
 
         skills_during = []
-        original_execute = worker.arun
-
+        original_execute = worker2.arun
         async def patched_arun(*args, **kwargs):
             ctx = kwargs.get("context", args[0] if args else None)
             if ctx:
                 skills_during.append([s.name for s in ctx.skills.get_all()])
             return await original_execute(*args, **kwargs)
+        worker2.arun = patched_arun
 
-        worker.arun = patched_arun
-
-        class TestAgent(AgentAutoma[TravelPlanningContext]):
-            filtered_step = think_step(worker, skills=["travel-planning"])
-
+        class SkillFilterAgent(AgentAutoma[TravelPlanningContext]):
+            filtered_step = think_step(worker2, skills=["travel-planning"])
             async def cognition(self, ctx):
                 await self.filtered_step
 
-        agent = TestAgent()
-        result = await agent.arun(goal="test")
-        original_skills_count = 2  # travel-planning + code-review
+        result = await SkillFilterAgent().arun(goal="test")
 
-        # During execution, only travel-planning should be visible
+        # During execution, only travel-planning visible
         assert len(skills_during) > 0
         assert skills_during[0] == ["travel-planning"]
+        # After execution, all skills restored
+        assert len(result.skills) == 2  # travel-planning + code-review
 
-        # After execution, all skills should be restored
-        assert len(result.skills) == original_skills_count
-
-
-# ============================================================================
-# Tests: Error Handling Strategies
-# ============================================================================
-
-class _FailingWorker(CognitiveWorker):
-    """Worker that always raises during thinking."""
-    async def thinking(self):
-        raise RuntimeError("Worker failed")
-
-
-class TestErrorStrategyRaise:
     @pytest.mark.asyncio
-    async def test_error_strategy_raise(self):
+    async def test_error_strategies(self):
+        """ErrorStrategy: RAISE re-raises, IGNORE swallows, RETRY exhausts then raises."""
         llm = StatefulMockLLM()
         failing_worker = _FailingWorker(llm=llm, mode=ThinkingMode.FAST)
 
-        class TestAgent(AgentAutoma[CognitiveContext]):
+        # RAISE: exception propagates
+        class RaiseAgent(AgentAutoma[CognitiveContext]):
             step = think_step(failing_worker, on_error=ErrorStrategy.RAISE)
-
             async def cognition(self, ctx):
                 await self.step
 
-        agent = TestAgent()
         with pytest.raises(RuntimeError, match="Worker failed"):
-            await agent.arun(goal="test")
+            await RaiseAgent().arun(goal="test")
 
-
-class TestErrorStrategyIgnore:
-    @pytest.mark.asyncio
-    async def test_error_strategy_ignore(self):
-        llm = StatefulMockLLM()
-        failing_worker = _FailingWorker(llm=llm, mode=ThinkingMode.FAST)
-
-        class TestAgent(AgentAutoma[CognitiveContext]):
+        # IGNORE: exception swallowed, agent completes
+        class IgnoreAgent(AgentAutoma[CognitiveContext]):
             step = think_step(failing_worker, on_error=ErrorStrategy.IGNORE)
-
             async def cognition(self, ctx):
                 await self.step
 
-        agent = TestAgent()
-        result = await agent.arun(goal="test")
+        result = await IgnoreAgent().arun(goal="test")
         assert isinstance(result, CognitiveContext)
 
-
-class TestErrorStrategyRetry:
-    @pytest.mark.asyncio
-    async def test_error_strategy_retry(self):
-        llm = StatefulMockLLM()
-        failing_worker = _FailingWorker(llm=llm, mode=ThinkingMode.FAST)
-
-        class TestAgent(AgentAutoma[CognitiveContext]):
+        # RETRY: retries exhausted, then raises
+        class RetryAgent(AgentAutoma[CognitiveContext]):
             step = think_step(failing_worker, on_error=ErrorStrategy.RETRY, max_retries=2)
-
             async def cognition(self, ctx):
                 await self.step
 
-        agent = TestAgent()
         with pytest.raises(RuntimeError, match="Worker failed"):
-            await agent.arun(goal="test")
+            await RetryAgent().arun(goal="test")
+
+
+# ============================================================================
+# Tests: ctx_init
+# ============================================================================
+
+class TestCtxInit:
+    """Test ctx_init parameter for initializing context fields without subclassing."""
+
+    def test_ctx_init_apply_rules(self):
+        """ctx_init: Exposure→add each, regular→setattr, unknown→skip, None→noop, type errors."""
+        class SimpleAgent(AgentAutoma[CognitiveContext]):
+            async def cognition(self, ctx):
+                pass
+
+        tools = get_travel_planning_tools()
+
+        # --- Exposure field: items added via add() ---
+        agent = SimpleAgent(ctx_init={"tools": tools})
+        ctx = CognitiveContext(goal="test")
+        agent._apply_ctx_init(ctx)
+        assert len(ctx.tools) == len(tools)
+        for i, tool in enumerate(tools):
+            assert ctx.tools[i].tool_name == tool.tool_name
+
+        # --- Regular field: setattr when type matches ---
+        agent = SimpleAgent(ctx_init={"finish": True})
+        ctx = CognitiveContext(goal="test")
+        assert ctx.finish is False
+        agent._apply_ctx_init(ctx)
+        assert ctx.finish is True
+
+        # --- Unknown keys: silently skipped ---
+        agent = SimpleAgent(ctx_init={"unknown_key": "value", "another": 42})
+        ctx = CognitiveContext(goal="test")
+        agent._apply_ctx_init(ctx)
+        assert len(ctx.tools) == 0
+        assert ctx.finish is False
+
+        # --- None ctx_init: no-op ---
+        agent = SimpleAgent()
+        ctx = CognitiveContext(goal="test")
+        agent._apply_ctx_init(ctx)
+        assert len(ctx.tools) == 0
+        assert ctx.goal == "test"
+
+        # --- Exposure requires list ---
+        agent = SimpleAgent(ctx_init={"tools": "not a list"})
+        ctx = CognitiveContext(goal="test")
+        with pytest.raises(TypeError, match="expected a list for Exposure field"):
+            agent._apply_ctx_init(ctx)
+
+        # --- Type mismatch on regular field ---
+        agent = SimpleAgent(ctx_init={"goal": 123})
+        ctx = CognitiveContext(goal="test")
+        with pytest.raises(TypeError, match="ctx_init\\['goal'\\]"):
+            agent._apply_ctx_init(ctx)
+
+    @pytest.mark.asyncio
+    async def test_ctx_init_integration(self):
+        """ctx_init works end-to-end: via arun(goal=...), arun(context=...), and alongside __post_init__."""
+        llm = StatefulMockLLM(structured_responses=[
+            FastThinkResult(finish=True, step_content="Done", calls=[], reasoning="done", details_needed=[]),
+            FastThinkResult(finish=True, step_content="Done", calls=[], reasoning="done", details_needed=[]),
+            FastThinkResult(finish=True, step_content="Done", calls=[], reasoning="done", details_needed=[]),
+        ])
+        worker = ReactThinkingWorker(llm=llm, mode=ThinkingMode.FAST)
+        tools = get_travel_planning_tools()
+
+        # 1. Via arun(goal=...) — framework creates context, ctx_init applied
+        class SimpleAgent(AgentAutoma[CognitiveContext]):
+            step = think_step(worker)
+            async def cognition(self, ctx):
+                await self.step
+
+        result = await SimpleAgent(ctx_init={"tools": tools}).arun(goal="test")
+        assert len(result.tools) == len(tools)
+        assert result.finish is True
+
+        # 2. Via arun(context=...) — pre-created context, ctx_init still applied
+        ctx = CognitiveContext(goal="test")
+        result = await SimpleAgent(ctx_init={"tools": tools}).arun(context=ctx)
+        assert len(result.tools) == len(tools)
+
+        # 3. Combined with __post_init__ — both contribute
+        class PostInitAgent(AgentAutoma[TravelPlanningContext]):
+            step = think_step(worker)
+            async def cognition(self, ctx):
+                await self.step
+
+        result = await PostInitAgent(ctx_init={"finish": True}).arun(goal="test")
+        assert len(result.tools) == len(get_travel_planning_tools())  # from __post_init__
+        assert result.finish is True  # from ctx_init

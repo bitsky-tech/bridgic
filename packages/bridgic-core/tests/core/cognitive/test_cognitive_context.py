@@ -11,91 +11,58 @@ SKILLS_DIR = os.path.join(os.path.dirname(__file__), "skills")
 def _make_context() -> CognitiveContext:
     """Create a context with tools, skills and some history."""
     ctx = CognitiveContext(goal="Plan a trip to Tokyo")
-
-    # Add tools
     for tool in get_travel_planning_tools():
         ctx.tools.add(tool)
-
-    # Add skills
     ctx.skills.load_from_directory(SKILLS_DIR)
-
-    # Add history
     ctx.add_info(Step(content="Search flights", status=True, result="Found 3 flights"))
     ctx.add_info(Step(content="Book flight CA123", status=True, result="Booking confirmed"))
-
     return ctx
 
 
-class TestSummaryBasic:
-    def test_summary_basic(self):
+class TestCognitiveContext:
+
+    def test_summary_and_format(self):
+        """summary() structure, status transitions, and all format_summary() modes."""
         ctx = _make_context()
+
+        # --- summary() returns dict with all expected keys ---
         summary = ctx.summary()
-
         assert isinstance(summary, dict)
-        assert "goal" in summary
-        assert "status" in summary
-        assert "tools" in summary
-        assert "skills" in summary
-        assert "cognitive_history" in summary
-
-        # Values are formatted strings
+        assert all(key in summary for key in ["goal", "status", "tools", "skills", "cognitive_history"])
         assert "Plan a trip to Tokyo" in summary["goal"]
         assert isinstance(summary["tools"], str)
         assert isinstance(summary["skills"], str)
         assert isinstance(summary["cognitive_history"], str)
 
-
-class TestSummaryStatus:
-    def test_status_in_progress(self):
-        ctx = CognitiveContext(goal="test")
-        summary = ctx.summary()
+        # --- Status transitions ---
         assert summary["status"] == "Status: In Progress"
 
-    def test_status_completed(self):
-        ctx = CognitiveContext(goal="test")
         ctx.set_finish()
         summary = ctx.summary()
         assert summary["status"] == "Status: Completed"
 
-
-class TestFormatSummaryInclude:
-    def test_format_summary_include(self):
-        ctx = _make_context()
+        # --- format_summary(include=...) ---
         result = ctx.format_summary(include=["goal", "status"])
-
         assert "Plan a trip to Tokyo" in result
         assert "Status:" in result
-        # Should NOT contain tools/skills/history
         assert "Available Tools" not in result
         assert "Available Skills" not in result
 
-
-class TestFormatSummaryExclude:
-    def test_format_summary_exclude(self):
-        ctx = _make_context()
+        # --- format_summary(exclude=...) ---
         result = ctx.format_summary(exclude=["tools"])
-
         assert "Plan a trip to Tokyo" in result
-        assert "Status:" in result
-        # tools should be excluded
         assert "Available Tools" not in result
-        # skills/history should remain
         assert "Skills" in result or "skills" in result.lower()
 
-
-class TestFormatSummaryDefault:
-    def test_format_summary_default(self):
-        ctx = _make_context()
-        result = ctx.format_summary()
-
-        # All fields should be present
+        # --- format_summary() default includes everything ---
+        ctx2 = _make_context()
+        result = ctx2.format_summary()
         assert "Plan a trip to Tokyo" in result
         assert "Status:" in result
         assert "Tools" in result or "tools" in result.lower()
 
-
-class TestDisclosedDetails:
     def test_disclosed_details(self):
+        """get_details() persists disclosed details in subsequent summary()."""
         ctx = _make_context()
 
         # Before requesting details, no disclosed_details key
