@@ -658,7 +658,13 @@ class CognitiveWorker(GraphAutoma):
         """Action phase for DEFAULT mode: select tools and execute each step."""
         for i, step_content in enumerate(think_result.steps, 1):
             self._log("Action", f"Step {i}/{len(think_result.steps)}: {step_content}", color="green")
-            tool_calls = await self.select_tools(step_content, context)
+            observation = await self.observation(context)
+            if i >= 1 and self._verbose:
+                if observation:
+                    self._log("Observe", "Custom observation", observation[:200] + "...", color="cyan")
+                else:
+                    self._log("Observe", "Custom observation", "No observation", color="cyan")
+            tool_calls = await self.select_tools(step_content, observation, context)
             tools = [tc.name for tc in tool_calls]
             self._log("Action", f"Tools selected: {tools}", color="green")
             await self._execute_step(step_content, tool_calls, context)
@@ -928,13 +934,15 @@ class CognitiveWorker(GraphAutoma):
         self.spend_tokens += self._count_tokens(system_prompt) + self._count_tokens(user_prompt)
         return system_prompt, user_prompt
 
-    def _build_tool_selection_prompts(self, step_content: str, context: CognitiveContext) -> Tuple[str, str]:
+    def _build_tool_selection_prompts(self, step_content: str, observation: Optional[str], context: CognitiveContext) -> Tuple[str, str]:
         """Build prompts for tool selection (DEFAULT mode).
 
         Parameters
         ----------
         step_content : str
             Description of the step to execute.
+        observation : Optional[str]
+            Custom observation to include in the tool selection process.
         context : CognitiveContext
             The cognitive context (contains goal, history, disclosed details).
         """
@@ -949,6 +957,10 @@ class CognitiveWorker(GraphAutoma):
         system_prompt = "\n\n".join(system_parts)
 
         user_parts = [context.format_summary(include=['disclosed_details', 'cognitive_history'])]
+        if observation:
+            user_parts.append(f"Observation:\n{observation}")
+        else:
+            user_parts.append("Observation: None")
         user_parts.append(f"Step to execute: {step_content}")
         user_prompt = "\n\n".join(user_parts)
 
@@ -956,18 +968,21 @@ class CognitiveWorker(GraphAutoma):
         self.spend_tokens += self._count_tokens(system_prompt) + self._count_tokens(user_prompt)
         return system_prompt, user_prompt
 
-    async def _select_tools_for_step(self, step_content: str, context: CognitiveContext) -> List[ToolCall]:
+    async def _select_tools_for_step(self, step_content: str, observation: Optional[str], context: CognitiveContext) -> List[ToolCall]:
         """Select tools for a single step via LLM (DEFAULT mode).
 
         Parameters
         ----------
         step_content : str
             Description of the step to execute.
+        observation : Optional[str]
+            Custom observation to include in the tool selection process.
         context : CognitiveContext
             The cognitive context (contains goal, history, disclosed details).
         """
         system_prompt, user_prompt = self._build_tool_selection_prompts(
             step_content=step_content,
+            observation=observation,
             context=context
         )
 
@@ -1269,7 +1284,7 @@ class CognitiveWorker(GraphAutoma):
         """
         return action_results
 
-    async def select_tools(self, step_content: str, context: CognitiveContext) -> List[ToolCall]:
+    async def select_tools(self, step_content: str, observation: Optional[str], context: CognitiveContext) -> List[ToolCall]:
         """
         Select tools for a step. Override to customize tool selection logic.
 
@@ -1282,6 +1297,8 @@ class CognitiveWorker(GraphAutoma):
         ----------
         step_content : str
             Description of the step to execute.
+        observation : Optional[str]
+            Custom observation to include in the tool selection process.
         context : CognitiveContext
             Current cognitive context. Previously disclosed details are available
             via context.summary()['disclosed_details'].
@@ -1293,16 +1310,16 @@ class CognitiveWorker(GraphAutoma):
 
         Examples
         --------
-        >>> async def select_tools(self, step_content, context):
+        >>> async def select_tools(self, step_content, observation, context):
         ...     # Custom logic: always use a specific tool
         ...     return [ToolCall(id="1", name="my_tool", arguments={"arg": "value"})]
         ...
-        >>> async def select_tools(self, step_content, context):
+        >>> async def select_tools(self, step_content, observation, context):
         ...     # Access disclosed details from context if needed
         ...     disclosed = context.summary().get('disclosed_details', '')
         ...     return [ToolCall(id="1", name="search", arguments={"query": step_content})]
         """
-        return await self._select_tools_for_step(step_content, context)
+        return await self._select_tools_for_step(step_content, observation, context)
 
     async def verify_tools(self, matched_list: List[Tuple[ToolCall, ToolSpec]], context: CognitiveContext) -> List[Tuple[ToolCall, ToolSpec]]:
         """
