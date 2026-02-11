@@ -562,11 +562,19 @@ class CognitiveWorker(GraphAutoma):
 
                 # Check if LLM needs more details
                 if think_result.details_needed:
-                    reqs = [f"{r.field}[{r.index}]" for r in think_result.details_needed]
-                    self._log("Think", f"Requesting details (round {round_idx + 1}): {reqs}", color="blue")
-                    for req in think_result.details_needed:
-                        context.get_details(req.field, req.index)
-                    continue
+                    # Filter out already-disclosed items
+                    new_requests = self._filter_disclosed_requests(
+                        think_result.details_needed, context
+                    )
+                    if new_requests:
+                        reqs = [f"{r.field}[{r.index}]" for r in new_requests]
+                        self._log("Think", f"Requesting details (round {round_idx + 1}): {reqs}", color="blue")
+                        for req in new_requests:
+                            context.get_details(req.field, req.index)
+                        continue
+                    else:
+                        self._log("Think", f"All requested details already disclosed (round {round_idx + 1}), skipping", color="yellow")
+                        continue  # Go to final round for forced decision
 
                 # LLM gave a decision, exit loop
                 break
@@ -626,11 +634,19 @@ class CognitiveWorker(GraphAutoma):
 
                 # Check if LLM needs more details
                 if think_result.details_needed:
-                    reqs = [f"{r.field}[{r.index}]" for r in think_result.details_needed]
-                    self._log("Think", f"Requesting details (round {round_idx + 1}): {reqs}", color="blue")
-                    for req in think_result.details_needed:
-                        context.get_details(req.field, req.index)
-                    continue
+                    # Filter out already-disclosed items
+                    new_requests = self._filter_disclosed_requests(
+                        think_result.details_needed, context
+                    )
+                    if new_requests:
+                        reqs = [f"{r.field}[{r.index}]" for r in new_requests]
+                        self._log("Think", f"Requesting details (round {round_idx + 1}): {reqs}", color="blue")
+                        for req in new_requests:
+                            context.get_details(req.field, req.index)
+                        continue
+                    else:
+                        self._log("Think", f"All requested details already disclosed (round {round_idx + 1}), skipping", color="yellow")
+                        continue  # Go to final round for forced decision
 
                 # LLM gave a decision, exit loop
                 break
@@ -728,6 +744,37 @@ class CognitiveWorker(GraphAutoma):
         printer.print(f"[{stage}] Tool JSON Schema ({tools_tokens} tokens):", color="cyan")
         printer.print(f"  (tool definitions are sent to LLM for function calling)", color="gray")
         printer.print(f"[{stage}] Total: {total_tokens} tokens (cumulative: {self.spend_tokens} tokens)", color="yellow")
+
+    def _filter_disclosed_requests(
+        self,
+        details_needed: List[DetailRequest],
+        context: CognitiveContext
+    ) -> List[DetailRequest]:
+        """Filter out detail requests for items already disclosed in context."""
+        try:
+            disclosed = object.__getattribute__(context, '_disclosed_details')
+        except AttributeError:
+            return details_needed
+        return [
+            req for req in details_needed
+            if not any(d[0] == req.field and d[1] == req.index for d in disclosed)
+        ]
+
+    def _append_disclosed_info(self, output_instructions: str, context: CognitiveContext) -> str:
+        """Append already-disclosed items info to output instructions."""
+        try:
+            disclosed = object.__getattribute__(context, '_disclosed_details')
+        except AttributeError:
+            return output_instructions
+        if disclosed:
+            disclosed_items = [f"{field}[{idx}]" for field, idx, _ in disclosed]
+            output_instructions += (
+                "\n\n# Already Disclosed (DO NOT request again):\n"
+                f"These items are already loaded: {', '.join(disclosed_items)}.\n"
+                "Their content is in 'Previously Disclosed Details' below. "
+                "Use them directly — do NOT add them to details_needed."
+            )
+        return output_instructions
 
     async def _build_fast_prompts(
         self,
@@ -840,6 +887,9 @@ class CognitiveWorker(GraphAutoma):
                 "- Tool arguments format: [{args_name: 'name', args_value: 'value'}]"
             )
 
+            # Append already-disclosed info to prevent redundant detail requests
+            output_instructions = self._append_disclosed_info(output_instructions, context)
+
         # Call template method to assemble final prompts
         system_prompt, user_prompt = await self.build_thinking_prompt(
             think_prompt=think_prompt.strip(),
@@ -922,6 +972,9 @@ class CognitiveWorker(GraphAutoma):
                 "- Only describe WHAT to do (tool selection is done separately)\n"
                 "- When requesting details, leave steps empty; plan after receiving details"
             )
+
+            # Append already-disclosed info to prevent redundant detail requests
+            output_instructions = self._append_disclosed_info(output_instructions, context)
 
         # Call template method to assemble final prompts
         system_prompt, user_prompt = await self.build_thinking_prompt(
