@@ -488,8 +488,12 @@ class CognitiveWorker(GraphAutoma):
 
         # Call user-overridable observation hook
         observation = await self.observation(context)
-        if observation:
-            self._log("Observe", "Custom observation", observation[:200] + "...", color="cyan")
+        if self._verbose:
+            if observation:
+                self._log("Observe", "Custom observation", observation[:200] + "...", color="cyan")
+            else:
+                self._log("Observe", "Custom observation", "No observation", color="cyan")
+        
 
         return observation
 
