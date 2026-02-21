@@ -593,6 +593,61 @@ class TestAgentFeatures:
         assert len(result2.cognitive_history) == 2  # Should execute exactly max_attempts times
 
     @pytest.mark.asyncio
+    async def test_dynamic_tools_and_skills_in_cognition(self):
+        """with_tools()/with_skills() and until(tools=..., skills=...): dynamic override in cognition."""
+        # --- with_tools: step without tools filter, override at runtime ---
+        llm1 = StatefulMockLLM(structured_responses=[
+            FastThinkResult(
+                finish=False, step_content="Search flights",
+                calls=[StepToolCall(
+                    tool="search_flights",
+                    tool_arguments=[
+                        ToolArgument(name="origin", value="Beijing"),
+                        ToolArgument(name="destination", value="Kunming"),
+                        ToolArgument(name="date", value="2025-06-01"),
+                    ]
+                )],
+                reasoning="Search", details_needed=[]
+            ),
+        ])
+        worker1 = ReactThinkingWorker(llm=llm1, mode=ThinkingMode.FAST)
+
+        class DynamicToolsAgent(AgentAutoma[TravelPlanningContext]):
+            step = think_step(worker1)  # No tools filter at init
+            async def cognition(self, ctx):
+                await self.step.with_tools(["search_flights"])
+
+        result = await DynamicToolsAgent().arun(goal="test")
+        assert len(result.tools) == len(get_travel_planning_tools())  # Restored after
+
+        # --- with_skills + until: dynamic skills in until ---
+        llm2 = StatefulMockLLM(structured_responses=[
+            FastThinkResult(finish=True, step_content="Done", calls=[], reasoning="done", details_needed=[]),
+        ])
+        worker2 = ReactThinkingWorker(llm=llm2, mode=ThinkingMode.FAST)
+        skills_seen = []
+        original_arun = worker2.arun
+        async def capture_skills(*args, **kwargs):
+            ctx = kwargs.get("context", args[0] if args else None)
+            if ctx:
+                skills_seen.append([s.name for s in ctx.skills.get_all()])
+            return await original_arun(*args, **kwargs)
+        worker2.arun = capture_skills
+
+        class DynamicSkillsAgent(AgentAutoma[TravelPlanningContext]):
+            step = think_step(worker2)
+            async def cognition(self, ctx):
+                await self.step.until(
+                    lambda c: True,
+                    skills=["travel-planning"],
+                    max_attempts=1
+                )
+
+        await DynamicSkillsAgent().arun(goal="test")
+        assert len(skills_seen) > 0
+        assert skills_seen[0] == ["travel-planning"]
+
+    @pytest.mark.asyncio
     async def test_dynamic_think_step_creation(self):
         """Dynamic think_step creation: defined in cognition() using .bind()."""
         llm = StatefulMockLLM(structured_responses=[
