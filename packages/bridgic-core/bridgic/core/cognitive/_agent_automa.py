@@ -2,7 +2,7 @@ import time
 
 from abc import abstractmethod
 from enum import Enum
-from typing import Any, Dict, Generic, List, Optional, Tuple, Type, TypeVar, get_args, get_origin
+from typing import Any, Callable, Dict, Generic, List, Optional, Tuple, Type, TypeVar, get_args, get_origin
 
 from bridgic.core.automa import GraphAutoma, worker
 from bridgic.core.automa._graph_meta import GraphMeta
@@ -73,7 +73,95 @@ class ThinkStepDescriptor:
     def __get__(self, obj: Optional["AgentAutoma"], objtype: Optional[Type] = None) -> Any:
         if obj is None:
             return self
-        return self._execute(obj)
+        # Return self to allow both direct await and .until() chaining
+        self._agent = obj
+        return self
+
+    def __await__(self):
+        """Make the descriptor directly awaitable."""
+        if not hasattr(self, '_agent') or self._agent is None:
+            raise RuntimeError(
+                f"Cannot await think_step '{self._name}': not accessed from agent instance. "
+                "Use 'await self.step_name' within cognition method."
+            )
+        return self._execute(self._agent).__await__()
+
+    def bind(self, agent: "AgentAutoma") -> "ThinkStepDescriptor":
+        """Bind this step to an agent instance for dynamic step creation.
+
+        This is needed when creating think_step instances inside cognition()
+        method as local variables, since the descriptor protocol only works
+        for class attributes.
+
+        Parameters
+        ----------
+        agent : AgentAutoma
+            The agent instance to bind to.
+
+        Returns
+        -------
+        ThinkStepDescriptor
+            Returns self for method chaining.
+
+        Example
+        -------
+        >>> async def cognition(self, ctx):
+        ...     step = think_step(Worker()).bind(self)
+        ...     await step.until(lambda ctx: ctx.done, max_attempts=5)
+        """
+        self._agent = agent
+        return self
+
+    def until(
+        self,
+        condition: Callable[[CognitiveContext], bool],
+        max_attempts: Optional[int] = None
+    ):
+        """
+        Create a repeating execution that runs until condition is met.
+
+        Parameters
+        ----------
+        condition : Callable[[CognitiveContext], bool]
+            Function that receives context and returns True when done.
+        max_attempts : Optional[int]
+            Maximum attempts. If None, uses self.max_retries.
+
+        Returns
+        -------
+        Awaitable that executes the step repeatedly until condition or max attempts.
+
+        Example
+        -------
+        await self.plan_step.until(lambda ctx: bool(ctx.phases), max_attempts=5)
+        """
+        if not hasattr(self, '_agent') or self._agent is None:
+            raise RuntimeError(
+                f"Cannot use until() on think_step '{self._name}': not accessed from agent instance. "
+                "Use within cognition method: await self.step_name.until(...)"
+            )
+
+        attempts = max_attempts if max_attempts is not None else self.max_retries
+        return self._execute_until(self._agent, condition, attempts)
+
+    async def _execute_until(
+        self,
+        agent: "AgentAutoma",
+        condition: Callable[..., bool],
+        max_attempts: Optional[int] = None,
+        *args: Any,
+        **kwargs: Any,
+    ) -> None:
+        """Execute the step repeatedly until condition is met or max attempts reached."""
+        max_attempts = max_attempts or self.max_retries
+        for _ in range(max_attempts):
+
+            # Execute one iteration
+            await self._execute_once(agent)
+
+            # Check termination condition
+            if condition(args, kwargs):
+                return
 
     async def _execute(self, agent: "AgentAutoma") -> None:
         """Execute the thinking step with error handling and optional tool/skill filtering."""
@@ -83,6 +171,12 @@ class ThinkStepDescriptor:
                 f"Cannot execute think_step '{self._name}': no active context. "
                 "This step must be called within a cognition method."
             )
+
+        await self._execute_once(agent)
+
+    async def _execute_once(self, agent: "AgentAutoma") -> None:
+        """Execute the step once with all setup and teardown."""
+        context = agent._current_context
 
         # Inject agent's default LLM if worker doesn't have one
         if self.worker._llm is None and agent._llm is not None:
@@ -199,7 +293,7 @@ def think_step(
     Examples
     --------
     >>> class MyAgent(AgentAutoma[MyContext]):
-    ...     # Step with all tools/skills
+    ...     # Class-level step definitions
     ...     analyze = think_step(ThinkWorker(llm=llm))
     ...
     ...     # Step with only specific tools
@@ -215,8 +309,16 @@ def think_step(
     ...     )
     ...
     ...     async def cognition(self, ctx: MyContext):
+    ...         # Direct execution
     ...         await self.analyze
-    ...         await self.search
+    ...
+    ...         # Conditional repeat execution
+    ...         await self.search.until(lambda ctx: ctx.found_results, max_attempts=5)
+    ...
+    ...         # Dynamic step creation (defined in cognition method)
+    ...         plan = think_step(PlanWorker(llm=llm), tools=["register_phase"]).bind(self)
+    ...         await plan.until(lambda ctx: bool(ctx.phases), max_attempts=3)
+    ...
     ...         await self.book
     """
     return ThinkStepDescriptor(

@@ -552,6 +552,66 @@ class TestAgentFeatures:
         with pytest.raises(RuntimeError, match="Worker failed"):
             await RetryAgent().arun(goal="test")
 
+    @pytest.mark.asyncio
+    async def test_until_conditional_repeat(self):
+        """test_step.until(condition, max_attempts): repeats until condition met or max reached."""
+        # Test 1: Condition met before max_attempts
+        llm = StatefulMockLLM(structured_responses=[
+            _fast_search_flights(),
+            _fast_book_flight(),
+            _fast_search_hotels(),
+            _fast_finish(),  # Extra in case needed
+        ])
+        worker = ReactThinkingWorker(llm=llm, mode=ThinkingMode.FAST)
+
+        class UntilAgent(AgentAutoma[TravelPlanningContext]):
+            step = think_step(worker)
+
+            async def cognition(self, ctx: TravelPlanningContext):
+                # Stop after 3 executions
+                await self.step.until(lambda ctx: len(ctx.cognitive_history) >= 3, max_attempts=5)
+
+        result = await UntilAgent().arun(goal="test")
+        assert len(result.cognitive_history) == 3  # Should stop when condition met
+
+        # Test 2: Max attempts reached before condition
+        llm2 = StatefulMockLLM(structured_responses=[
+            _fast_search_flights(),
+            _fast_book_flight(),
+            _fast_finish(),  # Extra in case needed
+        ])
+        worker2 = ReactThinkingWorker(llm=llm2, mode=ThinkingMode.FAST)
+
+        class MaxAttemptsAgent(AgentAutoma[TravelPlanningContext]):
+            step = think_step(worker2)
+
+            async def cognition(self, ctx: TravelPlanningContext):
+                # Condition will never be true, so should hit max_attempts
+                await self.step.until(lambda ctx: False, max_attempts=2)
+
+        result2 = await MaxAttemptsAgent().arun(goal="test")
+        assert len(result2.cognitive_history) == 2  # Should execute exactly max_attempts times
+
+    @pytest.mark.asyncio
+    async def test_dynamic_think_step_creation(self):
+        """Dynamic think_step creation: defined in cognition() using .bind()."""
+        llm = StatefulMockLLM(structured_responses=[
+            _fast_search_flights(),
+            _fast_book_flight(),
+        ])
+
+        worker = ReactThinkingWorker(llm=llm, mode=ThinkingMode.FAST)
+
+        class DynamicStepAgent(AgentAutoma[TravelPlanningContext]):
+            async def cognition(self, ctx: TravelPlanningContext):
+                # Create step dynamically and bind to agent
+                dynamic_step = think_step(worker).bind(self)
+                await dynamic_step
+                await dynamic_step
+
+        result = await DynamicStepAgent().arun(goal="test")
+        assert len(result.cognitive_history) == 2
+
 
 # ============================================================================
 # Tests: ctx_init
