@@ -230,10 +230,66 @@ class Context(BaseModel):
 
         return exposure_fields
 
+    @classmethod
+    def get_displayable_fields(cls) -> List[str]:
+        """
+        Get list of field names that should be displayed in summary.
+
+        Fields are displayable by default unless explicitly marked with
+        json_schema_extra={"display": False}.
+
+        Returns
+        -------
+        List[str]
+            Field names where display is not explicitly set to False.
+
+        Examples
+        --------
+        >>> class MyContext(Context):
+        ...     visible: str = Field(default="")
+        ...     hidden: str = Field(default="", json_schema_extra={"display": False})
+        >>> MyContext.get_displayable_fields()
+        ['visible']
+        """
+        displayable = []
+        for field_name, field_info in cls.model_fields.items():
+            extra = field_info.json_schema_extra or {}
+            display = extra.get("display", True)  # Default: True (displayable)
+            if display:
+                displayable.append(field_name)
+        return displayable
+
+    @classmethod
+    def get_hidden_fields(cls) -> List[str]:
+        """
+        Get list of field names that should be hidden from summary.
+
+        Returns
+        -------
+        List[str]
+            Field names where display is explicitly set to False.
+
+        Examples
+        --------
+        >>> class MyContext(Context):
+        ...     visible: str = Field(default="")
+        ...     hidden: str = Field(default="", json_schema_extra={"display": False})
+        >>> MyContext.get_hidden_fields()
+        ['hidden']
+        """
+        hidden = []
+        for field_name, field_info in cls.model_fields.items():
+            extra = field_info.json_schema_extra or {}
+            display = extra.get("display", True)
+            if not display:
+                hidden.append(field_name)
+        return hidden
+
     def summary(self) -> Dict[str, str]:
         """
         Generate a summary dictionary with formatted strings for each field.
 
+        Automatically filters out fields marked with json_schema_extra={"display": False}.
         Subclasses should override this to provide custom formatting for each field.
         The returned dictionary maps field names to their formatted string representations.
 
@@ -242,36 +298,39 @@ class Context(BaseModel):
         Dict[str, str]
             Field name to formatted summary string mapping.
             Each value should be a complete, formatted string ready for prompt inclusion.
+            Hidden fields (display=False) are excluded.
         """
         result = {}
         exposure_fields = self.__class__._exposure_fields or {}
+        hidden_fields = set(self.get_hidden_fields())
 
-        # Add non-Exposure fields as simple string
+        # Add non-Exposure fields as simple string (skip hidden fields)
         for field_name in self.__class__.model_fields:
-            if field_name not in exposure_fields:
+            if field_name not in exposure_fields and field_name not in hidden_fields:
                 value = getattr(self, field_name)
                 if value is not None:
                     # Get field description if available
                     field_info = self.__class__.model_fields.get(field_name)
                     description = field_info.description if field_info and field_info.description else None
-                    
+
                     if description:
                         result[field_name] = f"{field_name} ({description}):\n {value}"
                     else:
                         result[field_name] = f"{field_name}:\n {value}"
 
-        # Add Exposure field summaries
+        # Add Exposure field summaries (skip hidden fields)
         for field_name in exposure_fields:
-            field_value = getattr(self, field_name)
-            if field_value and len(field_value) > 0:
-                # Get field description if available
-                field_info = self.__class__.model_fields.get(field_name)
-                description = field_info.description if field_info and field_info.description else None
-                summaries = field_value.summary()
-                if description:
-                    result[field_name] = f"{field_name} ({description}):\n" + "\n".join(f"  {s}" for s in summaries)
-                else:
-                    result[field_name] = f"{field_name}:\n" + "\n".join(f"  {s}" for s in summaries)
+            if field_name not in hidden_fields:
+                field_value = getattr(self, field_name)
+                if field_value and len(field_value) > 0:
+                    # Get field description if available
+                    field_info = self.__class__.model_fields.get(field_name)
+                    description = field_info.description if field_info and field_info.description else None
+                    summaries = field_value.summary()
+                    if description:
+                        result[field_name] = f"{field_name} ({description}):\n" + "\n".join(f"  {s}" for s in summaries)
+                    else:
+                        result[field_name] = f"{field_name}:\n" + "\n".join(f"  {s}" for s in summaries)
 
         return result
 

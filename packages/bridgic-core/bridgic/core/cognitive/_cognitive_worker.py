@@ -137,10 +137,11 @@ class FastThinkResult(BaseModel):
     Used when planning a single step; thinking and tool selection are merged
     into one LLM call. Supports layered disclosure via details_needed.
 
+    Note: Worker executes one thinking cycle without deciding task completion.
+    Termination is controlled by Agent via until() conditions.
+
     Attributes
     ----------
-    finish : bool
-        Whether the task is complete. Set to True if the goal is achieved.
     step_content : str
         Description of what to do in this step.
     calls : List[StepToolCall]
@@ -154,15 +155,11 @@ class FastThinkResult(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
         json_schema_extra={
-            "required": ["finish", "step_content", "calls", "reasoning", "details_needed"],
+            "required": ["step_content", "calls", "reasoning", "details_needed"],
             "additionalProperties": False,
         }
     )
 
-    finish: bool = Field(
-        default=False,
-        description="Whether the task is complete. Set to true if the goal is achieved."
-    )
     step_content: str = Field(
         default="",
         description="Description of what to do in this step (can be empty if requesting details)"
@@ -188,10 +185,11 @@ class DefaultThinkResult(BaseModel):
     Describes steps without selecting tools. Supports single- or multi-step planning.
     Supports layered disclosure via details_needed (same as FAST mode).
 
+    Note: Worker executes one thinking cycle without deciding task completion.
+    Termination is controlled by Agent via until() conditions.
+
     Attributes
     ----------
-    finish : bool
-        Whether the task is complete. Set to True if the goal is achieved.
     steps : List[str]
         Step descriptions (one or more). Tool selection happens per step afterward.
     reasoning : Optional[str]
@@ -202,13 +200,9 @@ class DefaultThinkResult(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
         json_schema_extra={
-            "required": ["finish", "steps", "reasoning", "details_needed"],
+            "required": ["steps", "reasoning", "details_needed"],
             "additionalProperties": False,
         }
-    )
-    finish: bool = Field(
-        default=False,
-        description="Whether the task is complete. Set to true if the goal is achieved."
     )
     steps: List[str] = Field(
         default_factory=list,
@@ -236,10 +230,11 @@ class FastThinkDecision(BaseModel):
     Used on the last round of thinking to enforce decision output.
     Identical to FastThinkResult but without the details_needed field.
 
+    Note: Worker executes one thinking cycle without deciding task completion.
+    Termination is controlled by Agent via until() conditions.
+
     Attributes
     ----------
-    finish : bool
-        Whether the task is complete. Set to True if the goal is achieved.
     step_content : str
         Description of what to do in this step.
     calls : List[StepToolCall]
@@ -250,15 +245,11 @@ class FastThinkDecision(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
         json_schema_extra={
-            "required": ["finish", "step_content", "calls", "reasoning"],
+            "required": ["step_content", "calls", "reasoning"],
             "additionalProperties": False,
         }
     )
 
-    finish: bool = Field(
-        default=False,
-        description="Whether the task is complete. Set to true if the goal is achieved."
-    )
     step_content: str = Field(
         default="",
         description="Description of what to do in this step"
@@ -280,10 +271,11 @@ class DefaultThinkDecision(BaseModel):
     Used on the last round of thinking to enforce decision output.
     Identical to DefaultThinkResult but without the details_needed field.
 
+    Note: Worker executes one thinking cycle without deciding task completion.
+    Termination is controlled by Agent via until() conditions.
+
     Attributes
     ----------
-    finish : bool
-        Whether the task is complete. Set to True if the goal is achieved.
     steps : List[str]
         Step descriptions (one or more). Tool selection happens per step afterward.
     reasoning : Optional[str]
@@ -292,13 +284,9 @@ class DefaultThinkDecision(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
         json_schema_extra={
-            "required": ["finish", "steps", "reasoning"],
+            "required": ["steps", "reasoning"],
             "additionalProperties": False,
         }
-    )
-    finish: bool = Field(
-        default=False,
-        description="Whether the task is complete. Set to true if the goal is achieved."
     )
     steps: List[str] = Field(
         default_factory=list,
@@ -579,14 +567,10 @@ class CognitiveWorker(GraphAutoma):
                 # LLM gave a decision, exit loop
                 break
 
-        # Ferry to next worker and log result
-        if think_result.finish:
-            self._log("Think", "Result: Task completed (finish=True)", color="blue")
-            self.ferry_to("_finish", context=context)
-        else:
-            tools = [c.tool for c in think_result.calls]
-            self._log("Think", f"Result: step=\"{think_result.step_content}\" tools={tools}, reasoning=\"{think_result.reasoning}\"", color="blue")
-            self.ferry_to("_action_fast", think_result=think_result, context=context)
+        # Ferry to action phase (Worker doesn't decide task completion)
+        tools = [c.tool for c in think_result.calls]
+        self._log("Think", f"Result: step=\"{think_result.step_content}\" tools={tools}, reasoning=\"{think_result.reasoning}\"", color="blue")
+        self.ferry_to("_action_fast", think_result=think_result, context=context)
 
     async def _default_thinking(self, observation: Optional[str], context: CognitiveContext):
         """Default mode thinking with layered disclosure."""
@@ -651,17 +635,9 @@ class CognitiveWorker(GraphAutoma):
                 # LLM gave a decision, exit loop
                 break
 
-        # Ferry to next worker and log result
-        if think_result.finish:
-            self._log("Think", "Result: Task completed (finish=True)", color="blue")
-            self.ferry_to("_finish", context=context)
-        else:
-            self._log("Think", f"Result: steps={think_result.steps}, reasoning={think_result.reasoning}", color="blue")
-            self.ferry_to(
-                "_action_default",
-                think_result=think_result,
-                context=context
-            )
+        # Ferry to action phase (Worker doesn't decide task completion)
+        self._log("Think", f"Result: steps={think_result.steps}, reasoning={think_result.reasoning}", color="blue")
+        self.ferry_to("_action_default", think_result=think_result, context=context)
 
     @worker()
     async def _action_fast(self, think_result: Union[FastThinkResult, FastThinkDecision], context: CognitiveContext) -> CognitiveContext:
@@ -1118,6 +1094,18 @@ class CognitiveWorker(GraphAutoma):
 
     async def _execute_step(self, step_content: str, tool_calls: List[ToolCall], context: CognitiveContext):
         """Execute one step: match tools, verify, run, process result, update history."""
+        # Handle empty tool calls (LLM decided no tools needed)
+        if not tool_calls:
+            self._log("Action", "No tools to execute (empty calls)", color="yellow")
+            info = Step(
+                content=step_content,
+                status=True,
+                result="No tools executed",
+                metadata={"tool_calls": []}
+            )
+            context.add_info(info)
+            return
+
         # Get tools from context
         _, tool_specs = context.get_field('tools')
         matched_list = self._match_tool_calls(tool_calls, tool_specs)

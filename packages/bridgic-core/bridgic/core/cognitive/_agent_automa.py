@@ -578,8 +578,8 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT], metaclass=AgentAutoma
 
     def __init__(
         self,
-        llm: Optional[Any] = None,
         name: Optional[str] = None,
+        llm: Optional[Any] = None,
         ctx_init: Optional[Dict[str, Any]] = None,
         verbose: bool = False,
     ):

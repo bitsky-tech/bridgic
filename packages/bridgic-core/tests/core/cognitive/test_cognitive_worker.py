@@ -106,7 +106,7 @@ class _OverrideSelectToolsWorker(CognitiveWorker):
     async def thinking(self):
         return "Plan steps"
 
-    async def select_tools(self, step_content, context):
+    async def select_tools(self, step_content, observation, context):
         return [ToolCall(id="fixed_1", name="search_flights", arguments={
             "origin": "Beijing", "destination": "Tokyo", "date": "2025-06-01"
         })]
@@ -166,7 +166,7 @@ class TestCognitiveWorker:
 
         llm2 = MockLLM()
         llm2.structured_output_response = FastThinkResult(
-            finish=True, step_content="", calls=[], details_needed=[]
+            step_content="", calls=[], details_needed=[]
         )
         w = SimpleWorker(llm=llm2, mode=ThinkingMode.FAST)
         with pytest.raises(TypeError, match="Expected CognitiveContext"):
@@ -177,7 +177,16 @@ class TestCognitiveWorker:
         """Override observation + build_thinking_prompt: custom text appears in LLM messages."""
         llm = MockLLM()
         llm.structured_output_response = FastThinkResult(
-            finish=True, step_content="Done", calls=[], reasoning="done",
+            step_content="Search flights",
+            calls=[StepToolCall(
+                tool="search_flights",
+                tool_arguments=[
+                    ToolArgument(name="origin", value="Beijing"),
+                    ToolArgument(name="destination", value="Tokyo"),
+                    ToolArgument(name="date", value="2025-06-01"),
+                ]
+            )],
+            reasoning="done",
             details_needed=[]
         )
         worker = _PromptCustomWorker(llm=llm, mode=ThinkingMode.FAST)
@@ -197,7 +206,6 @@ class TestCognitiveWorker:
         """Override verify_tools + consequence: book_flight filtered, result formatted as string."""
         llm = MockLLM()
         llm.structured_output_response = FastThinkResult(
-            finish=False,
             step_content="Search and book",
             calls=[
                 StepToolCall(
@@ -232,14 +240,13 @@ class TestCognitiveWorker:
 
     @pytest.mark.asyncio
     async def test_fast_mode_cycle(self):
-        """FAST mode full cycle: tool execution → finish."""
+        """FAST mode: Worker executes one thinking cycle without setting finish."""
         llm = MockLLM()
         ctx = _make_context()
         worker = _FastWorker(llm=llm, mode=ThinkingMode.FAST)
 
-        # 1. Tool execution
+        # Tool execution - Worker executes cycle, doesn't set finish
         llm.structured_output_response = FastThinkResult(
-            finish=False,
             step_content="Search flights from Beijing to Tokyo",
             calls=[StepToolCall(
                 tool="search_flights",
@@ -257,26 +264,31 @@ class TestCognitiveWorker:
         assert len(ctx.cognitive_history) == 1
         assert ctx.cognitive_history[-1].status is True
         assert "search_flights" in ctx.cognitive_history[-1].metadata.get("tool_calls", [])
+        # Worker doesn't set finish (Option A design)
         assert ctx.finish is False
 
-        # 2. Finish
+        # Empty calls - Worker still executes, doesn't set finish
         llm.structured_output_response = FastThinkResult(
-            finish=True, step_content="Task complete", calls=[],
-            reasoning="All done", details_needed=[]
+            step_content="All done",
+            calls=[],
+            reasoning="Task complete",
+            details_needed=[]
         )
         await worker.arun(context=ctx)
-        assert ctx.finish is True
+        # Worker doesn't set finish even with empty calls
+        assert ctx.finish is False
+        # But step is recorded
+        assert len(ctx.cognitive_history) == 2
 
     @pytest.mark.asyncio
     async def test_default_mode_cycle(self):
-        """DEFAULT mode full cycle: tool selection + execution → finish, plus select_tools override."""
+        """DEFAULT mode: Worker executes one thinking cycle without setting finish."""
         llm = MockLLM()
         ctx = _make_context()
         worker = _DefaultWorker(llm=llm, mode=ThinkingMode.DEFAULT)
 
-        # 1. Tool execution with tool selection
+        # Tool execution with tool selection
         llm.structured_output_response = DefaultThinkResult(
-            finish=False,
             steps=["Search for available flights from Beijing to Tokyo"],
             reasoning="Start with flights",
             details_needed=[]
@@ -292,20 +304,22 @@ class TestCognitiveWorker:
         assert len(ctx.cognitive_history) == 1
         assert ctx.cognitive_history[-1].status is True
         assert "search_flights" in ctx.cognitive_history[-1].metadata.get("tool_calls", [])
+        # Worker doesn't set finish (Option A design)
         assert ctx.finish is False
 
-        # 2. Finish
+        # Empty steps - Worker completes without error, doesn't set finish
         llm.structured_output_response = DefaultThinkResult(
-            finish=True, steps=[], reasoning="Goal achieved",
+            steps=[],
+            reasoning="Goal achieved",
             details_needed=[]
         )
         await worker.arun(context=ctx)
-        assert ctx.finish is True
+        # Worker doesn't set finish even with empty steps
+        assert ctx.finish is False
 
-        # 3. Custom select_tools override bypasses LLM tool selection
+        # Custom select_tools override bypasses LLM tool selection
         llm2 = MockLLM()
         llm2.structured_output_response = DefaultThinkResult(
-            finish=False,
             steps=["Search for flights to Tokyo"],
             reasoning="Need flights",
             details_needed=[]

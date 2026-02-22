@@ -146,7 +146,6 @@ class _FailingWorker(CognitiveWorker):
 
 def _fast_search_flights() -> FastThinkResult:
     return FastThinkResult(
-        finish=False,
         step_content="Search flights from Beijing to Kunming",
         calls=[StepToolCall(
             tool="search_flights",
@@ -163,7 +162,6 @@ def _fast_search_flights() -> FastThinkResult:
 
 def _fast_book_flight() -> FastThinkResult:
     return FastThinkResult(
-        finish=False,
         step_content="Book the cheapest flight MU456",
         calls=[StepToolCall(
             tool="book_flight",
@@ -178,7 +176,6 @@ def _fast_book_flight() -> FastThinkResult:
 
 def _fast_search_hotels() -> FastThinkResult:
     return FastThinkResult(
-        finish=False,
         step_content="Search hotels in Kunming",
         calls=[StepToolCall(
             tool="search_hotels",
@@ -195,7 +192,6 @@ def _fast_search_hotels() -> FastThinkResult:
 
 def _fast_book_hotel() -> FastThinkResult:
     return FastThinkResult(
-        finish=False,
         step_content="Book Comfort Inn Kunming",
         calls=[StepToolCall(
             tool="book_hotel",
@@ -212,7 +208,6 @@ def _fast_book_hotel() -> FastThinkResult:
 
 def _fast_finish() -> FastThinkResult:
     return FastThinkResult(
-        finish=True,
         step_content="All bookings completed",
         calls=[],
         reasoning="Flight and hotel are booked, task is done",
@@ -247,11 +242,13 @@ def _make_react_agent(llm):
         )
 
         async def cognition(self, ctx: TravelPlanningContext):
-            for _ in range(5):
-                await self.react
-                await ctx.cognitive_history.compress_if_needed()
-                if ctx.finish:
-                    break
+            # Option A: Termination controlled by Agent via until()
+            # Stop when we've completed 4 steps (search/book flight + hotel)
+            await self.react.until(
+                lambda c: len(c.cognitive_history) >= 4,
+                max_attempts=5
+            )
+            await ctx.cognitive_history.compress_if_needed()
 
     return ReactAgent
 
@@ -301,14 +298,14 @@ def _make_react_then_plan_agent(react_llm, plan_llm):
         )
 
         async def cognition(self, ctx: TravelPlanningContext):
-            # First try React approach (up to 3 times)
-            for _ in range(3):
-                await self.react
-                if ctx.finish or len(ctx.cognitive_history) >= 3:
-                    break
+            # Option A: First try React approach (up to 3 times)
+            await self.react.until(
+                lambda c: len(c.cognitive_history) >= 3,
+                max_attempts=3
+            )
 
-            # If not finished, use Plan
-            if not ctx.finish:
+            # If not enough steps completed, use Plan to finish
+            if len(ctx.cognitive_history) < 4:
                 await self.plan
 
     return ReactThenPlanAgent
@@ -338,7 +335,8 @@ class TestAgentWorkflows:
                  "Could you help me plan the route and hotel?"
         )
 
-        assert result.finish is True
+        # Option A: Worker doesn't set finish, Agent controls termination via until()
+        # Verify task completion by checking executed steps instead
         _assert_tool_sequence(result, ["search_flights", "book_flight", "search_hotels", "book_hotel"])
 
     @pytest.mark.asyncio
@@ -347,7 +345,6 @@ class TestAgentWorkflows:
         llm = StatefulMockLLM(
             structured_responses=[
                 DefaultThinkResult(
-                    finish=False,
                     steps=[
                         "Search for available flights from Beijing to Kunming",
                         "Book the cheapest flight",
@@ -392,7 +389,6 @@ class TestAgentWorkflows:
         plan_llm = StatefulMockLLM(
             structured_responses=[
                 DefaultThinkResult(
-                    finish=False,
                     steps=["Search for hotels in Kunming", "Book the cheapest hotel"],
                     reasoning="Continue with accommodation after flights are done",
                     details_needed=[]
@@ -429,7 +425,6 @@ class TestAgentWorkflows:
         plan_llm = StatefulMockLLM(
             structured_responses=[
                 DefaultThinkResult(
-                    finish=False,
                     steps=["Book the cheapest hotel"],
                     reasoning="Remaining step: book accommodation",
                     details_needed=[]
@@ -465,7 +460,7 @@ class TestAgentFeatures:
         # --- Tool filtering: only search_flights visible ---
         llm1 = StatefulMockLLM(structured_responses=[
             FastThinkResult(
-                finish=False, step_content="Search flights",
+                step_content="Search flights",
                 calls=[StepToolCall(
                     tool="search_flights",
                     tool_arguments=[
@@ -491,7 +486,7 @@ class TestAgentFeatures:
         # --- Skill filtering: only travel-planning visible during execution ---
         llm2 = StatefulMockLLM(structured_responses=[
             FastThinkResult(
-                finish=True, step_content="Done", calls=[], reasoning="done",
+                step_content="Done", calls=[], reasoning="done",
                 details_needed=[]
             ),
         ])
@@ -598,7 +593,7 @@ class TestAgentFeatures:
         # --- with_tools: step without tools filter, override at runtime ---
         llm1 = StatefulMockLLM(structured_responses=[
             FastThinkResult(
-                finish=False, step_content="Search flights",
+                step_content="Search flights",
                 calls=[StepToolCall(
                     tool="search_flights",
                     tool_arguments=[
@@ -622,7 +617,7 @@ class TestAgentFeatures:
 
         # --- with_skills + until: dynamic skills in until ---
         llm2 = StatefulMockLLM(structured_responses=[
-            FastThinkResult(finish=True, step_content="Done", calls=[], reasoning="done", details_needed=[]),
+            FastThinkResult(step_content="Done", calls=[], reasoning="done", details_needed=[]),
         ])
         worker2 = ReactThinkingWorker(llm=llm2, mode=ThinkingMode.FAST)
         skills_seen = []
@@ -666,6 +661,182 @@ class TestAgentFeatures:
 
         result = await DynamicStepAgent().arun(goal="test")
         assert len(result.cognitive_history) == 2
+
+    @pytest.mark.asyncio
+    async def test_chained_override_priority(self):
+        """Chained overrides: later override wins (with_tools then with_tools)."""
+        llm = StatefulMockLLM(structured_responses=[
+            FastThinkResult(
+                step_content="Done", calls=[], reasoning="", details_needed=[]
+            ),
+        ])
+        worker = ReactThinkingWorker(llm=llm, mode=ThinkingMode.FAST)
+        tools_seen = []
+
+        original_arun = worker.arun
+        async def capture_tools(*args, **kwargs):
+            ctx = kwargs.get("context", args[0] if args else None)
+            if ctx:
+                tools_seen.append([t.tool_name for t in ctx.tools.get_all()])
+            return await original_arun(*args, **kwargs)
+        worker.arun = capture_tools
+
+        tools = get_travel_planning_tools()
+
+        class ChainAgent(AgentAutoma[TravelPlanningContext]):
+            step = think_step(worker)
+
+            async def cognition(self, ctx):
+                # Chain: with_tools(["search_flights"]) then with_tools(["book_flight"])
+                # The last one should win
+                await self.step.with_tools(["search_flights"]).with_tools(["book_flight"])
+
+        result = await ChainAgent().arun(goal="test")
+
+        # Should only see book_flight (last override wins)
+        assert len(tools_seen) > 0
+        assert tools_seen[0] == ["book_flight"]
+
+    @pytest.mark.asyncio
+    async def test_until_with_dynamic_tools_override(self):
+        """until(tools=...) should override descriptor's tools filter."""
+        llm = StatefulMockLLM(structured_responses=[
+            FastThinkResult(step_content="Done", calls=[], reasoning="", details_needed=[]),
+        ])
+        worker = ReactThinkingWorker(llm=llm, mode=ThinkingMode.FAST)
+        tools_seen = []
+
+        original_arun = worker.arun
+        async def capture_tools(*args, **kwargs):
+            ctx = kwargs.get("context", args[0] if args else None)
+            if ctx:
+                tools_seen.append([t.tool_name for t in ctx.tools.get_all()])
+            return await original_arun(*args, **kwargs)
+        worker.arun = capture_tools
+
+        class UntilOverrideAgent(AgentAutoma[TravelPlanningContext]):
+            # Descriptor filter: ["search_flights"]
+            step = think_step(worker, tools=["search_flights"])
+
+            async def cognition(self, ctx):
+                # Runtime override via until: ["book_flight"]
+                await self.step.until(lambda c: True, max_attempts=1, tools=["book_flight"])
+
+        await UntilOverrideAgent().arun(goal="test")
+
+        # Should see book_flight (until override wins over descriptor filter)
+        assert len(tools_seen) > 0
+        assert tools_seen[0] == ["book_flight"]
+
+    @pytest.mark.asyncio
+    async def test_empty_tools_filter(self):
+        """Empty tools filter results in no tools available."""
+        llm = StatefulMockLLM(structured_responses=[
+            FastThinkResult(step_content="Done", calls=[], reasoning="", details_needed=[]),
+        ])
+        worker = ReactThinkingWorker(llm=llm, mode=ThinkingMode.FAST)
+        tools_count = []
+
+        original_arun = worker.arun
+        async def capture_count(*args, **kwargs):
+            ctx = kwargs.get("context", args[0] if args else None)
+            if ctx:
+                tools_count.append(len(ctx.tools))
+            return await original_arun(*args, **kwargs)
+        worker.arun = capture_count
+
+        class EmptyToolsAgent(AgentAutoma[TravelPlanningContext]):
+            step = think_step(worker)
+
+            async def cognition(self, ctx):
+                await self.step.with_tools([])
+
+        await EmptyToolsAgent().arun(goal="test")
+
+        # Should have 0 tools during execution
+        assert len(tools_count) > 0
+        assert tools_count[0] == 0
+
+    @pytest.mark.asyncio
+    async def test_nonexistent_tool_filter(self):
+        """Filtering by nonexistent tool name results in empty tool list."""
+        llm = StatefulMockLLM(structured_responses=[
+            FastThinkResult(step_content="Done", calls=[], reasoning="", details_needed=[]),
+        ])
+        worker = ReactThinkingWorker(llm=llm, mode=ThinkingMode.FAST)
+        tools_count = []
+
+        original_arun = worker.arun
+        async def capture_count(*args, **kwargs):
+            ctx = kwargs.get("context", args[0] if args else None)
+            if ctx:
+                tools_count.append(len(ctx.tools))
+            return await original_arun(*args, **kwargs)
+        worker.arun = capture_count
+
+        class NonExistentAgent(AgentAutoma[TravelPlanningContext]):
+            step = think_step(worker)
+
+            async def cognition(self, ctx):
+                await self.step.with_tools(["nonexistent_tool"])
+
+        await NonExistentAgent().arun(goal="test")
+
+        # Should have 0 tools (nonexistent tool filtered out)
+        assert len(tools_count) > 0
+        assert tools_count[0] == 0
+
+    @pytest.mark.asyncio
+    async def test_until_max_attempts_zero(self):
+        """until with max_attempts=0 should not execute the step at all."""
+        llm = StatefulMockLLM(structured_responses=[])
+        worker = ReactThinkingWorker(llm=llm, mode=ThinkingMode.FAST)
+        execution_count = [0]
+
+        original_arun = worker.arun
+        async def count_executions(*args, **kwargs):
+            execution_count[0] += 1
+            return await original_arun(*args, **kwargs)
+        worker.arun = count_executions
+
+        class ZeroAttemptsAgent(AgentAutoma[TravelPlanningContext]):
+            step = think_step(worker)
+
+            async def cognition(self, ctx):
+                # max_attempts=0 means range(0), no iterations
+                await self.step.until(lambda c: False, max_attempts=0)
+
+        result = await ZeroAttemptsAgent().arun(goal="test")
+
+        # With max_attempts=0, the loop range(0) produces no iterations
+        assert execution_count[0] == 0
+
+    @pytest.mark.asyncio
+    async def test_until_condition_immediately_true(self):
+        """until with condition that's immediately true executes exactly once."""
+        llm = StatefulMockLLM(structured_responses=[
+            FastThinkResult(step_content="Done", calls=[], reasoning="", details_needed=[]),
+        ])
+        worker = ReactThinkingWorker(llm=llm, mode=ThinkingMode.FAST)
+        execution_count = [0]
+
+        original_arun = worker.arun
+        async def count_executions(*args, **kwargs):
+            execution_count[0] += 1
+            return await original_arun(*args, **kwargs)
+        worker.arun = count_executions
+
+        class ImmediateTrueAgent(AgentAutoma[TravelPlanningContext]):
+            step = think_step(worker)
+
+            async def cognition(self, ctx):
+                # Condition is always True, should execute once then exit
+                await self.step.until(lambda c: True, max_attempts=10)
+
+        result = await ImmediateTrueAgent().arun(goal="test")
+
+        # Should execute only once since condition is true after first execution
+        assert execution_count[0] == 1
 
 
 # ============================================================================
@@ -728,9 +899,9 @@ class TestCtxInit:
     async def test_ctx_init_integration(self):
         """ctx_init works end-to-end: via arun(goal=...), arun(context=...), and alongside __post_init__."""
         llm = StatefulMockLLM(structured_responses=[
-            FastThinkResult(finish=True, step_content="Done", calls=[], reasoning="done", details_needed=[]),
-            FastThinkResult(finish=True, step_content="Done", calls=[], reasoning="done", details_needed=[]),
-            FastThinkResult(finish=True, step_content="Done", calls=[], reasoning="done", details_needed=[]),
+            FastThinkResult(step_content="Done", calls=[], reasoning="done", details_needed=[]),
+            FastThinkResult(step_content="Done", calls=[], reasoning="done", details_needed=[]),
+            FastThinkResult(step_content="Done", calls=[], reasoning="done", details_needed=[]),
         ])
         worker = ReactThinkingWorker(llm=llm, mode=ThinkingMode.FAST)
         tools = get_travel_planning_tools()
@@ -747,7 +918,7 @@ class TestCtxInit:
         assert len(result.tools) == len(tools)
         assert len(result.skills) == 1
         assert result.skills[0].name == "travel-planning"
-        assert result.finish is True
+        # Option A: Worker doesn't set finish
 
         # 2. Via arun(context=...) — pre-created context, ctx_init still applied
         ctx = CognitiveContext(goal="test")
@@ -795,7 +966,7 @@ class TestAgentRuntime:
         assert agent.spend_time == 0.0
 
         result = await agent.arun(goal="test")
-        assert result.finish is True
+        # Option A: Worker doesn't set finish
         assert worker._llm is llm          # LLM was injected (persists)
         assert worker._verbose is None      # Verbose restored to None after execution
         tokens_first = agent.spend_tokens
@@ -804,7 +975,7 @@ class TestAgentRuntime:
 
         # --- 2. Worker with own LLM/verbose keeps them; stats reset per run ---
         own_llm = StatefulMockLLM(structured_responses=[
-            FastThinkResult(finish=True, step_content="Done", calls=[], reasoning="done", details_needed=[]),
+            FastThinkResult(step_content="Done", calls=[], reasoning="done", details_needed=[]),
         ])
         worker2 = ReactThinkingWorker(llm=own_llm, mode=ThinkingMode.FAST, verbose=False)
 
@@ -815,15 +986,15 @@ class TestAgentRuntime:
 
         agent2 = OverrideAgent(llm=llm, verbose=True)
         result = await agent2.arun(goal="test")
-        assert result.finish is True
+        # Option A: Worker doesn't set finish
         assert worker2._llm is own_llm     # Worker kept its own LLM
         assert worker2._verbose is False    # Worker kept its own verbose=False
         assert agent2.spend_tokens > 0
 
         # --- 3. Stats reset: re-run with same-shape work, tokens should not double ---
         own_llm2 = StatefulMockLLM(structured_responses=[
-            FastThinkResult(finish=True, step_content="Done", calls=[], reasoning="done", details_needed=[]),
-            FastThinkResult(finish=True, step_content="Done", calls=[], reasoning="done", details_needed=[]),
+            FastThinkResult(step_content="Done", calls=[], reasoning="done", details_needed=[]),
+            FastThinkResult(step_content="Done", calls=[], reasoning="done", details_needed=[]),
         ])
         worker3 = ReactThinkingWorker(llm=own_llm2, mode=ThinkingMode.FAST)
 
