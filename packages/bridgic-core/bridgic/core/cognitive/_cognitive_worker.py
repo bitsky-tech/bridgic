@@ -832,18 +832,17 @@ class CognitiveWorker(GraphAutoma):
             output_instructions = (
                 "# Output Format:\n"
                 "- **step_content**: Description of what to do in this step\n"
-                "- **calls**: Tool calls as [{tool, tool_arguments: [{name, value}]}]\n"
+                "- **calls**: Tool calls as [{tool, tool_arguments: [{name: 'param_name', value: 'param_value'}]}]\n"
                 "\n"
                 "# Execution Guidelines:\n"
-                "- Focus on ONE step at a time\n"
-                "- Tool arguments format: [{name: 'param_name', value: 'param_value'}]"
+                "- Focus on ONE step at a time"
             )
         else:
             # Non-final round: include details_needed option
             output_instructions = (
                 "# Output Format:\n"
                 "- **step_content**: Description of what to do in this step (empty if requesting details)\n"
-                "- **calls**: Tool calls as [{tool, tool_arguments: [{name, value}]}]\n"
+                "- **calls**: Tool calls as [{tool, tool_arguments: [{name: 'param_name', value: 'param_value'}]}]\n"
                 "- **details_needed**: Request details via [{field: 'xxx', index: N}]\n"
                 "\n"
                 "# BEFORE Taking Action - Check If You Need Details:\n"
@@ -863,8 +862,7 @@ class CognitiveWorker(GraphAutoma):
                 "\n"
                 "# Execution Guidelines:\n"
                 "- Focus on ONE step at a time\n"
-                "- When requesting details, leave step_content and calls empty\n"
-                "- Tool arguments format: [{name: 'param_name', value: 'param_value'}]"
+                "- When requesting details, leave step_content and calls empty"
             )
 
             # Append already-disclosed info to prevent redundant detail requests
