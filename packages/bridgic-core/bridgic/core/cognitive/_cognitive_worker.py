@@ -476,12 +476,15 @@ class CognitiveWorker(GraphAutoma):
 
         # Call user-overridable observation hook
         observation = await self.observation(context)
+
+        # Save observation to context for task completion check
+        context.observation = observation
+
         if self._verbose:
             if observation:
                 self._log("Observe", "Custom observation", observation[:200] + "...", color="cyan")
             else:
                 self._log("Observe", "Custom observation", "No observation", color="cyan")
-        
 
         return observation
 
@@ -663,12 +666,6 @@ class CognitiveWorker(GraphAutoma):
 
         return context
 
-    @worker(is_output=True)
-    async def _finish(self, context: CognitiveContext) -> CognitiveContext:
-        context.set_finish()
-        self._log("Finish", "Task completed successfully", color="lime")
-        return context
-
     ############################################################################
     # Internal helpers
     ############################################################################
@@ -814,9 +811,18 @@ class CognitiveWorker(GraphAutoma):
             capabilities_parts.append(f"# Available Tools (with parameters):\n{tools_details}")
 
         # Add skills to system_prompt (capabilities)
-        skills_summary = context.summary().get('skills')
-        if skills_summary:
-            capabilities_parts.append(f"# {skills_summary}")
+        # When is_final_round=True (i.e. max_detail_rounds=0), skip the details_needed hint
+        # because the LLM cannot request details in this round.
+        if len(context.skills) > 0:
+            if is_final_round:
+                lines = ["# Available Skills:"]
+                for i, skill_summary in enumerate(context.skills.summary()):
+                    lines.append(f"  [{i}] {skill_summary}")
+                capabilities_parts.append("\n".join(lines))
+            else:
+                skills_summary = context.summary().get('skills')
+                if skills_summary:
+                    capabilities_parts.append(f"# {skills_summary}")
 
         capabilities_description = "\n\n".join(capabilities_parts)
 
@@ -825,7 +831,6 @@ class CognitiveWorker(GraphAutoma):
             # Final round: no details_needed, must make a decision
             output_instructions = (
                 "# Output Format:\n"
-                "- **finish**: true only when goal is fully achieved\n"
                 "- **step_content**: Description of what to do in this step\n"
                 "- **calls**: Tool calls as [{tool, tool_arguments: [{name, value}]}]\n"
                 "\n"
@@ -837,7 +842,6 @@ class CognitiveWorker(GraphAutoma):
             # Non-final round: include details_needed option
             output_instructions = (
                 "# Output Format:\n"
-                "- **finish**: true only when goal is fully achieved\n"
                 "- **step_content**: Description of what to do in this step (empty if requesting details)\n"
                 "- **calls**: Tool calls as [{tool, tool_arguments: [{name, value}]}]\n"
                 "- **details_needed**: Request details via [{field: 'xxx', index: N}]\n"
@@ -903,15 +907,24 @@ class CognitiveWorker(GraphAutoma):
         if observation:
             context_info += f"\n\nObservation:\n{observation}"
 
-        # Build capabilities description (tools + skills) for system_prompt
-        capabilities_description = context.format_summary(include=['tools', 'skills'])
+        # Build capabilities description (tools + skills) for system_prompt.
+        # When is_final_round=True, skip the details_needed hint from skills summary
+        # because the LLM cannot request details in this round.
+        if is_final_round and len(context.skills) > 0:
+            tools_desc = context.format_summary(include=['tools'])
+            lines = ["Available Skills:"]
+            for i, skill_summary in enumerate(context.skills.summary()):
+                lines.append(f"  [{i}] {skill_summary}")
+            parts = [p for p in [tools_desc, "\n".join(lines)] if p]
+            capabilities_description = "\n\n".join(parts)
+        else:
+            capabilities_description = context.format_summary(include=['tools', 'skills'])
 
         # Prepare output instructions based on whether this is the final round
         if is_final_round:
             # Final round: no details_needed, must make a decision
             output_instructions = (
                 "# Output Format:\n"
-                "- **finish**: true only when goal is fully achieved\n"
                 "- **steps**: List of step descriptions\n"
                 "\n"
                 "# Planning Guidelines:\n"
@@ -923,7 +936,6 @@ class CognitiveWorker(GraphAutoma):
             # Non-final round: include details_needed option
             output_instructions = (
                 "# Output Format:\n"
-                "- **finish**: true only when goal is fully achieved\n"
                 "- **steps**: List of step descriptions (leave empty if requesting details first)\n"
                 "- **details_needed**: Request details via [{field: 'xxx', index: N}]\n"
                 "\n"
@@ -1104,6 +1116,9 @@ class CognitiveWorker(GraphAutoma):
                 metadata={"tool_calls": []}
             )
             context.add_info(info)
+
+            # Update tool call flag: no tools executed
+            context.last_step_has_tools = False
             return
 
         # Get tools from context
@@ -1131,6 +1146,9 @@ class CognitiveWorker(GraphAutoma):
             metadata={"tool_calls": [tc[0].name for tc in verify_list]}
         )
         context.add_info(info)
+
+        # Update tool call flag: tools were executed
+        context.last_step_has_tools = True
 
     async def _execute_tools(self, matched_list: List[Tuple[ToolCall, ToolSpec]]) -> ActionResult:
         """Execute a list of (ToolCall, ToolSpec) pairs and return ActionResult."""

@@ -264,10 +264,10 @@ class TestCognitiveWorker:
         assert len(ctx.cognitive_history) == 1
         assert ctx.cognitive_history[-1].status is True
         assert "search_flights" in ctx.cognitive_history[-1].metadata.get("tool_calls", [])
-        # Worker doesn't set finish (Option A design)
-        assert ctx.finish is False
+        # Worker sets last_step_has_tools to True when tools are executed
+        assert ctx.last_step_has_tools is True
 
-        # Empty calls - Worker still executes, doesn't set finish
+        # Empty calls - Worker sets last_step_has_tools to False
         llm.structured_output_response = FastThinkResult(
             step_content="All done",
             calls=[],
@@ -275,8 +275,8 @@ class TestCognitiveWorker:
             details_needed=[]
         )
         await worker.arun(context=ctx)
-        # Worker doesn't set finish even with empty calls
-        assert ctx.finish is False
+        # Worker sets last_step_has_tools to False when no tools are called
+        assert ctx.last_step_has_tools is False
         # But step is recorded
         assert len(ctx.cognitive_history) == 2
 
@@ -304,18 +304,19 @@ class TestCognitiveWorker:
         assert len(ctx.cognitive_history) == 1
         assert ctx.cognitive_history[-1].status is True
         assert "search_flights" in ctx.cognitive_history[-1].metadata.get("tool_calls", [])
-        # Worker doesn't set finish (Option A design)
-        assert ctx.finish is False
+        # Worker sets last_step_has_tools to True when tools are executed
+        assert ctx.last_step_has_tools is True
 
-        # Empty steps - Worker completes without error, doesn't set finish
+        # Empty steps - Worker completes without error
         llm.structured_output_response = DefaultThinkResult(
             steps=[],
             reasoning="Goal achieved",
             details_needed=[]
         )
         await worker.arun(context=ctx)
-        # Worker doesn't set finish even with empty steps
-        assert ctx.finish is False
+        # No tools were called in this round, last_step_has_tools remains from previous execution
+        # (since no _execute_step was called with empty steps)
+        assert ctx.last_step_has_tools is True
 
         # Custom select_tools override bypasses LLM tool selection
         llm2 = MockLLM()

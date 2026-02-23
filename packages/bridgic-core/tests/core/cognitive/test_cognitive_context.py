@@ -23,30 +23,23 @@ def _make_context() -> CognitiveContext:
 class TestCognitiveContext:
 
     def test_summary_and_format(self):
-        """summary() structure, status transitions, and all format_summary() modes."""
+        """summary() structure and all format_summary() modes."""
         ctx = _make_context()
 
         # --- summary() returns dict with all expected keys ---
         summary = ctx.summary()
         assert isinstance(summary, dict)
-        assert all(key in summary for key in ["goal", "status", "tools", "skills", "cognitive_history"])
+        assert all(key in summary for key in ["goal", "tools", "skills", "cognitive_history"])
         assert "Plan a trip to Tokyo" in summary["goal"]
         assert isinstance(summary["tools"], str)
         assert isinstance(summary["skills"], str)
         assert isinstance(summary["cognitive_history"], str)
 
-        # --- Status transitions ---
-        assert summary["status"] == "Status: In Progress"
-
-        ctx.set_finish()
-        summary = ctx.summary()
-        assert summary["status"] == "Status: Completed"
-
         # --- format_summary(include=...) ---
-        result = ctx.format_summary(include=["goal", "status"])
+        result = ctx.format_summary(include=["goal", "tools"])
         assert "Plan a trip to Tokyo" in result
-        assert "Status:" in result
-        assert "Available Tools" not in result
+        assert "Available Tools" in result
+        assert "Available Skills" not in result
         assert "Available Skills" not in result
 
         # --- format_summary(exclude=...) ---
@@ -59,8 +52,8 @@ class TestCognitiveContext:
         ctx2 = _make_context()
         result = ctx2.format_summary()
         assert "Plan a trip to Tokyo" in result
-        assert "Status:" in result
         assert "Tools" in result or "tools" in result.lower()
+        assert "History" in result or "history" in result.lower()
 
     def test_disclosed_details(self):
         """get_details() persists disclosed details in subsequent summary()."""

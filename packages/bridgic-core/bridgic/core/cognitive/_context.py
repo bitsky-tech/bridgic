@@ -1068,8 +1068,10 @@ class CognitiveContext(Context):
         Available skills (LayeredExposure - supports progressive disclosure).
     cognitive_history : CognitiveHistory
         History of cognitive steps (LayeredExposure - supports progressive disclosure).
-    finish : bool
-        Whether the goal is achieved.
+    observation : Optional[str]
+        Current observation from the last observation phase (not displayed in summary).
+    last_step_has_tools : bool
+        Whether the last thinking step executed any tool calls (not displayed in summary).
 
     Examples
     --------
@@ -1084,7 +1086,20 @@ class CognitiveContext(Context):
     tools: CognitiveTools = Field(default_factory=CognitiveTools, description="Available tools")
     skills: CognitiveSkills = Field(default_factory=CognitiveSkills, description="Available skills")
     cognitive_history: CognitiveHistory = Field(default_factory=CognitiveHistory)
-    finish: bool = Field(default=False)
+
+    # observation: saved from _observation worker method (not displayed in summary)
+    observation: Optional[str] = Field(
+        default=None,
+        json_schema_extra={"display": False},
+        description="Current observation from the last observation phase"
+    )
+
+    # last_step_has_tools: track if last thinking step had tool calls (not displayed in summary)
+    last_step_has_tools: bool = Field(
+        default=False,
+        json_schema_extra={"display": False},
+        description="Whether the last thinking step executed any tool calls"
+    )
 
     # Internal state for persisting disclosed details
     _disclosed_details: List[Tuple[str, int, str]] = []  # (field, index, detail)
@@ -1136,7 +1151,6 @@ class CognitiveContext(Context):
         Dict[str, str]
             Field name to formatted summary string mapping:
             - goal: "Goal: {goal}"
-            - status: "Status: {In Progress|Completed}"
             - tools: formatted tool list
             - skills: formatted skill list with indices
             - cognitive_history: formatted history with indices
@@ -1146,10 +1160,6 @@ class CognitiveContext(Context):
 
         # Format goal
         result['goal'] = f"Goal: {self.goal}"
-
-        # Format status
-        status = "Completed" if self.finish else "In Progress"
-        result['status'] = f"Status: {status}"
 
         # Format tools (EntireExposure - no detail queries)
         if len(self.tools) > 0:
@@ -1210,10 +1220,4 @@ class CognitiveContext(Context):
             Index of the added step.
         """
         return self.cognitive_history.add(info)
-
-    def set_finish(self) -> None:
-        """
-        Set the finish flag to True.
-        """
-        self.finish = True
 

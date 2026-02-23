@@ -2,7 +2,7 @@ import time
 
 from abc import abstractmethod
 from enum import Enum
-from typing import Any, Callable, Dict, Generic, List, Optional, Tuple, Type, TypeVar, get_args, get_origin
+from typing import Any, Awaitable, Callable, Dict, Generic, List, Optional, Tuple, Type, TypeVar, Union, get_args, get_origin
 
 from bridgic.core.automa import GraphAutoma, worker
 from bridgic.core.automa._graph_meta import GraphMeta
@@ -59,7 +59,7 @@ class ThinkStepOverride:
 
     def until(
         self,
-        condition: Callable[[CognitiveContext], bool],
+        condition: Union[Callable[[CognitiveContext], bool], Callable[[CognitiveContext], Awaitable[bool]]],
         max_attempts: Optional[int] = None,
     ):
         """Execute repeatedly until condition is met, with tools/skills override."""
@@ -209,7 +209,7 @@ class ThinkStepDescriptor:
 
     def until(
         self,
-        condition: Callable[[CognitiveContext], bool],
+        condition: Union[Callable[[CognitiveContext], bool], Callable[[CognitiveContext], Awaitable[bool]]],
         max_attempts: Optional[int] = None,
         tools: Optional[List[str]] = None,
         skills: Optional[List[str]] = None,
@@ -219,8 +219,9 @@ class ThinkStepDescriptor:
 
         Parameters
         ----------
-        condition : Callable[[CognitiveContext], bool]
-            Function that receives context and returns True when done.
+        condition : Union[Callable[[CognitiveContext], bool], Callable[[CognitiveContext], Awaitable[bool]]]
+            Condition function (sync or async) that receives context and returns True when done.
+            For LLM-based evaluation, use agent.check_task_completion(ctx) in an async condition.
         max_attempts : Optional[int]
             Maximum attempts. If None, uses self.max_retries.
         tools : Optional[List[str]]
@@ -232,9 +233,21 @@ class ThinkStepDescriptor:
         -------
         Awaitable that executes the step repeatedly until condition or max attempts.
 
-        Example
-        -------
-        >>> await self.plan_step.until(lambda ctx: bool(ctx.phases), max_attempts=5)
+        Examples
+        --------
+        # Sync condition (user-defined field)
+        >>> await self.search.until(lambda ctx: ctx.found_results, max_attempts=5)
+
+        # Async condition (using LLM to check completion)
+        >>> async def task_done(ctx):
+        ...     # Only check when no tools were called
+        ...     if ctx.last_step_has_tools:
+        ...         return False
+        ...     return await self.check_task_completion(ctx)
+        >>>
+        >>> await self.execute.until(task_done, max_attempts=10)
+
+        # With dynamic tools
         >>> await self.search.until(
         ...     lambda ctx: ctx.found,
         ...     tools=["search_flights"],
@@ -253,16 +266,24 @@ class ThinkStepDescriptor:
     async def _execute_until(
         self,
         agent: "AgentAutoma",
-        condition: Callable[[CognitiveContext], bool],
+        condition: Union[Callable[[CognitiveContext], bool], Callable[[CognitiveContext], Awaitable[bool]]],
         max_attempts: int,
         *,
         tools: Optional[List[str]] = None,
         skills: Optional[List[str]] = None,
     ) -> None:
         """Execute the step repeatedly until condition is met or max attempts reached."""
+        import inspect
+
         for _ in range(max_attempts):
             await self._execute_once(agent, tools=tools, skills=skills)
-            if condition(agent._current_context):
+
+            # Check condition (supports both sync and async)
+            result = condition(agent._current_context)
+            if inspect.iscoroutine(result):
+                result = await result
+
+            if result:
                 return
 
     async def _execute(self, agent: "AgentAutoma", *, tools: Optional[List[str]] = None, skills: Optional[List[str]] = None) -> None:
@@ -696,6 +717,106 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT], metaclass=AgentAutoma
         ...         await self.iterate
         """
         ...
+
+    ############################################################################
+    # Task completion check
+    ############################################################################
+
+    async def check_task_completion(self, ctx: CognitiveContextT) -> bool:
+        """
+        Use LLM to determine if the task has been completed.
+
+        This method is NOT called automatically. Users should explicitly call it
+        in their until() conditions or cognition() logic.
+
+        Evaluates based on:
+        - Goal: what we want to achieve
+        - Execution history: what has been done
+        - Current observation: custom observation from the last observation phase
+        - Other displayable context fields
+
+        Returns
+        -------
+        bool
+            True if the task is completed, False otherwise.
+
+        Raises
+        ------
+        RuntimeError
+            If no LLM is configured for this agent.
+
+        Examples
+        --------
+        >>> async def task_done(ctx):
+        ...     # Only check when no tools were called
+        ...     if ctx.last_step_has_tools:
+        ...         return False
+        ...     return await self.check_task_completion(ctx)
+        >>>
+        >>> await self.execute.until(task_done, max_attempts=10)
+        """
+        if self._llm is None:
+            raise RuntimeError(
+                "check_task_completion requires an LLM. "
+                "Set llm= when creating the agent."
+            )
+
+        prompt = self._build_completion_check_prompt(ctx)
+
+        system_msg = (
+            "You are a task completion evaluator. Determine if the task has been completed "
+            "based on the goal, execution history, and current observation.\n\n"
+            "Respond with ONLY 'YES' if the task is fully completed, or 'NO' if more work is needed.\n"
+            "Do not include any explanation or other text."
+        )
+
+        response = await self._llm.agenerate(
+            messages=[
+                Message.from_text(text=system_msg, role="system"),
+                Message.from_text(text=prompt, role="user")
+            ]
+        )
+
+        return response.strip().upper() == "YES"
+
+    def _build_completion_check_prompt(self, ctx: CognitiveContextT) -> str:
+        """
+        Build the prompt for task completion check.
+
+        Uses ctx.format_summary() to include all displayable context fields,
+        similar to how CognitiveWorker builds thinking prompts.
+
+        Subclasses can override this to customize what context is included.
+
+        Parameters
+        ----------
+        ctx : CognitiveContextT
+            The cognitive context.
+
+        Returns
+        -------
+        str
+            The formatted prompt for LLM evaluation.
+
+        Examples
+        --------
+        Override to customize the prompt:
+
+        >>> def _build_completion_check_prompt(self, ctx):
+        ...     # Include only specific fields
+        ...     context_info = ctx.format_summary(include=['goal', 'cognitive_history'])
+        ...     return f"{context_info}\\n\\nIs the task completed? YES or NO."
+        """
+        # Use format_summary, similar to CognitiveWorker._build_fast_prompts
+        context_info = ctx.format_summary()
+
+        # observation field is not in summary (display=False), but we need it for completion check
+        if ctx.observation:
+            context_info += f"\n\nCurrent Observation:\n{ctx.observation}"
+
+        prompt = f"{context_info}\n\nIs the task completed? Respond with YES or NO."
+
+        return prompt
 
     ############################################################################
     # Entry point
