@@ -7,6 +7,7 @@ from typing import Any, Awaitable, Callable, Dict, Generic, List, Optional, Tupl
 from bridgic.core.automa import GraphAutoma, worker
 from bridgic.core.automa._graph_meta import GraphMeta
 from bridgic.core.utils._console import printer
+from bridgic.core.model.types import Message
 
 from bridgic.core.cognitive._context import CognitiveContext, CognitiveTools, CognitiveSkills, Exposure
 from bridgic.core.cognitive._cognitive_worker import CognitiveWorker

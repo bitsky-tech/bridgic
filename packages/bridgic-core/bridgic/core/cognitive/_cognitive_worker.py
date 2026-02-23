@@ -836,7 +836,7 @@ class CognitiveWorker(GraphAutoma):
                 "\n"
                 "# Execution Guidelines:\n"
                 "- Focus on ONE step at a time\n"
-                "- Tool arguments format: [{args_name: 'name', args_value: 'value'}]"
+                "- Tool arguments format: [{name: 'param_name', value: 'param_value'}]"
             )
         else:
             # Non-final round: include details_needed option
@@ -864,7 +864,7 @@ class CognitiveWorker(GraphAutoma):
                 "# Execution Guidelines:\n"
                 "- Focus on ONE step at a time\n"
                 "- When requesting details, leave step_content and calls empty\n"
-                "- Tool arguments format: [{args_name: 'name', args_value: 'value'}]"
+                "- Tool arguments format: [{name: 'param_name', value: 'param_value'}]"
             )
 
             # Append already-disclosed info to prevent redundant detail requests
