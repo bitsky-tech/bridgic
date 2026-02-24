@@ -19,8 +19,7 @@ import time
 import traceback
 from enum import Enum
 from typing import Any, Dict, List, Optional, Tuple, Union
-
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field, ConfigDict, field_validator
 
 from bridgic.core.model import BaseLlm
 from bridgic.core.model.protocols import PydanticModel
@@ -105,6 +104,11 @@ class ToolArgument(BaseModel):
     name: str = Field(description="Parameter name")
     value: str = Field(description="Parameter value as string")
 
+    @field_validator('value', mode='before')
+    @classmethod
+    def coerce_to_str(cls, v: Any) -> str:
+        return str(v) if not isinstance(v, str) else v
+
 
 class StepToolCall(BaseModel):
     """
@@ -177,6 +181,16 @@ class FastThinkResult(BaseModel):
         description="Request details before deciding. Example: [{field: 'cognitive_history', index: 0}]"
     )
 
+    @field_validator('step_content', mode='before')
+    @classmethod
+    def coerce_step_content(cls, v: Any) -> str:
+        return "" if v is None else str(v)
+
+    @field_validator('calls', 'details_needed', mode='before')
+    @classmethod
+    def coerce_list(cls, v: Any) -> list:
+        return [] if v is None else v
+
 
 class DefaultThinkResult(BaseModel):
     """
@@ -222,6 +236,11 @@ class DefaultThinkResult(BaseModel):
         description="Request details before deciding. Example: [{field: 'cognitive_history', index: 0}]"
     )
 
+    @field_validator('steps', 'details_needed', mode='before')
+    @classmethod
+    def coerce_list(cls, v: Any) -> list:
+        return [] if v is None else v
+
 
 class FastThinkDecision(BaseModel):
     """
@@ -263,6 +282,16 @@ class FastThinkDecision(BaseModel):
         description="Brief reasoning for this decision (optional)"
     )
 
+    @field_validator('step_content', mode='before')
+    @classmethod
+    def coerce_step_content(cls, v: Any) -> str:
+        return "" if v is None else str(v)
+
+    @field_validator('calls', mode='before')
+    @classmethod
+    def coerce_list(cls, v: Any) -> list:
+        return [] if v is None else v
+
 
 class DefaultThinkDecision(BaseModel):
     """
@@ -301,6 +330,11 @@ class DefaultThinkDecision(BaseModel):
         default=None,
         description="Overall planning rationale (optional)"
     )
+
+    @field_validator('steps', mode='before')
+    @classmethod
+    def coerce_list(cls, v: Any) -> list:
+        return [] if v is None else v
 
 
 class ActionStepResult(BaseModel):
