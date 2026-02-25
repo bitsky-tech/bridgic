@@ -610,7 +610,9 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT], metaclass=AgentAutoma
         For each key-value pair in ctx_init:
         - If key is not a model field on the context, skip it.
         - If key is an Exposure field, value must be a list/tuple; items are added via add().
-        - Otherwise, value type must match the field annotation; assigned via setattr.
+        - Otherwise (regular field), only applied when context was pre-created
+          (i.e. ``_ctx_init_exposure_only`` is False). For auto-created contexts,
+          regular fields are already merged into the constructor kwargs by ``arun()``.
 
         Raises
         ------
@@ -620,6 +622,7 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT], metaclass=AgentAutoma
         if not self._ctx_init:
             return
 
+        exposure_only = getattr(self, '_ctx_init_exposure_only', False)
         exposure_fields = type(ctx)._exposure_fields or {}
 
         for key, value in self._ctx_init.items():
@@ -636,8 +639,8 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT], metaclass=AgentAutoma
                 attr = getattr(ctx, key)
                 for item in value:
                     attr.add(item)
-            else:
-                # Regular field: type check
+            elif not exposure_only:
+                # Regular field: only for pre-created contexts
                 field_annotation = type(ctx).model_fields[key].annotation
                 expected_type = field_annotation
                 if not isinstance(expected_type, type):
@@ -786,7 +789,6 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT], metaclass=AgentAutoma
 
     async def arun(
         self, 
-        goal: Optional[str] = None,
         *, 
         context: Optional[CognitiveContextT] = None, 
         **kwargs
@@ -796,9 +798,6 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT], metaclass=AgentAutoma
 
         Parameters
         ----------
-        goal : Optional[str]
-            Goal description. If provided, automatically creates the CognitiveContext
-            type specified in the generic parameter.
         context : Optional[CognitiveContextT]
             Pre-created context object. If provided, uses this context directly.
         **kwargs
@@ -812,8 +811,6 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT], metaclass=AgentAutoma
         Raises
         ------
         ValueError
-            If neither goal nor context is provided.
-        ValueError
             If CognitiveContext type is not specified in generic parameter.
         """
         # Reset stats for this run
@@ -821,13 +818,12 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT], metaclass=AgentAutoma
         self.spend_time = 0.0
 
         if context is not None:
+            # Pre-created context: _apply_ctx_init handles all fields
+            self._ctx_init_exposure_only = False
             # Set LLM for history compression if available
             if self._llm is not None:
                 context.cognitive_history.set_llm(self._llm)
             return await self._run_and_report(context=context)
-
-        if goal is None:
-            raise ValueError("Must provide either 'goal' or 'context'")
 
         if self._context_class is None:
             raise ValueError(
@@ -835,7 +831,20 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT], metaclass=AgentAutoma
                 f"e.g., class {self.__class__.__name__}(AgentAutoma[MyContext])"
             )
 
-        context = self._context_class(goal=goal, **kwargs)
+        # Merge non-Exposure ctx_init fields into constructor kwargs,
+        # so required fields (e.g. goal) can be provided via ctx_init.
+        # Exposure fields (tools, skills, etc.) are handled later by _apply_ctx_init.
+        # Auto-created: regular fields already in constructor, _apply_ctx_init only handles Exposure.
+        self._ctx_init_exposure_only = True
+        if self._ctx_init:
+            exposure_fields = getattr(self._context_class, '_exposure_fields', {}) or {}
+            merged = dict(kwargs)
+            for key, value in self._ctx_init.items():
+                if key in self._context_class.model_fields and key not in exposure_fields and key not in merged:
+                    merged[key] = value
+            context = self._context_class(**merged)
+        else:
+            context = self._context_class(**kwargs)
 
         # Set LLM for history compression if available
         if self._llm is not None:
