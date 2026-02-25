@@ -31,60 +31,6 @@ class ErrorStrategy(Enum):
 # ThinkStep Descriptor
 ################################################################################################################
 
-class ThinkStepOverride:
-    """
-    Wrapper that applies dynamic tools/skills override when executing a think step.
-
-    Returned by ThinkStepDescriptor.with_tools() and .with_skills().
-    Supports both direct await and .until() chaining.
-    """
-
-    def __init__(
-        self,
-        descriptor: "ThinkStepDescriptor",
-        agent: "AgentAutoma",
-        *,
-        tools: Optional[List[str]] = None,
-        skills: Optional[List[str]] = None,
-    ):
-        self._descriptor = descriptor
-        self._agent = agent
-        self._tools = tools
-        self._skills = skills
-
-    def __await__(self):
-        """Make the override directly awaitable."""
-        return self._descriptor._execute(
-            self._agent, tools=self._tools, skills=self._skills
-        ).__await__()
-
-    def until(
-        self,
-        condition: Union[Callable[[CognitiveContext], bool], Callable[[CognitiveContext], Awaitable[bool]]],
-        max_attempts: Optional[int] = None,
-    ):
-        """Execute repeatedly until condition is met, with tools/skills override."""
-        return self._descriptor._execute_until(
-            self._agent,
-            condition,
-            max_attempts or self._descriptor.max_retries,
-            tools=self._tools,
-            skills=self._skills,
-        )
-
-    def with_tools(self, tools: List[str]) -> "ThinkStepOverride":
-        """Chain: override tools (replaces any previous tools override)."""
-        return ThinkStepOverride(
-            self._descriptor, self._agent, tools=tools, skills=self._skills
-        )
-
-    def with_skills(self, skills: List[str]) -> "ThinkStepOverride":
-        """Chain: override skills (replaces any previous skills override)."""
-        return ThinkStepOverride(
-            self._descriptor, self._agent, tools=self._tools, skills=skills
-        )
-
-
 class ThinkStepDescriptor:
     """
     Descriptor for declaring cognitive thinking steps.
@@ -121,6 +67,8 @@ class ThinkStepDescriptor:
         self.tools_filter = tools
         self.skills_filter = skills
         self._name: Optional[str] = None
+        self._runtime_tools: Optional[List[str]] = None
+        self._runtime_skills: Optional[List[str]] = None
 
     def __set_name__(self, owner: Type, name: str) -> None:
         self._name = name
@@ -139,7 +87,9 @@ class ThinkStepDescriptor:
                 f"Cannot await think_step '{self._name}': not accessed from agent instance. "
                 "Use 'await self.step_name' within cognition method."
             )
-        return self._execute(self._agent).__await__()
+        tools, self._runtime_tools = self._runtime_tools, None
+        skills, self._runtime_skills = self._runtime_skills, None
+        return self._execute(self._agent, tools=tools, skills=skills).__await__()
 
     def bind(self, agent: "AgentAutoma") -> "ThinkStepDescriptor":
         """Bind this step to an agent instance for dynamic step creation.
@@ -167,29 +117,31 @@ class ThinkStepDescriptor:
         self._agent = agent
         return self
 
-    def with_tools(self, tools: List[str]) -> ThinkStepOverride:
+    def with_tools(self, tools: List[str]) -> "ThinkStepDescriptor":
         """
         Dynamically restrict tools for this execution (in cognition method).
 
-        Returns a wrapper that can be awaited or chained with .until().
+        Stores the override on self and returns self, so it can be directly
+        awaited or chained with .with_skills() and .until().
 
         Example
         -------
         >>> async def cognition(self, ctx):
-        ...     # Use different tools based on runtime state
         ...     if ctx.phase == "search":
         ...         await self.step.with_tools(["search_flights", "search_hotels"])
         ...     else:
-        ...         await self.step.with_tools(["book_flight", "book_hotel"])
+        ...         await self.step.with_tools(["book_flight"]).with_skills(["booking"])
         """
         self._ensure_agent()
-        return ThinkStepOverride(self, self._agent, tools=tools, skills=None)
+        self._runtime_tools = tools
+        return self
 
-    def with_skills(self, skills: List[str]) -> ThinkStepOverride:
+    def with_skills(self, skills: List[str]) -> "ThinkStepDescriptor":
         """
         Dynamically restrict skills for this execution (in cognition method).
 
-        Returns a wrapper that can be awaited or chained with .until().
+        Stores the override on self and returns self, so it can be directly
+        awaited or chained with .with_tools() and .until().
 
         Example
         -------
@@ -199,13 +151,14 @@ class ThinkStepDescriptor:
         ...     )
         """
         self._ensure_agent()
-        return ThinkStepOverride(self, self._agent, tools=None, skills=skills)
+        self._runtime_skills = skills
+        return self
 
     def _ensure_agent(self) -> None:
         if not hasattr(self, '_agent') or self._agent is None:
             raise RuntimeError(
                 f"Cannot use with_tools/with_skills on think_step '{self._name}': "
-                "not accessed from agent instance. Use within cognition method."
+                "not accessed from agent instance. Use 'self.step_name.with_tools(...)' within cognition method."
             )
 
     def until(
@@ -261,8 +214,14 @@ class ThinkStepDescriptor:
                 "Use within cognition method: await self.step_name.until(...)"
             )
 
+        # Explicit args take precedence; fall back to values set by with_tools()/with_skills()
+        effective_tools = tools if tools is not None else self._runtime_tools
+        effective_skills = skills if skills is not None else self._runtime_skills
+        self._runtime_tools = None
+        self._runtime_skills = None
+
         attempts = max_attempts if max_attempts is not None else self.max_retries
-        return self._execute_until(self._agent, condition, attempts, tools=tools, skills=skills)
+        return self._execute_until(self._agent, condition, attempts, tools=effective_tools, skills=effective_skills)
 
     async def _execute_until(
         self,
@@ -442,14 +401,12 @@ def think_step(
     ...         # Conditional repeat execution
     ...         await self.search.until(lambda ctx: ctx.found_results, max_attempts=5)
     ...
-    ...         # Dynamic tools/skills at runtime (in cognition)
+    ...         # Dynamic tools/skills at runtime (in cognition), chainable
     ...         if ctx.phase == "search":
     ...             await self.step.with_tools(["search_flight", "search_hotel"])
     ...         else:
-    ...             await self.step.until(
+    ...             await self.step.with_tools(["book_flight"]).with_skills(["booking"]).until(
     ...                 lambda ctx: ctx.done,
-    ...                 tools=["book_flight"],
-    ...                 skills=["booking"],
     ...                 max_attempts=3
     ...             )
     ...
