@@ -2,10 +2,12 @@ import time
 
 from abc import abstractmethod
 from enum import Enum
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Awaitable, Callable, Dict, Generic, List, Optional, Tuple, Type, TypeVar, Union, get_args, get_origin
 
 from bridgic.core.automa import GraphAutoma, worker
 from bridgic.core.automa._graph_meta import GraphMeta
+from bridgic.core.automa._automa import RunningOptions
 from bridgic.core.utils._console import printer
 from bridgic.core.model.types import Message
 
@@ -558,11 +560,13 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT], metaclass=AgentAutoma
     def __init__(
         self,
         name: Optional[str] = None,
+        thread_pool: Optional[ThreadPoolExecutor] = None,
+        running_options: Optional[RunningOptions] = None,
         llm: Optional[Any] = None,
         ctx_init: Optional[Dict[str, Any]] = None,
         verbose: bool = False,
     ):
-        super().__init__(name=name)
+        super().__init__(name=name, thread_pool=thread_pool, running_options=running_options)
         self._llm = llm  # Default LLM for auxiliary tasks
         self._ctx_init = ctx_init
         self._current_context: Optional[CognitiveContextT] = None
@@ -780,7 +784,13 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT], metaclass=AgentAutoma
     # Entry point
     ############################################################################
 
-    async def arun(self, goal: Optional[str] = None, *, context: Optional[CognitiveContextT] = None, **kwargs) -> CognitiveContextT:
+    async def arun(
+        self, 
+        goal: Optional[str] = None,
+        *, 
+        context: Optional[CognitiveContextT] = None, 
+        **kwargs
+    ) -> CognitiveContextT:
         """
         Run the agent.
 
