@@ -937,6 +937,49 @@ class TestCtxInit:
         assert len(result.tools) == len(get_travel_planning_tools())  # from __post_init__
         # last_step_has_tools will be set by worker during execution, so we just verify no error occurred
 
+    @pytest.mark.asyncio
+    async def test_ctx_init_provides_required_fields(self):
+        """ctx_init can provide required constructor fields (e.g. goal) so arun() needs no kwargs."""
+        tools = get_travel_planning_tools()
+        _done = lambda: FastThinkResult(step_content="Done", calls=[], reasoning="done", details_needed=[])
+
+        # 1. goal via ctx_init, arun() with no args
+        llm1 = StatefulMockLLM(structured_responses=[_done()])
+        worker1 = ReactThinkingWorker(llm=llm1, mode=ThinkingMode.FAST)
+
+        class Agent1(AgentAutoma[CognitiveContext]):
+            step = think_step(worker1)
+            async def cognition(self, ctx):
+                await self.step
+
+        result = await Agent1(ctx_init={"goal": "plan a trip"}).arun()
+        assert result.goal == "plan a trip"
+
+        # 2. goal via ctx_init + Exposure fields together
+        llm2 = StatefulMockLLM(structured_responses=[_done()])
+        worker2 = ReactThinkingWorker(llm=llm2, mode=ThinkingMode.FAST)
+
+        class Agent2(AgentAutoma[CognitiveContext]):
+            step = think_step(worker2)
+            async def cognition(self, ctx):
+                await self.step
+
+        result = await Agent2(ctx_init={"goal": "plan a trip", "tools": tools}).arun()
+        assert result.goal == "plan a trip"
+        assert len(result.tools) == len(tools)
+
+        # 3. arun kwargs override ctx_init (explicit wins)
+        llm3 = StatefulMockLLM(structured_responses=[_done()])
+        worker3 = ReactThinkingWorker(llm=llm3, mode=ThinkingMode.FAST)
+
+        class Agent3(AgentAutoma[CognitiveContext]):
+            step = think_step(worker3)
+            async def cognition(self, ctx):
+                await self.step
+
+        result = await Agent3(ctx_init={"goal": "from init"}).arun(goal="from arun")
+        assert result.goal == "from arun"
+
 
 # ============================================================================
 # Tests: Agent Runtime (LLM injection, verbose propagation, usage stats)
