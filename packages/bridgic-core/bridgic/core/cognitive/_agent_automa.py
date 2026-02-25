@@ -8,6 +8,7 @@ from typing import Any, Awaitable, Callable, Dict, Generic, List, Optional, Tupl
 from bridgic.core.automa import GraphAutoma, worker
 from bridgic.core.automa._graph_meta import GraphMeta
 from bridgic.core.automa._automa import RunningOptions
+from bridgic.core.automa.interaction import InteractionFeedback
 from bridgic.core.utils._console import printer
 from bridgic.core.model.types import Message
 
@@ -790,7 +791,8 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT], metaclass=AgentAutoma
     async def arun(
         self, 
         *, 
-        context: Optional[CognitiveContextT] = None, 
+        context: Optional[CognitiveContextT] = None,
+        feedback_data: Optional[Union[InteractionFeedback, List[InteractionFeedback]]] = None,
         **kwargs
     ) -> CognitiveContextT:
         """
