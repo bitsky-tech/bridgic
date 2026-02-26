@@ -839,7 +839,10 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT], metaclass=AgentAutoma
         # Auto-created: regular fields already in constructor, _apply_ctx_init only handles Exposure.
         self._ctx_init_exposure_only = True
         if self._ctx_init:
-            exposure_fields = getattr(self._context_class, '_exposure_fields', {}) or {}
+            exposure_fields = self._context_class._exposure_fields
+            if exposure_fields is None:
+                exposure_fields = self._context_class._detect_exposure_fields()
+                self._context_class._exposure_fields = exposure_fields
             merged = dict(kwargs)
             for key, value in self._ctx_init.items():
                 if key in self._context_class.model_fields and key not in exposure_fields and key not in merged:
