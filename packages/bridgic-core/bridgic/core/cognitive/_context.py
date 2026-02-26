@@ -1082,7 +1082,7 @@ class CognitiveContext(Context):
     """
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
-    goal: str = Field(description="The goal to achieve")
+    goal: str = Field(default="", description="The goal to achieve")
     tools: CognitiveTools = Field(default_factory=CognitiveTools, description="Available tools")
     skills: CognitiveSkills = Field(default_factory=CognitiveSkills, description="Available skills")
     cognitive_history: CognitiveHistory = Field(default_factory=CognitiveHistory)
