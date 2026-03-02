@@ -631,15 +631,19 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT], metaclass=AgentAutoma
                 continue
 
             if key in exposure_fields:
-                # Exposure field: value must be a list/tuple
-                if not isinstance(value, (list, tuple)):
+                if isinstance(value, Exposure):
+                    # Exposure instance: replace directly (enables shared state)
+                    setattr(ctx, key, value)
+                elif isinstance(value, (list, tuple)):
+                    # List/tuple: add items to the default Exposure
+                    attr = getattr(ctx, key)
+                    for item in value:
+                        attr.add(item)
+                else:
                     raise TypeError(
-                        f"ctx_init['{key}']: expected a list for Exposure field, "
-                        f"got {type(value).__name__}"
+                        f"ctx_init['{key}']: expected a list or Exposure instance "
+                        f"for Exposure field, got {type(value).__name__}"
                     )
-                attr = getattr(ctx, key)
-                for item in value:
-                    attr.add(item)
             elif not exposure_only:
                 # Regular field: only for pre-created contexts
                 field_annotation = type(ctx).model_fields[key].annotation

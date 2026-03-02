@@ -886,7 +886,7 @@ class TestCtxInit:
         # --- Exposure requires list ---
         agent = SimpleAgent(ctx_init={"tools": "not a list"})
         ctx = CognitiveContext(goal="test")
-        with pytest.raises(TypeError, match="expected a list for Exposure field"):
+        with pytest.raises(TypeError, match="expected a list or Exposure instance for Exposure field"):
             agent._apply_ctx_init(ctx)
 
         # --- Type mismatch on regular field ---
