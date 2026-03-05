@@ -7,9 +7,7 @@ from typing import Any, List, Optional, Tuple
 from bridgic.core.cognitive import (
     CognitiveContext,
     CognitiveWorker,
-    ThinkingMode,
     FastThinkResult,
-    DefaultThinkResult,
     ActionStepResult,
     StepToolCall,
     ToolArgument,
@@ -70,11 +68,6 @@ class _FastWorker(CognitiveWorker):
         return "Plan ONE immediate next step."
 
 
-class _DefaultWorker(CognitiveWorker):
-    async def thinking(self):
-        return "Create a step-by-step plan."
-
-
 class _PromptCustomWorker(CognitiveWorker):
     """Worker with observation + build_thinking_prompt overrides."""
     async def thinking(self):
@@ -99,17 +92,6 @@ class _ActionPipelineWorker(CognitiveWorker):
 
     async def consequence(self, action_results):
         return "; ".join(r.tool_result for r in action_results)
-
-
-class _OverrideSelectToolsWorker(CognitiveWorker):
-    """Worker with custom select_tools (DEFAULT mode only)."""
-    async def thinking(self):
-        return "Plan steps"
-
-    async def select_tools(self, step_content, observation, context):
-        return [ToolCall(id="fixed_1", name="search_flights", arguments={
-            "origin": "Beijing", "destination": "Tokyo", "date": "2025-06-01"
-        })]
 
 
 # ---------------------------------------------------------------------------
@@ -168,7 +150,7 @@ class TestCognitiveWorker:
         llm2.structured_output_response = FastThinkResult(
             step_content="", calls=[], details_needed=[]
         )
-        w = SimpleWorker(llm=llm2, mode=ThinkingMode.FAST)
+        w = SimpleWorker(llm=llm2)
         with pytest.raises(TypeError, match="Expected CognitiveContext"):
             await w.arun(context="not a context")
 
@@ -189,7 +171,7 @@ class TestCognitiveWorker:
             reasoning="done",
             details_needed=[]
         )
-        worker = _PromptCustomWorker(llm=llm, mode=ThinkingMode.FAST)
+        worker = _PromptCustomWorker(llm=llm)
         ctx = _make_context()
         await worker.arun(context=ctx)
 
@@ -226,7 +208,7 @@ class TestCognitiveWorker:
             reasoning="Do both",
             details_needed=[]
         )
-        worker = _ActionPipelineWorker(llm=llm, mode=ThinkingMode.FAST)
+        worker = _ActionPipelineWorker(llm=llm)
         ctx = _make_context()
         await worker.arun(context=ctx)
 
@@ -243,7 +225,7 @@ class TestCognitiveWorker:
         """FAST mode: Worker executes one thinking cycle without setting finish."""
         llm = MockLLM()
         ctx = _make_context()
-        worker = _FastWorker(llm=llm, mode=ThinkingMode.FAST)
+        worker = _FastWorker(llm=llm)
 
         # Tool execution - Worker executes cycle, doesn't set finish
         llm.structured_output_response = FastThinkResult(
@@ -279,54 +261,3 @@ class TestCognitiveWorker:
         assert ctx.last_step_has_tools is False
         # But step is recorded
         assert len(ctx.cognitive_history) == 2
-
-    @pytest.mark.asyncio
-    async def test_default_mode_cycle(self):
-        """DEFAULT mode: Worker executes one thinking cycle without setting finish."""
-        llm = MockLLM()
-        ctx = _make_context()
-        worker = _DefaultWorker(llm=llm, mode=ThinkingMode.DEFAULT)
-
-        # Tool execution with tool selection
-        llm.structured_output_response = DefaultThinkResult(
-            steps=["Search for available flights from Beijing to Tokyo"],
-            reasoning="Start with flights",
-            details_needed=[]
-        )
-        llm.select_tool_response = (
-            [ToolCall(id="tc1", name="search_flights", arguments={
-                "origin": "Beijing", "destination": "Tokyo", "date": "2025-06-01"
-            })],
-            None
-        )
-        await worker.arun(context=ctx)
-
-        assert len(ctx.cognitive_history) == 1
-        assert ctx.cognitive_history[-1].status is True
-        assert "search_flights" in ctx.cognitive_history[-1].metadata.get("tool_calls", [])
-        # Worker sets last_step_has_tools to True when tools are executed
-        assert ctx.last_step_has_tools is True
-
-        # Empty steps - Worker completes without error
-        llm.structured_output_response = DefaultThinkResult(
-            steps=[],
-            reasoning="Goal achieved",
-            details_needed=[]
-        )
-        await worker.arun(context=ctx)
-        # No tools were called in this round, last_step_has_tools remains from previous execution
-        # (since no _execute_step was called with empty steps)
-        assert ctx.last_step_has_tools is True
-
-        # Custom select_tools override bypasses LLM tool selection
-        llm2 = MockLLM()
-        llm2.structured_output_response = DefaultThinkResult(
-            steps=["Search for flights to Tokyo"],
-            reasoning="Need flights",
-            details_needed=[]
-        )
-        override_worker = _OverrideSelectToolsWorker(llm=llm2, mode=ThinkingMode.DEFAULT)
-        ctx2 = _make_context()
-        await override_worker.arun(context=ctx2)
-
-        assert "search_flights" in ctx2.cognitive_history[-1].metadata.get("tool_calls", [])

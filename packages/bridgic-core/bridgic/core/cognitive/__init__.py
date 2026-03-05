@@ -23,7 +23,6 @@ Architecture Layers
 
 **Implementation Layer - Worker:**
 - CognitiveWorker: One "observe-think-act" cycle (GraphAutoma implementation)
-- ThinkingMode: FAST (merged thinking+tools) or DEFAULT (separated)
 
 **Orchestration Layer:**
 - AgentAutoma: Agent automaton that orchestrates multiple CognitiveWorkers
@@ -35,13 +34,10 @@ Example
 -------
 >>> from cognitive import (
 ...     AgentAutoma, CognitiveContext, CognitiveWorker,
-...     ThinkingMode, think_step, ErrorStrategy
+...     think_step, ErrorStrategy
 ... )
 >>>
 >>> class ReactWorker(CognitiveWorker):
-...     def __init__(self, llm):
-...         super().__init__(llm, mode=ThinkingMode.FAST)
-...
 ...     async def thinking(self):
 ...         return "Plan ONE immediate next step."
 >>>
@@ -73,15 +69,12 @@ from ._context import (
 from ._cognitive_worker import (
     # Worker
     CognitiveWorker,
-    ThinkingMode,
     # Data structures
     DetailRequest,
     ToolArgument,
     StepToolCall,
     FastThinkResult,
     FastThinkDecision,
-    DefaultThinkResult,
-    DefaultThinkDecision,
     ActionResult,
     ActionStepResult,
 )
@@ -110,7 +103,6 @@ __all__ = [
 
     # Implementation layer - Worker
     "CognitiveWorker",
-    "ThinkingMode",
 
     # Data structures
     "DetailRequest",
@@ -118,11 +110,9 @@ __all__ = [
     "StepToolCall",
     "FastThinkResult",
     "FastThinkDecision",
-    "DefaultThinkResult",
-    "DefaultThinkDecision",
     "ActionResult",
     "ActionStepResult",
-    
+
     # Orchestration layer
     "AgentAutoma",
     "think_step",

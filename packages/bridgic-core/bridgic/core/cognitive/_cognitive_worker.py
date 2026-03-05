@@ -5,9 +5,7 @@ A CognitiveWorker represents one thinking cycle of an Agent and is the minimal
 programmable unit of "observe-think-act".
 
 Design:
-1. Two thinking modes
-   - FAST: Merges thinking and tool selection (1 LLM call, single-step only)
-   - DEFAULT: Separates thinking and tool selection (2+ calls, single/multi-step)
+1. Single thinking mode (FAST): Merges thinking and tool selection into 1 LLM call.
 
 2. Works directly with CognitiveContext
    - CognitiveWorker is the concrete implementation of GraphAutoma
@@ -17,7 +15,6 @@ Design:
 import json
 import time
 import traceback
-from enum import Enum
 from typing import Any, Dict, List, Optional, Tuple, Union
 from pydantic import BaseModel, Field, ConfigDict, field_validator
 
@@ -31,27 +28,6 @@ from bridgic.core.agentic import ConcurrentAutoma
 from bridgic.core.agentic.tool_specs import ToolSpec
 from bridgic.core.utils._console import printer
 from bridgic.core.cognitive._context import Step, CognitiveContext
-
-
-#############################################################################
-# Thinking modes
-#############################################################################
-
-class ThinkingMode(str, Enum):
-    """
-    Thinking mode: how thinking and tool selection are orchestrated.
-
-    Attributes
-    ----------
-    FAST : str
-        Fast mode: merge thinking and tool selection into 1 LLM call;
-        single-step planning only; suitable for React-style agents.
-    DEFAULT : str
-        Default mode: separate thinking and tool selection;
-        supports single- or multi-step planning; suitable for Plan-style agents.
-    """
-    FAST = "fast"
-    DEFAULT = "default"
 
 
 #############################################################################
@@ -192,57 +168,7 @@ class FastThinkResult(BaseModel):
         return [] if v is None else v
 
 
-class DefaultThinkResult(BaseModel):
-    """
-    Think result for default mode: "what to do" with optional detail requests.
-
-    Describes steps without selecting tools. Supports single- or multi-step planning.
-    Supports layered disclosure via details_needed (same as FAST mode).
-
-    Note: Worker executes one thinking cycle without deciding task completion.
-    Termination is controlled by Agent via until() conditions.
-
-    Attributes
-    ----------
-    steps : List[str]
-        Step descriptions (one or more). Tool selection happens per step afterward.
-    reasoning : Optional[str]
-        Overall planning rationale (optional).
-    details_needed : List[DetailRequest]
-        Request for more details before finalizing steps.
-    """
-    model_config = ConfigDict(
-        extra="forbid",
-        json_schema_extra={
-            "required": ["steps", "reasoning", "details_needed"],
-            "additionalProperties": False,
-        }
-    )
-    steps: List[str] = Field(
-        default_factory=list,
-        description=(
-            "Steps to execute (can be empty if requesting details first).\n"
-            "Examples:\n"
-            "- Single step: ['Search for flights from Beijing to Shanghai']\n"
-            "- Multiple steps: ['Search flights', 'Book the cheapest flight', 'Search hotels']"
-        )
-    )
-    reasoning: Optional[str] = Field(
-        default=None,
-        description="Overall planning rationale (optional)"
-    )
-    details_needed: List[DetailRequest] = Field(
-        default_factory=list,
-        description="Request details before deciding. Example: [{field: 'cognitive_history', index: 0}]"
-    )
-
-    @field_validator('steps', 'details_needed', mode='before')
-    @classmethod
-    def coerce_list(cls, v: Any) -> list:
-        return [] if v is None else v
-
-
-class FastThinkDecision(BaseModel):
+class ActionStepResult(BaseModel):
     """
     Decision model for fast mode final round: no details_needed field.
 
@@ -288,50 +214,6 @@ class FastThinkDecision(BaseModel):
         return "" if v is None else str(v)
 
     @field_validator('calls', mode='before')
-    @classmethod
-    def coerce_list(cls, v: Any) -> list:
-        return [] if v is None else v
-
-
-class DefaultThinkDecision(BaseModel):
-    """
-    Decision model for default mode final round: no details_needed field.
-
-    Used on the last round of thinking to enforce decision output.
-    Identical to DefaultThinkResult but without the details_needed field.
-
-    Note: Worker executes one thinking cycle without deciding task completion.
-    Termination is controlled by Agent via until() conditions.
-
-    Attributes
-    ----------
-    steps : List[str]
-        Step descriptions (one or more). Tool selection happens per step afterward.
-    reasoning : Optional[str]
-        Overall planning rationale (optional).
-    """
-    model_config = ConfigDict(
-        extra="forbid",
-        json_schema_extra={
-            "required": ["steps", "reasoning"],
-            "additionalProperties": False,
-        }
-    )
-    steps: List[str] = Field(
-        default_factory=list,
-        description=(
-            "Steps to execute.\n"
-            "Examples:\n"
-            "- Single step: ['Search for flights from Beijing to Shanghai']\n"
-            "- Multiple steps: ['Search flights', 'Book the cheapest flight', 'Search hotels']"
-        )
-    )
-    reasoning: Optional[str] = Field(
-        default=None,
-        description="Overall planning rationale (optional)"
-    )
-
-    @field_validator('steps', mode='before')
     @classmethod
     def coerce_list(cls, v: Any) -> list:
         return [] if v is None else v
@@ -402,10 +284,6 @@ class CognitiveWorker(GraphAutoma):
     ----------
     llm : Optional[BaseLlm]
         LLM used for thinking. Can be None if the agent will inject one via set_llm().
-    mode : ThinkingMode, optional
-        Thinking mode: FAST or DEFAULT. Default is DEFAULT.
-        - FAST: Single call (step + tools + details check in one)
-        - DEFAULT: Separate thinking and tool selection phases
     max_detail_rounds : int, optional
         Maximum rounds of progressive disclosure queries before proceeding.
         Default is 1. Set higher to allow more detail fetching iterations.
@@ -429,10 +307,6 @@ class CognitiveWorker(GraphAutoma):
         Transform the last step result into a form suitable for thinking.
         Default: return as string.
 
-    select_tools(step_content, context) -> List[ToolCall]
-        Select tools for a step. Default: LLM-based selection.
-        Only used in DEFAULT mode (FAST mode selects tools during thinking).
-
     verify_tools(matched_list, context) -> List[Tuple[ToolCall, ToolSpec]]
         Verify/adjust matched tools before execution. Default: no change.
 
@@ -443,32 +317,22 @@ class CognitiveWorker(GraphAutoma):
     --------
     >>> class ReactWorker(CognitiveWorker):
     ...     def __init__(self, llm):
-    ...         # FAST mode with 2 detail rounds
-    ...         super().__init__(llm, mode=ThinkingMode.FAST, max_detail_rounds=2)
+    ...         super().__init__(llm, max_detail_rounds=2)
     ...
     ...     async def thinking(self):
     ...         return "Plan ONE immediate next step with appropriate tools."
     ...
-    >>> class PlanWorker(CognitiveWorker):
-    ...     def __init__(self, llm):
-    ...         # DEFAULT mode
-    ...         super().__init__(llm)
-    ...
-    ...     async def thinking(self):
-    ...         return "Create a step-by-step plan to achieve the goal."
     """
 
     def __init__(
         self,
         llm: Optional[BaseLlm] = None,
-        mode: ThinkingMode = ThinkingMode.DEFAULT,
         max_detail_rounds: int = 1,
         verbose: Optional[bool] = None,
         verbose_prompt: Optional[bool] = None,
     ):
         super().__init__()
         self._llm = llm
-        self.mode = mode
         self.max_detail_rounds = max_detail_rounds
 
         # Logging runtime (None = inherit from AgentAutoma)
@@ -525,10 +389,7 @@ class CognitiveWorker(GraphAutoma):
     @worker(dependencies=["_observation"])
     async def _thinking(self, observation: Optional[str], context: CognitiveContext) -> Any:
         """
-        Thinking phase: decide what to do next.
-
-        Dispatches to fast (thinking + tool selection in one call) or
-        default (thinking only; tool selection per step later) based on thinking mode.
+        Thinking phase: decide what to do next (thinking + tool selection in one call).
         """
         if self._llm is None:
             raise RuntimeError(
@@ -536,10 +397,7 @@ class CognitiveWorker(GraphAutoma):
                 "or use set_llm() before running."
             )
 
-        if self.mode == ThinkingMode.FAST:
-            await self._fast_thinking(observation, context)
-        else:
-            await self._default_thinking(observation, context)
+        await self._fast_thinking(observation, context)
 
     async def _fast_thinking(self, observation: Optional[str], context: CognitiveContext):
         """Fast mode thinking with layered disclosure support."""
@@ -609,95 +467,10 @@ class CognitiveWorker(GraphAutoma):
         self._log("Think", f"Result: step=\"{think_result.step_content}\" tools={tools}, reasoning=\"{think_result.reasoning}\"", color="blue")
         self.ferry_to("_action_fast", think_result=think_result, context=context)
 
-    async def _default_thinking(self, observation: Optional[str], context: CognitiveContext):
-        """Default mode thinking with layered disclosure."""
-        self._log("Think", "Mode: DEFAULT (thinking only)", color="blue")
-
-        think_prompt = await self.thinking()
-        think_result: Union[DefaultThinkResult, DefaultThinkDecision] = None
-
-        for round_idx in range(self.max_detail_rounds + 1):
-            is_last_round = (round_idx == self.max_detail_rounds)
-
-            if is_last_round:
-                # Last round: use Decision schema (no details_needed)
-                system_prompt, user_prompt = await self._build_default_prompts(
-                    think_prompt=think_prompt,
-                    context=context,
-                    observation=observation,
-                    is_final_round=True
-                )
-                think_result = await self._llm.astructured_output(
-                    messages=[
-                        Message.from_text(text=system_prompt, role="system"),
-                        Message.from_text(text=user_prompt, role="user")
-                    ],
-                    constraint=PydanticModel(model=DefaultThinkDecision)
-                )
-                self._log_prompt(f"Think round {round_idx + 1} (final)", system_prompt, user_prompt)
-                break  # Always exit on last round
-            else:
-                # Non-last round: use ThinkResult schema (allows details_needed)
-                system_prompt, user_prompt = await self._build_default_prompts(
-                    think_prompt=think_prompt,
-                    context=context,
-                    observation=observation,
-                    is_final_round=False
-                )
-                think_result = await self._llm.astructured_output(
-                    messages=[
-                        Message.from_text(text=system_prompt, role="system"),
-                        Message.from_text(text=user_prompt, role="user")
-                    ],
-                    constraint=PydanticModel(model=DefaultThinkResult)
-                )
-                self._log_prompt(f"Think round {round_idx + 1}", system_prompt, user_prompt)
-
-                # Check if LLM needs more details
-                if think_result.details_needed:
-                    # Filter out already-disclosed items
-                    new_requests = self._filter_disclosed_requests(
-                        think_result.details_needed, context
-                    )
-                    if new_requests:
-                        reqs = [f"{r.field}[{r.index}]" for r in new_requests]
-                        self._log("Think", f"Requesting details (round {round_idx + 1}): {reqs}", color="blue")
-                        for req in new_requests:
-                            context.get_details(req.field, req.index)
-                        continue
-                    else:
-                        self._log("Think", f"All requested details already disclosed (round {round_idx + 1}), skipping", color="yellow")
-                        continue  # Go to final round for forced decision
-
-                # LLM gave a decision, exit loop
-                break
-
-        # Ferry to action phase (Worker doesn't decide task completion)
-        self._log("Think", f"Result: steps={think_result.steps}, reasoning={think_result.reasoning}", color="blue")
-        self.ferry_to("_action_default", think_result=think_result, context=context)
-
     @worker()
     async def _action_fast(self, think_result: Union[FastThinkResult, FastThinkDecision], context: CognitiveContext) -> CognitiveContext:
         tool_calls = self._create_tool_calls_from_fast(think_result, context)
         await self._execute_step(think_result.step_content, tool_calls, context)
-        return context
-
-    @worker()
-    async def _action_default(self, think_result: Union[DefaultThinkResult, DefaultThinkDecision], context: CognitiveContext) -> CognitiveContext:
-        """Action phase for DEFAULT mode: select tools and execute each step."""
-        for i, step_content in enumerate(think_result.steps, 1):
-            self._log("Action", f"Step {i}/{len(think_result.steps)}: {step_content}", color="green")
-            observation = await self.observation(context)
-            if i >= 1 and self._verbose:
-                if observation:
-                    self._log("Observe", "Custom observation", observation[:200] + "...", color="cyan")
-                else:
-                    self._log("Observe", "Custom observation", "No observation", color="cyan")
-            tool_calls = await self.select_tools(step_content, observation, context)
-            tools = [tc.name for tc in tool_calls]
-            self._log("Action", f"Tools selected: {tools}", color="green")
-            await self._execute_step(step_content, tool_calls, context)
-
         return context
 
     ############################################################################
