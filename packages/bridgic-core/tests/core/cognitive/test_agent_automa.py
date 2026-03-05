@@ -17,10 +17,11 @@ from bridgic.core.cognitive import (
     CognitiveWorker,
     think_step,
     ErrorStrategy,
-    FastThinkResult,
+    ThinkResult,
     StepToolCall,
     ToolArgument,
 )
+from bridgic.core.cognitive._context import Step
 from bridgic.core.model.types import ToolCall
 from .tools import get_travel_planning_tools
 
@@ -122,8 +123,8 @@ class _FailingWorker(CognitiveWorker):
 # Helper: common mock tool calls
 # ============================================================================
 
-def _fast_search_flights() -> FastThinkResult:
-    return FastThinkResult(
+def _resp_search_flights() -> ThinkResult:
+    return ThinkResult(
         step_content="Search flights from Beijing to Kunming",
         calls=[StepToolCall(
             tool="search_flights",
@@ -138,8 +139,8 @@ def _fast_search_flights() -> FastThinkResult:
     )
 
 
-def _fast_book_flight() -> FastThinkResult:
-    return FastThinkResult(
+def _resp_book_flight() -> ThinkResult:
+    return ThinkResult(
         step_content="Book the cheapest flight MU456",
         calls=[StepToolCall(
             tool="book_flight",
@@ -152,8 +153,8 @@ def _fast_book_flight() -> FastThinkResult:
     )
 
 
-def _fast_search_hotels() -> FastThinkResult:
-    return FastThinkResult(
+def _resp_search_hotels() -> ThinkResult:
+    return ThinkResult(
         step_content="Search hotels in Kunming",
         calls=[StepToolCall(
             tool="search_hotels",
@@ -168,8 +169,8 @@ def _fast_search_hotels() -> FastThinkResult:
     )
 
 
-def _fast_book_hotel() -> FastThinkResult:
-    return FastThinkResult(
+def _resp_book_hotel() -> ThinkResult:
+    return ThinkResult(
         step_content="Book Comfort Inn Kunming",
         calls=[StepToolCall(
             tool="book_hotel",
@@ -184,8 +185,8 @@ def _fast_book_hotel() -> FastThinkResult:
     )
 
 
-def _fast_finish() -> FastThinkResult:
-    return FastThinkResult(
+def _resp_finish() -> ThinkResult:
+    return ThinkResult(
         step_content="All bookings completed",
         calls=[],
         reasoning="Flight and hotel are booked, task is done",
@@ -238,11 +239,11 @@ class TestAgentWorkflows:
     async def test_react_agent(self):
         """ReactAgent: FAST-mode react loop until finish (5 iterations)."""
         llm = StatefulMockLLM(structured_responses=[
-            _fast_search_flights(),
-            _fast_book_flight(),
-            _fast_search_hotels(),
-            _fast_book_hotel(),
-            _fast_finish(),
+            _resp_search_flights(),
+            _resp_book_flight(),
+            _resp_search_hotels(),
+            _resp_book_hotel(),
+            _resp_finish(),
         ])
 
         ReactAgent = _make_react_agent(llm)
@@ -268,7 +269,7 @@ class TestAgentFeatures:
         """think_step tool/skill filtering temporarily hides items, then restores."""
         # --- Tool filtering: only search_flights visible ---
         llm1 = StatefulMockLLM(structured_responses=[
-            FastThinkResult(
+            ThinkResult(
                 step_content="Search flights",
                 calls=[StepToolCall(
                     tool="search_flights",
@@ -294,7 +295,7 @@ class TestAgentFeatures:
 
         # --- Skill filtering: only travel-planning visible during execution ---
         llm2 = StatefulMockLLM(structured_responses=[
-            FastThinkResult(
+            ThinkResult(
                 step_content="Done", calls=[], reasoning="done",
                 details_needed=[]
             ),
@@ -361,10 +362,10 @@ class TestAgentFeatures:
         """test_step.until(condition, max_attempts): repeats until condition met or max reached."""
         # Test 1: Condition met before max_attempts
         llm = StatefulMockLLM(structured_responses=[
-            _fast_search_flights(),
-            _fast_book_flight(),
-            _fast_search_hotels(),
-            _fast_finish(),  # Extra in case needed
+            _resp_search_flights(),
+            _resp_book_flight(),
+            _resp_search_hotels(),
+            _resp_finish(),  # Extra in case needed
         ])
         worker = ReactThinkingWorker(llm=llm)
 
@@ -380,9 +381,9 @@ class TestAgentFeatures:
 
         # Test 2: Max attempts reached before condition
         llm2 = StatefulMockLLM(structured_responses=[
-            _fast_search_flights(),
-            _fast_book_flight(),
-            _fast_finish(),  # Extra in case needed
+            _resp_search_flights(),
+            _resp_book_flight(),
+            _resp_finish(),  # Extra in case needed
         ])
         worker2 = ReactThinkingWorker(llm=llm2)
 
@@ -401,7 +402,7 @@ class TestAgentFeatures:
         """with_tools()/with_skills() and until(tools=..., skills=...): dynamic override in cognition."""
         # --- with_tools: step without tools filter, override at runtime ---
         llm1 = StatefulMockLLM(structured_responses=[
-            FastThinkResult(
+            ThinkResult(
                 step_content="Search flights",
                 calls=[StepToolCall(
                     tool="search_flights",
@@ -426,7 +427,7 @@ class TestAgentFeatures:
 
         # --- with_skills + until: dynamic skills in until ---
         llm2 = StatefulMockLLM(structured_responses=[
-            FastThinkResult(step_content="Done", calls=[], reasoning="done", details_needed=[]),
+            ThinkResult(step_content="Done", calls=[], reasoning="done", details_needed=[]),
         ])
         worker2 = ReactThinkingWorker(llm=llm2)
         skills_seen = []
@@ -455,8 +456,8 @@ class TestAgentFeatures:
     async def test_dynamic_think_step_creation(self):
         """Dynamic think_step creation: defined in cognition() using .bind()."""
         llm = StatefulMockLLM(structured_responses=[
-            _fast_search_flights(),
-            _fast_book_flight(),
+            _resp_search_flights(),
+            _resp_book_flight(),
         ])
 
         worker = ReactThinkingWorker(llm=llm)
@@ -475,7 +476,7 @@ class TestAgentFeatures:
     async def test_chained_override_priority(self):
         """Chained overrides: later override wins (with_tools then with_tools)."""
         llm = StatefulMockLLM(structured_responses=[
-            FastThinkResult(
+            ThinkResult(
                 step_content="Done", calls=[], reasoning="", details_needed=[]
             ),
         ])
@@ -510,7 +511,7 @@ class TestAgentFeatures:
     async def test_until_with_dynamic_tools_override(self):
         """until(tools=...) should override descriptor's tools filter."""
         llm = StatefulMockLLM(structured_responses=[
-            FastThinkResult(step_content="Done", calls=[], reasoning="", details_needed=[]),
+            ThinkResult(step_content="Done", calls=[], reasoning="", details_needed=[]),
         ])
         worker = ReactThinkingWorker(llm=llm)
         tools_seen = []
@@ -541,7 +542,7 @@ class TestAgentFeatures:
     async def test_empty_tools_filter(self):
         """Empty tools filter results in no tools available."""
         llm = StatefulMockLLM(structured_responses=[
-            FastThinkResult(step_content="Done", calls=[], reasoning="", details_needed=[]),
+            ThinkResult(step_content="Done", calls=[], reasoning="", details_needed=[]),
         ])
         worker = ReactThinkingWorker(llm=llm)
         tools_count = []
@@ -570,7 +571,7 @@ class TestAgentFeatures:
     async def test_nonexistent_tool_filter(self):
         """Filtering by nonexistent tool name results in empty tool list."""
         llm = StatefulMockLLM(structured_responses=[
-            FastThinkResult(step_content="Done", calls=[], reasoning="", details_needed=[]),
+            ThinkResult(step_content="Done", calls=[], reasoning="", details_needed=[]),
         ])
         worker = ReactThinkingWorker(llm=llm)
         tools_count = []
@@ -624,7 +625,7 @@ class TestAgentFeatures:
     async def test_until_condition_immediately_true(self):
         """until with condition that's immediately true executes exactly once."""
         llm = StatefulMockLLM(structured_responses=[
-            FastThinkResult(step_content="Done", calls=[], reasoning="", details_needed=[]),
+            ThinkResult(step_content="Done", calls=[], reasoning="", details_needed=[]),
         ])
         worker = ReactThinkingWorker(llm=llm)
         execution_count = [0]
@@ -708,9 +709,9 @@ class TestCtxInit:
     async def test_ctx_init_integration(self):
         """ctx_init works end-to-end: via arun(goal=...), arun(context=...), and alongside __post_init__."""
         llm = StatefulMockLLM(structured_responses=[
-            FastThinkResult(step_content="Done", calls=[], reasoning="done", details_needed=[]),
-            FastThinkResult(step_content="Done", calls=[], reasoning="done", details_needed=[]),
-            FastThinkResult(step_content="Done", calls=[], reasoning="done", details_needed=[]),
+            ThinkResult(step_content="Done", calls=[], reasoning="done", details_needed=[]),
+            ThinkResult(step_content="Done", calls=[], reasoning="done", details_needed=[]),
+            ThinkResult(step_content="Done", calls=[], reasoning="done", details_needed=[]),
         ])
         worker = ReactThinkingWorker(llm=llm)
         tools = get_travel_planning_tools()
@@ -750,7 +751,7 @@ class TestCtxInit:
     async def test_ctx_init_provides_required_fields(self):
         """ctx_init can provide required constructor fields (e.g. goal) so arun() needs no kwargs."""
         tools = get_travel_planning_tools()
-        _done = lambda: FastThinkResult(step_content="Done", calls=[], reasoning="done", details_needed=[])
+        _done = lambda: ThinkResult(step_content="Done", calls=[], reasoning="done", details_needed=[])
 
         # 1. goal via ctx_init, arun() with no args
         llm1 = StatefulMockLLM(structured_responses=[_done()])
@@ -802,8 +803,8 @@ class TestAgentRuntime:
         """LLM injection, LLM override, verbose inheritance/override, stats tracking/reset."""
         # --- 1. Worker without LLM/verbose inherits from agent, stats accumulated ---
         llm = StatefulMockLLM(structured_responses=[
-            _fast_search_flights(),
-            _fast_finish(),
+            _resp_search_flights(),
+            _resp_finish(),
         ])
         worker = ReactThinkingWorker()
         assert worker._llm is None
@@ -829,7 +830,7 @@ class TestAgentRuntime:
 
         # --- 2. Worker with own LLM/verbose keeps them; stats reset per run ---
         own_llm = StatefulMockLLM(structured_responses=[
-            FastThinkResult(step_content="Done", calls=[], reasoning="done", details_needed=[]),
+            ThinkResult(step_content="Done", calls=[], reasoning="done", details_needed=[]),
         ])
         worker2 = ReactThinkingWorker(llm=own_llm, verbose=False)
 
@@ -847,8 +848,8 @@ class TestAgentRuntime:
 
         # --- 3. Stats reset: re-run with same-shape work, tokens should not double ---
         own_llm2 = StatefulMockLLM(structured_responses=[
-            FastThinkResult(step_content="Done", calls=[], reasoning="done", details_needed=[]),
-            FastThinkResult(step_content="Done", calls=[], reasoning="done", details_needed=[]),
+            ThinkResult(step_content="Done", calls=[], reasoning="done", details_needed=[]),
+            ThinkResult(step_content="Done", calls=[], reasoning="done", details_needed=[]),
         ])
         worker3 = ReactThinkingWorker(llm=own_llm2)
 
@@ -875,3 +876,183 @@ class TestAgentRuntime:
 
         with pytest.raises(RuntimeError, match="no LLM set"):
             await NoLlmAgent().arun(goal="test")
+
+
+# ============================================================================
+# Tests: Observation Delegation & Action Override
+# ============================================================================
+
+class TestObservationAndAction:
+    """Test the new observation delegation and action override infrastructure."""
+
+    @pytest.mark.asyncio
+    async def test_agent_level_observation(self):
+        """Worker defaults to _DELEGATE → agent.observation() is called instead."""
+        observation_calls = []
+
+        llm = StatefulMockLLM(structured_responses=[
+            ThinkResult(step_content="Done", calls=[], reasoning="done", details_needed=[]),
+        ])
+        worker = ReactThinkingWorker(llm=llm)
+
+        class ObservationAgent(AgentAutoma[TravelPlanningContext]):
+            step = think_step(worker)
+
+            async def observation(self, ctx):
+                observation_calls.append("agent_observation_called")
+                return "Agent-level observation"
+
+            async def cognition(self, ctx):
+                await self.step
+
+        result = await ObservationAgent().arun(goal="test")
+
+        # Agent's observation() was called (worker delegates via _DELEGATE)
+        assert "agent_observation_called" in observation_calls
+        # Context has the agent observation
+        assert result.observation == "Agent-level observation"
+
+    @pytest.mark.asyncio
+    async def test_worker_override_observation(self):
+        """Worker returning a string bypasses agent.observation()."""
+        agent_obs_calls = []
+        worker_obs_calls = []
+
+        llm = StatefulMockLLM(structured_responses=[
+            ThinkResult(step_content="Done", calls=[], reasoning="done", details_needed=[]),
+        ])
+
+        class WorkerWithObs(CognitiveWorker):
+            async def thinking(self):
+                return "Plan ONE step"
+
+            async def observation(self, context):
+                worker_obs_calls.append("worker_observation_called")
+                return "Worker-specific observation"
+
+        worker = WorkerWithObs(llm=llm)
+
+        class AgentWithObs(AgentAutoma[TravelPlanningContext]):
+            step = think_step(worker)
+
+            async def observation(self, ctx):
+                agent_obs_calls.append("agent_observation_called")
+                return "Agent observation"
+
+            async def cognition(self, ctx):
+                await self.step
+
+        result = await AgentWithObs().arun(goal="test")
+
+        # Worker's observation was called, agent's was NOT (worker didn't return _DELEGATE)
+        assert "worker_observation_called" in worker_obs_calls
+        assert "agent_observation_called" not in agent_obs_calls
+        # Context has the worker's observation
+        assert result.observation == "Worker-specific observation"
+
+    @pytest.mark.asyncio
+    async def test_agent_action_override(self):
+        """Override agent.action() replaces the execution engine."""
+        action_calls = []
+
+        llm = StatefulMockLLM(structured_responses=[
+            ThinkResult(
+                step_content="Search flights",
+                calls=[StepToolCall(
+                    tool="search_flights",
+                    tool_arguments=[
+                        ToolArgument(name="origin", value="Beijing"),
+                        ToolArgument(name="destination", value="Kunming"),
+                        ToolArgument(name="date", value="2025-06-01"),
+                    ]
+                )],
+                reasoning="Search first",
+                details_needed=[]
+            ),
+        ])
+        worker = ReactThinkingWorker(llm=llm)
+
+        class CustomActionAgent(AgentAutoma[TravelPlanningContext]):
+            step = think_step(worker)
+
+            async def action(self, decision, ctx, *, _worker):
+                # Custom execution engine: just log, don't actually run tools
+                action_calls.append({
+                    "step": decision.step_content,
+                    "tools": [c.tool for c in decision.calls],
+                })
+                ctx.add_info(Step(
+                    content=decision.step_content,
+                    status=True,
+                    result="Custom execution result",
+                    metadata={"tool_calls": [c.tool for c in decision.calls]}
+                ))
+                ctx.last_step_has_tools = bool(decision.calls)
+
+            async def cognition(self, ctx):
+                await self.step
+
+        result = await CustomActionAgent().arun(goal="test")
+
+        # Custom action was called
+        assert len(action_calls) == 1
+        assert action_calls[0]["step"] == "Search flights"
+        assert "search_flights" in action_calls[0]["tools"]
+
+        # Step recorded with custom result
+        assert len(result.cognitive_history) == 1
+        assert result.cognitive_history[0].result == "Custom execution result"
+        assert result.last_step_has_tools is True
+
+    @pytest.mark.asyncio
+    async def test_verify_tools_and_consequence_via_agent(self):
+        """verify_tools + consequence callbacks work through agent.action()."""
+        llm = StatefulMockLLM(structured_responses=[
+            ThinkResult(
+                step_content="Search and book",
+                calls=[
+                    StepToolCall(
+                        tool="search_flights",
+                        tool_arguments=[
+                            ToolArgument(name="origin", value="Beijing"),
+                            ToolArgument(name="destination", value="Kunming"),
+                            ToolArgument(name="date", value="2025-06-01"),
+                        ]
+                    ),
+                    StepToolCall(
+                        tool="book_flight",
+                        tool_arguments=[
+                            ToolArgument(name="flight_number", value="MU456"),
+                        ]
+                    ),
+                ],
+                reasoning="Do both",
+                details_needed=[]
+            ),
+        ])
+
+        class FilterWorker(ReactThinkingWorker):
+            async def verify_tools(self, matched_list, context):
+                # Filter out book_flight
+                return [(tc, spec) for tc, spec in matched_list if spec.tool_name != "book_flight"]
+
+            async def consequence(self, action_results):
+                # Format as semicolon-joined string
+                return "; ".join(r.tool_result for r in action_results)
+
+        worker = FilterWorker(llm=llm)
+
+        class FilterAgent(AgentAutoma[TravelPlanningContext]):
+            step = think_step(worker)
+            async def cognition(self, ctx):
+                await self.step
+
+        result = await FilterAgent().arun(goal="test")
+
+        last_step = result.cognitive_history[-1]
+        # verify_tools filtered out book_flight
+        assert "book_flight" not in last_step.metadata.get("tool_calls", [])
+        assert "search_flights" in last_step.metadata.get("tool_calls", [])
+        # consequence formatted as joined string
+        assert isinstance(last_step.result, str)
+        assert "Found 3 available flights" in last_step.result

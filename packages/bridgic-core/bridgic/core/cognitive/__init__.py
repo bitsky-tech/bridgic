@@ -69,12 +69,14 @@ from ._context import (
 from ._cognitive_worker import (
     # Worker
     CognitiveWorker,
+    # Sentinel
+    _DELEGATE,
     # Data structures
     DetailRequest,
     ToolArgument,
     StepToolCall,
-    FastThinkResult,
-    FastThinkDecision,
+    ThinkResult,
+    ThinkDecision,
     ActionResult,
     ActionStepResult,
 )
@@ -103,13 +105,14 @@ __all__ = [
 
     # Implementation layer - Worker
     "CognitiveWorker",
+    "_DELEGATE",
 
     # Data structures
     "DetailRequest",
     "ToolArgument",
     "StepToolCall",
-    "FastThinkResult",
-    "FastThinkDecision",
+    "ThinkResult",
+    "ThinkDecision",
     "ActionResult",
     "ActionStepResult",
 

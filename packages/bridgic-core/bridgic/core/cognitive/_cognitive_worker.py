@@ -5,16 +5,14 @@ A CognitiveWorker represents one thinking cycle of an Agent and is the minimal
 programmable unit of "observe-think-act".
 
 Design:
-1. Single thinking mode (FAST): Merges thinking and tool selection into 1 LLM call.
+1. Single thinking mode: Merges thinking and tool selection into 1 LLM call.
 
 2. Works directly with CognitiveContext
    - CognitiveWorker is the concrete implementation of GraphAutoma
    - CognitiveContext is the concrete implementation of Context
 """
 
-import json
 import time
-import traceback
 from typing import Any, Dict, List, Optional, Tuple, Union
 from pydantic import BaseModel, Field, ConfigDict, field_validator
 
@@ -22,12 +20,10 @@ from bridgic.core.model import BaseLlm
 from bridgic.core.model.protocols import PydanticModel
 from bridgic.core.model.types import ToolCall, Message
 from bridgic.core.automa import GraphAutoma, worker
-from bridgic.core.automa.args import ArgsMappingRule, InOrder
 from bridgic.core.automa.interaction import InteractionFeedback
-from bridgic.core.agentic import ConcurrentAutoma
 from bridgic.core.agentic.tool_specs import ToolSpec
 from bridgic.core.utils._console import printer
-from bridgic.core.cognitive._context import Step, CognitiveContext
+from bridgic.core.cognitive._context import CognitiveContext
 
 
 #############################################################################
@@ -110,9 +106,9 @@ class StepToolCall(BaseModel):
     )
 
 
-class FastThinkResult(BaseModel):
+class ThinkResult(BaseModel):
     """
-    Think result for fast mode: "what to do" and "which tools" in one output.
+    Think result: "what to do" and "which tools" in one output.
 
     Used when planning a single step; thinking and tool selection are merged
     into one LLM call. Supports layered disclosure via details_needed.
@@ -168,12 +164,12 @@ class FastThinkResult(BaseModel):
         return [] if v is None else v
 
 
-class ActionStepResult(BaseModel):
+class ThinkDecision(BaseModel):
     """
-    Decision model for fast mode final round: no details_needed field.
+    Decision model for the final round: no details_needed field.
 
     Used on the last round of thinking to enforce decision output.
-    Identical to FastThinkResult but without the details_needed field.
+    Identical to ThinkResult but without the details_needed field.
 
     Note: Worker executes one thinking cycle without deciding task completion.
     Termination is controlled by Agent via until() conditions.
@@ -270,14 +266,24 @@ class ActionResult(BaseModel):
 
 
 #############################################################################
+# Sentinel
+#############################################################################
+
+_DELEGATE = object()  # Worker returns this to delegate observation to Agent
+
+
+#############################################################################
 # CognitiveWorker
 #############################################################################
 
 class CognitiveWorker(GraphAutoma):
     """
-    Cognitive worker: one thinking cycle of an Agent (observe-think-act).
+    Cognitive worker: pure thinking unit of an Agent.
 
-    One CognitiveWorker represents one full "observe-think-act" cycle.
+    A CognitiveWorker represents one thinking cycle and is responsible for
+    "what to think and how to think". Observation and action execution are
+    handled by AgentAutoma as shared infrastructure.
+
     Subclass and override template methods to customize behavior.
 
     Parameters
@@ -288,10 +294,9 @@ class CognitiveWorker(GraphAutoma):
         Maximum rounds of progressive disclosure queries before proceeding.
         Default is 1. Set higher to allow more detail fetching iterations.
     verbose : bool, optional
-        Enable logging of thinking process and tool execution. Default is False.
+        Enable logging of thinking process. Default is False.
     verbose_prompt : bool, optional
         Enable logging of full prompts sent to LLM. Default is False.
-        Separate from verbose to avoid cluttering output with long prompts.
 
     Template Methods (override in subclasses)
     -----------------------------------------
@@ -299,19 +304,17 @@ class CognitiveWorker(GraphAutoma):
         Return the thinking prompt (how to decide next steps). Must be implemented.
 
     build_thinking_prompt(think_prompt, tools_description, output_instructions, context_info)
-        Assemble the final prompts for the thinking phase. Override to customize
-        prompt structure (reorder, add extra instructions, etc.).
-        Default: concatenates components as system_prompt, context_info as user_prompt.
+        Assemble the final prompts for the thinking phase.
 
-    observation(latest_info) -> str
-        Transform the last step result into a form suitable for thinking.
-        Default: return as string.
+    observation(context) -> Union[str, _DELEGATE]
+        Provide custom observation. Default returns _DELEGATE (delegate to Agent).
+        Override to return a string for worker-specific observation.
 
     verify_tools(matched_list, context) -> List[Tuple[ToolCall, ToolSpec]]
-        Verify/adjust matched tools before execution. Default: no change.
+        Verify/adjust matched tools before execution. Called by agent.action().
 
     consequence(action_results) -> Any
-        Process tool execution results (format or summarize). Default: return raw.
+        Process tool execution results. Called by agent.action().
 
     Examples
     --------
@@ -343,6 +346,9 @@ class CognitiveWorker(GraphAutoma):
         self.spend_tokens = 0
         self.spend_time = 0
 
+        # Last decision from thinking phase (consumed by ThinkStepDescriptor)
+        self._last_decision: Optional[ThinkDecision] = None
+
     def set_llm(self, llm: BaseLlm) -> None:
         """
         Set the LLM used for thinking and tool selection.
@@ -359,59 +365,41 @@ class CognitiveWorker(GraphAutoma):
     ############################################################################
 
     @worker(is_start=True)
-    async def _observation(self, context: CognitiveContext) -> Optional[str]:
+    async def _thinking(self, context: CognitiveContext) -> Any:
         """
-        Observation phase: prepare context for thinking.
+        Thinking phase: decide what to do next (thinking + tool selection in one call).
 
-        Calls the user-overridable observation() method which can return
-        additional context to include in the thinking phase.
+        Reads observation from context.observation (set by ThinkStepDescriptor before
+        calling arun). Stores the decision in _last_decision for ThinkStepDescriptor
+        to pick up and pass to agent.action().
         """
         if not isinstance(context, CognitiveContext):
             raise TypeError(
                 f"Expected CognitiveContext, got {type(context).__name__}. "
                 "CognitiveWorker requires CognitiveContext or its subclass."
             )
-
-        # Call user-overridable observation hook
-        observation = await self.observation(context)
-
-        # Save observation to context for task completion check
-        context.observation = observation
-
-        if self._verbose:
-            if observation:
-                self._log("Observe", "Custom observation", observation[:200] + "...", color="cyan")
-            else:
-                self._log("Observe", "Custom observation", "No observation", color="cyan")
-
-        return observation
-
-    @worker(dependencies=["_observation"])
-    async def _thinking(self, observation: Optional[str], context: CognitiveContext) -> Any:
-        """
-        Thinking phase: decide what to do next (thinking + tool selection in one call).
-        """
         if self._llm is None:
             raise RuntimeError(
                 "CognitiveWorker has no LLM set. Either pass llm= in __init__ "
                 "or use set_llm() before running."
             )
 
-        await self._fast_thinking(observation, context)
+        observation = context.observation
+        await self._run_thinking(observation, context)
 
-    async def _fast_thinking(self, observation: Optional[str], context: CognitiveContext):
-        """Fast mode thinking with layered disclosure support."""
-        self._log("Think", "Mode: FAST (thinking + tool selection)", color="blue")
+    async def _run_thinking(self, observation: Optional[str], context: CognitiveContext):
+        """Thinking phase with layered disclosure support."""
+        self._log("Think", "Thinking with tool selection", color="blue")
 
         think_prompt = await self.thinking()
-        think_result: Union[FastThinkResult, FastThinkDecision] = None
+        think_result: Union[ThinkResult, ThinkDecision] = None
 
         for round_idx in range(self.max_detail_rounds + 1):
             is_last_round = (round_idx == self.max_detail_rounds)
 
             if is_last_round:
                 # Last round: use Decision schema (no details_needed)
-                system_prompt, user_prompt = await self._build_fast_prompts(
+                system_prompt, user_prompt = await self._build_prompts(
                     think_prompt=think_prompt,
                     context=context,
                     observation=observation,
@@ -422,13 +410,13 @@ class CognitiveWorker(GraphAutoma):
                         Message.from_text(text=system_prompt, role="system"),
                         Message.from_text(text=user_prompt, role="user")
                     ],
-                    constraint=PydanticModel(model=FastThinkDecision)
+                    constraint=PydanticModel(model=ThinkDecision)
                 )
                 self._log_prompt(f"Think round {round_idx + 1} (final)", system_prompt, user_prompt)
                 break  # Always exit on last round
             else:
                 # Non-last round: use ThinkResult schema (allows details_needed)
-                system_prompt, user_prompt = await self._build_fast_prompts(
+                system_prompt, user_prompt = await self._build_prompts(
                     think_prompt=think_prompt,
                     context=context,
                     observation=observation,
@@ -439,7 +427,7 @@ class CognitiveWorker(GraphAutoma):
                         Message.from_text(text=system_prompt, role="system"),
                         Message.from_text(text=user_prompt, role="user")
                     ],
-                    constraint=PydanticModel(model=FastThinkResult)
+                    constraint=PydanticModel(model=ThinkResult)
                 )
                 self._log_prompt(f"Think round {round_idx + 1}", system_prompt, user_prompt)
 
@@ -462,16 +450,10 @@ class CognitiveWorker(GraphAutoma):
                 # LLM gave a decision, exit loop
                 break
 
-        # Ferry to action phase (Worker doesn't decide task completion)
+        # Store decision for AgentAutoma to execute (Worker doesn't decide task completion)
         tools = [c.tool for c in think_result.calls]
         self._log("Think", f"Result: step=\"{think_result.step_content}\" tools={tools}, reasoning=\"{think_result.reasoning}\"", color="blue")
-        self.ferry_to("_action_fast", think_result=think_result, context=context)
-
-    @worker()
-    async def _action_fast(self, think_result: Union[FastThinkResult, FastThinkDecision], context: CognitiveContext) -> CognitiveContext:
-        tool_calls = self._create_tool_calls_from_fast(think_result, context)
-        await self._execute_step(think_result.step_content, tool_calls, context)
-        return context
+        self._last_decision = think_result
 
     ############################################################################
     # Internal helpers
@@ -505,26 +487,6 @@ class CognitiveWorker(GraphAutoma):
         printer.print(user_prompt, color="gray")
         printer.print(f"[{stage}] Total: {total_tokens} tokens (cumulative: {self.spend_tokens} tokens)", color="yellow")
 
-    def _log_prompt_with_tools(self, stage: str, system_prompt: str, user_prompt: str, tools_tokens: int):
-        """Log prompts with tool schema tokens if verbose_prompt mode is enabled."""
-        system_tokens = self._count_tokens(system_prompt)
-        user_tokens = self._count_tokens(user_prompt)
-        total_tokens = system_tokens + user_tokens + tools_tokens
-
-        # Always update spend_tokens
-        self.spend_tokens += total_tokens
-
-        if not self._verbose_prompt:
-            return
-
-        printer.print(f"[{stage}] System Prompt ({system_tokens} tokens):", color="cyan")
-        printer.print(system_prompt, color="gray")
-        printer.print(f"[{stage}] User Prompt ({user_tokens} tokens):", color="cyan")
-        printer.print(user_prompt, color="gray")
-        printer.print(f"[{stage}] Tool JSON Schema ({tools_tokens} tokens):", color="cyan")
-        printer.print(f"  (tool definitions are sent to LLM for function calling)", color="gray")
-        printer.print(f"[{stage}] Total: {total_tokens} tokens (cumulative: {self.spend_tokens} tokens)", color="yellow")
-
     def _filter_disclosed_requests(
         self,
         details_needed: List[DetailRequest],
@@ -556,14 +518,14 @@ class CognitiveWorker(GraphAutoma):
             )
         return output_instructions
 
-    async def _build_fast_prompts(
+    async def _build_prompts(
         self,
         think_prompt: str,
         context: CognitiveContext,
         observation: Optional[str] = None,
         is_final_round: bool = False
     ) -> Tuple[str, str]:
-        """Build prompts for FAST mode (thinking + tool selection in one call).
+        """Build prompts for the thinking phase (thinking + tool selection in one call).
 
         Parameters
         ----------
@@ -582,13 +544,12 @@ class CognitiveWorker(GraphAutoma):
         if observation:
             context_info += f"\n\nObservation:\n{observation}"
 
-        # For FAST mode, we need detailed tool info (with parameters)
         # Build tool details directly from ToolSpec list
         capabilities_parts = []
         _, tool_specs = context.get_field('tools')
 
         def _format_tools_details(tool_specs: List[ToolSpec]) -> str:
-            """Format tool specs into detailed description string (for FAST mode prompts)."""
+            """Format tool specs into detailed description string."""
             lines = []
             for tool in tool_specs:
                 tool_lines = [f"• {tool.tool_name}: {tool.tool_description}"]
@@ -686,336 +647,6 @@ class CognitiveWorker(GraphAutoma):
         self.spend_tokens += self._count_tokens(system_prompt) + self._count_tokens(user_prompt)
         return system_prompt, user_prompt
 
-    async def _build_default_prompts(
-        self,
-        think_prompt: str,
-        context: CognitiveContext,
-        observation: Optional[str] = None,
-        is_final_round: bool = False
-    ) -> Tuple[str, str]:
-        """Build prompts for DEFAULT mode (thinking only; tool selection done separately).
-
-        Parameters
-        ----------
-        think_prompt : str
-            The thinking prompt from the thinking() method.
-        context : CognitiveContext
-            The cognitive context.
-        observation : Optional[str]
-            Custom observation from user-overridden observation() method.
-        is_final_round : bool
-            If True, output instructions will not include details_needed field,
-            forcing the LLM to make a decision.
-        """
-        # Build context info (exclude tools and skills, they go in system prompt)
-        context_info = context.format_summary(exclude=['tools', 'skills'])
-        if observation:
-            context_info += f"\n\nObservation:\n{observation}"
-
-        # Build capabilities description (tools + skills) for system_prompt.
-        # When is_final_round=True, skip the details_needed hint from skills summary
-        # because the LLM cannot request details in this round.
-        if is_final_round and len(context.skills) > 0:
-            tools_desc = context.format_summary(include=['tools'])
-            lines = ["Available Skills:"]
-            for i, skill_summary in enumerate(context.skills.summary()):
-                lines.append(f"  [{i}] {skill_summary}")
-            parts = [p for p in [tools_desc, "\n".join(lines)] if p]
-            capabilities_description = "\n\n".join(parts)
-        else:
-            capabilities_description = context.format_summary(include=['tools', 'skills'])
-
-        # Prepare output instructions based on whether this is the final round
-        if is_final_round:
-            # Final round: no details_needed, must make a decision
-            output_instructions = (
-                "# Output Format:\n"
-                "- **steps**: List of step descriptions\n"
-                "\n"
-                "# Planning Guidelines:\n"
-                "- If a matching skill exists, follow its defined process strictly\n"
-                "- Each step should map to ONE logical action\n"
-                "- Only describe WHAT to do (tool selection is done separately)"
-            )
-        else:
-            # Non-final round: include details_needed option
-            output_instructions = (
-                "# Output Format:\n"
-                "- **steps**: List of step descriptions (leave empty if requesting details first)\n"
-                "- **details_needed**: Request details via [{field: 'xxx', index: N}]\n"
-                "\n"
-                "# BEFORE Planning - Check If You Need Details:\n"
-                "You MUST check the following before planning steps:\n"
-                "\n"
-                "1. **skills** (CHECK FIRST - CRITICAL):\n"
-                "   - Look at the Available Skills list above\n"
-                "   - Is there a skill that matches your current task?\n"
-                "   - If YES and you haven't seen its details: Request details FIRST via details_needed, leave steps empty\n"
-                "   - If YES and you already have the skill details: Follow the skill's workflow STRICTLY. **DO NOT REQUEST SAME ITEM AGAIN**\n"
-                "   - If NO matching skill: Plan based on available tools\n"
-                "\n"
-                "2. **cognitive_history** (CHECK WHEN NEEDED):\n"
-                "   - Do you need specific data from a previous step (e.g., flight numbers, hotel names)?\n"
-                "   - If YES: Request the step's details to extract the information\n"
-                "   - If NO: Don't request history details unnecessarily\n"
-                "\n"
-                "# Planning Guidelines:\n"
-                "- If a matching skill exists, follow its defined process strictly\n"
-                "- Each step should map to ONE logical action\n"
-                "- Only describe WHAT to do (tool selection is done separately)\n"
-                "- When requesting details, leave steps empty; plan after receiving details"
-            )
-
-            # Append already-disclosed info to prevent redundant detail requests
-            output_instructions = self._append_disclosed_info(output_instructions, context)
-
-        # Call template method to assemble final prompts
-        system_prompt, user_prompt = await self.build_thinking_prompt(
-            think_prompt=think_prompt.strip(),
-            tools_description=capabilities_description,  # Now includes tools and skills
-            output_instructions=output_instructions,
-            context_info=context_info
-        )
-
-        self.spend_tokens += self._count_tokens(system_prompt) + self._count_tokens(user_prompt)
-        return system_prompt, user_prompt
-
-    def _build_tool_selection_prompts(self, step_content: str, observation: Optional[str], context: CognitiveContext) -> Tuple[str, str]:
-        """Build prompts for tool selection (DEFAULT mode).
-
-        Parameters
-        ----------
-        step_content : str
-            Description of the step to execute.
-        observation : Optional[str]
-            Custom observation to include in the tool selection process.
-        context : CognitiveContext
-            The cognitive context (contains goal, history, disclosed details).
-        """
-        system_parts = [
-            "You are a tool selection assistant. "
-            "Select the appropriate tool(s) to execute the given step. "
-            "Analyze the step content and choose the tool(s) that best match the required action. "
-            "Use the provided context information (including any detailed information) to determine "
-            "the correct arguments for the tools."
-        ]
-        system_parts.append(context.format_summary(include=['tools']))
-        system_prompt = "\n\n".join(system_parts)
-
-        user_parts = [context.format_summary(include=['disclosed_details', 'cognitive_history'])]
-        if observation:
-            user_parts.append(f"Observation:\n{observation}")
-        else:
-            user_parts.append("Observation: None")
-        user_parts.append(f"Step to execute: {step_content}")
-        user_prompt = "\n\n".join(user_parts)
-
-        # Note: token counting is done in _log_prompt_with_tools which includes tool schema tokens
-        self.spend_tokens += self._count_tokens(system_prompt) + self._count_tokens(user_prompt)
-        return system_prompt, user_prompt
-
-    async def _select_tools_for_step(self, step_content: str, observation: Optional[str], context: CognitiveContext) -> List[ToolCall]:
-        """Select tools for a single step via LLM (DEFAULT mode).
-
-        Parameters
-        ----------
-        step_content : str
-            Description of the step to execute.
-        observation : Optional[str]
-            Custom observation to include in the tool selection process.
-        context : CognitiveContext
-            The cognitive context (contains goal, history, disclosed details).
-        """
-        system_prompt, user_prompt = self._build_tool_selection_prompts(
-            step_content=step_content,
-            observation=observation,
-            context=context
-        )
-
-        # Get tools from context
-        _, tool_specs = context.get_field('tools')
-        tools = [tool_spec.to_tool() for tool_spec in tool_specs]
-        tool_calls, _ = await self._llm.aselect_tool(
-            messages=[
-                Message.from_text(text=system_prompt, role="system"),
-                Message.from_text(text=user_prompt, role="user")
-            ],
-            tools=tools
-        )
-
-        # Calculate tool definition tokens (tool json_schema is also sent to LLM) and log prompts with tool tokens included
-        tools_json = json.dumps([t.model_dump() if hasattr(t, 'model_dump') else str(t) for t in tools], ensure_ascii=False)
-        tools_tokens = self._count_tokens(tools_json)
-        self._log_prompt_with_tools("Tool Selection", system_prompt, user_prompt, tools_tokens)
-        self.spend_tokens += tools_tokens
-        return tool_calls
-
-    def _create_tool_calls_from_fast(self, think_result: Union[FastThinkResult, FastThinkDecision], context: CognitiveContext) -> List[ToolCall]:
-        """Convert FastThinkResult into a list of ToolCall."""
-        tool_calls = []
-
-        def _find_tool_by_name(tool_specs: List[ToolSpec], name: str) -> Optional[ToolSpec]:
-            """Find a tool spec by name from the list."""
-            for tool in tool_specs:
-                if tool.tool_name == name:
-                    return tool
-            return None
-
-        def _convert_tool_arguments(tool_name: str, tool_arguments: List[ToolArgument], context: CognitiveContext) -> Dict[str, Any]:
-            """Convert List[ToolArgument] to Dict[str, Any] with type conversion."""
-            # Find tool spec by name from the list
-            _, tool_specs = context.get_field('tools')
-            tool_spec = _find_tool_by_name(tool_specs, tool_name)
-
-            # Get parameter type info
-            param_types = {}
-            if tool_spec and tool_spec.tool_parameters:
-                props = tool_spec.tool_parameters.get('properties', {})
-                for name, info in props.items():
-                    param_types[name] = info.get('type', 'string')
-
-            # Convert arguments
-            result = {}
-            for arg in tool_arguments:
-                value = arg.value
-                param_type = param_types.get(arg.name, 'string')
-
-                # Type conversion based on parameter type
-                if param_type == 'integer':
-                    try:
-                        value = int(value)
-                    except (ValueError, TypeError):
-                        pass
-                elif param_type == 'number':
-                    try:
-                        value = float(value)
-                    except (ValueError, TypeError):
-                        pass
-                elif param_type == 'boolean':
-                    value = value.lower() in ('true', '1', 'yes')
-                # string type: keep as-is
-
-                result[arg.name] = value
-
-            return result
-
-        for idx, call in enumerate(think_result.calls):
-            # Convert List[ToolArgument] to Dict[str, Any]
-            arguments = _convert_tool_arguments(call.tool, call.tool_arguments, context)
-            tool_calls.append(ToolCall(
-                id=f"call_{idx}",
-                name=call.tool,
-                arguments=arguments
-            ))
-        return tool_calls
-
-    async def _execute_step(self, step_content: str, tool_calls: List[ToolCall], context: CognitiveContext):
-        """Execute one step: match tools, verify, run, process result, update history."""
-        # Handle empty tool calls (LLM decided no tools needed)
-        if not tool_calls:
-            self._log("Action", "No tools to execute (empty calls)", color="yellow")
-            info = Step(
-                content=step_content,
-                status=True,
-                result="No tools executed",
-                metadata={"tool_calls": []}
-            )
-            context.add_info(info)
-
-            # Update tool call flag: no tools executed
-            context.last_step_has_tools = False
-            return
-
-        # Get tools from context
-        _, tool_specs = context.get_field('tools')
-        matched_list = self._match_tool_calls(tool_calls, tool_specs)
-        verify_list = await self.verify_tools(matched_list, context)
-        if not verify_list:
-            raise ValueError(f"No matching tools found for: {[tc.name for tc in tool_calls]}")
-
-        # Log tool execution
-        for tc, _ in verify_list:
-            self._log("Action", f"Executing: {tc.name}({tc.arguments})", color="green")
-
-        action_result = await self._execute_tools(verify_list)
-        consequence = await self.consequence(action_result.results)
-
-        # Log result
-        status = "success" if action_result.status else "failed"
-        self._log("Action", f"Result: {status}", consequence, color="green")
-
-        info = Step(
-            content=step_content,
-            status=action_result.status,
-            result=consequence,
-            metadata={"tool_calls": [tc[0].name for tc in verify_list]}
-        )
-        context.add_info(info)
-
-        # Update tool call flag: tools were executed
-        context.last_step_has_tools = True
-
-    async def _execute_tools(self, matched_list: List[Tuple[ToolCall, ToolSpec]]) -> ActionResult:
-        """Execute a list of (ToolCall, ToolSpec) pairs and return ActionResult."""
-        sandbox = ConcurrentAutoma()
-        tool_calls = []
-
-        for tool_call, tool_spec in matched_list:
-            tool_calls.append(tool_call)
-            tool_worker = tool_spec.create_worker()
-            worker_key = f"tool_{tool_call.name}_{tool_call.id}"
-            sandbox.add_worker(
-                key=worker_key,
-                worker=tool_worker,
-                args_mapping_rule=ArgsMappingRule.UNPACK
-            )
-
-        tool_args = [tc.arguments for tc in tool_calls]
-
-        try:
-            results = await sandbox.arun(InOrder(tool_args))
-            step_results = [
-                ActionStepResult(
-                    tool_id=tc.id,
-                    tool_name=tc.name,
-                    tool_arguments=tc.arguments,
-                    tool_result=result
-                )
-                for tc, result in zip(tool_calls, results)
-            ]
-            return ActionResult(status=True, results=step_results)
-        except Exception as e:
-            return ActionResult(
-                status=False,
-                results=[ActionStepResult(
-                    tool_id="",
-                    tool_name="",
-                    tool_arguments={},
-                    tool_result=traceback.format_exc()
-                )]
-            )
-
-    def _match_tool_calls(
-        self,
-        tool_calls: List[ToolCall],
-        tool_specs: List[ToolSpec]
-    ) -> List[Tuple[ToolCall, ToolSpec]]:
-        """Match each ToolCall to its ToolSpec by name."""
-        matched = []
-        for tc in tool_calls:
-            for spec in tool_specs:
-                if tc.name == spec.tool_name:
-                    if tc.arguments.get("__args__") is not None:
-                        props = list(spec.tool_parameters.get('properties', {}).keys())
-                        args = tc.arguments.get("__args__")
-                        if isinstance(args, list):
-                            tc.arguments = dict(zip(props, args))
-                        else:
-                            tc.arguments = {props[0]: args} if props else {}
-                    matched.append((tc, spec))
-                    break
-        return matched
-
     def _count_tokens(self, text: str) -> int:
         """Estimate token count. Rough approximation: ~4 chars per token (typical for English/UTF-8)."""
         return (len(text) + 3) // 4
@@ -1024,13 +655,15 @@ class CognitiveWorker(GraphAutoma):
     # Template methods (override by user to customize the behavior)
     ############################################################################
 
-    async def observation(self, context: CognitiveContext) -> Optional[str]:
+    async def observation(self, context: CognitiveContext) -> Any:
         """
-        Hook for custom observation logic before thinking.
+        Provide custom observation before thinking.
 
-        Override to add custom observation that will be included in the
-        thinking context. The context's cognitive_history already contains
-        layered history (working memory with full details, short-term with summaries).
+        Default returns _DELEGATE, signaling that ThinkStepDescriptor should
+        fall back to the agent's observation() method instead.
+
+        Override to return a string for worker-specific observation that takes
+        precedence over the agent-level default.
 
         Parameters
         ----------
@@ -1039,20 +672,20 @@ class CognitiveWorker(GraphAutoma):
 
         Returns
         -------
-        Optional[str]
-            Custom observation to include in thinking context.
-            Return None or empty string to skip.
+        Any
+            _DELEGATE (default) to delegate to agent.observation().
+            A string to use as the observation directly.
 
         Examples
         --------
         >>> async def observation(self, context):
-        ...     # Add custom observation based on latest step
+        ...     # Worker-specific observation, overrides agent default
         ...     if len(context.cognitive_history) > 0:
         ...         latest = context.cognitive_history[-1]
         ...         return f"Last action: {latest.content}, Result: {latest.result}"
-        ...     return None
+        ...     return _DELEGATE  # fall back to agent for everything else
         """
-        return None
+        return _DELEGATE
 
     async def thinking(self) -> str:
         """
@@ -1093,9 +726,7 @@ class CognitiveWorker(GraphAutoma):
         think_prompt : str
             The thinking prompt from the thinking() method.
         tools_description : str
-            Formatted description of available tools.
-            - FAST mode: detailed with parameters
-            - DEFAULT mode: empty (tools already in context_info)
+            Formatted description of available tools (with parameters).
         output_instructions : str
             Instructions for the output format (finish, steps/step_content, etc.).
         context_info : str
@@ -1147,43 +778,6 @@ class CognitiveWorker(GraphAutoma):
             Value stored as the step result in cognitive history.
         """
         return action_results
-
-    async def select_tools(self, step_content: str, observation: Optional[str], context: CognitiveContext) -> List[ToolCall]:
-        """
-        Select tools for a step. Override to customize tool selection logic.
-
-        This method is called in DEFAULT mode to select tools for each step.
-        (In FAST mode, tools are already selected during thinking.)
-
-        Default: uses LLM-based tool selection via aselect_tool.
-
-        Parameters
-        ----------
-        step_content : str
-            Description of the step to execute.
-        observation : Optional[str]
-            Custom observation to include in the tool selection process.
-        context : CognitiveContext
-            Current cognitive context. Previously disclosed details are available
-            via context.summary()['disclosed_details'].
-
-        Returns
-        -------
-        List[ToolCall]
-            Selected tool calls for this step.
-
-        Examples
-        --------
-        >>> async def select_tools(self, step_content, observation, context):
-        ...     # Custom logic: always use a specific tool
-        ...     return [ToolCall(id="1", name="my_tool", arguments={"arg": "value"})]
-        ...
-        >>> async def select_tools(self, step_content, observation, context):
-        ...     # Access disclosed details from context if needed
-        ...     disclosed = context.summary().get('disclosed_details', '')
-        ...     return [ToolCall(id="1", name="search", arguments={"query": step_content})]
-        """
-        return await self._select_tools_for_step(step_content, observation, context)
 
     async def verify_tools(self, matched_list: List[Tuple[ToolCall, ToolSpec]], context: CognitiveContext) -> List[Tuple[ToolCall, ToolSpec]]:
         """
