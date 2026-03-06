@@ -13,6 +13,7 @@ from bridgic.core.automa._automa import RunningOptions
 from bridgic.core.automa.interaction import InteractionFeedback
 from bridgic.core.automa.args import ArgsMappingRule, InOrder
 from bridgic.core.utils._console import printer
+from bridgic.core.model import BaseLlm
 from bridgic.core.model.types import Message, ToolCall
 from bridgic.core.agentic import ConcurrentAutoma
 from bridgic.core.agentic.tool_specs import ToolSpec
@@ -307,10 +308,16 @@ class ThinkStepDescriptor:
         tokens_before = self.worker.spend_tokens
 
         try:
-            # ① Observe (delegation semantics)
-            obs = await self.worker.observation(context)
+            # ① Observe (enhancement semantics)
+            # Step 1: Get default observation from agent
+            default_obs = await agent.observation(context)
+
+            # Step 2: Let worker enhance it (pass default_observation)
+            obs = await self.worker.observation(context, default_observation=default_obs)
+
+            # Step 3: If worker returns _DELEGATE (legacy mode), use default
             if obs is _DELEGATE:
-                obs = await agent.observation(context)
+                obs = default_obs
 
             # Write observation to context for the thinking phase
             context.observation = obs
@@ -455,6 +462,78 @@ def think_step(
         tools=tools,
         skills=skills,
     )
+
+
+def _think_step_from_prompt(
+    thinking_prompt: str,
+    llm: Optional[BaseLlm] = None,
+    *,
+    enable_rehearsal: bool = False,
+    enable_reflection: bool = False,
+    on_error: ErrorStrategy = ErrorStrategy.RAISE,
+    max_retries: int = 3,
+    tools: Optional[List[str]] = None,
+    skills: Optional[List[str]] = None,
+) -> ThinkStepDescriptor:
+    """
+    Create a think step from a thinking prompt string.
+
+    Convenience function for creating simple workers without defining a class.
+
+    Parameters
+    ----------
+    thinking_prompt : str
+        The thinking prompt to use.
+    llm : Optional[BaseLlm]
+        LLM instance to use.
+    enable_rehearsal : bool
+        Enable rehearsal policy.
+    enable_reflection : bool
+        Enable reflection policy.
+    on_error : ErrorStrategy
+        Error handling strategy.
+    max_retries : int
+        Maximum retry attempts.
+    tools : Optional[List[str]]
+        Tool filter for this step.
+    skills : Optional[List[str]]
+        Skill filter for this step.
+
+    Returns
+    -------
+    ThinkStepDescriptor
+        A descriptor that returns an awaitable when accessed.
+
+    Examples
+    --------
+    >>> class MyAgent(AgentAutoma):
+    ...     step = think_step.from_prompt(
+    ...         "Plan ONE step",
+    ...         llm=llm,
+    ...         enable_rehearsal=True
+    ...     )
+    ...
+    ...     async def cognition(self, ctx):
+    ...         while not ctx.finish:
+    ...             await self.step
+    """
+    worker = CognitiveWorker.from_prompt(
+        thinking_prompt=thinking_prompt,
+        llm=llm,
+        enable_rehearsal=enable_rehearsal,
+        enable_reflection=enable_reflection,
+    )
+    return think_step(
+        worker=worker,
+        on_error=on_error,
+        max_retries=max_retries,
+        tools=tools,
+        skills=skills,
+    )
+
+
+# Attach as a static method to think_step
+think_step.from_prompt = _think_step_from_prompt
 
 
 ################################################################################################################
@@ -739,14 +818,15 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT], metaclass=AgentAutoma
 
     async def action(
         self,
-        decision: ThinkDecision,        ctx: CognitiveContextT,
+        decision: ThinkDecision,
+        ctx: CognitiveContextT,
         *,
         _worker: CognitiveWorker,
     ) -> None:
         """
         Agent-level action execution. Override to change the execution engine.
 
-        Calls worker.verify_tools() and worker.consequence() as callbacks,
+        Calls worker.before_action() and worker.after_action() as callbacks,
         allowing per-worker customization within the shared infrastructure.
 
         Parameters
@@ -771,7 +851,9 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT], metaclass=AgentAutoma
 
         tool_calls = self._convert_decision_to_tool_calls(decision, ctx)
         matched = self._match_tool_calls(tool_calls, ctx)
-        verified = await _worker.verify_tools(matched, ctx)
+
+        # ① BEFORE ACTION (worker callback)
+        verified = await _worker.before_action(matched, ctx)
         if not verified:
             raise ValueError(f"No matching tools found for: {[tc.name for tc in tool_calls]}")
 
@@ -779,8 +861,11 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT], metaclass=AgentAutoma
         for tc, _ in verified:
             _worker._log("Action", f"Executing: {tc.name}({tc.arguments})", color="green")
 
+        # ② EXECUTE TOOLS
         action_result = await self._run_tools(verified)
-        consequence = await _worker.consequence(action_result.results)
+
+        # ③ AFTER ACTION (worker callback)
+        consequence = await _worker.after_action(action_result.results, ctx)
 
         # Log result
         status = "success" if action_result.status else "failed"
