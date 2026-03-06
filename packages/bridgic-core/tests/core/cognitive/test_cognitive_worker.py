@@ -149,7 +149,7 @@ class TestCognitiveWorker:
     @pytest.mark.asyncio
     async def test_template_method_defaults(self):
         """Default template methods: thinking raises, observation returns _DELEGATE,
-        consequence/verify_tools passthrough, build_thinking_prompt assembles, non-context rejected."""
+        before_action/after_action pass through, build_thinking_prompt assembles, non-context rejected."""
         llm = MockLLM()
         worker = CognitiveWorker(llm=llm)
         ctx = _make_context()
@@ -162,19 +162,19 @@ class TestCognitiveWorker:
         result = await worker.observation(ctx)
         assert result is _DELEGATE
 
-        # consequence() → passthrough
+        # before_action() → passthrough
+        tools = get_travel_planning_tools()
+        matched = [(ToolCall(id="1", name="search_flights", arguments={}), tools[0])]
+        assert await worker.before_action(matched, ctx) is matched
+
+        # after_action() → passthrough (returns raw list)
         test_results = [
             ActionStepResult(
                 tool_id="1", tool_name="search_flights",
                 tool_arguments={"origin": "Beijing"}, tool_result="found"
             )
         ]
-        assert await worker.consequence(test_results) is test_results
-
-        # verify_tools() → passthrough
-        tools = get_travel_planning_tools()
-        matched = [(ToolCall(id="1", name="search_flights", arguments={}), tools[0])]
-        assert await worker.verify_tools(matched, ctx) is matched
+        assert await worker.after_action(test_results, ctx) is test_results
 
         # build_thinking_prompt() → standard assembly
         system, user = await worker.build_thinking_prompt(
@@ -233,12 +233,12 @@ class TestCognitiveWorker:
 
     @pytest.mark.asyncio
     async def test_thinking_only(self):
-        """Worker.arun() only performs thinking, stores decision in _last_decision."""
+        """Worker.arun() only performs thinking, returns decision directly."""
         llm = MockLLM()
         ctx = _make_context()
         worker = _SimpleWorker(llm=llm)
 
-        # Tool call scenario - decision stored in _last_decision
+        # Tool call scenario - decision returned from arun()
         llm.structured_output_response = ThinkDecision(
             step_content="Search flights from Beijing to Tokyo",
             calls=[StepToolCall(
@@ -250,13 +250,13 @@ class TestCognitiveWorker:
                 ]
             )],
         )
-        await worker.arun(context=ctx)
+        decision = await worker.arun(context=ctx)
 
-        # Worker stores decision, does NOT execute tools
-        assert worker._last_decision is not None
-        assert worker._last_decision.step_content == "Search flights from Beijing to Tokyo"
-        assert len(worker._last_decision.calls) == 1
-        assert worker._last_decision.calls[0].tool == "search_flights"
+        # Worker returns decision, does NOT execute tools
+        assert decision is not None
+        assert decision.step_content == "Search flights from Beijing to Tokyo"
+        assert len(decision.calls) == 1
+        assert decision.calls[0].tool == "search_flights"
         # No history added (action not executed)
         assert len(ctx.cognitive_history) == 0
 
@@ -359,11 +359,11 @@ class TestCognitiveWorker:
             enable_rehearsal=True
         )
         ctx = _make_context()
-        await worker.arun(context=ctx)
+        decision = await worker.arun(context=ctx)
 
-        # Check decision was made
-        assert worker._last_decision is not None
-        assert worker._last_decision.step_content == "Search flights"
+        # Check decision was returned
+        assert decision is not None
+        assert decision.step_content == "Search flights"
 
     @pytest.mark.asyncio
     async def test_reflection_policy(self):
@@ -391,10 +391,10 @@ class TestCognitiveWorker:
             enable_reflection=True
         )
         ctx = _make_context()
-        await worker.arun(context=ctx)
+        decision = await worker.arun(context=ctx)
 
-        assert worker._last_decision is not None
-        assert worker._last_decision.step_content == "Search flights"
+        assert decision is not None
+        assert decision.step_content == "Search flights"
 
     @pytest.mark.asyncio
     async def test_combined_policies(self):
@@ -423,10 +423,10 @@ class TestCognitiveWorker:
             enable_reflection=True
         )
         ctx = _make_context()
-        await worker.arun(context=ctx)
+        decision = await worker.arun(context=ctx)
 
-        assert worker._last_decision is not None
-        assert worker._last_decision.step_content == "Search flights"
+        assert decision is not None
+        assert decision.step_content == "Search flights"
 
     @pytest.mark.asyncio
     async def test_policies_with_disclosure(self):
@@ -456,10 +456,10 @@ class TestCognitiveWorker:
             enable_rehearsal=True
         )
         ctx = _make_context()
-        await worker.arun(context=ctx)
+        decision = await worker.arun(context=ctx)
 
-        assert worker._last_decision is not None
-        assert worker._last_decision.step_content == "Execute skill workflow"
+        assert decision is not None
+        assert decision.step_content == "Execute skill workflow"
 
     @pytest.mark.asyncio
     async def test_observation_enhancement(self):
@@ -526,10 +526,10 @@ class TestCognitiveWorker:
             enable_rehearsal=False
         )
         ctx = _make_context()
-        await worker.arun(context=ctx)
+        decision = await worker.arun(context=ctx)
 
-        assert worker._last_decision is not None
-        assert worker._last_decision.step_content == "Search flights"
+        assert decision is not None
+        assert decision.step_content == "Search flights"
 
     @pytest.mark.asyncio
     async def test_think_step_from_prompt(self):
@@ -632,10 +632,10 @@ class TestCognitiveWorker:
         assert "details_needed" in worker._ThinkResultModel.model_fields
 
         ctx = _make_context()
-        await worker.arun(context=ctx)
+        decision = await worker.arun(context=ctx)
 
-        assert worker._last_decision is not None
-        assert worker._last_decision.step_content == "Direct decision after disclosure"
+        assert decision is not None
+        assert decision.step_content == "Direct decision after disclosure"
 
     @pytest.mark.asyncio
     async def test_dynamic_model_cache(self):
@@ -703,3 +703,113 @@ class TestCognitiveWorker:
         instr_a = w_default._build_output_instructions(is_policy_round=False, disclosure_done=False, context=ctx)
         assert "Detail Budget" not in instr_a
         assert "LIMIT REACHED" not in instr_a
+
+
+# ---------------------------------------------------------------------------
+# Tests for Feature 3: CognitiveWorker.output_type
+# ---------------------------------------------------------------------------
+
+from pydantic import BaseModel
+from typing import List as _List
+
+
+class _PlanPhase(BaseModel):
+    sub_goal: str
+    skill_name: str
+
+
+class _PlanResult(BaseModel):
+    phases: _List[_PlanPhase]
+
+
+class _PlannerWorker(CognitiveWorker):
+    """Worker with output_schema set — returns _PlanResult directly."""
+    output_schema = _PlanResult
+
+    async def thinking(self) -> str:
+        return "Produce a phased execution plan."
+
+
+class _MockAgentForOutputType(AgentAutoma[CognitiveContext]):
+    """Minimal agent wrapping _PlannerWorker for output_type testing."""
+    plan_step = think_step(_PlannerWorker())
+
+    async def cognition(self, ctx: CognitiveContext) -> None:
+        pass  # not used directly in these tests
+
+
+class TestOutputType:
+
+    @pytest.mark.asyncio
+    async def test_output_schema_returns_typed_instance(self):
+        """When output_schema is set, arun() returns the typed instance directly."""
+        expected = _PlanResult(phases=[
+            _PlanPhase(sub_goal="Step A", skill_name="skill-a"),
+        ])
+        llm = MockLLM()
+        llm.structured_output_response = expected
+
+        worker = _PlannerWorker(llm=llm)
+        ctx = CognitiveContext(goal="Test")
+        ctx.observation = None
+
+        result = await worker.arun(context=ctx)
+
+        assert result is expected
+        assert isinstance(result, _PlanResult)
+        assert result.phases[0].sub_goal == "Step A"
+
+    @pytest.mark.asyncio
+    async def test_output_schema_skips_action(self):
+        """When output_schema is set, agent.action() is NOT called; await step returns typed instance."""
+        expected = _PlanResult(phases=[
+            _PlanPhase(sub_goal="Phase 1", skill_name="skill-1"),
+        ])
+        llm = MockLLM()
+        llm.structured_output_response = expected
+
+        # Track whether action() was called
+        action_called = []
+
+        class _TrackingAgent(_MockAgentForOutputType):
+            async def action(self, decision, ctx, *, _worker):
+                action_called.append(decision)
+
+        agent = _TrackingAgent(llm=llm)
+        ctx = CognitiveContext(goal="Test output_schema")
+        agent._current_context = ctx
+
+        # Inject llm into the plan_step worker
+        agent.plan_step.worker.set_llm(llm)
+
+        result = await agent.plan_step._execute_once(agent)
+
+        # action() must NOT have been called
+        assert len(action_called) == 0
+
+        # The typed result must be returned
+        assert result is expected
+        assert isinstance(result, _PlanResult)
+
+    @pytest.mark.asyncio
+    async def test_output_schema_uses_schema_constraint(self):
+        """LLM is called with the output_schema model as constraint (not ThinkDecision)."""
+        from bridgic.core.model.protocols import PydanticModel
+
+        captured_constraint = []
+
+        class _CapturingLLM(MockLLM):
+            async def astructured_output(self, messages, constraint, **kwargs):
+                captured_constraint.append(constraint)
+                return _PlanResult(phases=[])
+
+        worker = _PlannerWorker(llm=_CapturingLLM())
+        ctx = CognitiveContext(goal="Test")
+        ctx.observation = None
+
+        await worker.arun(context=ctx)
+
+        assert len(captured_constraint) == 1
+        assert isinstance(captured_constraint[0], PydanticModel)
+        assert captured_constraint[0].model is _PlanResult
+

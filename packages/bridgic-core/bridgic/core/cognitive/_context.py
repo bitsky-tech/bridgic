@@ -8,6 +8,39 @@ from bridgic.core.model.types import Message
 
 
 ################################################################################################################
+# _OverrideContext — async context manager for safe field mutation
+################################################################################################################
+
+class _OverrideContext:
+    """
+    Async context manager for exception-safe temporary field overrides on a Context.
+
+    Saves original field values on enter, restores them in finally on exit.
+
+    Usage
+    -----
+    async with ctx.override(goal="new goal", browser=None) as ctx:
+        ...  # ctx.goal == "new goal" here
+    # ctx.goal restored to original value (even if exception was raised)
+    """
+
+    def __init__(self, ctx: "Context", fields: Dict[str, Any]):
+        self._ctx = ctx
+        self._fields = fields
+        self._originals: Dict[str, Any] = {}
+
+    async def __aenter__(self) -> "Context":
+        self._originals = {k: getattr(self._ctx, k) for k in self._fields}
+        for k, v in self._fields.items():
+            setattr(self._ctx, k, v)
+        return self._ctx
+
+    async def __aexit__(self, *exc) -> None:
+        for k, v in self._originals.items():
+            setattr(self._ctx, k, v)
+
+
+################################################################################################################
 # Abstract Base Classes
 ################################################################################################################
 T = TypeVar('T')
@@ -83,7 +116,49 @@ class LayeredExposure(Exposure[T]):
 
     Use this for data where the LLM may need to request details
     about specific items (e.g., execution history, skills).
+
+    Disclosure state is owned internally: once revealed, an item's detail
+    is cached in _revealed. Call reset_revealed() to clear all cached reveals
+    (e.g., at phase boundaries in a multi-phase agent).
     """
+
+    def __init__(self):
+        super().__init__()
+        self._revealed: Dict[int, str] = {}  # index → cached detail string
+
+    def reveal(self, index: int) -> Optional[str]:
+        """
+        Get and cache detailed information for a specific element.
+
+        Returns the cached value if already revealed; otherwise calls
+        get_details(index), stores the result, and returns it.
+
+        Parameters
+        ----------
+        index : int
+            Element index (0-based).
+
+        Returns
+        -------
+        Optional[str]
+            Detailed information string, or None if index is invalid.
+        """
+        if index in self._revealed:
+            return self._revealed[index]
+        detail = self.get_details(index)
+        if detail is not None:
+            self._revealed[index] = detail
+        return detail
+
+    def reset_revealed(self) -> None:
+        """
+        Clear all cached reveals.
+
+        Use at phase boundaries to allow the LLM to re-request details
+        that were disclosed in a previous phase.
+        """
+        self._revealed.clear()
+
     @abstractmethod
     def summary(self) -> List[str]:
         """
@@ -149,12 +224,12 @@ class Context(BaseModel):
         Get a dictionary of all field values or Exposure summaries.
     get_details(field, idx)
         Get detailed information for a specific LayeredExposure item.
-    get_exposable_fields()
-        Get the list of all Exposure fields.
-    get_layered_fields()
-        Get the list of LayeredExposure fields (support details query).
-    get_field_all(field)
-        Get all elements from an Exposure field.
+    get_revealed_items()
+        Get all (field, index) pairs that have been revealed so far.
+    reset_revealed()
+        Clear reveal caches on all LayeredExposure fields.
+    override(**fields)
+        Async context manager for exception-safe temporary field overrides.
 
     Examples
     --------
@@ -229,35 +304,6 @@ class Context(BaseModel):
                 }
 
         return exposure_fields
-
-    @classmethod
-    def get_displayable_fields(cls) -> List[str]:
-        """
-        Get list of field names that should be displayed in summary.
-
-        Fields are displayable by default unless explicitly marked with
-        json_schema_extra={"display": False}.
-
-        Returns
-        -------
-        List[str]
-            Field names where display is not explicitly set to False.
-
-        Examples
-        --------
-        >>> class MyContext(Context):
-        ...     visible: str = Field(default="")
-        ...     hidden: str = Field(default="", json_schema_extra={"display": False})
-        >>> MyContext.get_displayable_fields()
-        ['visible']
-        """
-        displayable = []
-        for field_name, field_info in cls.model_fields.items():
-            extra = field_info.json_schema_extra or {}
-            display = extra.get("display", True)  # Default: True (displayable)
-            if display:
-                displayable.append(field_name)
-        return displayable
 
     @classmethod
     def get_hidden_fields(cls) -> List[str]:
@@ -432,10 +478,68 @@ class Context(BaseModel):
             return None
 
         field_value = getattr(self, field, None)
-        if field_value and hasattr(field_value, 'get_details'):
-            return field_value.get_details(idx)
+        if field_value and hasattr(field_value, 'reveal'):
+            return field_value.reveal(idx)
 
         return None
+
+    def get_revealed_items(self) -> List[Tuple[str, int]]:
+        """
+        Return all (field_name, index) pairs that have been revealed across
+        all LayeredExposure fields on this context.
+
+        Returns
+        -------
+        List[Tuple[str, int]]
+            Ordered list of (field_name, item_index) that have cached reveals.
+        """
+        result: List[Tuple[str, int]] = []
+        exposure_fields = self.__class__._exposure_fields or {}
+        for fname, finfo in exposure_fields.items():
+            if finfo.get('exposure_type') == 'layered':
+                fval = getattr(self, fname, None)
+                if fval is not None and hasattr(fval, '_revealed'):
+                    for idx in fval._revealed:
+                        result.append((fname, idx))
+        return result
+
+    def reset_revealed(self) -> None:
+        """
+        Reset reveal state on all LayeredExposure fields.
+
+        Equivalent to calling field.reset_revealed() on every LayeredExposure
+        field. Use at phase boundaries so the next phase can request fresh details.
+        """
+        exposure_fields = self.__class__._exposure_fields or {}
+        for fname, finfo in exposure_fields.items():
+            if finfo.get('exposure_type') == 'layered':
+                fval = getattr(self, fname, None)
+                if fval is not None and hasattr(fval, 'reset_revealed'):
+                    fval.reset_revealed()
+
+    def override(self, **fields: Any) -> "_OverrideContext":
+        """
+        Create an async context manager for exception-safe temporary field overrides.
+
+        Saves original field values on enter, restores them in finally on exit.
+
+        Parameters
+        ----------
+        **fields
+            Field name to temporary value mappings.
+
+        Returns
+        -------
+        _OverrideContext
+            An async context manager that yields this context with overrides applied.
+
+        Examples
+        --------
+        >>> async with ctx.override(goal="new goal", browser=None):
+        ...     await self.execute_step.until(...)
+        ... # ctx.goal restored here, even on exception
+        """
+        return _OverrideContext(self, fields)
 
     def __str__(self) -> str:
         """
@@ -836,8 +940,6 @@ class CognitiveHistory(LayeredExposure[Step]):
         # LLM for compression (set via set_llm)
         self._llm: Optional[Any] = None
 
-    # TODO: Is it necessary to incorporate the setting of LLM as part of the context base class's capabilities, 
-    # and then only require internal elements to implement the set_llm interface? An LLM will be automatically injected.
     def set_llm(self, llm: Any) -> None:
         """
         Set the LLM used for history compression.
@@ -1101,50 +1203,13 @@ class CognitiveContext(Context):
         description="Whether the last thinking step executed any tool calls"
     )
 
-    # Internal state for persisting disclosed details
-    _disclosed_details: List[Tuple[str, int, str]] = []  # (field, index, detail)
-
-    def __init__(self, **data):
-        super().__init__(**data)
-        # Initialize internal state
-        object.__setattr__(self, '_disclosed_details', [])
-
-    def get_details(self, field: str, idx: int) -> Optional[str]:
-        """
-        Get detailed information for a LayeredExposure field item.
-
-        Overrides parent to persist disclosed details. Once retrieved,
-        details are stored and included in subsequent summary() calls.
-
-        Parameters
-        ----------
-        field : str
-            Name of the Exposure field.
-        idx : int
-            Item index within the field (0-based).
-
-        Returns
-        -------
-        Optional[str]
-            Detailed information string, or None if unavailable.
-        """
-        detail = super().get_details(field, idx)
-
-        if detail is not None:
-            # Persist if not already disclosed
-            disclosed = object.__getattribute__(self, '_disclosed_details')
-            if not any(d[0] == field and d[1] == idx for d in disclosed):
-                disclosed.append((field, idx, detail))
-
-        return detail
-
     def summary(self) -> Dict[str, str]:
         """
         Generate a summary dictionary with formatted strings for each field.
 
         Returns a dictionary where each key is a field name and each value is
         a formatted string ready for prompt inclusion. Includes previously
-        disclosed details.
+        disclosed details from all LayeredExposure fields.
 
         Returns
         -------
@@ -1195,13 +1260,19 @@ class CognitiveContext(Context):
         else:
             result['cognitive_history'] = "Execution History: (none)"
 
-        # Format disclosed details (persisted from previous get_details calls)
-        disclosed = object.__getattribute__(self, '_disclosed_details')
-        if disclosed:
-            lines = ["Previously Disclosed Details:"]
-            for field, idx, detail in disclosed:
-                lines.append(f"\n[{field}[{idx}]]:\n{detail}")
-            result['disclosed_details'] = "\n".join(lines)
+        # Format disclosed details from LayeredExposure fields' _revealed dicts
+        exposure_fields = self.__class__._exposure_fields or {}
+        disclosed_lines = ["Previously Disclosed Details:"]
+        has_disclosed = False
+        for fname, finfo in exposure_fields.items():
+            if finfo.get('exposure_type') == 'layered':
+                fval = getattr(self, fname, None)
+                if fval is not None and hasattr(fval, '_revealed') and fval._revealed:
+                    for idx, detail in fval._revealed.items():
+                        disclosed_lines.append(f"\n[{fname}[{idx}]]:\n{detail}")
+                        has_disclosed = True
+        if has_disclosed:
+            result['disclosed_details'] = "\n".join(disclosed_lines)
 
         return result
 

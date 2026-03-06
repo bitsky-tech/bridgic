@@ -277,6 +277,14 @@ class CognitiveWorker(GraphAutoma):
     verbose_prompt : bool, optional
         Enable logging of full prompts sent to LLM. Default is False.
 
+    Class Attributes
+    ----------------
+    output_schema : Optional[Type[BaseModel]]
+        If set, the worker produces a typed Pydantic instance directly using the
+        output_schema as the LLM constraint. The agent's action() phase is skipped
+        entirely. ``await step`` returns the typed instance.
+        Policy rounds (rehearsal/reflection) still run if enabled.
+
     Template Methods (override in subclasses)
     -----------------------------------------
     thinking() -> str
@@ -304,10 +312,18 @@ class CognitiveWorker(GraphAutoma):
     ...     async def thinking(self):
     ...         return "Plan ONE immediate next step with appropriate tools."
     ...
+    >>> class PlannerWorker(CognitiveWorker):
+    ...     output_schema = PlanningResult  # skip tool loop, return typed instance
+    ...
+    ...     async def thinking(self):
+    ...         return "Analyze the goal and produce a phased execution plan."
     """
 
     # Class-level cache: (enable_rehearsal, enable_reflection) → model class
     _model_cache: Dict[Tuple[bool, bool], Type[BaseModel]] = {}
+
+    # Subclasses set this to a Pydantic model to produce typed output directly
+    output_schema: Optional[Type[BaseModel]] = None
 
     def __init__(
         self,
@@ -316,12 +332,17 @@ class CognitiveWorker(GraphAutoma):
         enable_reflection: bool = False,
         verbose: Optional[bool] = None,
         verbose_prompt: Optional[bool] = None,
+        output_schema: Optional[Type[BaseModel]] = None,
     ):
         super().__init__()
         self._llm = llm
 
         self.enable_rehearsal = enable_rehearsal
         self.enable_reflection = enable_reflection
+
+        # Instance-level output_schema overrides the class attribute when provided
+        if output_schema is not None:
+            self.output_schema = output_schema
 
         # Policy round: one round before decision if any policy is enabled
         self._policy_rounds = 1 if (enable_rehearsal or enable_reflection) else 0
@@ -333,9 +354,6 @@ class CognitiveWorker(GraphAutoma):
         # Usage stats
         self.spend_tokens = 0
         self.spend_time = 0
-
-        # Last decision from thinking phase (consumed by ThinkStepDescriptor)
-        self._last_decision: Optional[Any] = None
 
         # Dynamic ThinkResult model based on enabled policies
         self._ThinkResultModel = self._create_think_result_model()
@@ -403,14 +421,14 @@ class CognitiveWorker(GraphAutoma):
     # Worker methods (GraphAutoma execution flow)
     ############################################################################
 
-    @worker(is_start=True)
+    @worker(is_start=True, is_output=True)
     async def _thinking(self, context: CognitiveContext) -> Any:
         """
         Thinking phase: decide what to do next (thinking + tool selection in one call).
 
         Reads observation from context.observation (set by ThinkStepDescriptor before
-        calling arun). Stores the decision in _last_decision for ThinkStepDescriptor
-        to pick up and pass to agent.action().
+        calling arun). Returns the decision directly; ThinkStepDescriptor reads the
+        arun() return value (no side-channel via _last_decision).
         """
         if not isinstance(context, CognitiveContext):
             raise TypeError(
@@ -424,13 +442,14 @@ class CognitiveWorker(GraphAutoma):
             )
 
         observation = context.observation
-        await self._run_thinking(observation, context)
+        return await self._run_thinking(observation, context)
 
-    async def _run_thinking(self, observation: Optional[str], context: CognitiveContext):
-        """Thinking phase with cognitive policies support."""
+    async def _run_thinking(self, observation: Optional[str], context: CognitiveContext) -> Any:
+        """Thinking phase with cognitive policies support. Returns the final decision."""
         self._log("Think", "Thinking with tool selection", color="blue")
 
         think_prompt = await self.thinking()
+
         think_result = None
 
         # Policy accumulation context (passed to subsequent rounds)
@@ -448,8 +467,19 @@ class CognitiveWorker(GraphAutoma):
             round_num += 1
             is_policy_round = not policy_phase_done
 
-            # After disclosure, use ThinkDecision (no details_needed) to hard-block further requests
-            model = ThinkDecision if disclosure_done else self._ThinkResultModel
+            # Model selection for this round:
+            # - Policy round: always _ThinkResultModel (can include rehearsal/reflection)
+            # - output_schema mode (non-policy): use output_schema directly as constraint
+            # - After disclosure (no output_schema): ThinkDecision (forced decision, no details_needed)
+            # - Normal intermediate: _ThinkResultModel (LLM can request details)
+            if is_policy_round:
+                model = self._ThinkResultModel
+            elif self.output_schema is not None:
+                model = self.output_schema
+            elif disclosure_done:
+                model = ThinkDecision
+            else:
+                model = self._ThinkResultModel
 
             system_prompt, user_prompt = await self._build_prompts(
                 think_prompt=think_prompt,
@@ -485,6 +515,7 @@ class CognitiveWorker(GraphAutoma):
                 continue
 
             # Check for disclosure requests (single batch: all requests processed at once)
+            # Only _ThinkResultModel results carry details_needed
             if not disclosure_done and hasattr(think_result, 'details_needed') and think_result.details_needed:
                 reqs = think_result.details_needed
                 req_labels = [f"{r.field}[{r.index}]" for r in reqs]
@@ -494,13 +525,16 @@ class CognitiveWorker(GraphAutoma):
                 disclosure_done = True  # Force decision on next round
                 continue
 
-            # LLM gave a decision (no disclosure requests)
+            # LLM gave a decision (no disclosure requests, or output_schema used)
             break
 
-        # Store decision
-        tools = [c.tool for c in think_result.calls]
-        self._log("Think", f"Result: step=\"{think_result.step_content}\" tools={tools}", color="blue")
-        self._last_decision = think_result
+        # Log and return decision
+        if self.output_schema is not None:
+            self._log("Think", "output_schema result", str(think_result), color="green")
+        else:
+            tools = [c.tool for c in think_result.calls]
+            self._log("Think", f"Result: step=\"{think_result.step_content}\" tools={tools}", color="blue")
+        return think_result
 
     ############################################################################
     # Internal helpers
@@ -534,6 +568,32 @@ class CognitiveWorker(GraphAutoma):
         printer.print(user_prompt, color="gray")
         printer.print(f"[{stage}] Total: {total_tokens} tokens (cumulative: {self.spend_tokens} tokens)", color="yellow")
 
+    @staticmethod
+    def _build_schema_prompt(model: Type[BaseModel]) -> str:
+        """
+        Build a format description prompt from a Pydantic model's JSON schema.
+
+        Used in output_schema mode to tell the LLM what structured format to produce.
+
+        Parameters
+        ----------
+        model : Type[BaseModel]
+            The Pydantic model to generate format instructions for.
+
+        Returns
+        -------
+        str
+            A formatted prompt describing the required JSON schema.
+        """
+        import json
+        schema = model.model_json_schema()
+        schema_json = json.dumps(schema, indent=2, ensure_ascii=False)
+        return (
+            "# Required Output Format\n"
+            "Produce a JSON object matching the following schema:\n"
+            f"```json\n{schema_json}\n```"
+        )
+
     def _build_output_instructions(
         self,
         is_policy_round: bool,
@@ -552,6 +612,8 @@ class CognitiveWorker(GraphAutoma):
 
         disclosure_done=True means a batch disclosure has already been done;
         we use ThinkDecision (no details_needed) and instruct the LLM to decide.
+
+        output_schema set: use _build_schema_prompt to describe the structured format.
         """
         # --- Field lines ---
         if is_policy_round:
@@ -574,6 +636,9 @@ class CognitiveWorker(GraphAutoma):
                     "- **reflection**: Reflect on the information quality. "
                     "Is it sufficient? Any contradictions or gaps?"
                 )
+        elif self.output_schema is not None:
+            # output_schema mode: show structured output format description
+            return self._build_schema_prompt(self.output_schema)
         elif disclosure_done:
             # Post-disclosure: ThinkDecision model is used, no details_needed field
             field_lines = [
@@ -663,7 +728,7 @@ class CognitiveWorker(GraphAutoma):
         """
         # Build context info (exclude tools and skills, they go in system prompt)
         context_info = context.format_summary(exclude=['tools', 'skills'])
-        if observation:
+        if observation is not None:
             context_info += f"\n\nObservation:\n{observation}"
 
         # Add policy context (from previous round's rehearsal/reflection)
@@ -672,18 +737,15 @@ class CognitiveWorker(GraphAutoma):
             context_info += "\n".join(policy_context)
 
         # Append already-disclosed items to user prompt (not output_instructions)
-        try:
-            disclosed = object.__getattribute__(context, '_disclosed_details')
-            if disclosed:
-                disclosed_items = [f"{field}[{idx}]" for field, idx, _ in disclosed]
-                context_info += (
-                    "\n\n# Already Disclosed (DO NOT request again):\n"
-                    f"These items are already loaded: {', '.join(disclosed_items)}.\n"
-                    "Their content is in 'Previously Disclosed Details' below. "
-                    "Use them directly — do NOT add them to details_needed."
-                )
-        except AttributeError:
-            pass
+        revealed = context.get_revealed_items()
+        if revealed:
+            revealed_labels = [f"{field}[{idx}]" for field, idx in revealed]
+            context_info += (
+                "\n\n# Already Disclosed (DO NOT request again):\n"
+                f"These items are already loaded: {', '.join(revealed_labels)}.\n"
+                "Their content is in 'Previously Disclosed Details' below. "
+                "Use them directly — do NOT add them to details_needed."
+            )
 
         # Task restatement at the start of user prompt
         user_prompt_context = f"Based on the context below, decide your next action.\n\n{context_info}"
@@ -948,31 +1010,12 @@ class CognitiveWorker(GraphAutoma):
         """
         return action_results
 
-    # Backward compatibility aliases
-    async def verify_tools(self, matched_list: List[Tuple[ToolCall, ToolSpec]], context: CognitiveContext) -> List[Tuple[ToolCall, ToolSpec]]:
-        """Deprecated: Use before_action() instead."""
-        return await self.before_action(matched_list, context)
-
-    async def consequence(self, action_results: List[ActionStepResult]) -> Any:
-        """Deprecated: Use after_action() instead."""
-        # Old signature didn't have context parameter
-        # Try to call new method if subclass overrode it
-        try:
-            # Check if subclass overrode after_action
-            if type(self).after_action is not CognitiveWorker.after_action:
-                # Subclass overrode it, but we don't have context here
-                # Just return raw results (best effort)
-                return action_results
-        except:
-            pass
-        return action_results
-
     ############################################################################
     # Entry point
     ############################################################################
 
     @classmethod
-    def from_prompt(
+    def inline(
         cls,
         thinking_prompt: str,
         llm: Optional[BaseLlm] = None,
@@ -980,6 +1023,7 @@ class CognitiveWorker(GraphAutoma):
         enable_reflection: bool = False,
         verbose: Optional[bool] = None,
         verbose_prompt: Optional[bool] = None,
+        output_schema: Optional[Type[BaseModel]] = None,
     ) -> "CognitiveWorker":
         """
         Create a simple CognitiveWorker from a thinking prompt string.
@@ -1001,6 +1045,9 @@ class CognitiveWorker(GraphAutoma):
             Enable verbose logging.
         verbose_prompt : Optional[bool]
             Enable prompt logging.
+        output_schema : Optional[Type[BaseModel]]
+            If set, the worker produces a typed instance directly instead of
+            going through the standard tool-call loop.
 
         Returns
         -------
@@ -1009,10 +1056,14 @@ class CognitiveWorker(GraphAutoma):
 
         Examples
         --------
-        >>> worker = CognitiveWorker.from_prompt(
+        >>> worker = CognitiveWorker.inline(
         ...     "Plan ONE immediate next step",
         ...     llm=llm,
         ...     enable_rehearsal=True
+        ... )
+        >>> planner = CognitiveWorker.inline(
+        ...     "Analyze the goal and produce a phased plan.",
+        ...     output_schema=PlanningResult,
         ... )
         """
         class _PromptWorker(cls):
@@ -1025,7 +1076,11 @@ class CognitiveWorker(GraphAutoma):
             enable_reflection=enable_reflection,
             verbose=verbose,
             verbose_prompt=verbose_prompt,
+            output_schema=output_schema,
         )
+
+    # Alias for inline() — preferred for readability in some contexts
+    from_prompt = inline
 
     async def arun(
         self,

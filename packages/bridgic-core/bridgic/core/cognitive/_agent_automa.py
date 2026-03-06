@@ -43,12 +43,69 @@ class ErrorStrategy(Enum):
 # ThinkStep Descriptor
 ################################################################################################################
 
+class _BoundStep:
+    """
+    Per-instance binding of a ThinkStepDescriptor to an agent.
+
+    Created fresh by ThinkStepDescriptor.__get__ on each attribute access,
+    so concurrent agent instances never share mutable runtime state.
+    """
+
+    def __init__(self, descriptor: "ThinkStepDescriptor", agent: "AgentAutoma"):
+        self._descriptor = descriptor
+        self._agent = agent
+        self._runtime_tools: Optional[List[str]] = None
+        self._runtime_skills: Optional[List[str]] = None
+
+    def __await__(self):
+        """Make the bound step directly awaitable."""
+        tools, self._runtime_tools = self._runtime_tools, None
+        skills, self._runtime_skills = self._runtime_skills, None
+        return self._descriptor._execute(self._agent, tools=tools, skills=skills).__await__()
+
+    def with_tools(self, tools: List[str]) -> "_BoundStep":
+        """Restrict tools for this execution. Chainable with with_skills() and until()."""
+        self._runtime_tools = tools
+        return self
+
+    def with_skills(self, skills: List[str]) -> "_BoundStep":
+        """Restrict skills for this execution. Chainable with with_tools() and until()."""
+        self._runtime_skills = skills
+        return self
+
+    def until(
+        self,
+        condition: Union[Callable[[CognitiveContext], bool], Callable[[CognitiveContext], Awaitable[bool]]],
+        max_attempts: Optional[int] = None,
+        tools: Optional[List[str]] = None,
+        skills: Optional[List[str]] = None,
+    ):
+        """Run until condition is met or max attempts reached."""
+        effective_tools = tools if tools is not None else self._runtime_tools
+        effective_skills = skills if skills is not None else self._runtime_skills
+        attempts = max_attempts if max_attempts is not None else self._descriptor.max_retries
+        return self._descriptor._execute_until(
+            self._agent, condition, attempts,
+            tools=effective_tools, skills=effective_skills,
+        )
+
+    @property
+    def worker(self) -> CognitiveWorker:
+        """Access the underlying worker (delegates to descriptor)."""
+        return self._descriptor.worker
+
+    def _execute_once(self, agent: "AgentAutoma", *, tools=None, skills=None):
+        """Delegate _execute_once to the descriptor (for testing)."""
+        return self._descriptor._execute_once(agent, tools=tools, skills=skills)
+
+
 class ThinkStepDescriptor:
     """
     Descriptor for declaring cognitive thinking steps.
 
-    When accessed on an instance, returns an awaitable coroutine that
-    executes the wrapped CognitiveWorker with the agent's current context.
+    When accessed on an agent instance, returns a fresh ``_BoundStep`` that
+    captures the agent reference. This ensures concurrent agent instances
+    never share mutable runtime state.
 
     Parameters
     ----------
@@ -79,8 +136,6 @@ class ThinkStepDescriptor:
         self.tools_filter = tools
         self.skills_filter = skills
         self._name: Optional[str] = None
-        self._runtime_tools: Optional[List[str]] = None
-        self._runtime_skills: Optional[List[str]] = None
 
     def __set_name__(self, owner: Type, name: str) -> None:
         self._name = name
@@ -88,27 +143,14 @@ class ThinkStepDescriptor:
     def __get__(self, obj: Optional["AgentAutoma"], objtype: Optional[Type] = None) -> Any:
         if obj is None:
             return self
-        # Return self to allow both direct await and .until() chaining
-        self._agent = obj
-        return self
+        # Return a fresh _BoundStep per access — no shared mutable state
+        return _BoundStep(self, obj)
 
-    def __await__(self):
-        """Make the descriptor directly awaitable."""
-        if not hasattr(self, '_agent') or self._agent is None:
-            raise RuntimeError(
-                f"Cannot await think_step '{self._name}': not accessed from agent instance. "
-                "Use 'await self.step_name' within cognition method."
-            )
-        tools, self._runtime_tools = self._runtime_tools, None
-        skills, self._runtime_skills = self._runtime_skills, None
-        return self._execute(self._agent, tools=tools, skills=skills).__await__()
-
-    def bind(self, agent: "AgentAutoma") -> "ThinkStepDescriptor":
+    def bind(self, agent: "AgentAutoma") -> "_BoundStep":
         """Bind this step to an agent instance for dynamic step creation.
 
-        This is needed when creating think_step instances inside cognition()
-        method as local variables, since the descriptor protocol only works
-        for class attributes.
+        Used when creating think_step instances inside cognition() as local
+        variables (descriptor protocol only works for class attributes).
 
         Parameters
         ----------
@@ -117,8 +159,8 @@ class ThinkStepDescriptor:
 
         Returns
         -------
-        ThinkStepDescriptor
-            Returns self for method chaining.
+        _BoundStep
+            A bound step ready for awaiting or chaining.
 
         Example
         -------
@@ -126,52 +168,7 @@ class ThinkStepDescriptor:
         ...     step = think_step(Worker()).bind(self)
         ...     await step.until(lambda ctx: ctx.done, max_attempts=5)
         """
-        self._agent = agent
-        return self
-
-    def with_tools(self, tools: List[str]) -> "ThinkStepDescriptor":
-        """
-        Dynamically restrict tools for this execution (in cognition method).
-
-        Stores the override on self and returns self, so it can be directly
-        awaited or chained with .with_skills() and .until().
-
-        Example
-        -------
-        >>> async def cognition(self, ctx):
-        ...     if ctx.phase == "search":
-        ...         await self.step.with_tools(["search_flights", "search_hotels"])
-        ...     else:
-        ...         await self.step.with_tools(["book_flight"]).with_skills(["booking"])
-        """
-        self._ensure_agent()
-        self._runtime_tools = tools
-        return self
-
-    def with_skills(self, skills: List[str]) -> "ThinkStepDescriptor":
-        """
-        Dynamically restrict skills for this execution (in cognition method).
-
-        Stores the override on self and returns self, so it can be directly
-        awaited or chained with .with_tools() and .until().
-
-        Example
-        -------
-        >>> async def cognition(self, ctx):
-        ...     await self.step.with_skills(["travel-planning"]).until(
-        ...         lambda ctx: ctx.plan_complete, max_attempts=5
-        ...     )
-        """
-        self._ensure_agent()
-        self._runtime_skills = skills
-        return self
-
-    def _ensure_agent(self) -> None:
-        if not hasattr(self, '_agent') or self._agent is None:
-            raise RuntimeError(
-                f"Cannot use with_tools/with_skills on think_step '{self._name}': "
-                "not accessed from agent instance. Use 'self.step_name.with_tools(...)' within cognition method."
-            )
+        return _BoundStep(self, agent)
 
     def until(
         self,
@@ -220,20 +217,10 @@ class ThinkStepDescriptor:
         ...     max_attempts=3
         ... )
         """
-        if not hasattr(self, '_agent') or self._agent is None:
-            raise RuntimeError(
-                f"Cannot use until() on think_step '{self._name}': not accessed from agent instance. "
-                "Use within cognition method: await self.step_name.until(...)"
-            )
-
-        # Explicit args take precedence; fall back to values set by with_tools()/with_skills()
-        effective_tools = tools if tools is not None else self._runtime_tools
-        effective_skills = skills if skills is not None else self._runtime_skills
-        self._runtime_tools = None
-        self._runtime_skills = None
-
-        attempts = max_attempts if max_attempts is not None else self.max_retries
-        return self._execute_until(self._agent, condition, attempts, tools=effective_tools, skills=effective_skills)
+        raise RuntimeError(
+            f"Cannot call until() directly on think_step '{self._name}': "
+            "access via agent instance first: self.step_name.until(...)"
+        )
 
     async def _execute_until(
         self,
@@ -256,7 +243,7 @@ class ThinkStepDescriptor:
             if result:
                 return
 
-    async def _execute(self, agent: "AgentAutoma", *, tools: Optional[List[str]] = None, skills: Optional[List[str]] = None) -> None:
+    async def _execute(self, agent: "AgentAutoma", *, tools: Optional[List[str]] = None, skills: Optional[List[str]] = None) -> Any:
         """Execute the thinking step with error handling and optional tool/skill filtering."""
         context = agent._current_context
         if context is None:
@@ -265,9 +252,9 @@ class ThinkStepDescriptor:
                 "This step must be called within a cognition method."
             )
 
-        await self._execute_once(agent, tools=tools, skills=skills)
+        return await self._execute_once(agent, tools=tools, skills=skills)
 
-    async def _execute_once(self, agent: "AgentAutoma", *, tools: Optional[List[str]] = None, skills: Optional[List[str]] = None) -> None:
+    async def _execute_once(self, agent: "AgentAutoma", *, tools: Optional[List[str]] = None, skills: Optional[List[str]] = None) -> Any:
         """Execute the step once with all setup and teardown."""
         context = agent._current_context
 
@@ -307,6 +294,7 @@ class ThinkStepDescriptor:
         # Track worker token delta
         tokens_before = self.worker.spend_tokens
 
+        result = None
         try:
             # ① Observe (enhancement semantics)
             # Step 1: Get default observation from agent
@@ -324,19 +312,21 @@ class ThinkStepDescriptor:
 
             # Log observation if verbose
             if self.worker._verbose:
-                if obs:
+                if obs is not None:
                     self.worker._log("Observe", "Custom observation", str(obs)[:200] + ("..." if len(str(obs)) > 200 else ""), color="cyan")
                 else:
                     self.worker._log("Observe", "Custom observation", "No observation", color="cyan")
 
-            # ② Think (pure thinking, decision stored in worker._last_decision)
-            await self._run_with_error_handling(context)
-            decision = self.worker._last_decision
-            self.worker._last_decision = None  # Always clear after reading
+            # ② Think (pure thinking — worker returns decision directly via is_output=True)
+            decision = await self._run_with_error_handling(context)
 
-            # ③ Act (agent-level execution)
+            # ③ Act (agent-level execution) — skipped when output_schema is set
             if decision is not None:
-                await agent.action(decision, context, _worker=self.worker)
+                if self.worker.output_schema is not None:
+                    # output_schema mode: return typed instance directly, skip action
+                    result = decision
+                else:
+                    await agent.action(decision, context, _worker=self.worker)
 
         finally:
             # Accumulate token delta to agent
@@ -352,25 +342,24 @@ class ThinkStepDescriptor:
             if original_skills is not None:
                 context.skills = original_skills
 
-    async def _run_with_error_handling(self, context) -> None:
-        """Run the worker with configured error handling strategy."""
+        return result
+
+    async def _run_with_error_handling(self, context) -> Any:
+        """Run the worker with configured error handling strategy, returning the decision."""
         if self.on_error == ErrorStrategy.RAISE:
-            await self.worker.arun(context=context)
+            return await self.worker.arun(context=context)
         elif self.on_error == ErrorStrategy.IGNORE:
             try:
-                await self.worker.arun(context=context)
+                return await self.worker.arun(context=context)
             except Exception:
-                pass
+                return None
         elif self.on_error == ErrorStrategy.RETRY:
-            last_error = None
             for attempt in range(self.max_retries + 1):
                 try:
-                    await self.worker.arun(context=context)
-                    return
+                    return await self.worker.arun(context=context)
                 except Exception as e:
-                    last_error = e
                     if attempt == self.max_retries:
-                        raise last_error
+                        raise
 
     @property
     def name(self) -> Optional[str]:
@@ -464,12 +453,13 @@ def think_step(
     )
 
 
-def _think_step_from_prompt(
+def _think_step_inline(
     thinking_prompt: str,
     llm: Optional[BaseLlm] = None,
     *,
     enable_rehearsal: bool = False,
     enable_reflection: bool = False,
+    output_schema: Optional[Type] = None,
     on_error: ErrorStrategy = ErrorStrategy.RAISE,
     max_retries: int = 3,
     tools: Optional[List[str]] = None,
@@ -490,6 +480,9 @@ def _think_step_from_prompt(
         Enable rehearsal policy.
     enable_reflection : bool
         Enable reflection policy.
+    output_schema : Optional[Type[BaseModel]]
+        If set, the worker produces a typed instance directly instead of
+        going through the standard tool-call loop.
     on_error : ErrorStrategy
         Error handling strategy.
     max_retries : int
@@ -507,21 +500,27 @@ def _think_step_from_prompt(
     Examples
     --------
     >>> class MyAgent(AgentAutoma):
-    ...     step = think_step.from_prompt(
+    ...     step = think_step.inline(
     ...         "Plan ONE step",
     ...         llm=llm,
     ...         enable_rehearsal=True
     ...     )
+    ...     plan_step = think_step.inline(
+    ...         "Produce a phased plan.",
+    ...         output_schema=PlanningResult,
+    ...     )
     ...
     ...     async def cognition(self, ctx):
+    ...         plan = await self.plan_step
     ...         while not ctx.finish:
     ...             await self.step
     """
-    worker = CognitiveWorker.from_prompt(
+    worker = CognitiveWorker.inline(
         thinking_prompt=thinking_prompt,
         llm=llm,
         enable_rehearsal=enable_rehearsal,
         enable_reflection=enable_reflection,
+        output_schema=output_schema,
     )
     return think_step(
         worker=worker,
@@ -533,7 +532,8 @@ def _think_step_from_prompt(
 
 
 # Attach as a static method to think_step
-think_step.from_prompt = _think_step_from_prompt
+think_step.inline = _think_step_inline
+think_step.from_prompt = _think_step_inline
 
 
 ################################################################################################################
@@ -885,7 +885,8 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT], metaclass=AgentAutoma
 
     def _convert_decision_to_tool_calls(
         self,
-        decision: ThinkDecision,        ctx: CognitiveContextT,
+        decision: ThinkDecision,
+        ctx: CognitiveContextT,
     ) -> List[ToolCall]:
         """Convert ThinkDecision into a list of ToolCall with type-coerced arguments."""
         _, tool_specs = ctx.get_field('tools')
