@@ -13,7 +13,9 @@ Design:
 """
 
 import time
-from typing import Annotated, Any, Dict, List, Optional, Tuple, Type, Union
+import json
+from typing import TYPE_CHECKING, Annotated, Any, Dict, List, Optional, Tuple, Type, Union
+
 from pydantic import BaseModel, Field, ConfigDict, field_validator, create_model
 from pydantic.functional_validators import BeforeValidator
 
@@ -25,6 +27,8 @@ from bridgic.core.automa.interaction import InteractionFeedback
 from bridgic.core.agentic.tool_specs import ToolSpec
 from bridgic.core.utils._console import printer
 from bridgic.core.cognitive._context import CognitiveContext
+if TYPE_CHECKING:
+    from bridgic.core.cognitive._agent_automa import ActionStepResult
 
 
 #############################################################################
@@ -107,140 +111,39 @@ class StepToolCall(BaseModel):
     )
 
 
-class ThinkDecision(BaseModel):
+class _ThinkBase(BaseModel):
     """
-    Decision model for the final round: no policy signals, must decide.
+    Unified base for all dynamically-generated ThinkModel variants.
 
-    Used on the last round of thinking to enforce decision output.
-    No policy fields - this is the final, actionable decision.
-
-    Note: Worker executes one thinking cycle without deciding task completion.
-    Termination is controlled by Agent via until() conditions.
-
-    Attributes
-    ----------
-    step_content : str
-        Description of what to do in this step.
-    calls : List[StepToolCall]
-        Tool calls to execute for this step.
+    Factory (_create_think_model) adds: output, details_needed, rehearsal,
+    reflection — all optional and conditional on configuration.
     """
     model_config = ConfigDict(
         extra="forbid",
         json_schema_extra={
-            "required": ["step_content", "calls"],
+            "required": ["step_content"],
             "additionalProperties": False,
         }
     )
 
     step_content: str = Field(
         default="",
-        description="Description of what to do in this step"
+        description="Description of what to do in this step, or your analysis/reasoning"
     )
-    calls: List[StepToolCall] = Field(
-        default_factory=list,
-        description="Tool calls to execute for this step"
+    finish: bool = Field(
+        default=False,
+        description="Set True when your current sub-task is FULLY complete and no more steps are needed."
     )
 
     @field_validator('step_content', mode='before')
     @classmethod
     def coerce_step_content(cls, v: Any) -> str:
         return "" if v is None else str(v)
-
-    @field_validator('calls', mode='before')
-    @classmethod
-    def coerce_list(cls, v: Any) -> list:
-        return [] if v is None else v
-
-
-class ActionStepResult(BaseModel):
-    """
-    Result of executing one tool in the action phase.
-
-    Attributes
-    ----------
-    tool_id : str
-        ID of the tool call.
-    tool_name : str
-        Name of the tool.
-    tool_arguments : Dict[str, Any]
-        Arguments passed to the tool.
-    tool_result : Any
-        Raw result returned by the tool.
-    """
-    model_config = ConfigDict(
-        extra="forbid",
-        json_schema_extra={
-            "required": ["tool_id", "tool_name", "tool_arguments", "tool_result"],
-            "additionalProperties": False,
-        }
-    )
-    tool_id: str
-    tool_name: str
-    tool_arguments: Dict[str, Any]
-    tool_result: Any
-
-
-class ActionResult(BaseModel):
-    """
-    Overall result of the action phase (one or more tool executions).
-
-    Attributes
-    ----------
-    status : bool
-        True if all tools succeeded, False otherwise.
-    results : List[ActionStepResult]
-        Per-tool results in order.
-    """
-    model_config = ConfigDict(
-        extra="forbid",
-        json_schema_extra={
-            "required": ["status", "results"],
-            "additionalProperties": False,
-        }
-    )
-    status: bool
-    results: List[ActionStepResult]
 
 
 def _coerce_none_to_list(v: Any) -> list:
     """Coerce None to empty list for field validation."""
     return [] if v is None else v
-
-
-class _ThinkResultBase(BaseModel):
-    """
-    Internal base class for dynamically-generated ThinkResult models.
-
-    Contains common fields (step_content, calls) with their validators.
-    Policy-specific fields (details_needed, rehearsal, reflection) are added
-    dynamically by _create_think_result_model() based on enabled policies.
-    """
-    model_config = ConfigDict(
-        extra="forbid",
-        json_schema_extra={
-            "required": ["step_content", "calls"],
-            "additionalProperties": False,
-        }
-    )
-
-    step_content: str = Field(
-        default="",
-        description="Description of what to do in this step (can be empty if using policies)"
-    )
-    calls: List[StepToolCall] = Field(
-        default_factory=list,
-        description="Tool calls to execute for this step (can be empty if using policies)"
-    )
-
-    @field_validator('step_content', mode='before')
-    @classmethod
-    def coerce_step_content(cls, v: Any) -> str:
-        return "" if v is None else str(v)
-
-    @field_validator('calls', mode='before')
-    @classmethod
-    def coerce_calls(cls, v: Any) -> list:
-        return [] if v is None else v
 
 
 #############################################################################
@@ -290,8 +193,8 @@ class CognitiveWorker(GraphAutoma):
     thinking() -> str
         Return the thinking prompt (how to decide next steps). Must be implemented.
 
-    build_thinking_prompt(think_prompt, tools_description, output_instructions, context_info)
-        Assemble the final prompts for the thinking phase.
+    build_messages(think_prompt, tools_description, output_instructions, context_info)
+        Assemble the final messages for the thinking phase. Returns List[Message].
 
     observation(context, default_observation) -> Union[str, _DELEGATE]
         Enhance or customize observation. Default returns default_observation as-is.
@@ -319,8 +222,8 @@ class CognitiveWorker(GraphAutoma):
     ...         return "Analyze the goal and produce a phased execution plan."
     """
 
-    # Class-level cache: (enable_rehearsal, enable_reflection) → model class
-    _model_cache: Dict[Tuple[bool, bool], Type[BaseModel]] = {}
+    # Class-level cache: (enable_rehearsal, enable_reflection, include_details_needed, output_schema) → model
+    _think_model_cache: Dict[Tuple, Type[BaseModel]] = {}
 
     # Subclasses set this to a Pydantic model to produce typed output directly
     output_schema: Optional[Type[BaseModel]] = None
@@ -337,15 +240,13 @@ class CognitiveWorker(GraphAutoma):
         super().__init__()
         self._llm = llm
 
+        # Policy flags
         self.enable_rehearsal = enable_rehearsal
         self.enable_reflection = enable_reflection
 
         # Instance-level output_schema overrides the class attribute when provided
         if output_schema is not None:
             self.output_schema = output_schema
-
-        # Policy round: one round before decision if any policy is enabled
-        self._policy_rounds = 1 if (enable_rehearsal or enable_reflection) else 0
 
         # Logging runtime (None = inherit from AgentAutoma)
         self._verbose = verbose
@@ -354,9 +255,6 @@ class CognitiveWorker(GraphAutoma):
         # Usage stats
         self.spend_tokens = 0
         self.spend_time = 0
-
-        # Dynamic ThinkResult model based on enabled policies
-        self._ThinkResultModel = self._create_think_result_model()
 
     def set_llm(self, llm: BaseLlm) -> None:
         """
@@ -369,53 +267,102 @@ class CognitiveWorker(GraphAutoma):
         """
         self._llm = llm
 
-    def _create_think_result_model(self) -> Type[BaseModel]:
+    @classmethod
+    def _create_think_model(
+        cls,
+        enable_rehearsal: bool = False,
+        enable_reflection: bool = False,
+        enable_acquiring: bool = True,
+        output_schema: Optional[Type[BaseModel]] = None,
+    ) -> Type[BaseModel]:
         """
-        Dynamically create ThinkResult model based on enabled policies.
+        Unified factory for all ThinkModel variants.
 
-        Returns a cached model class matching the current policy configuration.
-        Always includes details_needed (disclosure is built-in). Policy-specific
-        fields (rehearsal, reflection) are added based on enabled policies.
+        Builds and caches a Pydantic model with _ThinkBase as its base, adding
+        fields dynamically:
+        - output: List[StepToolCall] when output_schema is None, else Optional[output_schema]
+        - details_needed: only when include_details_needed=True
+        - rehearsal: only when enable_rehearsal=True
+        - reflection: only when enable_reflection=True
+
+        All variants are cached by (enable_rehearsal, enable_reflection,
+        include_details_needed, output_schema).
         """
-        cache_key = (
-            self.enable_rehearsal,
-            self.enable_reflection,
-        )
-        if cache_key in CognitiveWorker._model_cache:
-            return CognitiveWorker._model_cache[cache_key]
+        key = (enable_rehearsal, enable_reflection, enable_acquiring, output_schema)
+        if key in cls._think_model_cache:
+            return cls._think_model_cache[key]
 
         extra_fields: Dict[str, Any] = {}
 
-        # details_needed is always included (disclosure is built-in behavior)
-        extra_fields['details_needed'] = (
-            Annotated[List[DetailRequest], BeforeValidator(_coerce_none_to_list)],
-            Field(
-                default_factory=list,
-                description="Request details before deciding. Example: [{field: 'cognitive_history', index: 0}]"
+        # output field — type depends on output_schema
+        if output_schema is None:
+            extra_fields['output'] = (
+                Annotated[List[StepToolCall], BeforeValidator(_coerce_none_to_list)],
+                Field(
+                    default_factory=list,
+                    description="Tool calls to execute as [{tool, tool_arguments: [{name: 'param_name', value: 'param_value'}]}]"
+                )
             )
-        )
+        else:
+            extra_fields['output'] = (
+                Optional[output_schema],
+                Field(default=None, description="Structured result matching the required output schema.")
+            )
 
-        if self.enable_rehearsal:
+        # Information that can be requested for progressive disclosure to assist in decision-making.
+        if enable_acquiring:
+            extra_fields['details'] = (
+                Annotated[List[DetailRequest], BeforeValidator(_coerce_none_to_list)],
+                Field(
+                    default_factory=list,
+                    description="Request details before deciding. Example: [{field: 'cognitive_history', index: 0}]"
+                )
+            )
+
+        # Can predict what will happen after the operation and assist in decision-making.
+        if enable_rehearsal:
             extra_fields['rehearsal'] = (
                 Optional[str],
                 Field(
                     default=None,
-                    description="Rehearsal: predict what will happen if you execute the planned tools. What results will they return? Any potential issues?"
+                    description="(Optional) Predict what will happen if you execute the planned tools. What results will they return? Any potential issues?"
                 )
             )
 
-        if self.enable_reflection:
+        # Can reflect on the current situation to assist in decision-making.
+        if enable_reflection:
             extra_fields['reflection'] = (
                 Optional[str],
                 Field(
                     default=None,
-                    description="Reflection: assess information quality. Is the information sufficient? Any contradictions or gaps?"
+                    description="(Optional) Assess information quality. Is it sufficient? Any contradictions or gaps?"
                 )
             )
 
-        model = create_model('ThinkResult', __base__=_ThinkResultBase, **extra_fields)
-        CognitiveWorker._model_cache[cache_key] = model
+        model = create_model('ThinkModel', __base__=_ThinkBase, **extra_fields)
+        cls._think_model_cache[key] = model
         return model
+
+    @property
+    def _ThinkResultModel(self) -> Type[BaseModel]:
+        """Backward-compat: model for normal rounds (acquiring open, all enabled policies)."""
+        return self._create_think_model(
+            enable_rehearsal=self.enable_rehearsal,
+            enable_reflection=self.enable_reflection,
+            enable_acquiring=True,
+            output_schema=None,
+        )
+
+    @property
+    def _ThinkDecisionModel(self) -> Type[BaseModel]:
+        """Backward-compat: model for forced-decision rounds (all operators closed)."""
+        return self._create_think_model(
+            enable_rehearsal=False,
+            enable_reflection=False,
+            enable_acquiring=False,
+            output_schema=self.output_schema,
+        )
+
 
     ############################################################################
     # Worker methods (GraphAutoma execution flow)
@@ -448,91 +395,92 @@ class CognitiveWorker(GraphAutoma):
         """Thinking phase with cognitive policies support. Returns the final decision."""
         self._log("Think", "Thinking with tool selection", color="blue")
 
+        ###############################
+        # Call the LLM to get the decision
+        ###############################
+
+        # Get the custom thinking prompt from the worker's thinking() method.
         think_prompt = await self.thinking()
 
-        think_result = None
-
-        # Policy accumulation context (passed to subsequent rounds)
+        # Accumulated policy outputs injected into subsequent rounds' prompts
         policy_context = []
 
-        # After one disclosure batch, force decision on next round
-        disclosure_done = False
-
-        # Policy phase: exactly one round if any policy is enabled, then move on
-        policy_phase_done = (self._policy_rounds == 0)
-
-        round_num = 0
+        # Per-operator open flags — each fires at most once then closes
+        # acquiring is a built-in framework capability, disabled when output_schema is set
+        acquiring_open = (self.output_schema is None)
+        rehearsal_open = self.enable_rehearsal
+        reflection_open = self.enable_reflection
 
         while True:
-            round_num += 1
-            is_policy_round = not policy_phase_done
-
-            # Model selection for this round:
-            # - Policy round: always _ThinkResultModel (can include rehearsal/reflection)
-            # - output_schema mode (non-policy): use output_schema directly as constraint
-            # - After disclosure (no output_schema): ThinkDecision (forced decision, no details_needed)
-            # - Normal intermediate: _ThinkResultModel (LLM can request details)
-            if is_policy_round:
-                model = self._ThinkResultModel
-            elif self.output_schema is not None:
-                model = self.output_schema
-            elif disclosure_done:
-                model = ThinkDecision
-            else:
-                model = self._ThinkResultModel
-
-            system_prompt, user_prompt = await self._build_prompts(
+            # Build messages
+            messages = await self._build_messages(
                 think_prompt=think_prompt,
                 context=context,
                 observation=observation,
                 policy_context=policy_context,
-                is_policy_round=is_policy_round,
-                disclosure_done=disclosure_done,
+                acquiring_open=acquiring_open,
+                rehearsal_open=rehearsal_open,
+                reflection_open=reflection_open,
             )
+            # Build model from current per-operator state
+            model = self._create_think_model(
+                enable_rehearsal=rehearsal_open,
+                enable_reflection=reflection_open,
+                enable_acquiring=acquiring_open,
+                output_schema=self.output_schema,
+            )
+            # LLM call
             think_result = await self._llm.astructured_output(
-                messages=[
-                    Message.from_text(text=system_prompt, role="system"),
-                    Message.from_text(text=user_prompt, role="user")
-                ],
+                messages=messages,
                 constraint=PydanticModel(model=model)
             )
-            self._log_prompt(
-                f"Think round {round_num}" + (" (policy)" if is_policy_round else ""),
-                system_prompt, user_prompt
-            )
+            self._log_prompt("Think", messages)
 
-            # Process policy round
-            if is_policy_round:
-                if self.enable_rehearsal and hasattr(think_result, 'rehearsal') and think_result.rehearsal:
-                    policy_context.append(f"Rehearsal: {think_result.rehearsal}")
-                    self._log("Think", f"Rehearsal output: {think_result.rehearsal}", color="blue")
+            ###############################
+            # Analyze the LLM response and decide what to do next
+            ###############################
 
-                if self.enable_reflection and hasattr(think_result, 'reflection') and think_result.reflection:
-                    policy_context.append(f"Reflection: {think_result.reflection}")
-                    self._log("Think", f"Reflection output: {think_result.reflection}", color="blue")
+            re_think = False  # Whether any operator was activated this round
 
-                policy_phase_done = True
-                continue
+            # Operator 1: acquiring — fetch external details (one-shot, only when non-empty)
+            if acquiring_open:
+                reqs = getattr(think_result, 'details', None) or []
+                if reqs:
+                    req_labels = [f"{r.field}[{r.index}]" for r in reqs]
+                    self._log("Think", f"Requesting details (batch): {req_labels}", color="blue")
+                    for req in reqs:
+                        context.get_details(req.field, req.index)
+                    acquiring_open = False  # close — never fires again
+                    re_think = True
 
-            # Check for disclosure requests (single batch: all requests processed at once)
-            # Only _ThinkResultModel results carry details_needed
-            if not disclosure_done and hasattr(think_result, 'details_needed') and think_result.details_needed:
-                reqs = think_result.details_needed
-                req_labels = [f"{r.field}[{r.index}]" for r in reqs]
-                self._log("Think", f"Requesting details (batch): {req_labels}", color="blue")
-                for req in reqs:
-                    context.get_details(req.field, req.index)
-                disclosure_done = True  # Force decision on next round
-                continue
+            # Operator 2: rehearsal — inject prediction into next round (one-shot, only when filled)
+            if rehearsal_open:
+                rehearsal_val = getattr(think_result, 'rehearsal', None)
+                if rehearsal_val is not None:
+                    policy_context.append(f"## Mental Simulation (Rehearsal):\n{rehearsal_val}")
+                    self._log("Think", f"Rehearsal output: {rehearsal_val}", color="blue")
+                    rehearsal_open = False  # close
+                    re_think = True
 
-            # LLM gave a decision (no disclosure requests, or output_schema used)
-            break
+            # Operator 3: reflection — inject quality assessment into next round (one-shot, only when filled)
+            if reflection_open:
+                reflection_val = getattr(think_result, 'reflection', None)
+                if reflection_val is not None:
+                    policy_context.append(f"## Information Assessment (Reflection):\n{reflection_val}")
+                    self._log("Think", f"Reflection output: {reflection_val}", color="blue")
+                    reflection_open = False  # close
+                    re_think = True
+
+            if re_think:
+                continue  # Re-think with narrowed model + accumulated context
+
+            break  # No operator activated — LLM gave a direct decision
 
         # Log and return decision
         if self.output_schema is not None:
-            self._log("Think", "output_schema result", str(think_result), color="green")
+            self._log("Think", "output_schema result", str(think_result.output), color="green")
         else:
-            tools = [c.tool for c in think_result.calls]
+            tools = [c.tool for c in think_result.output]
             self._log("Think", f"Result: step=\"{think_result.step_content}\" tools={tools}", color="blue")
         return think_result
 
@@ -553,20 +501,17 @@ class CognitiveWorker(GraphAutoma):
         else:
             printer.print(f"{prefix} {message}", color=color)
 
-    def _log_prompt(self, stage: str, system_prompt: str, user_prompt: str):
+    def _log_prompt(self, stage: str, messages: List[Message]):
         """Log prompts if verbose_prompt mode is enabled."""
         if not self._verbose_prompt:
             return
 
-        system_tokens = self._count_tokens(system_prompt)
-        user_tokens = self._count_tokens(user_prompt)
-        total_tokens = system_tokens + user_tokens
-
-        printer.print(f"[{stage}] System Prompt ({system_tokens} tokens):", color="cyan")
-        printer.print(system_prompt, color="gray")
-        printer.print(f"[{stage}] User Prompt ({user_tokens} tokens):", color="cyan")
-        printer.print(user_prompt, color="gray")
-        printer.print(f"[{stage}] Total: {total_tokens} tokens (cumulative: {self.spend_tokens} tokens)", color="yellow")
+        total_tokens = sum(self._count_tokens(m.content) for m in messages)
+        for i, msg in enumerate(messages):
+            tokens = self._count_tokens(msg.content)
+            printer.print(f"[{stage}] Message {i+1} ({msg.role}, {tokens} tokens):", color="cyan")
+            printer.print(msg.content, color="gray")
+        printer.print(f"[{stage}] Total: {total_tokens} tokens (cumulative: {self.spend_tokens})", color="yellow")
 
     @staticmethod
     def _build_schema_prompt(model: Type[BaseModel]) -> str:
@@ -585,130 +530,114 @@ class CognitiveWorker(GraphAutoma):
         str
             A formatted prompt describing the required JSON schema.
         """
-        import json
         schema = model.model_json_schema()
         schema_json = json.dumps(schema, indent=2, ensure_ascii=False)
+        return f"```json\n{schema_json}\n```"
+
+    def _output_fields_prompt(self, acquiring_open: bool, rehearsal_open: bool, reflection_open: bool) -> str:
+        """Base fields: step_content, output, finish. Always present."""
+        parts = []
+
+        # Base fields
+        parts.append(
+            "# Output Fields\n"
+            "- **step_content**: Your analysis and reasoning for this step\n"
+            "- **finish**: Set True when the sub-task is fully complete (default: False)"
+        )
+
+        # Cognitive operators
+        if acquiring_open:
+            parts.append(
+                "- **details**: Available fields: **skills**, **cognitive_history**. "
+                "example: [{field: 'skills', index: 0}, ...]"
+            )
+        if rehearsal_open:
+            parts.append("- **rehearsal**: string describing your simulation and predictions")
+        if reflection_open:
+            parts.append("- **reflection**: string describing your assessment conclusions")
+
+        # Output schema
+        if self.output_schema is not None:
+            parts.append(
+                "- **output**: The custom output schema is: "
+                f"{self._build_schema_prompt(self.output_schema)}"
+            )
+        else:
+            parts.append(
+                "- **output**: Tool calls to execute: "
+                "[{tool, tool_arguments: [{name: 'param', value: 'value'}]}]\n"
+            )
+        return "\n\n".join(parts)
+
+    @staticmethod
+    def _acquiring_prompt() -> str:
+        """Acquiring operator: when/why to use + details field format."""
         return (
-            "# Required Output Format\n"
-            "Produce a JSON object matching the following schema:\n"
-            f"```json\n{schema_json}\n```"
+            "# Context Acquiring\n"
+            "If the context contains progressively disclosed information (e.g. skills, history steps) "
+            "and you want to inspect the details, use the **details** field to request them. "
+            "The framework will expand these items in the next round. "
+            "Batch all requests in a single output. "
+            "When using this field, leave step_content and output empty.\n\n"
+            "Field format:\n"
+            "- **details**: [{field: \"skills\", index: 0}, ...]\n"
+            "  Available fields: **skills** (view a skill's full workflow), "
+            "**cognitive_history** (view the full result of a previous step)"
+        )
+
+    @staticmethod
+    def _rehearsal_prompt() -> str:
+        """Rehearsal operator: when/why to use + rehearsal field format."""
+        return (
+            "# Pre-Action Rehearsal (optional)\n"
+            "To ensure the next action is accurate, you may mentally simulate it first: "
+            "which tools you plan to call, what they are expected to return, and whether any issues may arise. "
+            "When using this field, leave step_content and output empty; "
+            "the framework will ask for an actual decision in the next round.\n\n"
+            "Field format:\n"
+            "- **rehearsal**: \"(string describing your simulation and predictions)\""
+        )
+
+    @staticmethod
+    def _reflection_prompt() -> str:
+        """Reflection operator: when/why to use + reflection field format."""
+        return (
+            "# Pre-Action Reflection (optional)\n"
+            "Before committing to a decision, evaluate whether the current information is "
+            "sufficient and self-consistent. "
+            "If you have doubts, fill the **reflection** field and leave step_content and output empty; "
+            "the framework will ask for an actual decision in the next round.\n\n"
+            "Field format:\n"
+            "- **reflection**: \"(string describing your assessment conclusions)\""
         )
 
     def _build_output_instructions(
         self,
-        is_policy_round: bool,
-        disclosure_done: bool,
-        context: CognitiveContext,
+        acquiring_open: bool,
+        rehearsal_open: bool,
+        reflection_open: bool,
     ) -> str:
-        """
-        Build output instructions dynamically based on the current round type.
+        parts = []
+        if acquiring_open:
+            parts.append(self._acquiring_prompt())
+        if rehearsal_open:
+            parts.append(self._rehearsal_prompt())
+        if reflection_open:
+            parts.append(self._reflection_prompt())
+        parts.append(self._output_fields_prompt(acquiring_open, rehearsal_open, reflection_open))
+        return "\n\n".join(parts)
 
-        Mirrors _create_think_result_model: the same flags that add model fields
-        also add the corresponding prompt guidance, keeping the two in sync.
-
-          details_needed   → always present (disclosure is built-in)
-          enable_rehearsal → rehearsal field + guidance (policy round only)
-          enable_reflection→ reflection field + guidance (policy round only)
-
-        disclosure_done=True means a batch disclosure has already been done;
-        we use ThinkDecision (no details_needed) and instruct the LLM to decide.
-
-        output_schema set: use _build_schema_prompt to describe the structured format.
-        """
-        # --- Field lines ---
-        if is_policy_round:
-            role_note = (
-                "This is a policy analysis round — analyze the situation using "
-                "the policy fields below. Do NOT output step_content or calls yet.\n"
-            )
-            field_lines = [
-                role_note,
-                "- **step_content**: Leave empty in policy round",
-                "- **calls**: Leave empty in policy round",
-            ]
-            if self.enable_rehearsal:
-                field_lines.append(
-                    "- **rehearsal**: Predict what will happen if you execute the tools. "
-                    "What results will they return? Any potential issues or edge cases?"
-                )
-            if self.enable_reflection:
-                field_lines.append(
-                    "- **reflection**: Reflect on the information quality. "
-                    "Is it sufficient? Any contradictions or gaps?"
-                )
-        elif self.output_schema is not None:
-            # output_schema mode: show structured output format description
-            return self._build_schema_prompt(self.output_schema)
-        elif disclosure_done:
-            # Post-disclosure: ThinkDecision model is used, no details_needed field
-            field_lines = [
-                "- **step_content**: Description of what to do in this step",
-                "- **calls**: Tool calls as [{tool, tool_arguments: [{name: 'param_name', value: 'param_value'}]}]",
-            ]
-        else:
-            # Normal round: details_needed available for batch requests
-            field_lines = [
-                "- **step_content**: Description of what to do in this step (empty if requesting details)",
-                "- **calls**: Tool calls as [{tool, tool_arguments: [{name: 'param_name', value: 'param_value'}]}]",
-                "- **details_needed**: Request details via [{field: 'xxx', index: N}]",
-            ]
-
-        output_instructions = "# Output Format:\n" + "\n".join(field_lines)
-
-        # --- Guidance section ---
-        if is_policy_round:
-            policy_bullets = []
-            if self.enable_rehearsal:
-                policy_bullets.append("- Rehearse: mentally simulate tool execution")
-            if self.enable_reflection:
-                policy_bullets.append("- Reflect: assess information quality")
-            output_instructions += (
-                "\n\n# Policy Round:\n"
-                "This is a policy round. Do NOT make decisions yet.\n"
-                "Use the policy fields to think through the situation:\n"
-                + "\n".join(policy_bullets)
-            )
-        elif disclosure_done:
-            output_instructions += (
-                "\n\n# Execution Guidelines:\n"
-                "- Focus on ONE step at a time\n"
-                "- Make a concrete decision now"
-            )
-        else:
-            output_instructions += (
-                "\n\n# BEFORE Taking Action - Check If You Need Details:\n"
-                "You MUST check the following before calling any tools:\n"
-                "\n"
-                "1. **skills** (CHECK FIRST):\n"
-                "   - Look at the Available Skills list above\n"
-                "   - Is there a skill that matches your current task?\n"
-                "   - If YES and you haven't seen its details yet: Request its details FIRST via details_needed\n"
-                "   - If YES and you already have the skill details: IMMEDIATELY start executing the workflow - do NOT request details again\n"
-                "   - If NO: Proceed directly with tools (don't request skills that don't match)\n"
-                "\n"
-                "2. **cognitive_history** (CHECK WHEN NEEDED):\n"
-                "   - Do you need specific data from a previous step (e.g., flight numbers, hotel names)?\n"
-                "   - If YES: Request the step's details to extract the information\n"
-                "   - If NO: Don't request history details unnecessarily\n"
-                "\n"
-                "# Execution Guidelines:\n"
-                "- Focus on ONE step at a time\n"
-                "- When requesting details, leave step_content and calls empty\n"
-                "- You can request multiple items at once in a single details_needed batch"
-            )
-
-        return output_instructions
-
-    async def _build_prompts(
+    async def _build_messages(
         self,
         think_prompt: str,
         context: CognitiveContext,
         observation: Optional[str] = None,
         policy_context: List[str] = None,
-        is_policy_round: bool = False,
-        disclosure_done: bool = False,
-    ) -> Tuple[str, str]:
-        """Build prompts for the thinking phase (thinking + tool selection in one call).
+        acquiring_open: bool = True,
+        rehearsal_open: bool = False,
+        reflection_open: bool = False,
+    ) -> List[Message]:
+        """Build messages for the thinking phase (thinking + tool selection in one call).
 
         Parameters
         ----------
@@ -720,40 +649,13 @@ class CognitiveWorker(GraphAutoma):
             Custom observation from user-overridden observation() method.
         policy_context : List[str]
             Policy outputs from previous rounds (rehearsal, reflection).
-        is_policy_round : bool
-            If True, output instructions will include policy fields (rehearsal, reflection).
-        disclosure_done : bool
-            If True, a batch disclosure has already been done; use ThinkDecision model
-            and remove details_needed guidance to force a final decision.
+        acquiring_open : bool
+            Whether the acquiring (details_needed) operator can still fire this round.
+        rehearsal_open : bool
+            Whether the rehearsal operator can still fire this round.
+        reflection_open : bool
+            Whether the reflection operator can still fire this round.
         """
-        # Build context info (exclude tools and skills, they go in system prompt)
-        context_info = context.format_summary(exclude=['tools', 'skills'])
-        if observation is not None:
-            context_info += f"\n\nObservation:\n{observation}"
-
-        # Add policy context (from previous round's rehearsal/reflection)
-        if policy_context:
-            context_info += "\n\n# Policy Context (from previous round):\n"
-            context_info += "\n".join(policy_context)
-
-        # Append already-disclosed items to user prompt (not output_instructions)
-        revealed = context.get_revealed_items()
-        if revealed:
-            revealed_labels = [f"{field}[{idx}]" for field, idx in revealed]
-            context_info += (
-                "\n\n# Already Disclosed (DO NOT request again):\n"
-                f"These items are already loaded: {', '.join(revealed_labels)}.\n"
-                "Their content is in 'Previously Disclosed Details' below. "
-                "Use them directly — do NOT add them to details_needed."
-            )
-
-        # Task restatement at the start of user prompt
-        user_prompt_context = f"Based on the context below, decide your next action.\n\n{context_info}"
-
-        # Build tool details directly from ToolSpec list
-        capabilities_parts = []
-        _, tool_specs = context.get_field('tools')
-
         def _format_tools_details(tool_specs: List[ToolSpec]) -> str:
             """Format tool specs into detailed description string."""
             lines = []
@@ -780,42 +682,44 @@ class CognitiveWorker(GraphAutoma):
 
             return "\n".join(lines)
 
+        # 1. Get the think prompt: think_prompt in params
+        pass
+
+        # 2. Build tool details and skills summary
+        capabilities_parts = []
+        _, tool_specs = context.get_field('tools')
         if tool_specs:
             tools_details = _format_tools_details(tool_specs)
             capabilities_parts.append(f"# Available Tools (with parameters):\n{tools_details}")
-
-        # Add skills to system prompt (always show summary since details_needed is always available).
         if len(context.skills) > 0:
             skills_summary = context.summary().get('skills')
             if skills_summary:
                 capabilities_parts.append(f"# {skills_summary}")
-
         capabilities_description = "\n\n".join(capabilities_parts)
 
-        # In policy round: override think_prompt with a role-limiting prefix
-        effective_think_prompt = think_prompt
-        if is_policy_round:
-            effective_think_prompt = (
-                f"Before deciding, use the policy fields to analyze the situation.\n\n{think_prompt}"
-            )
+        # 3. Build context info about current status
+        context_info = context.format_summary(exclude=['tools', 'skills'])
+        if observation is not None:
+            context_info += f"\n\nObservation:\n{observation}"
+        user_prompt_context = f"Based on the context below, decide your next action.\n\n{context_info}"
 
-        # Build output instructions dynamically based on round type
+        # 4. Build output instructions dynamically based on per-operator state
         output_instructions = self._build_output_instructions(
-            is_policy_round=is_policy_round,
-            disclosure_done=disclosure_done,
-            context=context,
+            acquiring_open=acquiring_open,
+            rehearsal_open=rehearsal_open,
+            reflection_open=reflection_open,
         )
 
-        # Call template method to assemble final prompts
-        system_prompt, user_prompt = await self.build_thinking_prompt(
-            think_prompt=effective_think_prompt.strip(),
-            tools_description=capabilities_description,  # Now includes both tools and skills
+        # Call template method to assemble final messages
+        messages = await self.build_messages(
+            think_prompt=think_prompt.strip(),
+            tools_description=capabilities_description,
             output_instructions=output_instructions,
             context_info=user_prompt_context
         )
 
-        self.spend_tokens += self._count_tokens(system_prompt) + self._count_tokens(user_prompt)
-        return system_prompt, user_prompt
+        self.spend_tokens += sum(self._count_tokens(m.content) for m in messages)
+        return messages
 
     def _count_tokens(self, text: str) -> int:
         """Estimate token count. Rough approximation: ~4 chars per token (typical for English/UTF-8)."""
@@ -888,60 +792,59 @@ class CognitiveWorker(GraphAutoma):
         """
         raise NotImplementedError("thinking() must be implemented")
 
-    async def build_thinking_prompt(
+    async def build_messages(
         self,
         think_prompt: str,
         tools_description: str,
         output_instructions: str,
         context_info: str,
-    ) -> Tuple[str, str]:
+    ) -> List[Message]:
         """
-        Assemble the final prompts for the thinking phase.
+        Assemble the final messages for the thinking phase.
 
-        Override this method to customize how the prompt components are combined.
-        This allows you to reorder, modify, or add to the prompt structure.
+        Override this method to customize how the prompt components are structured
+        across messages. This allows you to reorder, modify, or add to the message list.
 
         Parameters
         ----------
         think_prompt : str
             The thinking prompt from the thinking() method.
         tools_description : str
-            Formatted description of available tools (with parameters).
+            Formatted description of available tools and skills.
         output_instructions : str
             Instructions for the output format (finish, steps/step_content, etc.).
         context_info : str
-            Context information including goal, status, tools summary, skills,
-            history, and fetched details.
+            Context information including goal, status, history, and fetched details.
 
         Returns
         -------
-        Tuple[str, str]
-            (system_prompt, user_prompt) to be sent to the LLM.
+        List[Message]
+            Messages to be sent to the LLM. Default structure:
+            - Message 1 (system): think_prompt + output_instructions
+            - Message 2 (user, optional): tools_description (if non-empty)
+            - Message N (user): context_info
 
         Examples
         --------
-        >>> async def build_thinking_prompt(self, think_prompt, tools_description,
-        ...                                  output_instructions, context_info):
-        ...     # Custom: put output_instructions first for emphasis
-        ...     system_prompt = f"{output_instructions}\\n\\n{think_prompt}\\n\\n{tools_description}"
-        ...     return system_prompt, context_info
-        ...
-        >>> async def build_thinking_prompt(self, think_prompt, tools_description,
-        ...                                  output_instructions, context_info):
-        ...     # Custom: add extra instructions
-        ...     extra = "Remember: Always plan multiple steps for complex tasks."
-        ...     system_prompt = f"{think_prompt}\\n\\n{extra}\\n\\n{tools_description}\\n\\n{output_instructions}"
-        ...     return system_prompt, context_info
+        >>> async def build_messages(self, think_prompt, tools_description,
+        ...                          output_instructions, context_info):
+        ...     # Custom: merge everything into a single system + user pair
+        ...     extra = "EXTRA_INSTRUCTION: Always prefer cheapest option."
+        ...     system = f"{think_prompt}\\n\\n{extra}\\n\\n{tools_description}\\n\\n{output_instructions}"
+        ...     return [
+        ...         Message.from_text(text=system, role="system"),
+        ...         Message.from_text(text=context_info, role="user"),
+        ...     ]
         """
         parts = [think_prompt]
-        if tools_description:
-            parts.append(tools_description)
         parts.append(output_instructions)
-        system_prompt = "\n\n".join(parts)
+        system_content = "\n\n".join(parts)
 
-        user_prompt = context_info
-
-        return system_prompt, user_prompt
+        messages = [Message.from_text(text=system_content, role="system")]
+        if tools_description:
+            messages.append(Message.from_text(text=tools_description, role="user"))
+        messages.append(Message.from_text(text=context_info, role="user"))
+        return messages
 
     async def before_action(
         self,
@@ -979,7 +882,7 @@ class CognitiveWorker(GraphAutoma):
 
     async def after_action(
         self,
-        action_results: List[ActionStepResult],
+        action_results: "List[ActionStepResult]",
         context: CognitiveContext
     ) -> Any:
         """
@@ -1093,3 +996,11 @@ class CognitiveWorker(GraphAutoma):
         result = await super().arun(*args, feedback_data=feedback_data, **kwargs)
         self.spend_time += time.time() - start_time
         return result
+
+
+#############################################################################
+# Standard ThinkDecision — no output_schema, no policy fields, no details_needed
+#############################################################################
+
+# Created after CognitiveWorker so the factory and cache are available.
+ThinkDecision = CognitiveWorker._create_think_model(False, False, False, None)

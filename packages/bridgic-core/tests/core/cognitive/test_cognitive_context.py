@@ -195,6 +195,85 @@ class TestLayeredExposureReveal:
         assert "disclosed_details" not in ctx.summary()
 
 
+class TestContextSnapshot:
+    """Tests for Context.snapshot() three-mode revealed management."""
+
+    @pytest.mark.asyncio
+    async def test_snapshot_clear_all_clears_revealed_on_enter(self):
+        """Default mode (keep_revealed=None): _revealed cleared on enter, restored on exit."""
+        ctx = _make_context()
+        # Reveal skill[0] before entering snapshot
+        ctx.get_details("skills", 0)
+        assert 0 in ctx.skills._revealed
+
+        async with ctx.snapshot(goal="sub-goal") as c:
+            assert c is ctx
+            # Inside: revealed cleared
+            assert 0 not in ctx.skills._revealed
+            # Reveal skill[1] inside
+            ctx.get_details("skills", 1)
+            assert 1 in ctx.skills._revealed
+
+        # After exit: skill[0] restored, skill[1] gone
+        assert 0 in ctx.skills._revealed
+        assert 1 not in ctx.skills._revealed
+
+    @pytest.mark.asyncio
+    async def test_snapshot_clear_all_restores_on_exception(self):
+        """Revealed state is restored even when exception is raised inside snapshot block."""
+        ctx = _make_context()
+        ctx.get_details("skills", 0)
+
+        try:
+            async with ctx.snapshot(goal="sub-goal"):
+                ctx.get_details("skills", 1)
+                raise ValueError("test error")
+        except ValueError:
+            pass
+
+        # skill[0] restored, skill[1] gone
+        assert 0 in ctx.skills._revealed
+        assert 1 not in ctx.skills._revealed
+
+    @pytest.mark.asyncio
+    async def test_snapshot_custom_keep_revealed(self):
+        """Custom keep_revealed dict preserves specified indices on enter."""
+        ctx = _make_context()
+        # Reveal skills 0, 1 before entering
+        ctx.get_details("skills", 0)
+        ctx.get_details("skills", 1)
+        assert 0 in ctx.skills._revealed
+        assert 1 in ctx.skills._revealed
+
+        # Enter with keep_revealed={"skills": [0]} — keep only index 0
+        async with ctx.snapshot(goal="sub-goal", keep_revealed={"skills": [0]}):
+            assert 0 in ctx.skills._revealed
+            assert 1 not in ctx.skills._revealed
+
+        # After exit: both 0 and 1 restored
+        assert 0 in ctx.skills._revealed
+        assert 1 in ctx.skills._revealed
+
+    @pytest.mark.asyncio
+    async def test_snapshot_goal_field_restored(self):
+        """snapshot() also restores field values like override() does."""
+        ctx = CognitiveContext(goal="original goal")
+        async with ctx.snapshot(goal="sub-goal"):
+            assert ctx.goal == "sub-goal"
+        assert ctx.goal == "original goal"
+
+    @pytest.mark.asyncio
+    async def test_override_is_alias_for_snapshot_clear_all(self):
+        """override() is a backward-compatible alias that clears revealed on enter."""
+        ctx = _make_context()
+        ctx.get_details("skills", 0)
+
+        async with ctx.override(goal="sub"):
+            assert 0 not in ctx.skills._revealed
+
+        assert 0 in ctx.skills._revealed
+
+
 class TestContextOverride:
     """Tests for Feature 2: Context.override() async context manager."""
 

@@ -26,11 +26,11 @@ SKILLS_DIR = os.path.join(os.path.dirname(__file__), "skills")
 def _tr(**kwargs):
     """Create a simple namespace mock for intermediate (non-final) thinking rounds.
 
-    Simulates the dynamic _ThinkResultModel in tests: has step_content, calls,
-    and optionally details_needed / rehearsal / reflection attributes.
+    Simulates the dynamic _ThinkResultModel in tests: has step_content, output,
+    finish, and optionally details_needed / rehearsal / reflection attributes.
     MockLLM returns this directly, bypassing schema validation.
     """
-    defaults = {"step_content": "", "calls": [], "details_needed": []}
+    defaults = {"step_content": "", "output": [], "finish": False, "details": []}
     defaults.update(kwargs)
     return types.SimpleNamespace(**defaults)
 
@@ -115,17 +115,21 @@ class _SimpleWorker(CognitiveWorker):
 
 
 class _PromptCustomWorker(CognitiveWorker):
-    """Worker with observation + build_thinking_prompt overrides."""
+    """Worker with observation + build_messages overrides."""
     async def thinking(self):
         return "Plan ONE step"
 
     async def observation(self, context):
         return "Custom observation: environment is ready"
 
-    async def build_thinking_prompt(self, think_prompt, tools_description, output_instructions, context_info):
+    async def build_messages(self, think_prompt, tools_description, output_instructions, context_info):
+        from bridgic.core.model.types import Message
         extra = "EXTRA_INSTRUCTION: Always prefer cheapest option."
         system = f"{think_prompt}\n\n{extra}\n\n{tools_description}\n\n{output_instructions}"
-        return system, context_info
+        return [
+            Message.from_text(text=system, role="system"),
+            Message.from_text(text=context_info, role="user"),
+        ]
 
 
 class _ActionPipelineWorker(CognitiveWorker):
@@ -176,17 +180,23 @@ class TestCognitiveWorker:
         ]
         assert await worker.after_action(test_results, ctx) is test_results
 
-        # build_thinking_prompt() → standard assembly
-        system, user = await worker.build_thinking_prompt(
+        # build_messages() → standard assembly: system + optional tools + user
+        from bridgic.core.model.types import Message
+        messages = await worker.build_messages(
             think_prompt="Plan next step",
             tools_description="Tool A, Tool B",
             output_instructions="Output JSON",
             context_info="Goal: test"
         )
-        assert "Plan next step" in system
-        assert "Tool A, Tool B" in system
-        assert "Output JSON" in system
-        assert user == "Goal: test"
+        assert isinstance(messages, list)
+        assert messages[0].role == "system"
+        assert "Plan next step" in messages[0].content
+        assert "Output JSON" in messages[0].content
+        # tools_description goes in a separate user message
+        assert any("Tool A, Tool B" in m.content for m in messages)
+        # context_info in last user message
+        assert messages[-1].role == "user"
+        assert "Goal: test" in messages[-1].content
 
         # Type check: rejects non-CognitiveContext
         class SimpleWorker(CognitiveWorker):
@@ -194,7 +204,7 @@ class TestCognitiveWorker:
                 return "Plan"
 
         llm2 = MockLLM()
-        llm2.structured_output_response = ThinkDecision(step_content="", calls=[])
+        llm2.structured_output_response = ThinkDecision(step_content="", output=[])
         w = SimpleWorker(llm=llm2)
         with pytest.raises(TypeError, match="Expected CognitiveContext"):
             await w.arun(context="not a context")
@@ -205,7 +215,7 @@ class TestCognitiveWorker:
         llm = MockLLM()
         llm.structured_output_response = ThinkDecision(
             step_content="Search flights",
-            calls=[StepToolCall(
+            output=[StepToolCall(
                 tool="search_flights",
                 tool_arguments=[
                     ToolArgument(name="origin", value="Beijing"),
@@ -241,7 +251,7 @@ class TestCognitiveWorker:
         # Tool call scenario - decision returned from arun()
         llm.structured_output_response = ThinkDecision(
             step_content="Search flights from Beijing to Tokyo",
-            calls=[StepToolCall(
+            output=[StepToolCall(
                 tool="search_flights",
                 tool_arguments=[
                     ToolArgument(name="origin", value="Beijing"),
@@ -255,8 +265,8 @@ class TestCognitiveWorker:
         # Worker returns decision, does NOT execute tools
         assert decision is not None
         assert decision.step_content == "Search flights from Beijing to Tokyo"
-        assert len(decision.calls) == 1
-        assert decision.calls[0].tool == "search_flights"
+        assert len(decision.output) == 1
+        assert decision.output[0].tool == "search_flights"
         # No history added (action not executed)
         assert len(ctx.cognitive_history) == 0
 
@@ -266,7 +276,7 @@ class TestCognitiveWorker:
         llm = StatefulMockLLM([
             ThinkDecision(
                 step_content="Search flights from Beijing to Tokyo",
-                calls=[StepToolCall(
+                output=[StepToolCall(
                     tool="search_flights",
                     tool_arguments=[
                         ToolArgument(name="origin", value="Beijing"),
@@ -275,7 +285,7 @@ class TestCognitiveWorker:
                     ]
                 )],
             ),
-            ThinkDecision(step_content="All done", calls=[]),
+            ThinkDecision(step_content="All done", output=[]),
         ])
         worker = _SimpleWorker(llm=llm)
 
@@ -299,7 +309,7 @@ class TestCognitiveWorker:
         llm = MockLLM()
         llm.structured_output_response = ThinkDecision(
             step_content="Search and book",
-            calls=[
+            output=[
                 StepToolCall(
                     tool="search_flights",
                     tool_arguments=[
@@ -335,14 +345,14 @@ class TestCognitiveWorker:
 
     @pytest.mark.asyncio
     async def test_rehearsal_policy(self):
-        """Rehearsal policy: LLM outputs rehearsal content, then makes decision."""
+        """Rehearsal policy: LLM fills rehearsal (optional) → triggers another round → decision."""
         llm = StatefulMockLLM([
-            # Round 0: Policy round (rehearsal)
+            # Round 0: LLM chooses to fill rehearsal (optional operator)
             _tr(rehearsal="Predicted: search_flights will return 3 flights"),
-            # Round 1: Decision
+            # Round 1: Decision (no more operators activated)
             ThinkDecision(
                 step_content="Search flights",
-                calls=[StepToolCall(
+                output=[StepToolCall(
                     tool="search_flights",
                     tool_arguments=[
                         ToolArgument(name="origin", value="Beijing"),
@@ -367,14 +377,14 @@ class TestCognitiveWorker:
 
     @pytest.mark.asyncio
     async def test_reflection_policy(self):
-        """Reflection policy: LLM outputs reflection content, then makes decision."""
+        """Reflection policy: LLM fills reflection (optional) → triggers another round → decision."""
         llm = StatefulMockLLM([
-            # Round 0: Policy round (reflection)
+            # Round 0: LLM chooses to fill reflection (optional operator)
             _tr(reflection="Information is sufficient, no contradictions found"),
-            # Round 1: Decision
+            # Round 1: Decision (no more operators activated)
             ThinkDecision(
                 step_content="Search flights",
-                calls=[StepToolCall(
+                output=[StepToolCall(
                     tool="search_flights",
                     tool_arguments=[
                         ToolArgument(name="origin", value="Beijing"),
@@ -398,14 +408,14 @@ class TestCognitiveWorker:
 
     @pytest.mark.asyncio
     async def test_combined_policies(self):
-        """Combined policies: rehearsal + reflection in same round."""
+        """Combined policies: LLM fills both rehearsal + reflection → triggers another round → decision."""
         llm = StatefulMockLLM([
-            # Round 0: Policy round (both)
+            # Round 0: LLM fills both optional operators
             _tr(rehearsal="Will return 3 flights", reflection="Information sufficient"),
-            # Round 1: Decision
+            # Round 1: Decision (no more operators)
             ThinkDecision(
                 step_content="Search flights",
-                calls=[StepToolCall(
+                output=[StepToolCall(
                     tool="search_flights",
                     tool_arguments=[
                         ToolArgument(name="origin", value="Beijing"),
@@ -430,16 +440,16 @@ class TestCognitiveWorker:
 
     @pytest.mark.asyncio
     async def test_policies_with_disclosure(self):
-        """Policies + single-round batch disclosure: policy round → detail batch → forced decision."""
+        """Policies + disclosure: rehearsal triggers round 2, details_needed triggers round 3 (forced decision)."""
         llm = StatefulMockLLM([
-            # Round 0: Policy round
+            # Round 0: LLM fills rehearsal operator
             _tr(rehearsal="Need to see skill details first"),
-            # Round 1: Request details (single batch)
-            _tr(details_needed=[DetailRequest(field="skills", index=0)]),
-            # Round 2: Decision (using ThinkDecision model — disclosure_done=True)
+            # Round 1: LLM requests details (single batch disclosure)
+            _tr(details=[DetailRequest(field="skills", index=0)]),
+            # Round 2: Decision (disclosure_done=True → no details field offered)
             ThinkDecision(
                 step_content="Execute skill workflow",
-                calls=[StepToolCall(
+                output=[StepToolCall(
                     tool="search_flights",
                     tool_arguments=[
                         ToolArgument(name="origin", value="Beijing"),
@@ -477,7 +487,7 @@ class TestCognitiveWorker:
         llm = MockLLM()
         llm.structured_output_response = ThinkDecision(
             step_content="Search flights",
-            calls=[StepToolCall(
+            output=[StepToolCall(
                 tool="search_flights",
                 tool_arguments=[
                     ToolArgument(name="origin", value="Beijing"),
@@ -510,7 +520,7 @@ class TestCognitiveWorker:
         llm = MockLLM()
         llm.structured_output_response = ThinkDecision(
             step_content="Search flights",
-            calls=[StepToolCall(
+            output=[StepToolCall(
                 tool="search_flights",
                 tool_arguments=[
                     ToolArgument(name="origin", value="Beijing"),
@@ -537,7 +547,7 @@ class TestCognitiveWorker:
         llm = MockLLM()
         llm.structured_output_response = ThinkDecision(
             step_content="Search flights",
-            calls=[StepToolCall(
+            output=[StepToolCall(
                 tool="search_flights",
                 tool_arguments=[
                     ToolArgument(name="origin", value="Beijing"),
@@ -563,8 +573,8 @@ class TestCognitiveWorker:
 
     @pytest.mark.asyncio
     async def test_dynamic_model_fields(self):
-        """Dynamic ThinkResult model always has details_needed; policy fields added based on flags."""
-        # No policies: step_content + calls + details_needed (disclosure is always built-in)
+        """Dynamic ThinkResult model always has details; policy fields added based on flags."""
+        # No policies: step_content + calls + details (disclosure is always built-in)
         w_none = CognitiveWorker.from_prompt(
             "Plan",
             llm=MockLLM(),
@@ -572,7 +582,7 @@ class TestCognitiveWorker:
             enable_reflection=False,
         )
         fields_none = set(w_none._ThinkResultModel.model_fields.keys())
-        assert fields_none == {"step_content", "calls", "details_needed"}
+        assert fields_none == {"step_content", "output", "finish", "details"}
 
         # Rehearsal only: adds rehearsal
         w_reh = CognitiveWorker.from_prompt(
@@ -582,7 +592,7 @@ class TestCognitiveWorker:
             enable_reflection=False,
         )
         fields_reh = set(w_reh._ThinkResultModel.model_fields.keys())
-        assert fields_reh == {"step_content", "calls", "details_needed", "rehearsal"}
+        assert fields_reh == {"step_content", "output", "finish", "details", "rehearsal"}
 
         # Reflection only: adds reflection
         w_ref = CognitiveWorker.from_prompt(
@@ -592,7 +602,7 @@ class TestCognitiveWorker:
             enable_reflection=True,
         )
         fields_ref = set(w_ref._ThinkResultModel.model_fields.keys())
-        assert fields_ref == {"step_content", "calls", "details_needed", "reflection"}
+        assert fields_ref == {"step_content", "output", "finish", "details", "reflection"}
 
         # Both policies: all fields present
         w_all = CognitiveWorker.from_prompt(
@@ -602,21 +612,21 @@ class TestCognitiveWorker:
             enable_reflection=True,
         )
         fields_all = set(w_all._ThinkResultModel.model_fields.keys())
-        assert fields_all == {"step_content", "calls", "details_needed", "rehearsal", "reflection"}
+        assert fields_all == {"step_content", "output", "finish", "details", "rehearsal", "reflection"}
 
     @pytest.mark.asyncio
     async def test_single_round_batch_disclosure(self):
         """Disclosure is single-round batch: LLM requests details, all expanded, then ThinkDecision forced."""
         llm = StatefulMockLLM([
             # Round 1: Request details (batch of multiple items)
-            _tr(details_needed=[
+            _tr(details=[
                 DetailRequest(field="skills", index=0),
                 DetailRequest(field="cognitive_history", index=0),
             ]),
             # Round 2: Forced decision (ThinkDecision model, no details_needed field)
             ThinkDecision(
                 step_content="Direct decision after disclosure",
-                calls=[StepToolCall(
+                output=[StepToolCall(
                     tool="search_flights",
                     tool_arguments=[
                         ToolArgument(name="origin", value="Beijing"),
@@ -628,8 +638,8 @@ class TestCognitiveWorker:
         ])
 
         worker = CognitiveWorker.from_prompt("Plan ONE step", llm=llm)
-        # _ThinkResultModel always has details_needed
-        assert "details_needed" in worker._ThinkResultModel.model_fields
+        # _ThinkResultModel always has details
+        assert "details" in worker._ThinkResultModel.model_fields
 
         ctx = _make_context()
         decision = await worker.arun(context=ctx)
@@ -652,55 +662,51 @@ class TestCognitiveWorker:
     def test_prompt_instructions_match_enabled_policies(self):
         """_build_output_instructions describes fields matching enabled policies.
 
-        details_needed is always in non-policy rounds (disclosure is built-in).
-        Policy fields (rehearsal/reflection) appear only in policy rounds.
-        After disclosure (disclosure_done=True), details_needed guidance is removed.
+        details is always in normal rounds (acquiring_open=True).
+        Policy fields (rehearsal/reflection) appear as optional when their operator is open.
+        After acquiring closes (acquiring_open=False), details guidance is removed.
         """
-        ctx = _make_context()
-
-        # Default (no policies): non-policy round has details_needed, no policy fields
+        # Default (no policies): normal round has details, no policy fields
         w_default = CognitiveWorker.from_prompt("Plan", llm=MockLLM())
-        instr = w_default._build_output_instructions(is_policy_round=False, disclosure_done=False, context=ctx)
-        assert "details_needed" in instr
+        instr = w_default._build_output_instructions(acquiring_open=True, rehearsal_open=False, reflection_open=False)
+        assert "details" in instr
         assert "rehearsal" not in instr
         assert "reflection" not in instr
 
-        # After disclosure done: no details_needed (ThinkDecision model is used)
-        instr_done = w_default._build_output_instructions(is_policy_round=False, disclosure_done=True, context=ctx)
-        assert "details_needed" not in instr_done
+        # After acquiring closes: no details
+        instr_done = w_default._build_output_instructions(acquiring_open=False, rehearsal_open=False, reflection_open=False)
+        assert "details" not in instr_done
 
-        # enable_rehearsal=True: policy round has rehearsal, not details_needed
+        # enable_rehearsal=True: normal round has both details AND rehearsal (optional)
         w_reh = CognitiveWorker.from_prompt("Plan", llm=MockLLM(), enable_rehearsal=True)
-        instr = w_reh._build_output_instructions(is_policy_round=True, disclosure_done=False, context=ctx)
+        instr = w_reh._build_output_instructions(acquiring_open=True, rehearsal_open=True, reflection_open=False)
         assert "rehearsal" in instr
-        assert "details_needed" not in instr
+        assert "details" in instr
         assert "reflection" not in instr
 
-        # enable_reflection=True: policy round has reflection, not others
+        # enable_reflection=True: normal round has both details AND reflection (optional)
         w_ref = CognitiveWorker.from_prompt("Plan", llm=MockLLM(), enable_reflection=True)
-        instr = w_ref._build_output_instructions(is_policy_round=True, disclosure_done=False, context=ctx)
+        instr = w_ref._build_output_instructions(acquiring_open=True, rehearsal_open=False, reflection_open=True)
         assert "reflection" in instr
+        assert "details" in instr
         assert "rehearsal" not in instr
-        assert "details_needed" not in instr
 
-        # All policies: non-policy round has details_needed (not policy fields)
+        # All policies: all fields present in normal round
         w_all = CognitiveWorker.from_prompt(
             "Plan", llm=MockLLM(),
             enable_rehearsal=True, enable_reflection=True
         )
-        instr_detail = w_all._build_output_instructions(is_policy_round=False, disclosure_done=False, context=ctx)
-        assert "details_needed" in instr_detail
-        assert "rehearsal" not in instr_detail
-        assert "reflection" not in instr_detail
+        instr_all = w_all._build_output_instructions(acquiring_open=True, rehearsal_open=True, reflection_open=True)
+        assert "details" in instr_all
+        assert "rehearsal" in instr_all
+        assert "reflection" in instr_all
 
-        # Policy round has both policy fields, not details_needed
-        instr_policy = w_all._build_output_instructions(is_policy_round=True, disclosure_done=False, context=ctx)
-        assert "rehearsal" in instr_policy
-        assert "reflection" in instr_policy
-        assert "details_needed" not in instr_policy
+        # After acquiring closes with policies still open: still no details
+        instr_done_all = w_all._build_output_instructions(acquiring_open=False, rehearsal_open=True, reflection_open=True)
+        assert "details" not in instr_done_all
 
         # No progressive pressure (removed): no "Detail Budget" regardless of round count
-        instr_a = w_default._build_output_instructions(is_policy_round=False, disclosure_done=False, context=ctx)
+        instr_a = w_default._build_output_instructions(acquiring_open=True, rehearsal_open=False, reflection_open=False)
         assert "Detail Budget" not in instr_a
         assert "LIMIT REACHED" not in instr_a
 
@@ -742,31 +748,36 @@ class TestOutputType:
 
     @pytest.mark.asyncio
     async def test_output_schema_returns_typed_instance(self):
-        """When output_schema is set, arun() returns the typed instance directly."""
-        expected = _PlanResult(phases=[
+        """When output_schema is set, arun() returns a ThinkDecision wrapping the typed output."""
+        expected_output = _PlanResult(phases=[
             _PlanPhase(sub_goal="Step A", skill_name="skill-a"),
         ])
-        llm = MockLLM()
-        llm.structured_output_response = expected
+        worker = _PlannerWorker(llm=MockLLM())
+        decision_model = worker._ThinkDecisionModel
+        decision_instance = decision_model(
+            step_content="Planning complete", output=expected_output, finish=False
+        )
 
+        llm = MockLLM()
+        llm.structured_output_response = decision_instance
         worker = _PlannerWorker(llm=llm)
         ctx = CognitiveContext(goal="Test")
         ctx.observation = None
 
+        # worker.arun() returns the ThinkDecision wrapper
         result = await worker.arun(context=ctx)
 
-        assert result is expected
-        assert isinstance(result, _PlanResult)
-        assert result.phases[0].sub_goal == "Step A"
+        assert isinstance(result, decision_model)
+        assert result.output is expected_output
+        assert isinstance(result.output, _PlanResult)
+        assert result.output.phases[0].sub_goal == "Step A"
 
     @pytest.mark.asyncio
     async def test_output_schema_skips_action(self):
         """When output_schema is set, agent.action() is NOT called; await step returns typed instance."""
-        expected = _PlanResult(phases=[
+        expected_output = _PlanResult(phases=[
             _PlanPhase(sub_goal="Phase 1", skill_name="skill-1"),
         ])
-        llm = MockLLM()
-        llm.structured_output_response = expected
 
         # Track whether action() was called
         action_called = []
@@ -775,35 +786,46 @@ class TestOutputType:
             async def action(self, decision, ctx, *, _worker):
                 action_called.append(decision)
 
+        llm = MockLLM()
         agent = _TrackingAgent(llm=llm)
         ctx = CognitiveContext(goal="Test output_schema")
         agent._current_context = ctx
 
-        # Inject llm into the plan_step worker
-        agent.plan_step.worker.set_llm(llm)
+        # Get the dynamic ThinkDecision model from the worker and create a proper mock response
+        worker = agent.plan_step.worker
+        worker.set_llm(llm)
+        decision_model = worker._ThinkDecisionModel
+        llm.structured_output_response = decision_model(
+            step_content="Done", output=expected_output, finish=False
+        )
 
-        result = await agent.plan_step._execute_once(agent)
+        result, finished = await agent.plan_step._execute_once(agent)
 
         # action() must NOT have been called
         assert len(action_called) == 0
 
-        # The typed result must be returned
-        assert result is expected
+        # _execute_once extracts decision.output → typed _PlanResult
+        assert result is expected_output
         assert isinstance(result, _PlanResult)
 
     @pytest.mark.asyncio
     async def test_output_schema_uses_schema_constraint(self):
-        """LLM is called with the output_schema model as constraint (not ThinkDecision)."""
+        """LLM is called with ThinkDecision model (wrapping output_schema) as constraint."""
         from bridgic.core.model.protocols import PydanticModel
 
         captured_constraint = []
+        worker_ref = []
 
         class _CapturingLLM(MockLLM):
             async def astructured_output(self, messages, constraint, **kwargs):
                 captured_constraint.append(constraint)
-                return _PlanResult(phases=[])
+                # Return a proper ThinkDecision instance with the output wrapped
+                w = worker_ref[0]
+                dm = w._ThinkDecisionModel
+                return dm(step_content="", output=_PlanResult(phases=[]), finish=False)
 
         worker = _PlannerWorker(llm=_CapturingLLM())
+        worker_ref.append(worker)
         ctx = CognitiveContext(goal="Test")
         ctx.observation = None
 
@@ -811,5 +833,154 @@ class TestOutputType:
 
         assert len(captured_constraint) == 1
         assert isinstance(captured_constraint[0], PydanticModel)
-        assert captured_constraint[0].model is _PlanResult
+        # Constraint is the ThinkDecision model (wrapping _PlanResult in 'output' field)
+        model = captured_constraint[0].model
+        assert 'output' in model.model_fields
+        assert 'finish' in model.model_fields
+        assert 'step_content' in model.model_fields
+
+
+class TestFinishSignal:
+    """Tests for finish=True signal stopping _execute_until() early."""
+
+    @pytest.mark.asyncio
+    async def test_finish_true_stops_execute_until(self):
+        """When LLM sets finish=True, _execute_until() stops after that round."""
+
+        class _SimpleAgent(AgentAutoma):
+            think = think_step(CognitiveWorker.inline("Plan one step."))
+
+            async def cognition(self, ctx):
+                await self.think.until(max_attempts=10)
+
+        step_count = 0
+
+        # First call: finish=False (normal step with a tool call)
+        # Second call: finish=True (LLM signals done)
+        call_idx = [0]
+
+        class _FinishLLM(MockLLM):
+            async def astructured_output(self, messages, constraint, **kwargs):
+                nonlocal step_count
+                idx = call_idx[0]
+                call_idx[0] += 1
+                # Return a decision; finish=True on second call
+                return ThinkDecision(
+                    step_content="done" if idx == 1 else "step",
+                    output=[],
+                    finish=(idx == 1),
+                )
+
+        agent = _SimpleAgent(llm=_FinishLLM())
+        ctx = CognitiveContext(goal="Test finish signal")
+        agent._current_context = ctx
+
+        # Run until — should stop after 2 rounds (finish=True on round 2)
+        await agent.think.until(max_attempts=10)
+
+        assert call_idx[0] == 2, f"Expected 2 LLM calls, got {call_idx[0]}"
+
+    @pytest.mark.asyncio
+    async def test_finish_false_continues_loop(self):
+        """When finish is always False and no condition, loop runs max_attempts times."""
+        call_idx = [0]
+
+        class _NeverFinishLLM(MockLLM):
+            async def astructured_output(self, messages, constraint, **kwargs):
+                call_idx[0] += 1
+                return ThinkDecision(step_content="step", output=[], finish=False)
+
+        class _LoopAgent(AgentAutoma):
+            think = think_step(CognitiveWorker.inline("Plan one step."))
+            async def cognition(self, ctx): pass
+
+        agent = _LoopAgent(llm=_NeverFinishLLM())
+        ctx = CognitiveContext(goal="Test no finish")
+        agent._current_context = ctx
+
+        await agent.think.until(max_attempts=3)
+
+        assert call_idx[0] == 3, f"Expected 3 LLM calls, got {call_idx[0]}"
+
+
+class TestActionDefensive:
+    """Tests for action() TypeError when output_schema decision is passed."""
+
+    @pytest.mark.asyncio
+    async def test_action_raises_type_error_for_non_list_output(self):
+        """action() raises TypeError when decision.output is not a list."""
+        from pydantic import BaseModel
+
+        class _MySchema(BaseModel):
+            value: str
+
+        class _SchemaAgent(AgentAutoma):
+            plan = think_step(CognitiveWorker.inline("Plan.", output_schema=_MySchema))
+            async def cognition(self, ctx): pass
+
+        agent = _SchemaAgent(llm=MockLLM())
+        ctx = CognitiveContext(goal="Test")
+        agent._current_context = ctx
+
+        # Create an output_schema decision where output is _MySchema, not a list
+        schema_decision = type('SchemaDecision', (), {
+            'output': _MySchema(value="result"),
+            'step_content': "done",
+        })()
+
+        with pytest.raises(TypeError, match="action\\(\\) received"):
+            await agent.action(schema_decision, ctx, _worker=agent.plan.worker)
+
+
+class TestSkillRevealPersistence:
+    """Tests that skill _revealed state persists across until() iterations via write-back."""
+
+    @pytest.mark.asyncio
+    async def test_revealed_state_persists_across_iterations(self):
+        """Skills revealed in iteration N are available in iteration N+1 via index remapping."""
+        from bridgic.core.cognitive import CognitiveSkills
+
+        ctx = _make_context()  # already loads skills from SKILLS_DIR
+
+        # Pre-reveal skill[0] on original_skills
+        ctx.get_details("skills", 0)
+        assert 0 in ctx.skills._revealed
+
+        # Simulate what _execute_once does when skills_filter is active:
+        # create filtered_skills with only skill[0], copy reveals, then write back.
+        original_skills = ctx.skills
+        filtered_skills = CognitiveSkills()
+        orig_to_filtered: Dict[int, int] = {}
+        filtered_to_orig: Dict[int, int] = {}
+
+        for orig_idx, skill in enumerate(original_skills.get_all()):
+            new_idx = len(filtered_skills)
+            filtered_skills.add(skill)
+            orig_to_filtered[orig_idx] = new_idx
+            filtered_to_orig[new_idx] = orig_idx
+
+        # Forward-copy reveals
+        for orig_idx, detail in original_skills._revealed.items():
+            if orig_idx in orig_to_filtered:
+                filtered_skills._revealed[orig_to_filtered[orig_idx]] = detail
+
+        ctx.skills = filtered_skills
+
+        # Inside iteration: skill[0] should be visible as revealed in filtered
+        assert 0 in ctx.skills._revealed
+
+        # Simulate revealing skill[1] inside the iteration
+        ctx.get_details("skills", 1)
+        assert 1 in ctx.skills._revealed
+
+        # Write back: both 0 and 1 should propagate to original
+        for filtered_idx, detail in filtered_skills._revealed.items():
+            orig_idx = filtered_to_orig.get(filtered_idx)
+            if orig_idx is not None:
+                original_skills._revealed[orig_idx] = detail
+        ctx.skills = original_skills
+
+        # After write-back: both 0 and 1 in original_skills._revealed
+        assert 0 in ctx.skills._revealed
+        assert 1 in ctx.skills._revealed
 

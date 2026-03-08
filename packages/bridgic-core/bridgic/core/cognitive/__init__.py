@@ -76,8 +76,6 @@ from ._cognitive_worker import (
     ToolArgument,
     StepToolCall,
     ThinkDecision,
-    ActionResult,
-    ActionStepResult,
 )
 from ._agent_automa import (
     # Orchestration
@@ -85,6 +83,9 @@ from ._agent_automa import (
     think_step,
     ThinkStepDescriptor,
     ErrorStrategy,
+    # Action result data structures
+    ActionResult,
+    ActionStepResult,
 )
 
 __all__ = [

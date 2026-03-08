@@ -5,39 +5,149 @@ from typing import Any, Dict, List, Optional, Generic, TypeVar, Tuple, get_origi
 from pydantic import BaseModel, Field, ConfigDict
 from bridgic.core.agentic.tool_specs import ToolSpec
 from bridgic.core.model.types import Message
+from bridgic.core.utils._console import printer
 
 
 ################################################################################################################
-# _OverrideContext — async context manager for safe field mutation
+# Helpers
 ################################################################################################################
 
-class _OverrideContext:
+def _iter_layered(ctx: "Context"):
+    """Yield (field_name, LayeredExposure_instance) for all LayeredExposure fields on ctx."""
+    exposure_fields = type(ctx)._exposure_fields or {}
+    for fname, finfo in exposure_fields.items():
+        if finfo.get('exposure_type') == 'layered':
+            fval = getattr(ctx, fname, None)
+            if fval is not None:
+                yield fname, fval
+
+
+################################################################################################################
+# _SnapshotContext — async context manager for safe field mutation + revealed state management
+################################################################################################################
+
+class _SnapshotContext:
     """
-    Async context manager for exception-safe temporary field overrides on a Context.
+    Async context manager for exception-safe temporary field overrides on a Context,
+    with additional management of LayeredExposure._revealed state.
 
-    Saves original field values on enter, restores them in finally on exit.
+    On enter:
+    1. Saves original field values and applies overrides.
+    2. Snapshots all LayeredExposure._revealed dicts.
+    3. Manages _revealed according to the chosen mode.
+
+    On exit:
+    - Restores all field values.
+    - Restores all _revealed dicts to their pre-enter state.
+
+    Modes (keep_revealed parameter)
+    --------------------------------
+    None (default)  — Clear All: clears all _revealed on enter, restores on exit.
+    "auto"          — LLM Auto-Prune: LLM decides which items to keep based on new goal.
+                      Requires llm= kwarg.
+    dict            — Custom: {field_name: [indices]} specifying which items to keep.
 
     Usage
     -----
-    async with ctx.override(goal="new goal", browser=None) as ctx:
-        ...  # ctx.goal == "new goal" here
-    # ctx.goal restored to original value (even if exception was raised)
+    async with ctx.snapshot(goal="new goal") as ctx:
+        ...  # all _revealed cleared, goal overridden
+    # _revealed and goal restored on exit
     """
 
-    def __init__(self, ctx: "Context", fields: Dict[str, Any]):
+    def __init__(self, ctx: "Context", fields: Dict[str, Any], keep_revealed=None, llm=None):
         self._ctx = ctx
         self._fields = fields
+        self._keep_revealed = keep_revealed
+        self._llm = llm
         self._originals: Dict[str, Any] = {}
+        self._saved_revealed: Dict[str, Dict[int, str]] = {}
 
     async def __aenter__(self) -> "Context":
+        # 1. Save field values and apply overrides
         self._originals = {k: getattr(self._ctx, k) for k in self._fields}
         for k, v in self._fields.items():
             setattr(self._ctx, k, v)
+
+        # 2. Save all LayeredExposure._revealed snapshots
+        for fname, fval in _iter_layered(self._ctx):
+            self._saved_revealed[fname] = dict(fval._revealed)
+
+        # 3. Apply revealed management based on mode
+        if self._keep_revealed is None:
+            # Mode 1: Clear All
+            for _, fval in _iter_layered(self._ctx):
+                fval._revealed.clear()
+        elif self._keep_revealed == "auto":
+            # Mode 2: LLM Auto-Prune
+            keep = await self._auto_prune(new_goal=self._fields.get('goal'))
+            self._apply_filter(keep)
+        else:
+            # Mode 3: Custom dict {field: [indices]}
+            self._apply_filter(self._keep_revealed)
+
         return self._ctx
 
     async def __aexit__(self, *exc) -> None:
+        # Restore field values
         for k, v in self._originals.items():
             setattr(self._ctx, k, v)
+        # Restore _revealed state for all LayeredExposure fields
+        for fname, fval in _iter_layered(self._ctx):
+            fval._revealed.clear()
+            if fname in self._saved_revealed:
+                fval._revealed.update(self._saved_revealed[fname])
+
+    def _apply_filter(self, keep: Dict[str, List[int]]) -> None:
+        """Remove revealed items not in the keep dict."""
+        for fname, fval in _iter_layered(self._ctx):
+            allowed = set(keep.get(fname, []))
+            to_remove = [idx for idx in fval._revealed if idx not in allowed]
+            for idx in to_remove:
+                del fval._revealed[idx]
+
+    async def _auto_prune(self, new_goal: Optional[str]) -> Dict[str, List[int]]:
+        """Ask LLM which revealed items are still relevant to the new goal."""
+        if self._llm is None:
+            # No LLM available, clear all
+            return {}
+
+        # Collect currently revealed items
+        revealed_lines = []
+        for fname, fval in _iter_layered(self._ctx):
+            for idx, detail in fval._revealed.items():
+                snippet = detail[:120] + ("..." if len(detail) > 120 else "")
+                revealed_lines.append(f"{fname}[{idx}]: {snippet}")
+
+        if not revealed_lines:
+            return {}
+
+        summary_text = "\n".join(revealed_lines)
+        prompt_text = (
+            f"New goal: {new_goal or 'Unknown'}\n\n"
+            f"Currently revealed items:\n{summary_text}\n\n"
+            "Which items are still relevant to the new goal? "
+            "Return their field names and indices in the 'keep' list."
+        )
+
+        from pydantic import BaseModel as _BaseModel
+        from bridgic.core.model.protocols import PydanticModel
+
+        class _KeepItem(_BaseModel):
+            field: str
+            index: int
+
+        class _AutoPruneResult(_BaseModel):
+            keep: List[_KeepItem] = Field(default_factory=list)
+
+        result = await self._llm.astructured_output(
+            messages=[Message.from_text(text=prompt_text, role="user")],
+            constraint=PydanticModel(model=_AutoPruneResult)
+        )
+
+        keep_dict: Dict[str, List[int]] = {}
+        for item in result.keep:
+            keep_dict.setdefault(item.field, []).append(item.index)
+        return keep_dict
 
 
 ################################################################################################################
@@ -228,8 +338,10 @@ class Context(BaseModel):
         Get all (field, index) pairs that have been revealed so far.
     reset_revealed()
         Clear reveal caches on all LayeredExposure fields.
+    snapshot(**fields, keep_revealed=None, llm=None)
+        Async context manager for field overrides + _revealed state management.
     override(**fields)
-        Async context manager for exception-safe temporary field overrides.
+        Alias for snapshot() with keep_revealed=None.
 
     Examples
     --------
@@ -494,13 +606,9 @@ class Context(BaseModel):
             Ordered list of (field_name, item_index) that have cached reveals.
         """
         result: List[Tuple[str, int]] = []
-        exposure_fields = self.__class__._exposure_fields or {}
-        for fname, finfo in exposure_fields.items():
-            if finfo.get('exposure_type') == 'layered':
-                fval = getattr(self, fname, None)
-                if fval is not None and hasattr(fval, '_revealed'):
-                    for idx in fval._revealed:
-                        result.append((fname, idx))
+        for fname, fval in _iter_layered(self):
+            for idx in fval._revealed:
+                result.append((fname, idx))
         return result
 
     def reset_revealed(self) -> None:
@@ -510,18 +618,61 @@ class Context(BaseModel):
         Equivalent to calling field.reset_revealed() on every LayeredExposure
         field. Use at phase boundaries so the next phase can request fresh details.
         """
-        exposure_fields = self.__class__._exposure_fields or {}
-        for fname, finfo in exposure_fields.items():
-            if finfo.get('exposure_type') == 'layered':
-                fval = getattr(self, fname, None)
-                if fval is not None and hasattr(fval, 'reset_revealed'):
-                    fval.reset_revealed()
+        for _, fval in _iter_layered(self):
+            fval.reset_revealed()
 
-    def override(self, **fields: Any) -> "_OverrideContext":
+    def snapshot(
+        self,
+        keep_revealed=None,
+        llm=None,
+        **fields: Any,
+    ) -> "_SnapshotContext":
         """
-        Create an async context manager for exception-safe temporary field overrides.
+        Create an async context manager for exception-safe field overrides + revealed state management.
 
-        Saves original field values on enter, restores them in finally on exit.
+        On enter: saves field values, applies overrides, and manages LayeredExposure._revealed
+        according to the chosen mode. On exit: restores both field values and _revealed state.
+
+        Parameters
+        ----------
+        keep_revealed : None | "auto" | Dict[str, List[int]]
+            Revealed state management mode:
+            - None (default): Clear All — all _revealed caches are cleared on enter, restored on exit.
+            - "auto": LLM Auto-Prune — LLM decides which items to keep based on the new goal.
+              Requires llm= kwarg pointing to a BaseLlm instance.
+            - dict: Custom — {field_name: [indices]} specifying which items to keep.
+        llm : Optional[BaseLlm]
+            LLM instance required only when keep_revealed="auto".
+        **fields
+            Field name to temporary value mappings.
+
+        Returns
+        -------
+        _SnapshotContext
+            An async context manager that yields this context.
+
+        Examples
+        --------
+        >>> # Default: clear all revealed on phase entry (no explicit reset needed)
+        >>> async with ctx.snapshot(goal="phase goal", browser=None):
+        ...     await self.execute_step.until(max_attempts=20, skills=["my-skill"])
+        ... # goal, browser, and _revealed all restored on exit
+
+        >>> # Keep specific revealed items across phase boundary
+        >>> async with ctx.snapshot(goal="new phase", keep_revealed={"skills": [0]}):
+        ...     ...
+
+        >>> # LLM decides what to keep
+        >>> async with ctx.snapshot(goal="new phase", keep_revealed="auto", llm=my_llm):
+        ...     ...
+        """
+        return _SnapshotContext(self, fields, keep_revealed=keep_revealed, llm=llm)
+
+    def override(self, **fields: Any) -> "_SnapshotContext":
+        """
+        Alias for snapshot() with keep_revealed=None (clear all revealed).
+
+        Provided for backward compatibility. Prefer snapshot() for new code.
 
         Parameters
         ----------
@@ -530,16 +681,16 @@ class Context(BaseModel):
 
         Returns
         -------
-        _OverrideContext
+        _SnapshotContext
             An async context manager that yields this context with overrides applied.
 
         Examples
         --------
         >>> async with ctx.override(goal="new goal", browser=None):
         ...     await self.execute_step.until(...)
-        ... # ctx.goal restored here, even on exception
+        ... # ctx.goal and _revealed restored here, even on exception
         """
-        return _OverrideContext(self, fields)
+        return _SnapshotContext(self, fields, keep_revealed=None)
 
     def __str__(self) -> str:
         """
@@ -818,7 +969,7 @@ class CognitiveSkills(LayeredExposure[Skill]):
                 count += 1
             except (ValueError, FileNotFoundError) as e:
                 # Log or handle errors for individual files
-                print(f"Warning: Failed to load {skill_file}: {e}")
+                printer.print(f"Warning: Failed to load {skill_file}: {e}", color="yellow")
 
         return count
 
@@ -1098,19 +1249,19 @@ class CognitiveHistory(LayeredExposure[Step]):
         for i in range(self.compressed_count, short_term_start):
             step = self._items[i]
             summary = self._format_step_summary(step)
-            result.append(f"{summary}")
+            result.append(f"[{i}] {summary}")
 
         # 3. Short-term memory: summary only, queryable for details
         for i in range(short_term_start, working_start):
             step = self._items[i]
             summary = self._format_step_summary(step)
-            result.append(f"{summary}")
+            result.append(f"[{i}] {summary}")
 
         # 4. Working memory: full details
         for i in range(working_start, total):
             step = self._items[i]
             detail = self._format_step_detail(step)
-            result.append(f"{detail}")
+            result.append(f"[{i}] {detail}")
 
         return result
 
@@ -1235,7 +1386,7 @@ class CognitiveContext(Context):
 
         # Format skills (LayeredExposure - with indices for detail queries)
         if len(self.skills) > 0:
-            lines = ["Available Skills (request details via details_needed: {field: 'skills', index: N}):"]
+            lines = ["Available Skills (request details via details: {field: 'skills', index: N}):"]
             for i, skill_summary in enumerate(self.skills.summary()):
                 lines.append(f"  [{i}] {skill_summary}")
             result['skills'] = "\n".join(lines)
@@ -1250,7 +1401,7 @@ class CognitiveContext(Context):
             if self.cognitive_history.compressed_summary:
                 lines.append("  (Older history compressed into summary)")
             if short_term_start < working_start:
-                lines.append(f"  (Steps [{short_term_start}-{working_start-1}]: summary only, query details via details_needed)")
+                lines.append(f"  (Steps [{short_term_start}-{working_start-1}]: summary only, query details via details)")
 
             # history.summary() already returns formatted layered output
             for summary_line in self.cognitive_history.summary():
@@ -1261,16 +1412,12 @@ class CognitiveContext(Context):
             result['cognitive_history'] = "Execution History: (none)"
 
         # Format disclosed details from LayeredExposure fields' _revealed dicts
-        exposure_fields = self.__class__._exposure_fields or {}
         disclosed_lines = ["Previously Disclosed Details:"]
         has_disclosed = False
-        for fname, finfo in exposure_fields.items():
-            if finfo.get('exposure_type') == 'layered':
-                fval = getattr(self, fname, None)
-                if fval is not None and hasattr(fval, '_revealed') and fval._revealed:
-                    for idx, detail in fval._revealed.items():
-                        disclosed_lines.append(f"\n[{fname}[{idx}]]:\n{detail}")
-                        has_disclosed = True
+        for fname, fval in _iter_layered(self):
+            for idx, detail in fval._revealed.items():
+                disclosed_lines.append(f"\n[{fname}[{idx}]]:\n{detail}")
+                has_disclosed = True
         if has_disclosed:
             result['disclosed_details'] = "\n".join(disclosed_lines)
 
