@@ -115,7 +115,7 @@ class _ThinkBase(BaseModel):
     """
     Unified base for all dynamically-generated ThinkModel variants.
 
-    Factory (_create_think_model) adds: output, details_needed, rehearsal,
+    Factory (_create_think_model) adds: output, details, rehearsal,
     reflection — all optional and conditional on configuration.
     """
     model_config = ConfigDict(
@@ -222,7 +222,7 @@ class CognitiveWorker(GraphAutoma):
     ...         return "Analyze the goal and produce a phased execution plan."
     """
 
-    # Class-level cache: (enable_rehearsal, enable_reflection, include_details_needed, output_schema) → model
+    # Class-level cache: (enable_rehearsal, enable_reflection, enable_acquiring, output_schema) → model
     _think_model_cache: Dict[Tuple, Type[BaseModel]] = {}
 
     # Subclasses set this to a Pydantic model to produce typed output directly
@@ -281,12 +281,12 @@ class CognitiveWorker(GraphAutoma):
         Builds and caches a Pydantic model with _ThinkBase as its base, adding
         fields dynamically:
         - output: List[StepToolCall] when output_schema is None, else Optional[output_schema]
-        - details_needed: only when include_details_needed=True
+        - details: only when enable_acquiring=True
         - rehearsal: only when enable_rehearsal=True
         - reflection: only when enable_reflection=True
 
         All variants are cached by (enable_rehearsal, enable_reflection,
-        include_details_needed, output_schema).
+        enable_acquiring, output_schema).
         """
         key = (enable_rehearsal, enable_reflection, enable_acquiring, output_schema)
         if key in cls._think_model_cache:
@@ -514,25 +514,84 @@ class CognitiveWorker(GraphAutoma):
         printer.print(f"[{stage}] Total: {total_tokens} tokens (cumulative: {self.spend_tokens})", color="yellow")
 
     @staticmethod
-    def _build_schema_prompt(model: Type[BaseModel]) -> str:
+    def _generate_schema_example(schema: dict, defs: dict = None) -> Any:
         """
-        Build a format description prompt from a Pydantic model's JSON schema.
+        Recursively build a compact example value from a JSON Schema node.
 
-        Used in output_schema mode to tell the LLM what structured format to produce.
+        Handles $ref, anyOf (Optional), object, array, scalar types, enum, and const.
+        Arrays are represented as a single-element list to keep examples concise.
+        """
+        if defs is None:
+            defs = schema.get('$defs', {})
 
-        Parameters
-        ----------
-        model : Type[BaseModel]
-            The Pydantic model to generate format instructions for.
+        # Resolve $ref
+        if '$ref' in schema:
+            ref_name = schema['$ref'].split('/')[-1]
+            return CognitiveWorker._generate_schema_example(defs.get(ref_name, {}), defs)
 
-        Returns
-        -------
-        str
-            A formatted prompt describing the required JSON schema.
+        # anyOf / oneOf — covers Optional[X] (anyOf: [{type: X}, {type: null}])
+        if 'anyOf' in schema:
+            non_null = [s for s in schema['anyOf'] if s.get('type') != 'null']
+            if non_null:
+                return CognitiveWorker._generate_schema_example(non_null[0], defs)
+            return None
+
+        # allOf — usually single-item wrapper
+        if 'allOf' in schema:
+            if len(schema['allOf']) == 1:
+                return CognitiveWorker._generate_schema_example(schema['allOf'][0], defs)
+            return {}
+
+        # Enum — use first value
+        if 'enum' in schema:
+            return schema['enum'][0]
+
+        # Const
+        if 'const' in schema:
+            return schema['const']
+
+        schema_type = schema.get('type')
+
+        if schema_type == 'object':
+            props = schema.get('properties', {})
+            result = {}
+            for name, prop_schema in props.items():
+                if 'default' in prop_schema:
+                    result[name] = prop_schema['default']
+                else:
+                    result[name] = CognitiveWorker._generate_schema_example(prop_schema, defs)
+            return result
+
+        if schema_type == 'array':
+            items = schema.get('items', {})
+            item_example = CognitiveWorker._generate_schema_example(items, defs)
+            return [item_example]
+
+        if schema_type == 'string':
+            return "..."
+        if schema_type == 'integer':
+            return schema.get('default', 0)
+        if schema_type == 'number':
+            return schema.get('default', 0.0)
+        if schema_type == 'boolean':
+            return schema.get('default', False)
+
+        return None
+
+    @staticmethod
+    def _build_schema_example_prompt(model: Type[BaseModel]) -> str:
+        """
+        Build a compact inline example from a Pydantic model.
+
+        Replaces the old full JSON Schema dump with a concise representative example,
+        which is more token-efficient and equally effective for guiding the LLM.
+
+        Example output for ``PlanningResult``:
+            {"phases": [{"sub_goal": "...", "skill_name": "...", "max_steps": 20}]}
         """
         schema = model.model_json_schema()
-        schema_json = json.dumps(schema, indent=2, ensure_ascii=False)
-        return f"```json\n{schema_json}\n```"
+        example = CognitiveWorker._generate_schema_example(schema)
+        return json.dumps(example, ensure_ascii=False)
 
     def _output_fields_prompt(self, acquiring_open: bool, rehearsal_open: bool, reflection_open: bool) -> str:
         """Base fields: step_content, output, finish. Always present."""
@@ -559,15 +618,15 @@ class CognitiveWorker(GraphAutoma):
         # Output schema
         if self.output_schema is not None:
             parts.append(
-                "- **output**: The custom output schema is: "
-                f"{self._build_schema_prompt(self.output_schema)}"
+                "- **output**: Structured result — example: "
+                f"{self._build_schema_example_prompt(self.output_schema)}"
             )
         else:
             parts.append(
                 "- **output**: Tool calls to execute: "
                 "[{tool, tool_arguments: [{name: 'param', value: 'value'}]}]\n"
             )
-        return "\n\n".join(parts)
+        return "\n".join(parts)
 
     @staticmethod
     def _acquiring_prompt() -> str:
@@ -579,7 +638,7 @@ class CognitiveWorker(GraphAutoma):
             "The framework will expand these items in the next round. "
             "Batch all requests in a single output. "
             "When using this field, leave step_content and output empty.\n\n"
-            "Field format:\n"
+            "## Field format:\n"
             "- **details**: [{field: \"skills\", index: 0}, ...]\n"
             "  Available fields: **skills** (view a skill's full workflow), "
             "**cognitive_history** (view the full result of a previous step)"
@@ -594,7 +653,7 @@ class CognitiveWorker(GraphAutoma):
             "which tools you plan to call, what they are expected to return, and whether any issues may arise. "
             "When using this field, leave step_content and output empty; "
             "the framework will ask for an actual decision in the next round.\n\n"
-            "Field format:\n"
+            "## Field format:\n"
             "- **rehearsal**: \"(string describing your simulation and predictions)\""
         )
 
@@ -607,7 +666,7 @@ class CognitiveWorker(GraphAutoma):
             "sufficient and self-consistent. "
             "If you have doubts, fill the **reflection** field and leave step_content and output empty; "
             "the framework will ask for an actual decision in the next round.\n\n"
-            "Field format:\n"
+            "## Field format:\n"
             "- **reflection**: \"(string describing your assessment conclusions)\""
         )
 
@@ -650,7 +709,7 @@ class CognitiveWorker(GraphAutoma):
         policy_context : List[str]
             Policy outputs from previous rounds (rehearsal, reflection).
         acquiring_open : bool
-            Whether the acquiring (details_needed) operator can still fire this round.
+            Whether the acquiring operator can still fire this round.
         rehearsal_open : bool
             Whether the rehearsal operator can still fire this round.
         reflection_open : bool
@@ -682,10 +741,7 @@ class CognitiveWorker(GraphAutoma):
 
             return "\n".join(lines)
 
-        # 1. Get the think prompt: think_prompt in params
-        pass
-
-        # 2. Build tool details and skills summary
+        # 1. Build tool details and skills summary
         capabilities_parts = []
         _, tool_specs = context.get_field('tools')
         if tool_specs:
@@ -697,13 +753,13 @@ class CognitiveWorker(GraphAutoma):
                 capabilities_parts.append(f"# {skills_summary}")
         capabilities_description = "\n\n".join(capabilities_parts)
 
-        # 3. Build context info about current status
+        # 2. Build context info about current status
         context_info = context.format_summary(exclude=['tools', 'skills'])
         if observation is not None:
             context_info += f"\n\nObservation:\n{observation}"
         user_prompt_context = f"Based on the context below, decide your next action.\n\n{context_info}"
 
-        # 4. Build output instructions dynamically based on per-operator state
+        # 3. Build output instructions dynamically based on per-operator state
         output_instructions = self._build_output_instructions(
             acquiring_open=acquiring_open,
             rehearsal_open=rehearsal_open,
@@ -820,9 +876,8 @@ class CognitiveWorker(GraphAutoma):
         -------
         List[Message]
             Messages to be sent to the LLM. Default structure:
-            - Message 1 (system): think_prompt + output_instructions
-            - Message 2 (user, optional): tools_description (if non-empty)
-            - Message N (user): context_info
+            - Message 1 (system): think_prompt + tools_description (if non-empty) + output_instructions
+            - Message 2 (user): context_info
 
         Examples
         --------
@@ -837,14 +892,15 @@ class CognitiveWorker(GraphAutoma):
         ...     ]
         """
         parts = [think_prompt]
+        if tools_description:
+            parts.append(tools_description)
         parts.append(output_instructions)
         system_content = "\n\n".join(parts)
 
-        messages = [Message.from_text(text=system_content, role="system")]
-        if tools_description:
-            messages.append(Message.from_text(text=tools_description, role="user"))
-        messages.append(Message.from_text(text=context_info, role="user"))
-        return messages
+        return [
+            Message.from_text(text=system_content, role="system"),
+            Message.from_text(text=context_info, role="user"),
+        ]
 
     async def before_action(
         self,
