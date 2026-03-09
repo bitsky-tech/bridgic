@@ -839,11 +839,33 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
 
     def _add_schema_properties(self, schema: Dict[str, Any]) -> Dict[str, Any]:
         """
-        OpenAI requires additionalProperties to be set to False for all objects
-        in structured output schemas. See:
-        [AdditionalProperties False Must Always Be Set in Objects](https://platform.openai.com/docs/guides/structured-outputs?example=moderation#additionalproperties-false-must-always-be-set-in-objects)
+        Recursively adjust a JSON Schema to comply with OpenAI strict structured
+        output requirements:
+
+        1. ``additionalProperties`` must be ``False`` on every object.
+           https://platform.openai.com/docs/guides/structured-outputs#additionalproperties-false-must-always-be-set-in-objects
+        2. ``required`` must list **all** keys in ``properties`` (even those
+           with defaults).
+           https://platform.openai.com/docs/guides/structured-outputs#all-fields-must-be-required
         """
-        schema["additionalProperties"] = False
+        properties = schema.get("properties")
+        if schema.get("type") == "object" or properties is not None:
+            schema["additionalProperties"] = False
+            # OpenAI strict mode: every property must be required
+            if properties is not None:
+                schema["required"] = list(properties.keys())
+        # Recursively process nested objects in $defs
+        for def_schema in schema.get("$defs", {}).values():
+            self._add_schema_properties(def_schema)
+        # Recursively process properties that are inline objects
+        if properties is not None:
+            for prop_schema in properties.values():
+                if prop_schema.get("type") == "object":
+                    self._add_schema_properties(prop_schema)
+                # Handle items in arrays (e.g., List[SomeModel] without $ref)
+                items = prop_schema.get("items")
+                if isinstance(items, dict) and items.get("type") == "object":
+                    self._add_schema_properties(items)
         return schema
     
     def _get_response_format(self, constraint: Union[PydanticModel, JsonSchema]) -> Dict[str, Any]:
