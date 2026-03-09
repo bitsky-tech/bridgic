@@ -1,4 +1,6 @@
+import inspect
 import time
+import traceback
 
 from abc import abstractmethod
 from enum import Enum
@@ -9,11 +11,74 @@ from bridgic.core.automa import GraphAutoma, worker
 from bridgic.core.automa._graph_meta import GraphMeta
 from bridgic.core.automa._automa import RunningOptions
 from bridgic.core.automa.interaction import InteractionFeedback
+from bridgic.core.automa.args import ArgsMappingRule, InOrder
 from bridgic.core.utils._console import printer
-from bridgic.core.model.types import Message
+from bridgic.core.model import BaseLlm
+from bridgic.core.model.types import Message, ToolCall
+from bridgic.core.agentic import ConcurrentAutoma
+from bridgic.core.agentic.tool_specs import ToolSpec
 
-from bridgic.core.cognitive._context import CognitiveContext, CognitiveTools, CognitiveSkills, Exposure
-from bridgic.core.cognitive._cognitive_worker import CognitiveWorker
+from pydantic import BaseModel, ConfigDict
+
+from bridgic.core.cognitive._context import CognitiveContext, CognitiveTools, CognitiveSkills, Exposure, Step
+from bridgic.core.cognitive._cognitive_worker import (
+    CognitiveWorker, _DELEGATE,
+    ThinkDecision,
+)
+
+
+################################################################################################################
+# Action Result Data Structures
+################################################################################################################
+
+class ActionStepResult(BaseModel):
+    """
+    Result of executing one tool in the action phase.
+
+    Attributes
+    ----------
+    tool_id : str
+        ID of the tool call.
+    tool_name : str
+        Name of the tool.
+    tool_arguments : Dict[str, Any]
+        Arguments passed to the tool.
+    tool_result : Any
+        Raw result returned by the tool.
+    """
+    model_config = ConfigDict(
+        extra="forbid",
+        json_schema_extra={
+            "required": ["tool_id", "tool_name", "tool_arguments", "tool_result"],
+            "additionalProperties": False,
+        }
+    )
+    tool_id: str
+    tool_name: str
+    tool_arguments: Dict[str, Any]
+    tool_result: Any
+
+
+class ActionResult(BaseModel):
+    """
+    Overall result of the action phase (one or more tool executions).
+
+    Attributes
+    ----------
+    status : bool
+        True if all tools succeeded, False otherwise.
+    results : List[ActionStepResult]
+        Per-tool results in order.
+    """
+    model_config = ConfigDict(
+        extra="forbid",
+        json_schema_extra={
+            "required": ["status", "results"],
+            "additionalProperties": False,
+        }
+    )
+    status: bool
+    results: List[ActionStepResult]
 
 
 ################################################################################################################
@@ -34,12 +99,69 @@ class ErrorStrategy(Enum):
 # ThinkStep Descriptor
 ################################################################################################################
 
+class _BoundStep:
+    """
+    Per-instance binding of a ThinkStepDescriptor to an agent.
+
+    Created fresh by ThinkStepDescriptor.__get__ on each attribute access,
+    so concurrent agent instances never share mutable runtime state.
+    """
+
+    def __init__(self, descriptor: "ThinkStepDescriptor", agent: "AgentAutoma"):
+        self._descriptor = descriptor
+        self._agent = agent
+        self._runtime_tools: Optional[List[str]] = None
+        self._runtime_skills: Optional[List[str]] = None
+
+    def __await__(self):
+        """Make the bound step directly awaitable."""
+        tools, self._runtime_tools = self._runtime_tools, None
+        skills, self._runtime_skills = self._runtime_skills, None
+        return self._descriptor._execute(self._agent, tools=tools, skills=skills).__await__()
+
+    def with_tools(self, tools: List[str]) -> "_BoundStep":
+        """Restrict tools for this execution. Chainable with with_skills() and until()."""
+        self._runtime_tools = tools
+        return self
+
+    def with_skills(self, skills: List[str]) -> "_BoundStep":
+        """Restrict skills for this execution. Chainable with with_tools() and until()."""
+        self._runtime_skills = skills
+        return self
+
+    def until(
+        self,
+        condition: Optional[Union[Callable[[CognitiveContext], bool], Callable[[CognitiveContext], Awaitable[bool]]]] = None,
+        max_attempts: Optional[int] = None,
+        tools: Optional[List[str]] = None,
+        skills: Optional[List[str]] = None,
+    ):
+        """Run until condition is met, LLM signals finish, or max attempts reached."""
+        effective_tools = tools if tools is not None else self._runtime_tools
+        effective_skills = skills if skills is not None else self._runtime_skills
+        attempts = max_attempts if max_attempts is not None else self._descriptor.max_retries
+        return self._descriptor._execute_until(
+            self._agent, condition, attempts,
+            tools=effective_tools, skills=effective_skills,
+        )
+
+    @property
+    def worker(self) -> CognitiveWorker:
+        """Access the underlying worker (delegates to descriptor)."""
+        return self._descriptor.worker
+
+    def _execute_once(self, agent: "AgentAutoma", *, tools=None, skills=None):
+        """Delegate _execute_once to the descriptor (for testing). Returns (result, finished) tuple."""
+        return self._descriptor._execute_once(agent, tools=tools, skills=skills)
+
+
 class ThinkStepDescriptor:
     """
     Descriptor for declaring cognitive thinking steps.
 
-    When accessed on an instance, returns an awaitable coroutine that
-    executes the wrapped CognitiveWorker with the agent's current context.
+    When accessed on an agent instance, returns a fresh ``_BoundStep`` that
+    captures the agent reference. This ensures concurrent agent instances
+    never share mutable runtime state.
 
     Parameters
     ----------
@@ -70,8 +192,6 @@ class ThinkStepDescriptor:
         self.tools_filter = tools
         self.skills_filter = skills
         self._name: Optional[str] = None
-        self._runtime_tools: Optional[List[str]] = None
-        self._runtime_skills: Optional[List[str]] = None
 
     def __set_name__(self, owner: Type, name: str) -> None:
         self._name = name
@@ -79,27 +199,14 @@ class ThinkStepDescriptor:
     def __get__(self, obj: Optional["AgentAutoma"], objtype: Optional[Type] = None) -> Any:
         if obj is None:
             return self
-        # Return self to allow both direct await and .until() chaining
-        self._agent = obj
-        return self
+        # Return a fresh _BoundStep per access — no shared mutable state
+        return _BoundStep(self, obj)
 
-    def __await__(self):
-        """Make the descriptor directly awaitable."""
-        if not hasattr(self, '_agent') or self._agent is None:
-            raise RuntimeError(
-                f"Cannot await think_step '{self._name}': not accessed from agent instance. "
-                "Use 'await self.step_name' within cognition method."
-            )
-        tools, self._runtime_tools = self._runtime_tools, None
-        skills, self._runtime_skills = self._runtime_skills, None
-        return self._execute(self._agent, tools=tools, skills=skills).__await__()
-
-    def bind(self, agent: "AgentAutoma") -> "ThinkStepDescriptor":
+    def bind(self, agent: "AgentAutoma") -> "_BoundStep":
         """Bind this step to an agent instance for dynamic step creation.
 
-        This is needed when creating think_step instances inside cognition()
-        method as local variables, since the descriptor protocol only works
-        for class attributes.
+        Used when creating think_step instances inside cognition() as local
+        variables (descriptor protocol only works for class attributes).
 
         Parameters
         ----------
@@ -108,8 +215,8 @@ class ThinkStepDescriptor:
 
         Returns
         -------
-        ThinkStepDescriptor
-            Returns self for method chaining.
+        _BoundStep
+            A bound step ready for awaiting or chaining.
 
         Example
         -------
@@ -117,68 +224,24 @@ class ThinkStepDescriptor:
         ...     step = think_step(Worker()).bind(self)
         ...     await step.until(lambda ctx: ctx.done, max_attempts=5)
         """
-        self._agent = agent
-        return self
-
-    def with_tools(self, tools: List[str]) -> "ThinkStepDescriptor":
-        """
-        Dynamically restrict tools for this execution (in cognition method).
-
-        Stores the override on self and returns self, so it can be directly
-        awaited or chained with .with_skills() and .until().
-
-        Example
-        -------
-        >>> async def cognition(self, ctx):
-        ...     if ctx.phase == "search":
-        ...         await self.step.with_tools(["search_flights", "search_hotels"])
-        ...     else:
-        ...         await self.step.with_tools(["book_flight"]).with_skills(["booking"])
-        """
-        self._ensure_agent()
-        self._runtime_tools = tools
-        return self
-
-    def with_skills(self, skills: List[str]) -> "ThinkStepDescriptor":
-        """
-        Dynamically restrict skills for this execution (in cognition method).
-
-        Stores the override on self and returns self, so it can be directly
-        awaited or chained with .with_tools() and .until().
-
-        Example
-        -------
-        >>> async def cognition(self, ctx):
-        ...     await self.step.with_skills(["travel-planning"]).until(
-        ...         lambda ctx: ctx.plan_complete, max_attempts=5
-        ...     )
-        """
-        self._ensure_agent()
-        self._runtime_skills = skills
-        return self
-
-    def _ensure_agent(self) -> None:
-        if not hasattr(self, '_agent') or self._agent is None:
-            raise RuntimeError(
-                f"Cannot use with_tools/with_skills on think_step '{self._name}': "
-                "not accessed from agent instance. Use 'self.step_name.with_tools(...)' within cognition method."
-            )
+        return _BoundStep(self, agent)
 
     def until(
         self,
-        condition: Union[Callable[[CognitiveContext], bool], Callable[[CognitiveContext], Awaitable[bool]]],
+        condition: Optional[Union[Callable[[CognitiveContext], bool], Callable[[CognitiveContext], Awaitable[bool]]]] = None,
         max_attempts: Optional[int] = None,
         tools: Optional[List[str]] = None,
         skills: Optional[List[str]] = None,
     ):
         """
-        Create a repeating execution that runs until condition is met.
+        Create a repeating execution that runs until condition is met, LLM signals finish,
+        or max attempts is reached.
 
         Parameters
         ----------
-        condition : Union[Callable[[CognitiveContext], bool], Callable[[CognitiveContext], Awaitable[bool]]]
-            Condition function (sync or async) that receives context and returns True when done.
-            For LLM-based evaluation, use agent.check_task_completion(ctx) in an async condition.
+        condition : Optional callable
+            Condition function (sync or async) returning True when done.
+            If None, the loop continues until LLM sets finish=True or max_attempts is reached.
         max_attempts : Optional[int]
             Maximum attempts. If None, uses self.max_retries.
         tools : Optional[List[str]]
@@ -188,68 +251,54 @@ class ThinkStepDescriptor:
 
         Returns
         -------
-        Awaitable that executes the step repeatedly until condition or max attempts.
+        Awaitable that executes the step repeatedly until stopping condition or max attempts.
 
         Examples
         --------
-        # Sync condition (user-defined field)
+        # Rely on LLM finish signal (no explicit condition)
+        >>> await self.execute.until(max_attempts=20, skills=["my-skill"])
+
+        # Sync condition
         >>> await self.search.until(lambda ctx: ctx.found_results, max_attempts=5)
 
-        # Async condition (using LLM to check completion)
+        # Async condition
         >>> async def task_done(ctx):
-        ...     # Only check when no tools were called
         ...     if ctx.last_step_has_tools:
         ...         return False
         ...     return await self.check_task_completion(ctx)
-        >>>
         >>> await self.execute.until(task_done, max_attempts=10)
-
-        # With dynamic tools
-        >>> await self.search.until(
-        ...     lambda ctx: ctx.found,
-        ...     tools=["search_flights"],
-        ...     max_attempts=3
-        ... )
         """
-        if not hasattr(self, '_agent') or self._agent is None:
-            raise RuntimeError(
-                f"Cannot use until() on think_step '{self._name}': not accessed from agent instance. "
-                "Use within cognition method: await self.step_name.until(...)"
-            )
-
-        # Explicit args take precedence; fall back to values set by with_tools()/with_skills()
-        effective_tools = tools if tools is not None else self._runtime_tools
-        effective_skills = skills if skills is not None else self._runtime_skills
-        self._runtime_tools = None
-        self._runtime_skills = None
-
-        attempts = max_attempts if max_attempts is not None else self.max_retries
-        return self._execute_until(self._agent, condition, attempts, tools=effective_tools, skills=effective_skills)
+        raise RuntimeError(
+            f"Cannot call until() directly on think_step '{self._name}': "
+            "access via agent instance first: self.step_name.until(...)"
+        )
 
     async def _execute_until(
         self,
         agent: "AgentAutoma",
-        condition: Union[Callable[[CognitiveContext], bool], Callable[[CognitiveContext], Awaitable[bool]]],
+        condition: Optional[Union[Callable[[CognitiveContext], bool], Callable[[CognitiveContext], Awaitable[bool]]]],
         max_attempts: int,
         *,
         tools: Optional[List[str]] = None,
         skills: Optional[List[str]] = None,
     ) -> None:
-        """Execute the step repeatedly until condition is met or max attempts reached."""
-        import inspect
-
+        """Execute the step repeatedly until finish signal, condition is met, or max attempts reached."""
         for _ in range(max_attempts):
-            await self._execute_once(agent, tools=tools, skills=skills)
+            _, finished = await self._execute_once(agent, tools=tools, skills=skills)
 
-            # Check condition (supports both sync and async)
-            result = condition(agent._current_context)
-            if inspect.iscoroutine(result):
-                result = await result
-
-            if result:
+            # LLM explicit finish signal — highest priority
+            if finished:
                 return
 
-    async def _execute(self, agent: "AgentAutoma", *, tools: Optional[List[str]] = None, skills: Optional[List[str]] = None) -> None:
+            # Check condition (supports both sync and async)
+            if condition is not None:
+                result = condition(agent._current_context)
+                if inspect.iscoroutine(result):
+                    result = await result
+                if result:
+                    return
+
+    async def _execute(self, agent: "AgentAutoma", *, tools: Optional[List[str]] = None, skills: Optional[List[str]] = None) -> Any:
         """Execute the thinking step with error handling and optional tool/skill filtering."""
         context = agent._current_context
         if context is None:
@@ -258,10 +307,19 @@ class ThinkStepDescriptor:
                 "This step must be called within a cognition method."
             )
 
-        await self._execute_once(agent, tools=tools, skills=skills)
+        result, _ = await self._execute_once(agent, tools=tools, skills=skills)
+        return result
 
-    async def _execute_once(self, agent: "AgentAutoma", *, tools: Optional[List[str]] = None, skills: Optional[List[str]] = None) -> None:
-        """Execute the step once with all setup and teardown."""
+    async def _execute_once(self, agent: "AgentAutoma", *, tools: Optional[List[str]] = None, skills: Optional[List[str]] = None) -> Tuple[Any, bool]:
+        """Execute the step once with all setup and teardown.
+
+        Returns
+        -------
+        Tuple[Any, bool]
+            (result, finished) where:
+            - result: typed instance (output_schema mode) or None (standard mode)
+            - finished: True if LLM set finish=True on this round
+        """
         context = agent._current_context
 
         # Inject agent's default LLM if worker doesn't have one
@@ -280,6 +338,8 @@ class ThinkStepDescriptor:
 
         original_tools = None
         original_skills = None
+        filtered_skills = None
+        filtered_to_orig: Dict[int, int] = {}
 
         if effective_tools is not None:
             original_tools = context.tools
@@ -292,16 +352,66 @@ class ThinkStepDescriptor:
         if effective_skills is not None:
             original_skills = context.skills
             filtered_skills = CognitiveSkills()
-            for skill in original_skills.get_all():
+            # Build index mappings and copy revealed state from original to filtered.
+            # This preserves skill details disclosed in earlier iterations of until(),
+            # so the LLM doesn't need to re-request the same skill details each round.
+            orig_to_filtered: Dict[int, int] = {}
+            for orig_idx, skill in enumerate(original_skills.get_all()):
                 if skill.name in effective_skills:
+                    new_idx = len(filtered_skills)
                     filtered_skills.add(skill)
+                    orig_to_filtered[orig_idx] = new_idx
+                    filtered_to_orig[new_idx] = orig_idx
+            # Forward-copy cached reveals with remapped indices
+            for orig_idx, detail in original_skills._revealed.items():
+                if orig_idx in orig_to_filtered:
+                    filtered_skills._revealed[orig_to_filtered[orig_idx]] = detail
             context.skills = filtered_skills
 
         # Track worker token delta
         tokens_before = self.worker.spend_tokens
 
+        result = None
+        finished = False
         try:
-            await self._run_with_error_handling(context)
+            # ① Observe (enhancement semantics)
+            # Step 1: Get default observation from agent
+            default_obs = await agent.observation(context)
+
+            # Step 2: Let worker enhance it (pass default_observation)
+            obs = await self.worker.observation(context, default_observation=default_obs)
+
+            # Step 3: If worker returns _DELEGATE (legacy mode), use default
+            if obs is _DELEGATE:
+                obs = default_obs
+
+            # Write observation to context for the thinking phase
+            context.observation = obs
+
+            # Log observation if verbose
+            if self.worker._verbose:
+                obs_str = str(obs) if obs is not None else "None"
+                self.worker._log(
+                    "Observe", "Observation",
+                    obs_str[:200] + ("..." if len(obs_str) > 200 else ""),
+                    color="cyan"
+                )
+
+            # ② Think (pure thinking — worker returns decision directly via is_output=True)
+            decision = await self._run_with_error_handling(context)
+
+            # ③ Act (agent-level execution)
+            if decision is not None:
+                if self.worker.output_schema is not None:
+                    # output_schema mode: decision.output is typed instance, skip action
+                    result = decision.output
+                    finished = getattr(decision, 'finish', False)
+                else:
+                    # standard mode: decision.output is List[StepToolCall], execute tools
+                    await agent.action(decision, context, _worker=self.worker)
+                    result = None
+                    finished = getattr(decision, 'finish', False)
+
         finally:
             # Accumulate token delta to agent
             agent.spend_tokens += self.worker.spend_tokens - tokens_before
@@ -314,27 +424,33 @@ class ThinkStepDescriptor:
             if original_tools is not None:
                 context.tools = original_tools
             if original_skills is not None:
+                # Write back any new reveals from filtered_skills to original_skills
+                # (with reverse index mapping) so they persist across until() iterations.
+                if filtered_skills is not None:
+                    for filtered_idx, detail in filtered_skills._revealed.items():
+                        orig_idx = filtered_to_orig.get(filtered_idx)
+                        if orig_idx is not None:
+                            original_skills._revealed[orig_idx] = detail
                 context.skills = original_skills
 
-    async def _run_with_error_handling(self, context) -> None:
-        """Run the worker with configured error handling strategy."""
+        return result, finished
+
+    async def _run_with_error_handling(self, context) -> Any:
+        """Run the worker with configured error handling strategy, returning the decision."""
         if self.on_error == ErrorStrategy.RAISE:
-            await self.worker.arun(context=context)
+            return await self.worker.arun(context=context)
         elif self.on_error == ErrorStrategy.IGNORE:
             try:
-                await self.worker.arun(context=context)
+                return await self.worker.arun(context=context)
             except Exception:
-                pass
+                return None
         elif self.on_error == ErrorStrategy.RETRY:
-            last_error = None
             for attempt in range(self.max_retries + 1):
                 try:
-                    await self.worker.arun(context=context)
-                    return
+                    return await self.worker.arun(context=context)
                 except Exception as e:
-                    last_error = e
                     if attempt == self.max_retries:
-                        raise last_error
+                        raise
 
     @property
     def name(self) -> Optional[str]:
@@ -426,6 +542,89 @@ def think_step(
         tools=tools,
         skills=skills,
     )
+
+
+def _think_step_inline(
+    thinking_prompt: str,
+    llm: Optional[BaseLlm] = None,
+    *,
+    enable_rehearsal: bool = False,
+    enable_reflection: bool = False,
+    output_schema: Optional[Type] = None,
+    on_error: ErrorStrategy = ErrorStrategy.RAISE,
+    max_retries: int = 3,
+    tools: Optional[List[str]] = None,
+    skills: Optional[List[str]] = None,
+) -> ThinkStepDescriptor:
+    """
+    Create a think step from a thinking prompt string.
+
+    Convenience function for creating simple workers without defining a class.
+
+    Parameters
+    ----------
+    thinking_prompt : str
+        The thinking prompt to use.
+    llm : Optional[BaseLlm]
+        LLM instance to use.
+    enable_rehearsal : bool
+        Enable rehearsal policy.
+    enable_reflection : bool
+        Enable reflection policy.
+    output_schema : Optional[Type[BaseModel]]
+        If set, the worker produces a typed instance directly instead of
+        going through the standard tool-call loop.
+    on_error : ErrorStrategy
+        Error handling strategy.
+    max_retries : int
+        Maximum retry attempts.
+    tools : Optional[List[str]]
+        Tool filter for this step.
+    skills : Optional[List[str]]
+        Skill filter for this step.
+
+    Returns
+    -------
+    ThinkStepDescriptor
+        A descriptor that returns an awaitable when accessed.
+
+    Examples
+    --------
+    >>> class MyAgent(AgentAutoma):
+    ...     step = think_step.inline(
+    ...         "Plan ONE step",
+    ...         llm=llm,
+    ...         enable_rehearsal=True
+    ...     )
+    ...     plan_step = think_step.inline(
+    ...         "Produce a phased plan.",
+    ...         output_schema=PlanningResult,
+    ...     )
+    ...
+    ...     async def cognition(self, ctx):
+    ...         plan = await self.plan_step
+    ...         while not ctx.finish:
+    ...             await self.step
+    """
+    worker = CognitiveWorker.inline(
+        thinking_prompt=thinking_prompt,
+        llm=llm,
+        enable_rehearsal=enable_rehearsal,
+        enable_reflection=enable_reflection,
+        output_schema=output_schema,
+    )
+    return think_step(
+        worker=worker,
+        on_error=on_error,
+        max_retries=max_retries,
+        tools=tools,
+        skills=skills,
+    )
+
+
+# Attach as a static method to think_step
+think_step.inline = _think_step_inline
+think_step.from_prompt = _think_step_inline
 
 
 ################################################################################################################
@@ -688,6 +887,209 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT], metaclass=AgentAutoma
         """
         ...
 
+    async def observation(self, ctx: CognitiveContextT) -> Optional[str]:
+        """
+        Agent-level default observation, shared across all think steps.
+
+        Called by ThinkStepDescriptor when a worker's observation() returns _DELEGATE.
+        Override to provide custom context to all workers by default.
+
+        Parameters
+        ----------
+        ctx : CognitiveContextT
+            The cognitive context.
+
+        Returns
+        -------
+        Optional[str]
+            Custom observation to include in the thinking context.
+            Return None to include no observation.
+        """
+        return None
+
+    async def action(
+        self,
+        decision: Any,
+        ctx: CognitiveContextT,
+        *,
+        _worker: CognitiveWorker,
+    ) -> None:
+        """
+        Agent-level action execution. Override to change the execution engine.
+
+        Calls worker.before_action() and worker.after_action() as callbacks,
+        allowing per-worker customization within the shared infrastructure.
+
+        Parameters
+        ----------
+        decision : Any
+            The thinking decision (ThinkDecision or _ThinkResultModel instance).
+            Must have an 'output' field of type List[StepToolCall].
+        ctx : CognitiveContextT
+            The cognitive context.
+        _worker : CognitiveWorker
+            The worker that produced this decision (used for callbacks).
+
+        Raises
+        ------
+        TypeError
+            If decision.output is not a list (output_schema decisions should not reach here).
+        """
+        # Read tool calls from 'output' field (unified field name across all models)
+        calls = getattr(decision, 'output', None)
+        if not isinstance(calls, list):
+            raise TypeError(
+                f"action() received a non-tool-call decision (output type: {type(calls).__name__}). "
+                "output_schema decisions should not reach action()."
+            )
+
+        # No tool calls: record the thinking step and continue
+        if not calls:
+            ctx.add_info(Step(
+                content=decision.step_content,
+                status=True,
+                result=None,
+                metadata={"tool_calls": []}
+            ))
+            ctx.last_step_has_tools = False
+            return
+
+        tool_calls = self._convert_decision_to_tool_calls(calls, ctx)
+        matched = self._match_tool_calls(tool_calls, ctx)
+
+        # ① BEFORE ACTION (worker callback)
+        verified = await _worker.before_action(matched, ctx)
+        if not verified:
+            raise ValueError(f"No matching tools found for: {[tc.name for tc in tool_calls]}")
+
+        # Log tool execution
+        for tc, _ in verified:
+            _worker._log("Action", f"Executing: {tc.name}({tc.arguments})", color="green")
+
+        # ② EXECUTE TOOLS
+        action_result = await self._run_tools(verified)
+
+        # ③ AFTER ACTION (worker callback)
+        consequence = await _worker.after_action(action_result.results, ctx)
+
+        # Log result
+        status = "success" if action_result.status else "failed"
+        _worker._log("Action", f"Result: {status}", consequence, color="green")
+
+        ctx.add_info(Step(
+            content=decision.step_content,
+            status=action_result.status,
+            result=consequence,
+            metadata={"tool_calls": [tc[0].name for tc in verified]}
+        ))
+        ctx.last_step_has_tools = True
+
+    ############################################################################
+    # Execution helpers (migrated from CognitiveWorker)
+    ############################################################################
+
+    def _convert_decision_to_tool_calls(
+        self,
+        calls: List,
+        ctx: CognitiveContextT,
+    ) -> List[ToolCall]:
+        """Convert a list of StepToolCall into ToolCall objects with type-coerced arguments."""
+        _, tool_specs = ctx.get_field('tools')
+        tool_calls = []
+
+        for idx, call in enumerate(calls):
+            # Look up param types for this tool
+            tool_spec = next((s for s in tool_specs if s.tool_name == call.tool), None)
+            param_types: Dict[str, str] = {}
+            if tool_spec and tool_spec.tool_parameters:
+                for name, info in tool_spec.tool_parameters.get('properties', {}).items():
+                    param_types[name] = info.get('type', 'string')
+
+            # Build arguments dict with type coercion
+            arguments: Dict[str, Any] = {}
+            for arg in call.tool_arguments:
+                value: Any = arg.value
+                param_type = param_types.get(arg.name, 'string')
+                if param_type == 'integer':
+                    try:
+                        value = int(value)
+                    except (ValueError, TypeError):
+                        pass
+                elif param_type == 'number':
+                    try:
+                        value = float(value)
+                    except (ValueError, TypeError):
+                        pass
+                elif param_type == 'boolean':
+                    value = value.lower() in ('true', '1', 'yes')
+                arguments[arg.name] = value
+
+            tool_calls.append(ToolCall(id=f"call_{idx}", name=call.tool, arguments=arguments))
+
+        return tool_calls
+
+    def _match_tool_calls(
+        self,
+        tool_calls: List[ToolCall],
+        ctx: CognitiveContextT,
+    ) -> List[Tuple[ToolCall, ToolSpec]]:
+        """Match each ToolCall to its ToolSpec by name."""
+        _, tool_specs = ctx.get_field('tools')
+        matched: List[Tuple[ToolCall, ToolSpec]] = []
+        for tc in tool_calls:
+            for spec in tool_specs:
+                if tc.name == spec.tool_name:
+                    if tc.arguments.get("__args__") is not None:
+                        props = list(spec.tool_parameters.get('properties', {}).keys())
+                        args = tc.arguments.get("__args__")
+                        if isinstance(args, list):
+                            tc.arguments = dict(zip(props, args))
+                        else:
+                            tc.arguments = {props[0]: args} if props else {}
+                    matched.append((tc, spec))
+                    break
+        return matched
+
+    async def _run_tools(self, matched_list: List[Tuple[ToolCall, ToolSpec]]) -> ActionResult:
+        """Execute a list of (ToolCall, ToolSpec) pairs and return ActionResult."""
+        sandbox = ConcurrentAutoma()
+        tool_calls = []
+
+        for tool_call, tool_spec in matched_list:
+            tool_calls.append(tool_call)
+            tool_worker = tool_spec.create_worker()
+            worker_key = f"tool_{tool_call.name}_{tool_call.id}"
+            sandbox.add_worker(
+                key=worker_key,
+                worker=tool_worker,
+                args_mapping_rule=ArgsMappingRule.UNPACK
+            )
+
+        tool_args = [tc.arguments for tc in tool_calls]
+
+        try:
+            results = await sandbox.arun(InOrder(tool_args))
+            step_results = [
+                ActionStepResult(
+                    tool_id=tc.id,
+                    tool_name=tc.name,
+                    tool_arguments=tc.arguments,
+                    tool_result=result
+                )
+                for tc, result in zip(tool_calls, results)
+            ]
+            return ActionResult(status=True, results=step_results)
+        except Exception:
+            return ActionResult(
+                status=False,
+                results=[ActionStepResult(
+                    tool_id="",
+                    tool_name="",
+                    tool_arguments={},
+                    tool_result=traceback.format_exc()
+                )]
+            )
+
     ############################################################################
     # Task completion check
     ############################################################################
@@ -777,7 +1179,7 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT], metaclass=AgentAutoma
         ...     context_info = ctx.format_summary(include=['goal', 'cognitive_history'])
         ...     return f"{context_info}\\n\\nIs the task completed? YES or NO."
         """
-        # Use format_summary, similar to CognitiveWorker._build_fast_prompts
+        # Use format_summary, similar to CognitiveWorker._build_prompts
         context_info = ctx.format_summary()
 
         # observation field is not in summary (display=False), but we need it for completion check
@@ -870,11 +1272,10 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT], metaclass=AgentAutoma
         if self._verbose:
             agent_name = self.name or self.__class__.__name__
             steps_count = len(result.cognitive_history) if hasattr(result, 'cognitive_history') else 0
-            status = "Completed" if getattr(result, 'finish', False) else "In Progress"
             separator = "=" * 50
             printer.print(separator, color="cyan")
             printer.print(
-                f"  {agent_name} | {status}\n"
+                f"  {agent_name} | Completed\n"
                 f"  Steps: {steps_count} | "
                 f"Tokens: {self.spend_tokens} | "
                 f"Time: {self.spend_time:.2f}s",
