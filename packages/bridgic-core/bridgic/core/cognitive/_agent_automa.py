@@ -412,6 +412,11 @@ class ThinkStepDescriptor:
                     result = None
                     finished = getattr(decision, 'finish', False)
 
+                    # Record descriptor name in the last step's metadata for workflow replay.
+                    # This lets _build_workflow() find the exact worker for each step.
+                    if self._name and context.cognitive_history._items:
+                        context.cognitive_history._items[-1].metadata["step_key"] = self._name
+
         finally:
             # Accumulate token delta to agent
             agent.spend_tokens += self.worker.spend_tokens - tokens_before
@@ -980,7 +985,17 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT], metaclass=AgentAutoma
             content=decision.step_content,
             status=action_result.status,
             result=consequence,
-            metadata={"tool_calls": [tc[0].name for tc in verified]}
+            metadata={
+                "tool_calls": [tc[0].name for tc in verified],
+                "action_results": [
+                    {
+                        "tool_name": r.tool_name,
+                        "tool_arguments": r.tool_arguments,
+                        "tool_result": r.tool_result,
+                    }
+                    for r in action_result.results
+                ],
+            }
         ))
         ctx.last_step_has_tools = True
 
@@ -1195,12 +1210,13 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT], metaclass=AgentAutoma
     ############################################################################
 
     async def arun(
-        self, 
-        *, 
+        self,
+        *,
         context: Optional[CognitiveContextT] = None,
+        capture_workflow: bool = False,
         feedback_data: Optional[Union[InteractionFeedback, List[InteractionFeedback]]] = None,
         **kwargs
-    ) -> CognitiveContextT:
+    ) -> Union[CognitiveContextT, Tuple[CognitiveContextT, "GraphAutoma"]]:
         """
         Run the agent.
 
@@ -1208,13 +1224,16 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT], metaclass=AgentAutoma
         ----------
         context : Optional[CognitiveContextT]
             Pre-created context object. If provided, uses this context directly.
+        capture_workflow : bool
+            If True, returns a ``(context, workflow)`` tuple where ``workflow``
+            is a ``GraphAutoma`` representing the flat replay of this run.
         **kwargs
             Additional arguments passed to CognitiveContext constructor.
 
         Returns
         -------
-        CognitiveContextT
-            The context object after execution completes.
+        CognitiveContextT | Tuple[CognitiveContextT, GraphAutoma]
+            The context after execution (or a tuple when capture_workflow=True).
 
         Raises
         ------
@@ -1231,7 +1250,10 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT], metaclass=AgentAutoma
             # Set LLM for history compression if available
             if self._llm is not None:
                 context.cognitive_history.set_llm(self._llm)
-            return await self._run_and_report(context=context)
+            result = await self._run_and_report(context=context)
+            if capture_workflow:
+                return result, self._build_workflow()
+            return result
 
         if self._context_class is None:
             raise ValueError(
@@ -1261,7 +1283,73 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT], metaclass=AgentAutoma
         if self._llm is not None:
             context.cognitive_history.set_llm(self._llm)
 
-        return await self._run_and_report(context=context)
+        result = await self._run_and_report(context=context)
+        if capture_workflow:
+            return result, self._build_workflow()
+        return result
+
+    def _build_workflow(self) -> "GraphAutoma":
+        """
+        Build a linear GraphAutoma from the execution history of the last run.
+
+        Each step in ``cognitive_history`` becomes a ``WorkflowStepWorker`` node.
+        Tool call data is taken from the ``action_results`` entry in step metadata
+        (populated by ``action()`` during the live run).
+
+        If a step recorded a ``step_key`` in its metadata, the corresponding
+        worker from ``_declared_steps`` is used to build an ``observation_fn``
+        that replicates the original observe-think-act observation chain on replay.
+
+        Returns
+        -------
+        GraphAutoma
+            A ready-to-run workflow that replays all tool calls without LLM.
+        """
+        from ._workflow import WorkflowStepWorker, WorkflowToolCall
+
+        graph = GraphAutoma()
+        steps = list(self._current_context.cognitive_history.get_all())
+
+        for i, step in enumerate(steps):
+            raw = step.metadata.get("action_results", [])
+            tool_calls = [
+                WorkflowToolCall(
+                    tool_name=r["tool_name"],
+                    tool_arguments=r["tool_arguments"],
+                    tool_result=r.get("tool_result"),
+                )
+                for r in raw
+            ]
+
+            # Build observation_fn bound to the exact worker that produced this step.
+            obs_fn = None
+            step_key = step.metadata.get("step_key")
+            if step_key and step_key in self._declared_steps:
+                the_worker = self._declared_steps[step_key].worker
+
+                async def _obs(context, _agent=self, _worker=the_worker):
+                    default_obs = await _agent.observation(context)
+                    await _worker.observation(context, default_observation=default_obs)
+
+                obs_fn = _obs
+
+            step_worker = WorkflowStepWorker(
+                tool_calls=tool_calls,
+                step_content=step.content,
+                observation_fn=obs_fn,
+            )
+            is_first = (i == 0)
+            is_last = (i == len(steps) - 1)
+            graph.add_worker(
+                key=f"step_{i}",
+                worker=step_worker,
+                dependencies=[] if is_first else [f"step_{i - 1}"],
+                is_start=is_first,
+                is_output=is_last,
+                args_mapping_rule=ArgsMappingRule.AS_IS,
+            )
+
+        return graph
 
     async def _run_and_report(self, context: CognitiveContextT) -> CognitiveContextT:
         """Run the agent, measure time, and log summary."""

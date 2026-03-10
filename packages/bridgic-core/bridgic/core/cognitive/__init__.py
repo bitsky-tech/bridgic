@@ -87,6 +87,10 @@ from ._agent_automa import (
     ActionResult,
     ActionStepResult,
 )
+from ._workflow import (
+    WorkflowToolCall,
+    WorkflowStepWorker,
+)
 
 __all__ = [
     # Abstraction layer
@@ -120,4 +124,8 @@ __all__ = [
     "think_step",
     "ThinkStepDescriptor",
     "ErrorStrategy",
+
+    # Workflow capture & replay
+    "WorkflowToolCall",
+    "WorkflowStepWorker",
 ]
