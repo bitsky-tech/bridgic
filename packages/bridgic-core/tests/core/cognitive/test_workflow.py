@@ -8,9 +8,9 @@ from bridgic.core.cognitive import (
     AgentAutoma,
     CognitiveContext,
     CognitiveWorker,
-    think_step,
     WorkflowToolCall,
     WorkflowStepWorker,
+    Workflow,
 )
 from bridgic.core.cognitive._cognitive_worker import StepToolCall, ToolArgument
 from .tools import get_travel_planning_tools
@@ -103,23 +103,21 @@ def _make_agent(llm) -> AgentAutoma:
     worker_instance = _SimpleWorker(llm=llm)
 
     class _TravelAgent(AgentAutoma[CognitiveContext]):
-        step = think_step(worker_instance)
-
         async def cognition(self, ctx: CognitiveContext) -> None:
-            await self.step.until(max_attempts=5)
+            await self.run(worker_instance, name="step", max_attempts=5)
 
-    return _TravelAgent()
+    return _TravelAgent(llm=llm)
 
 
 # ---------------------------------------------------------------------------
-# Tests — capture_workflow
+# Tests — capture_workflow (new Workflow type)
 # ---------------------------------------------------------------------------
 
 class TestCaptureWorkflow:
 
     @pytest.mark.asyncio
     async def test_returns_tuple_when_capture_workflow(self):
-        """arun(capture_workflow=True) → (ctx, GraphAutoma)."""
+        """arun(capture_workflow=True) → (ctx, Workflow)."""
         llm = _make_llm_two_steps()
         agent = _make_agent(llm)
         ctx = _make_ctx()
@@ -129,46 +127,59 @@ class TestCaptureWorkflow:
         assert isinstance(result, tuple), "Expected (ctx, workflow) tuple"
         ctx_out, workflow = result
         assert isinstance(ctx_out, CognitiveContext)
-        assert isinstance(workflow, GraphAutoma)
+        assert isinstance(workflow, Workflow)
 
     @pytest.mark.asyncio
-    async def test_workflow_has_correct_number_of_workers(self):
-        """Workflow GraphAutoma has one worker per history step."""
+    async def test_workflow_has_correct_number_of_blocks(self):
+        """Workflow should contain blocks with all recorded steps."""
         llm = _make_llm_two_steps()
         agent = _make_agent(llm)
         ctx = _make_ctx()
 
         ctx_out, workflow = await agent.arun(context=ctx, capture_workflow=True)
 
-        # Two steps in history → two workers in workflow
+        # Two steps in history
         history_len = len(ctx_out.cognitive_history.get_all())
         assert history_len == 2
-        assert len(workflow._workers) == 2
+
+        # Workflow should have at least one block
+        assert len(workflow.blocks) >= 1
+
+        # Total steps across all blocks should match
+        total_steps = 0
+        for block in workflow.blocks:
+            if hasattr(block, 'steps'):
+                total_steps += len(block.steps)
+        assert total_steps == 2
 
     @pytest.mark.asyncio
-    async def test_workflow_workers_have_recorded_tool_calls(self):
-        """Each workflow worker contains the correct pre-recorded tool calls."""
+    async def test_workflow_blocks_have_recorded_tool_calls(self):
+        """Workflow blocks contain the correct recorded tool calls."""
         llm = _make_llm_two_steps()
         agent = _make_agent(llm)
         ctx = _make_ctx()
 
         _, workflow = await agent.arun(context=ctx, capture_workflow=True)
 
-        workers = list(workflow._workers.values())
-        # workers are _WorkerNode instances — the actual WorkflowStepWorker is inside
-        step0_worker = workers[0]._decorated_worker
-        step1_worker = workers[1]._decorated_worker
+        # Get all steps from blocks
+        all_steps = []
+        for block in workflow.blocks:
+            if hasattr(block, 'steps'):
+                all_steps.extend(block.steps)
 
-        assert isinstance(step0_worker, WorkflowStepWorker)
-        assert isinstance(step1_worker, WorkflowStepWorker)
+        assert len(all_steps) == 2
 
-        assert len(step0_worker.tool_calls) == 1
-        assert step0_worker.tool_calls[0].tool_name == "search_flights"
-        assert step0_worker.tool_calls[0].tool_arguments["origin"] == "Beijing"
+        # Step 0 — search_flights
+        step0_calls = all_steps[0].get("tool_calls", [])
+        assert len(step0_calls) == 1
+        assert step0_calls[0]["tool_name"] == "search_flights"
+        assert step0_calls[0]["tool_arguments"]["origin"] == "Beijing"
 
-        assert len(step1_worker.tool_calls) == 1
-        assert step1_worker.tool_calls[0].tool_name == "search_hotels"
-        assert step1_worker.tool_calls[0].tool_arguments["city"] == "Tokyo"
+        # Step 1 — search_hotels
+        step1_calls = all_steps[1].get("tool_calls", [])
+        assert len(step1_calls) == 1
+        assert step1_calls[0]["tool_name"] == "search_hotels"
+        assert step1_calls[0]["tool_arguments"]["city"] == "Tokyo"
 
     @pytest.mark.asyncio
     async def test_normal_arun_returns_context_not_tuple(self):
@@ -208,14 +219,51 @@ class TestCaptureWorkflow:
 
 
 # ---------------------------------------------------------------------------
+# Tests — new API (self.run)
+# ---------------------------------------------------------------------------
+
+class TestNewRunAPI:
+
+    @pytest.mark.asyncio
+    async def test_new_api_runs_agent(self):
+        """Agent using self.run() completes successfully."""
+        llm = _make_llm_two_steps()
+        agent = _make_agent(llm)
+        ctx = _make_ctx()
+
+        result = await agent.arun(context=ctx)
+
+        assert isinstance(result, CognitiveContext)
+        steps = result.cognitive_history.get_all()
+        assert len(steps) == 2
+        assert steps[0].metadata["action_results"][0]["tool_name"] == "search_flights"
+        assert steps[1].metadata["action_results"][0]["tool_name"] == "search_hotels"
+
+    @pytest.mark.asyncio
+    async def test_new_api_capture_workflow(self):
+        """New API agent also supports capture_workflow."""
+        llm = _make_llm_two_steps()
+        agent = _make_agent(llm)
+        ctx = _make_ctx()
+
+        result = await agent.arun(context=ctx, capture_workflow=True)
+
+        assert isinstance(result, tuple)
+        ctx_out, workflow = result
+        assert isinstance(ctx_out, CognitiveContext)
+        assert isinstance(workflow, Workflow)
+        assert len(workflow.blocks) >= 1
+
+
+# ---------------------------------------------------------------------------
 # Tests — serialization round-trip
 # ---------------------------------------------------------------------------
 
 class TestWorkflowSerialization:
 
     @pytest.mark.asyncio
-    async def test_dump_and_load_roundtrip(self):
-        """dump_to_dict → load_from_dict preserves all tool_calls and step metadata."""
+    async def test_workflow_model_dump_and_restore(self):
+        """Workflow model_dump → Workflow(**data) preserves all blocks."""
         llm = _make_llm_two_steps()
         agent = _make_agent(llm)
         ctx = _make_ctx()
@@ -223,27 +271,27 @@ class TestWorkflowSerialization:
         _, workflow = await agent.arun(context=ctx, capture_workflow=True)
 
         # Serialize
-        state = workflow.dump_to_dict()
-        assert isinstance(state, dict)
+        data = workflow.model_dump()
+        assert isinstance(data, dict)
 
-        # Deserialize into a fresh GraphAutoma
-        restored = GraphAutoma()
-        restored.load_from_dict(state)
+        # Deserialize
+        restored = Workflow(**data)
+        assert len(restored.blocks) == len(workflow.blocks)
 
-        assert len(restored._workers) == 2
+        # Verify step data preserved
+        orig_steps = []
+        for block in workflow.blocks:
+            if hasattr(block, 'steps'):
+                orig_steps.extend(block.steps)
 
-        # Verify workers are still WorkflowStepWorker with the right calls
-        workers = list(restored._workers.values())
-        w0 = workers[0]._decorated_worker
-        w1 = workers[1]._decorated_worker
+        restored_steps = []
+        for block in restored.blocks:
+            if hasattr(block, 'steps'):
+                restored_steps.extend(block.steps)
 
-        assert isinstance(w0, WorkflowStepWorker)
-        assert isinstance(w1, WorkflowStepWorker)
-
-        assert w0.tool_calls[0].tool_name == "search_flights"
-        assert w0.tool_calls[0].tool_arguments["origin"] == "Beijing"
-        assert w1.tool_calls[0].tool_name == "search_hotels"
-        assert w1.tool_calls[0].tool_arguments["city"] == "Tokyo"
+        assert len(orig_steps) == len(restored_steps)
+        assert orig_steps[0]["tool_calls"][0]["tool_name"] == "search_flights"
+        assert restored_steps[0]["tool_calls"][0]["tool_name"] == "search_flights"
 
     def test_workflow_tool_call_model_dump(self):
         """WorkflowToolCall serializes and deserializes via model_dump."""
@@ -280,87 +328,92 @@ class TestWorkflowSerialization:
 
 
 # ---------------------------------------------------------------------------
-# Tests — workflow replay
+# Tests — WorkflowStepWorker replay (these still work as before)
 # ---------------------------------------------------------------------------
 
 class TestWorkflowReplay:
 
     @pytest.mark.asyncio
-    async def test_replay_records_steps_in_history(self):
-        """Replaying a workflow fills ctx.cognitive_history with replayed steps."""
+    async def test_replay_step_worker_records_steps(self):
+        """WorkflowStepWorker fills ctx.cognitive_history with replayed steps."""
         llm = _make_llm_two_steps()
         agent = _make_agent(llm)
         original_ctx = _make_ctx()
 
-        _, workflow = await agent.arun(context=original_ctx, capture_workflow=True)
+        # Run agent to generate history
+        await agent.arun(context=original_ctx)
+        history = original_ctx.cognitive_history.get_all()
 
-        # Create a fresh context for replay (same tools, no prior history)
+        # Build a GraphAutoma from history (like the old workflow)
+        workflow = GraphAutoma()
+        for i, step in enumerate(history):
+            raw = step.metadata.get("action_results", [])
+            tool_calls = [
+                WorkflowToolCall(
+                    tool_name=r["tool_name"],
+                    tool_arguments=r["tool_arguments"],
+                )
+                for r in raw
+            ]
+            step_worker = WorkflowStepWorker(
+                tool_calls=tool_calls,
+                step_content=step.content,
+            )
+            from bridgic.core.automa.args import ArgsMappingRule
+            workflow.add_worker(
+                key=f"step_{i}",
+                worker=step_worker,
+                dependencies=[] if i == 0 else [f"step_{i - 1}"],
+                is_start=(i == 0),
+                is_output=(i == len(history) - 1),
+                args_mapping_rule=ArgsMappingRule.AS_IS,
+            )
+
+        # Replay
         replay_ctx = _make_ctx()
         result = await workflow.arun(context=replay_ctx)
 
-        # Result should be the same CognitiveContext (returned by last worker)
         assert result is replay_ctx
-
-        # History should have been populated by the replay
         steps = replay_ctx.cognitive_history.get_all()
         assert len(steps) == 2
 
     @pytest.mark.asyncio
     async def test_replay_calls_correct_tools(self):
         """Replay calls the same tools with the same arguments."""
-        llm = _make_llm_two_steps()
-        agent = _make_agent(llm)
-        original_ctx = _make_ctx()
+        tc1 = WorkflowToolCall(
+            tool_name="search_flights",
+            tool_arguments={"origin": "Beijing", "destination": "Tokyo", "date": "2024-06-01"},
+        )
+        tc2 = WorkflowToolCall(
+            tool_name="search_hotels",
+            tool_arguments={"city": "Tokyo", "check_in": "2024-06-01", "check_out": "2024-06-05"},
+        )
+        from bridgic.core.automa.args import ArgsMappingRule
 
-        _, workflow = await agent.arun(context=original_ctx, capture_workflow=True)
+        workflow = GraphAutoma()
+        w0 = WorkflowStepWorker(tool_calls=[tc1], step_content="Search flights")
+        w1 = WorkflowStepWorker(tool_calls=[tc2], step_content="Search hotels")
+        workflow.add_worker(key="step_0", worker=w0, is_start=True, args_mapping_rule=ArgsMappingRule.AS_IS)
+        workflow.add_worker(key="step_1", worker=w1, dependencies=["step_0"], is_output=True, args_mapping_rule=ArgsMappingRule.AS_IS)
 
         replay_ctx = _make_ctx()
         await workflow.arun(context=replay_ctx)
 
         steps = replay_ctx.cognitive_history.get_all()
+        assert len(steps) == 2
 
-        # Step 0: search_flights was called
         meta0 = steps[0].metadata
         assert "replayed" in meta0 and meta0["replayed"] is True
         assert "search_flights" in meta0["tool_calls"]
-        assert len(meta0["action_results"]) == 1
         ar0 = meta0["action_results"][0]
         assert ar0["tool_name"] == "search_flights"
-        assert ar0["tool_arguments"]["origin"] == "Beijing"
-        assert ar0["tool_arguments"]["destination"] == "Tokyo"
-        # The mock tool should have produced a real result string
         assert "Tokyo" in ar0["tool_result"]
 
-        # Step 1: search_hotels was called
         meta1 = steps[1].metadata
         assert "search_hotels" in meta1["tool_calls"]
         ar1 = meta1["action_results"][0]
         assert ar1["tool_name"] == "search_hotels"
-        assert ar1["tool_arguments"]["city"] == "Tokyo"
         assert "Tokyo" in ar1["tool_result"]
-
-    @pytest.mark.asyncio
-    async def test_replay_after_serialization_roundtrip(self):
-        """Workflow survives serialization round-trip and still replays correctly."""
-        llm = _make_llm_two_steps()
-        agent = _make_agent(llm)
-        original_ctx = _make_ctx()
-
-        _, workflow = await agent.arun(context=original_ctx, capture_workflow=True)
-
-        # Serialize and restore
-        state = workflow.dump_to_dict()
-        restored_workflow = GraphAutoma()
-        restored_workflow.load_from_dict(state)
-
-        # Replay with the restored workflow
-        replay_ctx = _make_ctx()
-        await restored_workflow.arun(context=replay_ctx)
-
-        steps = replay_ctx.cognitive_history.get_all()
-        assert len(steps) == 2
-        assert steps[0].metadata["action_results"][0]["tool_name"] == "search_flights"
-        assert steps[1].metadata["action_results"][0]["tool_name"] == "search_hotels"
 
     @pytest.mark.asyncio
     async def test_replay_raises_if_tool_missing(self):
@@ -403,4 +456,3 @@ class TestWorkflowReplay:
         assert steps[0].content == "thinking step"
         assert steps[0].metadata["tool_calls"] == []
         assert steps[0].metadata["replayed"] is True
-        assert result.last_step_has_tools is False

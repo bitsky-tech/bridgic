@@ -1,15 +1,23 @@
 """
-CognitiveWorker - Core component of the cognitive architecture.
+CognitiveWorker - Core thinking unit of the cognitive architecture.
 
-A CognitiveWorker represents one thinking cycle of an Agent and is the minimal
-programmable unit of "observe-think-act".
+A CognitiveWorker represents the "think" phase of one observe-think-act cycle.
+Observation (before) and action (after) are orchestrated by AgentAutoma.
 
 Design:
-1. Single thinking mode: Merges thinking and tool selection into 1 LLM call.
+1. Think-only unit: Each arun() call performs exactly the thinking phase.
+   Observation is injected via context.observation (set by AgentAutoma._run_once
+   before calling arun). Action is executed by AgentAutoma.action() after arun
+   returns.
 
-2. Works directly with CognitiveContext
-   - CognitiveWorker is the concrete implementation of GraphAutoma
-   - CognitiveContext is the concrete implementation of Context
+2. Multi-round thinking loop: The thinking phase calls the LLM at least once.
+   Cognitive policies (acquiring, rehearsal, reflection) may trigger additional
+   rounds within the same arun() call. Each policy fires at most once per call,
+   then permanently closes for that round.
+
+3. Works directly with CognitiveContext:
+   - CognitiveWorker extends GraphAutoma (single-node graph, _thinking as start+output)
+   - CognitiveContext extends Context (Exposure-based field management)
 """
 
 import time
@@ -373,8 +381,8 @@ class CognitiveWorker(GraphAutoma):
         """
         Thinking phase: decide what to do next (thinking + tool selection in one call).
 
-        Reads observation from context.observation (set by ThinkStepDescriptor before
-        calling arun). Returns the decision directly; ThinkStepDescriptor reads the
+        Reads observation from context.observation (set by AgentAutoma.run() before
+        calling arun). Returns the decision directly; AgentAutoma.run() reads the
         arun() return value (no side-channel via _last_decision).
         """
         if not isinstance(context, CognitiveContext):
@@ -1047,7 +1055,7 @@ class CognitiveWorker(GraphAutoma):
         feedback_data: Optional[Union[InteractionFeedback, List[InteractionFeedback]]] = None,
         **kwargs
     ) -> Any:
-        """Run the observe-think-act cycle. First arg should be CognitiveContext."""
+        """Execute the thinking phase. Observation must be pre-set in context.observation."""
         start_time = time.time()
         result = await super().arun(*args, feedback_data=feedback_data, **kwargs)
         self.spend_time += time.time() - start_time

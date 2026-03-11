@@ -3,7 +3,7 @@ import os
 import types
 import pytest
 from unittest.mock import MagicMock
-from typing import Any, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from bridgic.core.cognitive import (
     CognitiveContext,
@@ -15,7 +15,6 @@ from bridgic.core.cognitive import (
     DetailRequest,
     _DELEGATE,
     AgentAutoma,
-    think_step,
 )
 from bridgic.core.model.types import ToolCall
 from .tools import get_travel_planning_tools
@@ -227,7 +226,7 @@ class TestCognitiveWorker:
         worker = _PromptCustomWorker(llm=llm)
         ctx = _make_context()
 
-        # Simulate ThinkStepDescriptor: call observation(), write to ctx.observation, then arun()
+        # Simulate AgentAutoma.run(): call observation(), write to ctx.observation, then arun()
         obs = await worker.observation(ctx)
         assert obs == "Custom observation: environment is ready"
         ctx.observation = obs
@@ -290,10 +289,9 @@ class TestCognitiveWorker:
         worker = _SimpleWorker(llm=llm)
 
         class SimpleAgent(AgentAutoma[TravelCtx]):
-            step = think_step(worker)
             async def cognition(self, ctx):
-                await self.step  # search_flights
-                await self.step  # no tools
+                await self.run(worker, name="step")  # search_flights
+                await self.run(worker, name="step")  # no tools
 
         result = await SimpleAgent().arun(goal="Plan a trip to Tokyo")
 
@@ -301,7 +299,6 @@ class TestCognitiveWorker:
         # Step 1: search_flights was executed
         assert result.cognitive_history[0].status is True
         assert "search_flights" in result.cognitive_history[0].metadata.get("tool_calls", [])
-        assert result.last_step_has_tools is False  # last step had no tools
 
     @pytest.mark.asyncio
     async def test_override_action_pipeline_via_agent(self):
@@ -329,9 +326,8 @@ class TestCognitiveWorker:
         worker = _ActionPipelineWorker(llm=llm)
 
         class PipelineAgent(AgentAutoma[TravelCtx]):
-            step = think_step(worker)
             async def cognition(self, ctx):
-                await self.step
+                await self.run(worker, name="step")
 
         result = await PipelineAgent().arun(goal="test")
 
@@ -499,13 +495,11 @@ class TestCognitiveWorker:
         worker = EnhancementWorker(llm=llm)
 
         class EnhancementAgent(AgentAutoma[TravelCtx]):
-            step = think_step(worker)
-
             async def observation(self, ctx):
                 return "Default observation from agent"
 
             async def cognition(self, ctx):
-                await self.step
+                await self.run(worker, name="step")
 
         result = await EnhancementAgent().arun(goal="test")
 
@@ -542,8 +536,8 @@ class TestCognitiveWorker:
         assert decision.step_content == "Search flights"
 
     @pytest.mark.asyncio
-    async def test_think_step_from_prompt(self):
-        """think_step.from_prompt() creates a step without defining a worker class."""
+    async def test_inline_worker_via_agent(self):
+        """CognitiveWorker.inline() creates a worker used with self.run() in cognition."""
         llm = MockLLM()
         llm.structured_output_response = ThinkDecision(
             step_content="Search flights",
@@ -557,15 +551,15 @@ class TestCognitiveWorker:
             )],
         )
 
-        class SimpleAgent(AgentAutoma[TravelCtx]):
-            step = think_step.from_prompt(
-                "Plan ONE step",
-                llm=llm,
-                enable_rehearsal=False
-            )
+        worker = CognitiveWorker.inline(
+            "Plan ONE step",
+            llm=llm,
+            enable_rehearsal=False
+        )
 
+        class SimpleAgent(AgentAutoma[TravelCtx]):
             async def cognition(self, ctx):
-                await self.step
+                await self.run(worker, name="step")
 
         result = await SimpleAgent().arun(goal="test")
         assert len(result.cognitive_history) == 1
@@ -736,14 +730,6 @@ class _PlannerWorker(CognitiveWorker):
         return "Produce a phased execution plan."
 
 
-class _MockAgentForOutputType(AgentAutoma[CognitiveContext]):
-    """Minimal agent wrapping _PlannerWorker for output_type testing."""
-    plan_step = think_step(_PlannerWorker())
-
-    async def cognition(self, ctx: CognitiveContext) -> None:
-        pass  # not used directly in these tests
-
-
 class TestOutputType:
 
     @pytest.mark.asyncio
@@ -774,39 +760,40 @@ class TestOutputType:
 
     @pytest.mark.asyncio
     async def test_output_schema_skips_action(self):
-        """When output_schema is set, agent.action() is NOT called; await step returns typed instance."""
+        """When output_schema is set, agent.action() is NOT called; self.run() returns typed instance."""
         expected_output = _PlanResult(phases=[
             _PlanPhase(sub_goal="Phase 1", skill_name="skill-1"),
         ])
 
         # Track whether action() was called
         action_called = []
+        planner_worker = _PlannerWorker(llm=MockLLM())
 
-        class _TrackingAgent(_MockAgentForOutputType):
+        class _TrackingAgent(AgentAutoma[CognitiveContext]):
             async def action(self, decision, ctx, *, _worker):
                 action_called.append(decision)
 
-        llm = MockLLM()
-        agent = _TrackingAgent(llm=llm)
-        ctx = CognitiveContext(goal="Test output_schema")
-        agent._current_context = ctx
+            async def cognition(self, ctx):
+                nonlocal captured_result
+                captured_result = await self.run(planner_worker, name="plan_step")
 
-        # Get the dynamic ThinkDecision model from the worker and create a proper mock response
-        worker = agent.plan_step.worker
-        worker.set_llm(llm)
-        decision_model = worker._ThinkDecisionModel
+        captured_result = None
+
+        llm = MockLLM()
+        planner_worker.set_llm(llm)
+        decision_model = planner_worker._ThinkDecisionModel
         llm.structured_output_response = decision_model(
             step_content="Done", output=expected_output, finish=False
         )
 
-        result, finished = await agent.plan_step._execute_once(agent)
+        result = await _TrackingAgent(llm=llm).arun(goal="Test output_schema")
 
         # action() must NOT have been called
         assert len(action_called) == 0
 
-        # _execute_once extracts decision.output → typed _PlanResult
-        assert result is expected_output
-        assert isinstance(result, _PlanResult)
+        # self.run() extracts decision.output → typed _PlanResult
+        assert captured_result is expected_output
+        assert isinstance(captured_result, _PlanResult)
 
     @pytest.mark.asyncio
     async def test_output_schema_uses_schema_constraint(self):
@@ -841,27 +828,16 @@ class TestOutputType:
 
 
 class TestFinishSignal:
-    """Tests for finish=True signal stopping _execute_until() early."""
+    """Tests for finish=True signal stopping the loop early via self.run(max_attempts=...)."""
 
     @pytest.mark.asyncio
-    async def test_finish_true_stops_execute_until(self):
-        """When LLM sets finish=True, _execute_until() stops after that round."""
+    async def test_finish_true_stops_run_loop(self):
+        """When LLM sets finish=True, self.run(max_attempts=...) stops after that round."""
 
-        class _SimpleAgent(AgentAutoma):
-            think = think_step(CognitiveWorker.inline("Plan one step."))
-
-            async def cognition(self, ctx):
-                await self.think.until(max_attempts=10)
-
-        step_count = 0
-
-        # First call: finish=False (normal step with a tool call)
-        # Second call: finish=True (LLM signals done)
         call_idx = [0]
 
         class _FinishLLM(MockLLM):
             async def astructured_output(self, messages, constraint, **kwargs):
-                nonlocal step_count
                 idx = call_idx[0]
                 call_idx[0] += 1
                 # Return a decision; finish=True on second call
@@ -871,12 +847,14 @@ class TestFinishSignal:
                     finish=(idx == 1),
                 )
 
-        agent = _SimpleAgent(llm=_FinishLLM())
-        ctx = CognitiveContext(goal="Test finish signal")
-        agent._current_context = ctx
+        worker = CognitiveWorker.inline("Plan one step.")
 
-        # Run until — should stop after 2 rounds (finish=True on round 2)
-        await agent.think.until(max_attempts=10)
+        class _SimpleAgent(AgentAutoma[CognitiveContext]):
+            async def cognition(self, ctx):
+                await self.run(worker, name="think", max_attempts=10)
+
+        agent = _SimpleAgent(llm=_FinishLLM())
+        await agent.arun(goal="Test finish signal")
 
         assert call_idx[0] == 2, f"Expected 2 LLM calls, got {call_idx[0]}"
 
@@ -890,15 +868,14 @@ class TestFinishSignal:
                 call_idx[0] += 1
                 return ThinkDecision(step_content="step", output=[], finish=False)
 
-        class _LoopAgent(AgentAutoma):
-            think = think_step(CognitiveWorker.inline("Plan one step."))
-            async def cognition(self, ctx): pass
+        worker = CognitiveWorker.inline("Plan one step.")
+
+        class _LoopAgent(AgentAutoma[CognitiveContext]):
+            async def cognition(self, ctx):
+                await self.run(worker, name="think", max_attempts=3)
 
         agent = _LoopAgent(llm=_NeverFinishLLM())
-        ctx = CognitiveContext(goal="Test no finish")
-        agent._current_context = ctx
-
-        await agent.think.until(max_attempts=3)
+        await agent.arun(goal="Test no finish")
 
         assert call_idx[0] == 3, f"Expected 3 LLM calls, got {call_idx[0]}"
 
@@ -914,8 +891,9 @@ class TestActionDefensive:
         class _MySchema(BaseModel):
             value: str
 
+        worker = CognitiveWorker.inline("Plan.", output_schema=_MySchema)
+
         class _SchemaAgent(AgentAutoma):
-            plan = think_step(CognitiveWorker.inline("Plan.", output_schema=_MySchema))
             async def cognition(self, ctx): pass
 
         agent = _SchemaAgent(llm=MockLLM())
@@ -929,7 +907,7 @@ class TestActionDefensive:
         })()
 
         with pytest.raises(TypeError, match="action\\(\\) received"):
-            await agent.action(schema_decision, ctx, _worker=agent.plan.worker)
+            await agent.action(schema_decision, ctx, _worker=worker)
 
 
 class TestSkillRevealPersistence:
@@ -946,7 +924,7 @@ class TestSkillRevealPersistence:
         ctx.get_details("skills", 0)
         assert 0 in ctx.skills._revealed
 
-        # Simulate what _execute_once does when skills_filter is active:
+        # Simulate what self.run() does when tools filter is active:
         # create filtered_skills with only skill[0], copy reveals, then write back.
         original_skills = ctx.skills
         filtered_skills = CognitiveSkills()
@@ -983,4 +961,3 @@ class TestSkillRevealPersistence:
         # After write-back: both 0 and 1 in original_skills._revealed
         assert 0 in ctx.skills._revealed
         assert 1 in ctx.skills._revealed
-

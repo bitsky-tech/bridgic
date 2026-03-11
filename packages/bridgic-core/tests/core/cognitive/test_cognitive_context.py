@@ -313,11 +313,9 @@ class TestContextOverride:
     @pytest.mark.asyncio
     async def test_override_multiple_fields(self):
         """override() can temporarily set multiple fields at once."""
-        ctx = CognitiveContext(goal="original", last_step_has_tools=False)
+        ctx = CognitiveContext(goal="original")
 
-        async with ctx.override(goal="phase goal", last_step_has_tools=True):
+        async with ctx.override(goal="phase goal"):
             assert ctx.goal == "phase goal"
-            assert ctx.last_step_has_tools is True
 
         assert ctx.goal == "original"
-        assert ctx.last_step_has_tools is False

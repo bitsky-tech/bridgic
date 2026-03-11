@@ -1,13 +1,31 @@
 """
 Workflow capture and replay for AgentAutoma.
 
-A workflow is a flat, ordered sequence of tool calls recorded during a successful
-agent run, stored as a native GraphAutoma so it can be re-executed without LLM.
+Two parallel replay paths live in this module:
+
+1. **Flat replay** (``WorkflowStepWorker``):
+   A lightweight ``Worker`` that re-executes a pre-recorded list of tool calls
+   without any LLM involvement.  Used by ``AgentAutoma._build_workflow()`` to
+   produce a ``GraphAutoma``-based linear replay of a completed run.
+
+2. **Amphibious workflow** (``Workflow`` and its block types):
+   A serialisable Pydantic model that captures the structured shape of an agent
+   run (steps, loops, free-form linear traces).  Used by ``AmphibiousRunner``
+   to replay deterministically and fall back to agent mode on divergence.
+
+Data models for the amphibious workflow system:
+- ``WorkflowToolCall``: single recorded tool call (name + arguments + result)
+- ``WorkflowStepWorker``: flat-replay worker node for GraphAutoma
+- ``Workflow``: top-level container (blocks + patches + version)
+- ``StepBlock`` / ``LoopBlock`` / ``LinearTraceBlock``: block types
+- ``WorkerConfig``: worker reconstruction metadata
+- ``WorkflowPatch``: learning patch record generated after divergence
 """
 import traceback
-from typing import Any, Callable, Dict, List, Optional
+from datetime import datetime
+from typing import Any, Callable, Dict, List, Literal, Optional, Union
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing_extensions import override
 
 from bridgic.core.automa.worker import Worker
@@ -66,7 +84,6 @@ class WorkflowStepWorker(Worker):
                 status=True,
                 metadata={"tool_calls": [], "replayed": True},
             ))
-            context.last_step_has_tools = False
             return context
 
         # Build ToolCall objects from pre-recorded data
@@ -127,7 +144,6 @@ class WorkflowStepWorker(Worker):
                 "replayed": True,
             },
         ))
-        context.last_step_has_tools = True
         return context
 
     # ── Serialization ──────────────────────────────────────────────────────
@@ -150,3 +166,129 @@ class WorkflowStepWorker(Worker):
             WorkflowToolCall(**tc) for tc in state_dict.get("tool_calls", [])
         ]
         # observation_fn is not persisted; after deserialization it stays None.
+
+
+################################################################################################################
+# Amphibious Workflow Data Models
+################################################################################################################
+
+class WorkerConfig(BaseModel):
+    """Configuration for reconstructing a CognitiveWorker.
+
+    Stores enough information to recreate a worker for workflow replay,
+    or to describe the worker that originally executed a step.
+    """
+
+    prompt: str
+    class_name: Optional[str] = None
+    enable_rehearsal: bool = False
+    enable_reflection: bool = False
+    output_schema: Optional[str] = None  # fully qualified class name
+
+
+class WorkflowBlock(BaseModel):
+    """Base class for workflow execution blocks."""
+
+    type: Literal["step", "loop", "sequence", "branch", "linear_trace"]
+    name: str = ""
+
+
+class StepBlock(WorkflowBlock):
+    """A single step execution block."""
+
+    type: Literal["step"] = "step"
+    worker_config: Optional[WorkerConfig] = None
+    tool_calls: List[WorkflowToolCall] = Field(default_factory=list)
+    tools_filter: Optional[List[str]] = None
+    skills_filter: Optional[List[str]] = None
+
+
+class LoopBlock(WorkflowBlock):
+    """A loop execution block, recording each iteration's trace."""
+
+    type: Literal["loop"] = "loop"
+    worker_config: Optional[WorkerConfig] = None
+    iterations: List[List[Dict[str, Any]]] = Field(default_factory=list)
+    max_attempts: int = 10
+    tools_filter: Optional[List[str]] = None
+    skills_filter: Optional[List[str]] = None
+
+
+class LinearTraceBlock(WorkflowBlock):
+    """A block of free-form steps recorded linearly."""
+
+    type: Literal["linear_trace"] = "linear_trace"
+    steps: List[Dict[str, Any]] = Field(default_factory=list)
+
+
+class WorkflowPatch(BaseModel):
+    """A learning patch applied to a workflow after execution divergence."""
+
+    type: Literal["guard", "replace", "extend"]
+    block_index: int
+    trigger_pattern: str
+    resolution_steps: List[Dict[str, Any]] = Field(default_factory=list)
+    verified: bool = False
+    created_at: datetime = Field(default_factory=datetime.now)
+
+
+class Workflow(BaseModel):
+    """Serializable, executable workflow combining structured and linear blocks.
+
+    A workflow is generated from a successful agent run and can be replayed
+    deterministically. When replay encounters divergence, the amphibious
+    engine switches to agent mode.
+    """
+
+    blocks: List[Union[StepBlock, LoopBlock, LinearTraceBlock]] = Field(default_factory=list)
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    version: int = 1
+    patches: List[WorkflowPatch] = Field(default_factory=list)
+
+    def add_step_block(
+        self,
+        name: str,
+        tool_calls: Optional[List[WorkflowToolCall]] = None,
+        worker_config: Optional[WorkerConfig] = None,
+        tools_filter: Optional[List[str]] = None,
+        skills_filter: Optional[List[str]] = None,
+    ) -> StepBlock:
+        """Add a StepBlock to the workflow."""
+        block = StepBlock(
+            name=name,
+            tool_calls=tool_calls or [],
+            worker_config=worker_config,
+            tools_filter=tools_filter,
+            skills_filter=skills_filter,
+        )
+        self.blocks.append(block)
+        return block
+
+    def add_loop_block(
+        self,
+        name: str,
+        max_attempts: int = 10,
+        worker_config: Optional[WorkerConfig] = None,
+        tools_filter: Optional[List[str]] = None,
+        skills_filter: Optional[List[str]] = None,
+    ) -> LoopBlock:
+        """Add a LoopBlock to the workflow."""
+        block = LoopBlock(
+            name=name,
+            max_attempts=max_attempts,
+            worker_config=worker_config,
+            tools_filter=tools_filter,
+            skills_filter=skills_filter,
+        )
+        self.blocks.append(block)
+        return block
+
+    def add_linear_trace_block(
+        self,
+        name: str = "",
+        steps: Optional[List[Dict[str, Any]]] = None,
+    ) -> LinearTraceBlock:
+        """Add a LinearTraceBlock to the workflow."""
+        block = LinearTraceBlock(name=name, steps=steps or [])
+        self.blocks.append(block)
+        return block

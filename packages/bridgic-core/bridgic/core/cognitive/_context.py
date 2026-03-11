@@ -5,7 +5,6 @@ from typing import Any, Dict, List, Optional, Generic, TypeVar, Tuple, get_origi
 from pydantic import BaseModel, Field, ConfigDict
 from bridgic.core.agentic.tool_specs import ToolSpec
 from bridgic.core.model.types import Message
-from bridgic.core.utils._console import printer
 
 
 ################################################################################################################
@@ -177,6 +176,7 @@ class Exposure(ABC, Generic[T]):
 
     def __init__(self):
         self._items: List[T] = []
+        self._llm: Optional[Any] = None
 
     def __len__(self) -> int:
         return len(self._items)
@@ -214,6 +214,22 @@ class Exposure(ABC, Generic[T]):
             A copy of all elements.
         """
         return self._items.copy()
+
+    def set_llm(self, llm: Any) -> None:
+        """
+        Set the LLM for this exposure.
+
+        Stored as ``self._llm`` and available to subclasses that need it
+        (e.g. ``CognitiveHistory`` uses it for compression).
+        Called automatically by ``Context.set_llm()`` for fields marked with
+        ``json_schema_extra={"use_llm": True}``.
+
+        Parameters
+        ----------
+        llm : Any
+            LLM instance to store.
+        """
+        self._llm = llm
 
 
 class LayeredExposure(Exposure[T]):
@@ -382,28 +398,26 @@ class Context(BaseModel):
         def _get_exposure_type(field_type: Any) -> Optional[str]:
             """Return 'layered', 'entire', or None."""
             if inspect.isclass(field_type):
-                try:
-                    if issubclass(field_type, LayeredExposure):
-                        return 'layered'
-                    elif issubclass(field_type, EntireExposure):
-                        return 'entire'
-                    elif issubclass(field_type, Exposure):
-                        # Base Exposure - treat as entire (no details)
-                        return 'entire'
-                except TypeError:
-                    pass
+                if issubclass(field_type, LayeredExposure):
+                    return 'layered'
+                elif issubclass(field_type, EntireExposure):
+                    return 'entire'
+                elif issubclass(field_type, Exposure):
+                    # Base Exposure - treat as entire (no details)
+                    return 'entire'
+                else:
+                    raise ValueError(f"Invalid exposure type: {field_type}")
 
             origin = get_origin(field_type)
             if origin and inspect.isclass(origin):
-                try:
-                    if issubclass(origin, LayeredExposure):
-                        return 'layered'
-                    elif issubclass(origin, EntireExposure):
-                        return 'entire'
-                    elif issubclass(origin, Exposure):
-                        return 'entire'
-                except TypeError:
-                    pass
+                if issubclass(origin, LayeredExposure):
+                    return 'layered'
+                elif issubclass(origin, EntireExposure):
+                    return 'entire'
+                elif issubclass(origin, Exposure):
+                    return 'entire'
+                else:
+                    raise ValueError(f"Invalid origin exposure type: {origin}")
 
             return None
 
@@ -442,6 +456,35 @@ class Context(BaseModel):
             if not display:
                 hidden.append(field_name)
         return hidden
+
+    def set_llm(self, llm: Any) -> None:
+        """
+        Propagate an LLM to all Exposure fields that opt in via ``use_llm=True``.
+
+        Called by ``AgentAutoma`` at run start. Fields opt in by declaring:
+
+            my_field: MyExposure = Field(
+                ..., json_schema_extra={"use_llm": True}
+            )
+
+        Only Exposure fields are considered; non-Exposure fields are ignored.
+        Exposure fields without ``use_llm=True`` are also ignored.
+
+        Parameters
+        ----------
+        llm : Any
+            The LLM instance to propagate.
+        """
+        exposure_fields = self.__class__._exposure_fields or {}
+        for field_name in exposure_fields:
+            field_info = self.__class__.model_fields.get(field_name)
+            if field_info is None:
+                continue
+            extra = field_info.json_schema_extra or {}
+            if extra.get("use_llm", False):
+                field_value = getattr(self, field_name, None)
+                if field_value is not None:
+                    field_value.set_llm(llm)
 
     def summary(self) -> Dict[str, str]:
         """
@@ -883,10 +926,7 @@ class CognitiveSkills(LayeredExposure[Skill]):
         content = '---'.join(parts[2:]).strip()
 
         # Parse YAML frontmatter
-        try:
-            frontmatter = yaml.safe_load(frontmatter_text)
-        except yaml.YAMLError as e:
-            raise ValueError(f"Invalid YAML frontmatter: {e}")
+        frontmatter = yaml.safe_load(frontmatter_text)
 
         # Validate required fields
         if not isinstance(frontmatter, dict):
@@ -964,12 +1004,8 @@ class CognitiveSkills(LayeredExposure[Skill]):
 
         count = 0
         for skill_file in dir_path.glob(pattern):
-            try:
-                self.add_from_file(str(skill_file))
-                count += 1
-            except (ValueError, FileNotFoundError) as e:
-                # Log or handle errors for individual files
-                printer.print(f"Warning: Failed to load {skill_file}: {e}", color="yellow")
+            self.add_from_file(str(skill_file))
+            count += 1
 
         return count
 
@@ -1087,20 +1123,6 @@ class CognitiveHistory(LayeredExposure[Step]):
         # Compression state
         self.compressed_summary: str = ""
         self.compressed_count: int = 0
-
-        # LLM for compression (set via set_llm)
-        self._llm: Optional[Any] = None
-
-    def set_llm(self, llm: Any) -> None:
-        """
-        Set the LLM used for history compression.
-
-        Parameters
-        ----------
-        llm : BaseLlm
-            LLM instance with agenerate() method.
-        """
-        self._llm = llm
 
     def add(self, item: Step) -> int:
         """
@@ -1323,8 +1345,6 @@ class CognitiveContext(Context):
         History of cognitive steps (LayeredExposure - supports progressive disclosure).
     observation : Optional[str]
         Current observation from the last observation phase (not displayed in summary).
-    last_step_has_tools : bool
-        Whether the last thinking step executed any tool calls (not displayed in summary).
 
     Examples
     --------
@@ -1338,20 +1358,13 @@ class CognitiveContext(Context):
     goal: str = Field(default="", description="The goal to achieve")
     tools: CognitiveTools = Field(default_factory=CognitiveTools, description="Available tools")
     skills: CognitiveSkills = Field(default_factory=CognitiveSkills, description="Available skills")
-    cognitive_history: CognitiveHistory = Field(default_factory=CognitiveHistory)
+    cognitive_history: CognitiveHistory = Field(default_factory=CognitiveHistory, json_schema_extra={"use_llm": True})
 
     # observation: saved from _observation worker method (not displayed in summary)
     observation: Optional[str] = Field(
         default=None,
         json_schema_extra={"display": False},
         description="Current observation from the last observation phase"
-    )
-
-    # last_step_has_tools: track if last thinking step had tool calls (not displayed in summary)
-    last_step_has_tools: bool = Field(
-        default=False,
-        json_schema_extra={"display": False},
-        description="Whether the last thinking step executed any tool calls"
     )
 
     def summary(self) -> Dict[str, str]:

@@ -22,35 +22,36 @@ Architecture Layers
 - CognitiveContext: The default cognitive context combining all above
 
 **Implementation Layer - Worker:**
-- CognitiveWorker: One "observe-think-act" cycle (GraphAutoma implementation)
+- CognitiveWorker: The "think" unit of one observe-think-act cycle.
+  Observation is injected before calling arun(); action is executed by the
+  agent after arun() returns. Multiple LLM rounds may occur within a single
+  arun() call when cognitive policies (acquiring, rehearsal, reflection) fire.
 
 **Orchestration Layer:**
-- AgentAutoma: Agent automaton that orchestrates multiple CognitiveWorkers
-- think_step: Descriptor factory for declaring thinking steps
-- ThinkStepDescriptor: Descriptor that wraps a CognitiveWorker as an awaitable step
-- ErrorStrategy: Error handling strategies (RAISE, IGNORE, RETRY)
+- AgentAutoma: Agent automaton that orchestrates CognitiveWorkers
+  - self.run(worker, ...) — primary execution method (observe-think-act)
+  - self.execute_plan(operator) — structured flow operators
+  - exception_scope() — mark steps as exception handlers (excluded from workflow)
+- ErrorStrategy: Error handling strategies for self.run() (RAISE, IGNORE, RETRY)
+
+**Workflow & Trace:**
+- Workflow: Serialisable structured workflow (StepBlock/LoopBlock/LinearTraceBlock)
+- WorkflowStepWorker: Flat-replay worker node (re-executes recorded tool calls)
+- TraceStep, ExecutionTrace: Per-step and per-run execution recording
+- DivergenceDetector, DivergenceLevel: Replay divergence detection
+- FlowStep/Loop/Sequence/Branch: Structured flow operators for execute_plan()
 
 Example
 -------
->>> from cognitive import (
-...     AgentAutoma, CognitiveContext, CognitiveWorker,
-...     think_step, ErrorStrategy
-... )
->>>
->>> class ReactWorker(CognitiveWorker):
-...     async def thinking(self):
-...         return "Plan ONE immediate next step."
->>>
 >>> class MyAgent(AgentAutoma[CognitiveContext]):
-...     analyze = think_step(ReactWorker(llm))
-...     execute = think_step(ReactWorker(llm), on_error=ErrorStrategy.RETRY)
-...
 ...     async def cognition(self, ctx):
-...         await self.analyze
-...         while not ctx.finish:
-...             await self.execute
->>>
->>> result = await MyAgent(llm=llm).arun(goal="Complete the task")
+...         planner = CognitiveWorker.inline("Plan approach", llm=self.llm)
+...         executor = CognitiveWorker.inline("Execute step", llm=self.llm)
+...         await self.run(planner, name="plan")
+...         await self.run(executor, name="execute",
+...                        until=lambda ctx: ctx.done, max_attempts=20)
+...
+>>> ctx = await MyAgent(llm=llm).arun(goal="Complete the task")
 """
 from ._context import (
     # Abstraction layer
@@ -80,8 +81,6 @@ from ._cognitive_worker import (
 from ._agent_automa import (
     # Orchestration
     AgentAutoma,
-    think_step,
-    ThinkStepDescriptor,
     ErrorStrategy,
     # Action result data structures
     ActionResult,
@@ -90,6 +89,26 @@ from ._agent_automa import (
 from ._workflow import (
     WorkflowToolCall,
     WorkflowStepWorker,
+    # Amphibious workflow data models
+    Workflow,
+    WorkflowBlock,
+    StepBlock,
+    LoopBlock,
+    LinearTraceBlock,
+    WorkerConfig,
+    WorkflowPatch,
+)
+from ._trace import (
+    TraceStep,
+    ExecutionTrace,
+    DivergenceDetector,
+    DivergenceLevel,
+)
+from ._operators import (
+    Step as FlowStep,
+    Loop,
+    Sequence,
+    Branch,
 )
 
 __all__ = [
@@ -121,11 +140,30 @@ __all__ = [
 
     # Orchestration layer
     "AgentAutoma",
-    "think_step",
-    "ThinkStepDescriptor",
     "ErrorStrategy",
 
     # Workflow capture & replay
     "WorkflowToolCall",
     "WorkflowStepWorker",
+
+    # Amphibious workflow
+    "Workflow",
+    "WorkflowBlock",
+    "StepBlock",
+    "LoopBlock",
+    "LinearTraceBlock",
+    "WorkerConfig",
+    "WorkflowPatch",
+
+    # Trace
+    "TraceStep",
+    "ExecutionTrace",
+    "DivergenceDetector",
+    "DivergenceLevel",
+
+    # Flow operators
+    "FlowStep",
+    "Loop",
+    "Sequence",
+    "Branch",
 ]
