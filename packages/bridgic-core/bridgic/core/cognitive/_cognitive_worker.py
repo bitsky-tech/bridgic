@@ -767,6 +767,11 @@ class CognitiveWorker(GraphAutoma):
             context_info += f"\n\nObservation:\n{observation}"
         user_prompt_context = f"Based on the context below, decide your next action.\n\n{context_info}"
 
+        # Inject phase-level goal if set by sequential()/loop()
+        phase_goal = getattr(context, '_phase_goal', None)
+        if phase_goal:
+            user_prompt_context += f"\n\n## Current Phase Goal\n{phase_goal}\nWhen this phase goal is achieved, set finish=True."
+
         # 3. Build output instructions dynamically based on per-operator state
         output_instructions = self._build_output_instructions(
             acquiring_open=acquiring_open,

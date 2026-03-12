@@ -1,4 +1,4 @@
-"""Tests for the amphibious refactoring: self.run(), execute_plan(), trace, operators, etc."""
+"""Tests for the amphibious refactoring: self.run(), trace, workflow patcher, etc."""
 import types
 import pytest
 from typing import Any, List, Optional
@@ -11,14 +11,9 @@ from bridgic.core.cognitive import (
     ErrorStrategy,
     Workflow,
     TraceStep,
-    ExecutionTrace,
     DivergenceDetector,
     DivergenceLevel,
     WorkflowToolCall,
-    FlowStep,
-    Loop,
-    Sequence,
-    Branch,
 )
 from bridgic.core.cognitive._cognitive_worker import StepToolCall, ToolArgument
 from bridgic.core.cognitive._amphibious import (
@@ -228,151 +223,6 @@ class TestRunMethod:
 
 
 # ---------------------------------------------------------------------------
-# Tests — execute_plan() with operators
-# ---------------------------------------------------------------------------
-
-class TestExecutePlan:
-
-    @pytest.mark.asyncio
-    async def test_execute_step_operator(self):
-        """execute_plan(FlowStep(...)) executes a single step."""
-        llm = MockLLM([_make_search_step()])
-        worker = CognitiveWorker.inline("Plan", llm=llm)
-
-        class Agent(AgentAutoma[CognitiveContext]):
-            async def cognition(self, ctx):
-                step = FlowStep(worker=worker, name="plan")
-                await self.execute_plan(step)
-
-        agent = Agent(llm=llm)
-        ctx = _make_ctx()
-        result = await agent.arun(context=ctx)
-
-        steps = result.cognitive_history.get_all()
-        assert len(steps) == 1
-
-    @pytest.mark.asyncio
-    async def test_execute_loop_operator(self):
-        """execute_plan(Loop(...)) loops until finish."""
-        llm = MockLLM([_make_search_step(), _make_hotel_step(finish=True)])
-        worker = CognitiveWorker.inline("Execute", llm=llm)
-
-        class Agent(AgentAutoma[CognitiveContext]):
-            async def cognition(self, ctx):
-                loop = Loop(worker=worker, name="main_loop", max_attempts=5)
-                await self.execute_plan(loop)
-
-        agent = Agent(llm=llm)
-        ctx = _make_ctx()
-        result = await agent.arun(context=ctx)
-
-        steps = result.cognitive_history.get_all()
-        assert len(steps) == 2
-
-    @pytest.mark.asyncio
-    async def test_execute_sequence_operator(self):
-        """execute_plan(Sequence([...])) executes steps in order."""
-        llm = MockLLM([_make_search_step(), _make_hotel_step()])
-        worker1 = CognitiveWorker.inline("Step 1", llm=llm)
-        worker2 = CognitiveWorker.inline("Step 2", llm=llm)
-
-        class Agent(AgentAutoma[CognitiveContext]):
-            async def cognition(self, ctx):
-                seq = Sequence([
-                    FlowStep(worker=worker1, name="step1"),
-                    FlowStep(worker=worker2, name="step2"),
-                ], name="sequence")
-                await self.execute_plan(seq)
-
-        agent = Agent(llm=llm)
-        ctx = _make_ctx()
-        result = await agent.arun(context=ctx)
-
-        steps = result.cognitive_history.get_all()
-        assert len(steps) == 2
-
-    @pytest.mark.asyncio
-    async def test_execute_branch_operator(self):
-        """execute_plan(Branch(...)) takes the correct branch."""
-        llm = MockLLM([_make_search_step()])
-        worker_a = CognitiveWorker.inline("Branch A", llm=llm)
-        worker_b = CognitiveWorker.inline("Branch B", llm=llm)
-
-        class Agent(AgentAutoma[CognitiveContext]):
-            async def cognition(self, ctx):
-                branch = Branch(
-                    condition=lambda ctx: "a",
-                    branches={
-                        "a": FlowStep(worker=worker_a, name="branch_a"),
-                        "b": FlowStep(worker=worker_b, name="branch_b"),
-                    },
-                    name="choice",
-                )
-                await self.execute_plan(branch)
-
-        agent = Agent(llm=llm)
-        ctx = _make_ctx()
-        result = await agent.arun(context=ctx)
-
-        steps = result.cognitive_history.get_all()
-        assert len(steps) == 1
-
-
-# ---------------------------------------------------------------------------
-# Tests — exception_scope
-# ---------------------------------------------------------------------------
-
-class TestExceptionScope:
-
-    @pytest.mark.asyncio
-    async def test_exception_scope_marks_steps(self):
-        """Steps in exception_scope are marked is_exception_handler=True in trace."""
-        llm = MockLLM([_make_search_step(), _make_hotel_step()])
-        worker = CognitiveWorker.inline("Handle", llm=llm)
-
-        class Agent(AgentAutoma[CognitiveContext]):
-            async def cognition(self, ctx):
-                async with self.exception_scope():
-                    await self.run(worker, name="handle_error")
-                await self.run(worker, name="normal_step")
-
-        agent = Agent(llm=llm)
-        ctx = _make_ctx()
-        result = await agent.arun(context=ctx, capture_workflow=True)
-
-        ctx_out, workflow = result
-        assert isinstance(workflow, Workflow)
-
-        # The exception step should be excluded from workflow blocks
-        all_steps = []
-        for block in workflow.blocks:
-            if hasattr(block, 'steps'):
-                all_steps.extend(block.steps)
-
-        # Only non-exception steps should be in the workflow
-        non_exception = [s for s in all_steps if not s.get("is_exception_handler", False)]
-        assert len(non_exception) >= 1
-
-    @pytest.mark.asyncio
-    async def test_exception_scope_restores_flag(self):
-        """exception_scope restores _in_exception_scope on exit."""
-        llm = MockLLM([_make_search_step()])
-        worker = CognitiveWorker.inline("Test", llm=llm)
-
-        class Agent(AgentAutoma[CognitiveContext]):
-            async def cognition(self, ctx):
-                assert not self._in_exception_scope
-                async with self.exception_scope():
-                    assert self._in_exception_scope
-                assert not self._in_exception_scope
-                await self.run(worker, name="after")
-
-        agent = Agent(llm=llm)
-        ctx = _make_ctx()
-        await agent.arun(context=ctx)
-
-
-# ---------------------------------------------------------------------------
 # Tests — TraceStep and DivergenceDetector
 # ---------------------------------------------------------------------------
 
@@ -394,17 +244,6 @@ class TestTraceAndDivergence:
         hashes = ts.compute_result_hashes()
         assert len(hashes) == 2
         assert hashes[0] != hashes[1]
-
-    def test_execution_trace_add_step(self):
-        """ExecutionTrace.add_step creates and appends steps."""
-        trace = ExecutionTrace()
-        s1 = trace.add_step("step1", observation="obs1")
-        s2 = trace.add_step("step2", observation="obs2")
-
-        assert len(trace.steps) == 2
-        assert s1.index == 0
-        assert s2.index == 1
-        assert s1.observation_hash != ""
 
     def test_divergence_detector_match(self):
         """DivergenceDetector returns MATCH for identical data."""
@@ -601,28 +440,6 @@ class TestBackwardCompatibility:
 # ---------------------------------------------------------------------------
 
 class TestWorkflowPatcher:
-
-    def test_guard_patch_from_exception_steps(self):
-        """WorkflowPatcher creates guard patches for exception-handler steps."""
-        wf = Workflow()
-        wf.add_linear_trace_block("main", steps=[
-            {"index": 0, "name": "s1", "tool_calls": []},
-        ])
-
-        log = [
-            TraceStep(
-                index=0, name="handle_error",
-                is_exception_handler=True,
-                tool_calls=[WorkflowToolCall(tool_name="close_popup", tool_arguments={})],
-            ),
-        ]
-
-        patcher = WorkflowPatcher(wf, log)
-        patches = patcher.analyze_and_patch()
-
-        guard_patches = [p for p in patches if p.type == "guard"]
-        assert len(guard_patches) >= 1
-        assert wf.version == 2  # Version incremented
 
     def test_no_patches_when_no_divergence(self):
         """WorkflowPatcher produces no patches for normal execution."""

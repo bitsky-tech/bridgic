@@ -42,8 +42,6 @@ class _SnapshotContext:
     Modes (keep_revealed parameter)
     --------------------------------
     None (default)  — Clear All: clears all _revealed on enter, restores on exit.
-    "auto"          — LLM Auto-Prune: LLM decides which items to keep based on new goal.
-                      Requires llm= kwarg.
     dict            — Custom: {field_name: [indices]} specifying which items to keep.
 
     Usage
@@ -53,11 +51,10 @@ class _SnapshotContext:
     # _revealed and goal restored on exit
     """
 
-    def __init__(self, ctx: "Context", fields: Dict[str, Any], keep_revealed=None, llm=None):
+    def __init__(self, ctx: "Context", fields: Dict[str, Any], keep_revealed=None):
         self._ctx = ctx
         self._fields = fields
         self._keep_revealed = keep_revealed
-        self._llm = llm
         self._originals: Dict[str, Any] = {}
         self._saved_revealed: Dict[str, Dict[int, str]] = {}
 
@@ -76,12 +73,8 @@ class _SnapshotContext:
             # Mode 1: Clear All
             for _, fval in _iter_layered(self._ctx):
                 fval._revealed.clear()
-        elif self._keep_revealed == "auto":
-            # Mode 2: LLM Auto-Prune
-            keep = await self._auto_prune(new_goal=self._fields.get('goal'))
-            self._apply_filter(keep)
         else:
-            # Mode 3: Custom dict {field: [indices]}
+            # Mode 2: Custom dict {field: [indices]}
             self._apply_filter(self._keep_revealed)
 
         return self._ctx
@@ -103,50 +96,6 @@ class _SnapshotContext:
             to_remove = [idx for idx in fval._revealed if idx not in allowed]
             for idx in to_remove:
                 del fval._revealed[idx]
-
-    async def _auto_prune(self, new_goal: Optional[str]) -> Dict[str, List[int]]:
-        """Ask LLM which revealed items are still relevant to the new goal."""
-        if self._llm is None:
-            # No LLM available, clear all
-            return {}
-
-        # Collect currently revealed items
-        revealed_lines = []
-        for fname, fval in _iter_layered(self._ctx):
-            for idx, detail in fval._revealed.items():
-                snippet = detail[:120] + ("..." if len(detail) > 120 else "")
-                revealed_lines.append(f"{fname}[{idx}]: {snippet}")
-
-        if not revealed_lines:
-            return {}
-
-        summary_text = "\n".join(revealed_lines)
-        prompt_text = (
-            f"New goal: {new_goal or 'Unknown'}\n\n"
-            f"Currently revealed items:\n{summary_text}\n\n"
-            "Which items are still relevant to the new goal? "
-            "Return their field names and indices in the 'keep' list."
-        )
-
-        from pydantic import BaseModel as _BaseModel
-        from bridgic.core.model.protocols import PydanticModel
-
-        class _KeepItem(_BaseModel):
-            field: str
-            index: int
-
-        class _AutoPruneResult(_BaseModel):
-            keep: List[_KeepItem] = Field(default_factory=list)
-
-        result = await self._llm.astructured_output(
-            messages=[Message.from_text(text=prompt_text, role="user")],
-            constraint=PydanticModel(model=_AutoPruneResult)
-        )
-
-        keep_dict: Dict[str, List[int]] = {}
-        for item in result.keep:
-            keep_dict.setdefault(item.field, []).append(item.index)
-        return keep_dict
 
 
 ################################################################################################################
@@ -406,7 +355,7 @@ class Context(BaseModel):
                     # Base Exposure - treat as entire (no details)
                     return 'entire'
                 else:
-                    raise ValueError(f"Invalid exposure type: {field_type}")
+                    return None
 
             origin = get_origin(field_type)
             if origin and inspect.isclass(origin):
@@ -417,7 +366,7 @@ class Context(BaseModel):
                 elif issubclass(origin, Exposure):
                     return 'entire'
                 else:
-                    raise ValueError(f"Invalid origin exposure type: {origin}")
+                    return None
 
             return None
 
@@ -667,7 +616,6 @@ class Context(BaseModel):
     def snapshot(
         self,
         keep_revealed=None,
-        llm=None,
         **fields: Any,
     ) -> "_SnapshotContext":
         """
@@ -678,14 +626,10 @@ class Context(BaseModel):
 
         Parameters
         ----------
-        keep_revealed : None | "auto" | Dict[str, List[int]]
+        keep_revealed : None | Dict[str, List[int]]
             Revealed state management mode:
             - None (default): Clear All — all _revealed caches are cleared on enter, restored on exit.
-            - "auto": LLM Auto-Prune — LLM decides which items to keep based on the new goal.
-              Requires llm= kwarg pointing to a BaseLlm instance.
             - dict: Custom — {field_name: [indices]} specifying which items to keep.
-        llm : Optional[BaseLlm]
-            LLM instance required only when keep_revealed="auto".
         **fields
             Field name to temporary value mappings.
 
@@ -704,12 +648,8 @@ class Context(BaseModel):
         >>> # Keep specific revealed items across phase boundary
         >>> async with ctx.snapshot(goal="new phase", keep_revealed={"skills": [0]}):
         ...     ...
-
-        >>> # LLM decides what to keep
-        >>> async with ctx.snapshot(goal="new phase", keep_revealed="auto", llm=my_llm):
-        ...     ...
         """
-        return _SnapshotContext(self, fields, keep_revealed=keep_revealed, llm=llm)
+        return _SnapshotContext(self, fields, keep_revealed=keep_revealed)
 
     def override(self, **fields: Any) -> "_SnapshotContext":
         """

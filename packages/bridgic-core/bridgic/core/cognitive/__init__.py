@@ -30,16 +30,13 @@ Architecture Layers
 **Orchestration Layer:**
 - AgentAutoma: Agent automaton that orchestrates CognitiveWorkers
   - self.run(worker, ...) — primary execution method (observe-think-act)
-  - self.execute_plan(operator) — structured flow operators
-  - exception_scope() — mark steps as exception handlers (excluded from workflow)
 - ErrorStrategy: Error handling strategies for self.run() (RAISE, IGNORE, RETRY)
 
 **Workflow & Trace:**
 - Workflow: Serialisable structured workflow (StepBlock/LoopBlock/LinearTraceBlock)
 - WorkflowStepWorker: Flat-replay worker node (re-executes recorded tool calls)
-- TraceStep, ExecutionTrace: Per-step and per-run execution recording
+- TraceStep: Per-step execution recording
 - DivergenceDetector, DivergenceLevel: Replay divergence detection
-- FlowStep/Loop/Sequence/Branch: Structured flow operators for execute_plan()
 
 Example
 -------
@@ -91,24 +88,15 @@ from ._workflow import (
     WorkflowStepWorker,
     # Amphibious workflow data models
     Workflow,
-    WorkflowBlock,
     StepBlock,
     LoopBlock,
     LinearTraceBlock,
-    WorkerConfig,
     WorkflowPatch,
 )
 from ._trace import (
     TraceStep,
-    ExecutionTrace,
     DivergenceDetector,
     DivergenceLevel,
-)
-from ._operators import (
-    Step as FlowStep,
-    Loop,
-    Sequence,
-    Branch,
 )
 
 __all__ = [
@@ -148,22 +136,13 @@ __all__ = [
 
     # Amphibious workflow
     "Workflow",
-    "WorkflowBlock",
     "StepBlock",
     "LoopBlock",
     "LinearTraceBlock",
-    "WorkerConfig",
     "WorkflowPatch",
 
     # Trace
     "TraceStep",
-    "ExecutionTrace",
     "DivergenceDetector",
     "DivergenceLevel",
-
-    # Flow operators
-    "FlowStep",
-    "Loop",
-    "Sequence",
-    "Branch",
 ]

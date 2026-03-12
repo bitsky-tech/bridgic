@@ -2,7 +2,6 @@
 Execution trace and divergence detection for amphibious agent execution.
 
 TraceStep records the complete state of a single observe-think-act cycle.
-ExecutionTrace collects TraceSteps across a run.
 DivergenceDetector compares recorded vs actual execution for mode switching.
 """
 import hashlib
@@ -25,7 +24,6 @@ class TraceStep(BaseModel):
     tool_calls: List[WorkflowToolCall] = Field(default_factory=list)
     tool_results: List[Any] = Field(default_factory=list)
     result_hashes: List[str] = Field(default_factory=list)
-    is_exception_handler: bool = False
     source: Literal["agent", "workflow"] = "agent"
 
     @staticmethod
@@ -43,40 +41,6 @@ class TraceStep(BaseModel):
         """Compute and set result_hashes from tool_results."""
         self.result_hashes = [self.compute_hash(r) for r in self.tool_results]
         return self.result_hashes
-
-
-class ExecutionTrace(BaseModel):
-    """Ordered collection of TraceSteps from a single run."""
-
-    steps: List[TraceStep] = Field(default_factory=list)
-    metadata: Dict[str, Any] = Field(default_factory=dict)
-
-    def add_step(
-        self,
-        name: str,
-        *,
-        observation: Optional[str] = None,
-        step_content: str = "",
-        tool_calls: Optional[List[WorkflowToolCall]] = None,
-        tool_results: Optional[List[Any]] = None,
-        is_exception_handler: bool = False,
-        source: Literal["agent", "workflow"] = "agent",
-    ) -> TraceStep:
-        """Create and append a new TraceStep."""
-        step = TraceStep(
-            index=len(self.steps),
-            name=name,
-            observation=observation,
-            step_content=step_content,
-            tool_calls=tool_calls or [],
-            tool_results=tool_results or [],
-            is_exception_handler=is_exception_handler,
-            source=source,
-        )
-        step.compute_observation_hash()
-        step.compute_result_hashes()
-        self.steps.append(step)
-        return step
 
 
 class DivergenceLevel(Enum):

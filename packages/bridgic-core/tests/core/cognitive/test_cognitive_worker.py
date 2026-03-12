@@ -893,7 +893,7 @@ class TestActionDefensive:
 
         worker = CognitiveWorker.inline("Plan.", output_schema=_MySchema)
 
-        class _SchemaAgent(AgentAutoma):
+        class _SchemaAgent(AgentAutoma[CognitiveContext]):
             async def cognition(self, ctx): pass
 
         agent = _SchemaAgent(llm=MockLLM())

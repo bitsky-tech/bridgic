@@ -9,13 +9,13 @@ After a run completes, it can learn from the experience and patch the
 workflow for better future replays.
 """
 import inspect
+import json
 from enum import Enum
-from typing import TYPE_CHECKING, Any, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from bridgic.core.cognitive._trace import (
     DivergenceDetector,
     DivergenceLevel,
-    ExecutionTrace,
     TraceStep,
 )
 from bridgic.core.cognitive._workflow import (
@@ -162,11 +162,20 @@ class AmphibiousRunner:
             )
 
     async def _replay_loop_block(self, block: LoopBlock, context) -> None:
-        """Replay a LoopBlock by iterating through recorded iterations.
+        """Replay a LoopBlock using template-driven adaptive execution.
 
-        For loops, tool name patterns must match but arguments may differ.
-        If patterns diverge, switches to agent mode.
+        When a ``pattern_template`` is available, uses lightweight model
+        evaluation to decide continue/stop and fill tool arguments for each
+        iteration.  Falls back to deterministic iteration replay when no
+        pattern template exists.
         """
+        if block.pattern_template and self.agent.llm is not None:
+            await self._replay_loop_adaptive(block, context)
+        else:
+            await self._replay_loop_deterministic(block, context)
+
+    async def _replay_loop_deterministic(self, block: LoopBlock, context) -> None:
+        """Deterministic loop replay — iterate through recorded iterations."""
         for iteration_idx, iteration_steps in enumerate(block.iterations):
             for step_data in iteration_steps:
                 tool_calls = [
@@ -191,6 +200,110 @@ class AmphibiousRunner:
                             "error": str(e),
                         },
                     )
+
+    async def _replay_loop_adaptive(self, block: LoopBlock, context) -> None:
+        """Adaptive loop replay — model evaluates continue/stop and fills arguments."""
+        template = block.pattern_template
+        reference = block.iterations[0] if block.iterations else []
+
+        for attempt in range(block.max_attempts):
+            # 1. Observe current state
+            obs = await self.agent.observation(context)
+            obs_str = str(obs) if obs is not None else ""
+
+            # 2. Lightweight model evaluation
+            decision = await self._loop_evaluate(obs_str, template, reference, context)
+
+            if decision.get("should_stop", False):
+                break
+
+            # 3. Execute tool calls from model decision
+            tool_calls_data = decision.get("tool_calls", [])
+            if not tool_calls_data:
+                break
+
+            tool_calls = []
+            for tc in tool_calls_data:
+                tool_calls.append(WorkflowToolCall(
+                    tool_name=tc.get("name", ""),
+                    tool_arguments=tc.get("arguments", {}),
+                ))
+
+            step_worker = WorkflowStepWorker(
+                tool_calls=tool_calls,
+                step_content=f"Adaptive loop iteration {attempt}",
+            )
+
+            try:
+                await step_worker.arun(context)
+            except Exception as e:
+                raise DivergenceError(
+                    f"Adaptive loop '{block.name}' iteration {attempt} failed: {e}",
+                    block_index=self.current_block_index,
+                    details={"iteration": attempt, "error": str(e)},
+                )
+
+    async def _loop_evaluate(
+        self,
+        observation: str,
+        template: List[str],
+        reference_iteration: List[dict],
+        context,
+    ) -> Dict[str, Any]:
+        """Lightweight model call to evaluate loop continuation and fill arguments.
+
+        The model only needs to:
+        1. Decide whether to continue or stop the loop
+        2. Fill in tool arguments for this iteration's tool calls
+
+        Returns a dict: ``{"should_stop": bool, "tool_calls": [{"name": str, "arguments": dict}]}``
+        """
+        from bridgic.core.model.types import Message
+
+        # Build reference arguments from first iteration
+        ref_args = []
+        for step in reference_iteration:
+            for tc in step.get("tool_calls", []):
+                name = tc.get("tool_name") or tc.get("name", "")
+                if name in template:
+                    ref_args.append({
+                        "name": name,
+                        "arguments": tc.get("tool_arguments") or tc.get("arguments", {}),
+                    })
+
+        prompt = (
+            "You are replaying a loop in a workflow. Based on the current observation, "
+            "decide whether to continue or stop, and fill in tool arguments.\n\n"
+            f"## Tool sequence template (one iteration)\n{json.dumps(template)}\n\n"
+            f"## Reference arguments from first iteration\n{json.dumps(ref_args, ensure_ascii=False)}\n\n"
+            f"## Current observation\n{observation}\n\n"
+            "## Instructions\n"
+            "- If there are no more items to process, set should_stop=true\n"
+            "- If there are items to process, set should_stop=false and provide tool_calls "
+            "with the correct arguments for this iteration\n"
+            "- Each tool_call needs: {\"name\": \"tool_name\", \"arguments\": {...}}\n\n"
+            "Respond with ONLY a JSON object:\n"
+            "{\"should_stop\": bool, \"tool_calls\": [{\"name\": str, \"arguments\": dict}]}"
+        )
+
+        try:
+            response = await self.agent.llm.achat([
+                Message.from_text(prompt, role="user"),
+            ])
+            text = ""
+            if response.message and response.message.blocks:
+                for block in response.message.blocks:
+                    if hasattr(block, "text"):
+                        text += block.text
+            # Parse JSON from response
+            text = text.strip()
+            # Handle markdown code blocks
+            if text.startswith("```"):
+                text = text.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+            return json.loads(text)
+        except Exception:
+            # On any failure, stop the loop to avoid infinite retries
+            return {"should_stop": True, "tool_calls": []}
 
     async def _replay_linear_trace(self, block: LinearTraceBlock, context) -> None:
         """Replay a LinearTraceBlock by executing each step's recorded tool calls."""
@@ -311,10 +424,6 @@ class WorkflowPatcher:
         """
         patches = []
 
-        # Find exception-handler steps and create guard patches
-        guard_patches = self._generate_guard_patches()
-        patches.extend(guard_patches)
-
         # Find tool argument changes and create replace patches
         replace_patches = self._generate_replace_patches()
         patches.extend(replace_patches)
@@ -326,24 +435,6 @@ class WorkflowPatcher:
         if patches:
             self.workflow.version += 1
 
-        return patches
-
-    def _generate_guard_patches(self) -> List[WorkflowPatch]:
-        """Generate guard patches from exception-handler steps.
-
-        Exception-handler steps (is_exception_handler=True) are converted
-        to guard patches that can handle the same exception in future replays.
-        """
-        patches = []
-        for step in self.execution_log:
-            if step.is_exception_handler:
-                patch = WorkflowPatch(
-                    type="guard",
-                    block_index=self._find_block_index_for_step(step),
-                    trigger_pattern=f"exception_at_step_{step.index}",
-                    resolution_steps=[step.model_dump()],
-                )
-                patches.append(patch)
         return patches
 
     def _generate_replace_patches(self) -> List[WorkflowPatch]:

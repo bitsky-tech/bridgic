@@ -18,7 +18,6 @@ Data models for the amphibious workflow system:
 - ``WorkflowStepWorker``: flat-replay worker node for GraphAutoma
 - ``Workflow``: top-level container (blocks + patches + version)
 - ``StepBlock`` / ``LoopBlock`` / ``LinearTraceBlock``: block types
-- ``WorkerConfig``: worker reconstruction metadata
 - ``WorkflowPatch``: learning patch record generated after divergence
 """
 import traceback
@@ -172,20 +171,6 @@ class WorkflowStepWorker(Worker):
 # Amphibious Workflow Data Models
 ################################################################################################################
 
-class WorkerConfig(BaseModel):
-    """Configuration for reconstructing a CognitiveWorker.
-
-    Stores enough information to recreate a worker for workflow replay,
-    or to describe the worker that originally executed a step.
-    """
-
-    prompt: str
-    class_name: Optional[str] = None
-    enable_rehearsal: bool = False
-    enable_reflection: bool = False
-    output_schema: Optional[str] = None  # fully qualified class name
-
-
 class WorkflowBlock(BaseModel):
     """Base class for workflow execution blocks."""
 
@@ -197,7 +182,6 @@ class StepBlock(WorkflowBlock):
     """A single step execution block."""
 
     type: Literal["step"] = "step"
-    worker_config: Optional[WorkerConfig] = None
     tool_calls: List[WorkflowToolCall] = Field(default_factory=list)
     tools_filter: Optional[List[str]] = None
     skills_filter: Optional[List[str]] = None
@@ -207,9 +191,9 @@ class LoopBlock(WorkflowBlock):
     """A loop execution block, recording each iteration's trace."""
 
     type: Literal["loop"] = "loop"
-    worker_config: Optional[WorkerConfig] = None
     iterations: List[List[Dict[str, Any]]] = Field(default_factory=list)
     max_attempts: int = 10
+    pattern_template: List[str] = Field(default_factory=list)
     tools_filter: Optional[List[str]] = None
     skills_filter: Optional[List[str]] = None
 
@@ -249,7 +233,6 @@ class Workflow(BaseModel):
         self,
         name: str,
         tool_calls: Optional[List[WorkflowToolCall]] = None,
-        worker_config: Optional[WorkerConfig] = None,
         tools_filter: Optional[List[str]] = None,
         skills_filter: Optional[List[str]] = None,
     ) -> StepBlock:
@@ -257,7 +240,6 @@ class Workflow(BaseModel):
         block = StepBlock(
             name=name,
             tool_calls=tool_calls or [],
-            worker_config=worker_config,
             tools_filter=tools_filter,
             skills_filter=skills_filter,
         )
@@ -268,7 +250,6 @@ class Workflow(BaseModel):
         self,
         name: str,
         max_attempts: int = 10,
-        worker_config: Optional[WorkerConfig] = None,
         tools_filter: Optional[List[str]] = None,
         skills_filter: Optional[List[str]] = None,
     ) -> LoopBlock:
@@ -276,7 +257,6 @@ class Workflow(BaseModel):
         block = LoopBlock(
             name=name,
             max_attempts=max_attempts,
-            worker_config=worker_config,
             tools_filter=tools_filter,
             skills_filter=skills_filter,
         )

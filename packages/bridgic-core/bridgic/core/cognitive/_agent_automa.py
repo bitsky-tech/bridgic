@@ -3,7 +3,6 @@ import time
 import traceback
 
 from abc import abstractmethod
-from contextlib import asynccontextmanager
 from enum import Enum
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Awaitable, Callable, Dict, Generic, List, Optional, Tuple, Type, TypeVar, Union, get_args, get_origin
@@ -96,6 +95,194 @@ class ErrorStrategy(Enum):
 
 
 ################################################################################################################
+# Workflow Builder (internal)
+################################################################################################################
+
+class _PhaseAccumulator:
+    """Accumulates trace steps for a single structural phase (sequential or loop)."""
+
+    __slots__ = ("phase_type", "name", "steps")
+
+    def __init__(self, phase_type: str, name: str):
+        self.phase_type: str = phase_type  # "sequential" | "loop"
+        self.name: str = name
+        self.steps: List[dict] = []
+
+
+class _WorkflowBuilder:
+    """Stack-based builder that converts phase-annotated trace steps into structured Workflow blocks.
+
+    ``begin_phase()`` / ``end_phase()`` bracket a structural phase.
+    ``record_step()`` routes step data to the active phase (or orphan list).
+    ``build()`` converts completed phases into the appropriate block types.
+    """
+
+    def __init__(self):
+        self._stack: List[_PhaseAccumulator] = []
+        self._completed: List[_PhaseAccumulator] = []
+        self._orphan_steps: List[dict] = []
+
+    def begin_phase(self, phase_type: str, name: str) -> None:
+        self._stack.append(_PhaseAccumulator(phase_type, name or phase_type))
+
+    def end_phase(self) -> None:
+        if self._stack:
+            self._completed.append(self._stack.pop())
+
+    def record_step(self, step_data: dict) -> None:
+        if self._stack:
+            self._stack[-1].steps.append(step_data)
+        else:
+            self._orphan_steps.append(step_data)
+
+    def has_content(self) -> bool:
+        return bool(self._completed) or bool(self._orphan_steps)
+
+    def has_phases(self) -> bool:
+        """True if at least one phase was opened (sequential/loop was used)."""
+        return bool(self._completed) or bool(self._stack)
+
+    @property
+    def steps_count(self) -> int:
+        """Total number of recorded steps across all phases and orphans."""
+        total = len(self._orphan_steps)
+        for phase in self._completed:
+            total += len(phase.steps)
+        for phase in self._stack:
+            total += len(phase.steps)
+        return total
+
+    # ------------------------------------------------------------------
+    # Build
+    # ------------------------------------------------------------------
+
+    def build(self):
+        """Convert accumulated phases into a ``Workflow``."""
+        from bridgic.core.cognitive._workflow import (
+            LinearTraceBlock,
+            LoopBlock,
+            Workflow,
+        )
+
+        wf = Workflow(metadata={"structured": True})
+
+        # Flush any remaining open phases (shouldn't happen, but be safe)
+        while self._stack:
+            self._completed.append(self._stack.pop())
+
+        # Prepend orphan steps that arrived before the first phase
+        if self._orphan_steps:
+            wf.blocks.append(LinearTraceBlock(name="pre", steps=list(self._orphan_steps)))
+
+        for phase in self._completed:
+            if phase.phase_type == "loop":
+                pattern, iterations = self._detect_loop_pattern(phase.steps)
+                wf.blocks.append(LoopBlock(
+                    name=phase.name,
+                    pattern_template=pattern,
+                    iterations=iterations,
+                    max_attempts=max(len(iterations) * 3, 10),
+                ))
+            else:
+                # sequential (or any other type) → LinearTraceBlock
+                wf.blocks.append(LinearTraceBlock(
+                    name=phase.name,
+                    steps=list(phase.steps),
+                ))
+
+        return wf
+
+    # ------------------------------------------------------------------
+    # Loop pattern detection
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _detect_loop_pattern(steps: List[dict]) -> tuple:
+        """Detect repeating tool-name subsequences and split steps into iterations.
+
+        Returns ``(pattern_template, iterations)`` where *pattern_template* is
+        the canonical tool-name sequence for one iteration and *iterations* is
+        a list of step-data lists, one per detected iteration.
+        """
+        # 1. Extract tool name sequence (flatten multi-tool steps)
+        tool_names: List[str] = []
+        step_indices: List[int] = []  # maps each tool_name entry → step index
+        for idx, step in enumerate(steps):
+            tcs = step.get("tool_calls", [])
+            for tc in tcs:
+                name = tc.get("tool_name") or tc.get("name", "")
+                if name:
+                    tool_names.append(name)
+                    step_indices.append(idx)
+
+        if not tool_names:
+            return [], [list(steps)] if steps else []
+
+        # 2. Find best repeating pattern via sliding window + frequency
+        #    Prefer longer patterns when counts are equal (more specific).
+        best_pattern: List[str] = []
+        best_count = 0
+
+        for length in range(2, min(len(tool_names) // 2 + 1, 16)):
+            candidate = tool_names[:length]
+            count = _count_pattern_occurrences(tool_names, candidate)
+            if count >= 2 and count >= best_count:
+                best_count = count
+                best_pattern = candidate
+
+        if best_count < 2:
+            # No repeating pattern found — treat as single iteration
+            return tool_names, [list(steps)]
+
+        # 3. Split steps into iterations using the detected pattern
+        iterations: List[List[dict]] = []
+        current_iter_steps: List[dict] = []
+        pattern_pos = 0
+
+        for step in steps:
+            current_iter_steps.append(step)
+
+            tcs = step.get("tool_calls", [])
+            for tc in tcs:
+                tn = tc.get("tool_name") or tc.get("name", "")
+                if tn and pattern_pos < len(best_pattern) and tn == best_pattern[pattern_pos]:
+                    pattern_pos += 1
+                    if pattern_pos >= len(best_pattern):
+                        # Completed one iteration
+                        iterations.append(current_iter_steps)
+                        current_iter_steps = []
+                        pattern_pos = 0
+                        break
+
+        # Remaining steps go into a partial iteration
+        if current_iter_steps:
+            iterations.append(current_iter_steps)
+
+        return best_pattern, iterations
+
+
+def _count_pattern_occurrences(sequence: List[str], pattern: List[str]) -> int:
+    """Count non-overlapping occurrences of *pattern* in *sequence*, tolerating noise."""
+    if not pattern:
+        return 0
+    count = 0
+    seq_pos = 0
+    while seq_pos < len(sequence):
+        pat_pos = 0
+        scan = seq_pos
+        while scan < len(sequence) and pat_pos < len(pattern):
+            if sequence[scan] == pattern[pat_pos]:
+                pat_pos += 1
+            scan += 1
+        if pat_pos == len(pattern):
+            count += 1
+            seq_pos = scan
+        else:
+            break
+    return count
+
+
+################################################################################################################
 # AgentAutoma
 ################################################################################################################
 
@@ -171,10 +358,9 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT]):
         self._llm = llm
         self._current_context: Optional[CognitiveContextT] = None
         self._verbose = verbose
-        self._in_exception_scope = False
 
-        # Execution trace for workflow capture
-        self._execution_trace = None
+        # Workflow capture
+        self._workflow_builder: Optional[_WorkflowBuilder] = None
 
         # Usage stats (reset per arun call)
         self.spend_tokens: int = 0
@@ -437,6 +623,7 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT]):
         skills: Optional[List[str]] = None,
         on_error: ErrorStrategy = ErrorStrategy.RAISE,
         max_retries: int = 0,
+        _phase_type: str = "sequential",
     ) -> Any:
         """
         Execute a CognitiveWorker through observe-think-act cycle(s).
@@ -490,30 +677,97 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT]):
 
         step_name = name or worker.__class__.__name__
 
-        if until is not None or max_attempts > 1:
-            # Looping execution
-            result = None
-            for attempt in range(max_attempts):
-                result, finished = await self._run_once(
+        # Default phase annotation: every run() opens a phase
+        if self._workflow_builder:
+            self._workflow_builder.begin_phase(_phase_type, step_name)
+
+        try:
+            if until is not None or max_attempts > 1:
+                # Looping execution
+                result = None
+                for attempt in range(max_attempts):
+                    result, finished = await self._run_once(
+                        worker, name=step_name, tools=tools, skills=skills,
+                        on_error=on_error, max_retries=max_retries,
+                    )
+                    if finished:
+                        return result
+                    if until is not None:
+                        cond_result = until(context)
+                        if inspect.iscoroutine(cond_result):
+                            cond_result = await cond_result
+                        if cond_result:
+                            return result
+                return result
+            else:
+                # Single execution
+                result, _ = await self._run_once(
                     worker, name=step_name, tools=tools, skills=skills,
                     on_error=on_error, max_retries=max_retries,
                 )
-                if finished:
-                    return result
-                if until is not None:
-                    cond_result = until(context)
-                    if inspect.iscoroutine(cond_result):
-                        cond_result = await cond_result
-                    if cond_result:
-                        return result
-            return result
-        else:
-            # Single execution
-            result, _ = await self._run_once(
-                worker, name=step_name, tools=tools, skills=skills,
-                on_error=on_error, max_retries=max_retries,
+                return result
+        finally:
+            if self._workflow_builder:
+                self._workflow_builder.end_phase()
+
+    async def sequential(
+        self,
+        worker: CognitiveWorker,
+        *,
+        name: Optional[str] = None,
+        goal: Optional[str] = None,
+        max_attempts: int = 20,
+        **kwargs,
+    ) -> Any:
+        """Alias for ``self.run()`` with optional phase-level goal injection.
+
+        Every ``run()`` call already records a sequential phase, so this method
+        only adds the *goal* convenience (temporarily sets ``context._phase_goal``
+        so the LLM knows when the phase is complete).
+        """
+        context = self._current_context
+        prev_goal = getattr(context, '_phase_goal', None)
+        if context is not None and goal is not None:
+            context._phase_goal = goal
+        try:
+            return await self.run(worker, name=name, max_attempts=max_attempts, **kwargs)
+        finally:
+            if context is not None:
+                context._phase_goal = prev_goal
+
+    async def loop(
+        self,
+        worker: CognitiveWorker,
+        *,
+        name: Optional[str] = None,
+        goal: Optional[str] = None,
+        max_attempts: int = 60,
+        **kwargs,
+    ) -> Any:
+        """Mark an execution phase as a *loop* (repeating iterations).
+
+        Behaves identically to ``self.run()`` but annotates the phase as ``"loop"``
+        so that ``capture_workflow=True`` produces a ``LoopBlock`` with pattern
+        detection.
+
+        Parameters
+        ----------
+        goal : Optional[str]
+            Phase-level goal injected into the LLM prompt so it knows when this
+            phase is complete and should set ``finish=True``.
+        """
+        context = self._current_context
+        prev_goal = getattr(context, '_phase_goal', None)
+        if context is not None and goal is not None:
+            context._phase_goal = goal
+        try:
+            return await self.run(
+                worker, name=name, max_attempts=max_attempts,
+                _phase_type="loop", **kwargs,
             )
-            return result
+        finally:
+            if context is not None:
+                context._phase_goal = prev_goal
 
     async def _run_once(
         self,
@@ -645,11 +899,10 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT]):
                         raise
 
     def _record_trace_step(self, name: str, obs: Any, decision: Any, context: Any) -> None:
-        """Record a TraceStep to the execution trace (if capture is active)."""
-        if self._execution_trace is None:
+        """Record a trace step to the workflow builder (if capture is active)."""
+        if self._workflow_builder is None:
             return
 
-        from bridgic.core.cognitive._trace import TraceStep
         from bridgic.core.cognitive._workflow import WorkflowToolCall
 
         tool_calls = []
@@ -671,106 +924,13 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT]):
                         ))
                         tool_results.append(ar.get("tool_result"))
 
-        self._execution_trace.add_step(
-            name=name,
-            observation=str(obs) if obs is not None else None,
-            step_content=step_content,
-            tool_calls=tool_calls,
-            tool_results=tool_results,
-            is_exception_handler=self._in_exception_scope,
-            source="agent",
-        )
-
-    ############################################################################
-    # Structured operator execution
-    ############################################################################
-
-    async def execute_plan(self, operator) -> Any:
-        """
-        Execute a structured flow operator (Step, Loop, Sequence, Branch).
-
-        Operators express flow control in a way that serializes cleanly to
-        workflow blocks.
-
-        Parameters
-        ----------
-        operator : Step | Loop | Sequence | Branch
-            The operator to execute.
-
-        Returns
-        -------
-        Any
-            The result from the last execution.
-
-        Examples
-        --------
-        >>> from bridgic.core.cognitive import Loop
-        >>> main_flow = Loop(
-        ...     worker=executor,
-        ...     name="process_orders",
-        ...     until=lambda ctx: ctx.all_done,
-        ...     max_attempts=50,
-        ... )
-        >>> await self.execute_plan(main_flow)
-        """
-        from bridgic.core.cognitive._operators import Step as OpStep, Loop, Sequence, Branch
-
-        if isinstance(operator, OpStep):
-            return await self.run(
-                operator.worker, name=operator.name,
-                tools=operator.tools, skills=operator.skills,
-            )
-        elif isinstance(operator, Loop):
-            return await self.run(
-                operator.worker, name=operator.name,
-                until=operator.until, max_attempts=operator.max_attempts,
-                tools=operator.tools, skills=operator.skills,
-            )
-        elif isinstance(operator, Sequence):
-            result = None
-            for sub_op in operator.steps:
-                result = await self.execute_plan(sub_op)
-            return result
-        elif isinstance(operator, Branch):
-            key = operator.condition(self._current_context)
-            if inspect.iscoroutine(key):
-                key = await key
-            chosen = operator.branches.get(key, operator.default)
-            if chosen is not None:
-                return await self.execute_plan(chosen)
-            return None
-        else:
-            raise TypeError(f"Unknown operator type: {type(operator).__name__}")
-
-    ############################################################################
-    # Exception scope
-    ############################################################################
-
-    @asynccontextmanager
-    async def exception_scope(self):
-        """
-        Mark subsequent steps as exception handling (not recorded in workflow).
-
-        Steps executed within this scope have ``is_exception_handler=True``
-        in their TraceStep. When generating a Workflow, these steps are stored
-        as known exception patterns at that position, not as normal flow steps.
-
-        Examples
-        --------
-        >>> async def cognition(self, ctx):
-        ...     try:
-        ...         await self.run(executor, name="navigate")
-        ...     except LoginPopupDetected:
-        ...         async with self.exception_scope():
-        ...             await self.run(login_handler, name="handle_login")
-        ...         await self.run(executor, name="navigate")  # retry
-        """
-        self._in_exception_scope = True
-        try:
-            yield
-        finally:
-            self._in_exception_scope = False
-
+        self._workflow_builder.record_step({
+            "name": name,
+            "observation": str(obs) if obs is not None else None,
+            "step_content": step_content,
+            "tool_calls": [tc.model_dump() for tc in tool_calls],
+            "tool_results": tool_results,
+        })
 
     ############################################################################
     # Task completion check
@@ -876,15 +1036,21 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT]):
         >>> # Capture workflow for later replay
         >>> ctx, wf = await agent.arun(goal="...", capture_workflow=True)
         """
+        ########################
+        # Pre-initialize status
+        ########################
         self.spend_tokens = 0
         self.spend_time = 0.0
 
-        # Initialize execution trace for workflow capture
+        if self._llm is None:
+            raise RuntimeError(
+                "AgentAutoma must be initialized with an LLM."
+            )
+
         if capture_workflow:
-            from bridgic.core.cognitive._trace import ExecutionTrace
-            self._execution_trace = ExecutionTrace()
+            self._workflow_builder = _WorkflowBuilder()
         else:
-            self._execution_trace = None
+            self._workflow_builder = None
 
         ########################
         # Initialize context
@@ -918,22 +1084,22 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT]):
                 for item in items:
                     attr.add(item)
 
-            # Set the LLM to the context
-            if self._llm is not None:
-                context.set_llm(self._llm)
+        # Set the LLM to the context
+        if self._llm is not None:
+            context.set_llm(self._llm)
+        self._current_context = context
+        
     
         ########################
         # Run the amphibious agent
         ########################
         if workflow is not None:
-            result = await self._run_amphibious(context, workflow)
+            return await self._run_amphibious(context, workflow)
         else:
             result = await self._run_and_report(context=context)
-
-        # If capture_workflow is True, return the result and the workflow
-        if capture_workflow:
-            return result, self._build_workflow()
-        return result
+            if capture_workflow:  # If capture_workflow is True, return the result and the workflow
+                return result, self._build_workflow()
+            return result
 
     async def _run_amphibious(self, context: CognitiveContextT, workflow) -> CognitiveContextT:
         """Run in amphibious mode using AmphibiousRunner."""
@@ -943,41 +1109,23 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT]):
 
     def _build_workflow(self) -> Any:
         """
-        Build a Workflow from the execution trace of the last run.
+        Build a Workflow from the workflow builder of the last run.
 
         Returns
         -------
         Workflow
-            Structured Workflow from the execution trace.
+            Structured Workflow from the captured steps.
         """
-        if self._execution_trace is not None:
-            return self._build_structured_workflow()
-
-        # Fallback: no trace active (capture_workflow=False path shouldn't reach here,
-        # but guard anyway by returning an empty Workflow).
-        from bridgic.core.cognitive._workflow import Workflow
-        wf = Workflow(metadata={"agent_class": self.__class__.__name__})
-        return wf
-
-    def _build_structured_workflow(self):
-        """Build a structured Workflow from the execution trace."""
         from bridgic.core.cognitive._workflow import Workflow
 
-        wf = Workflow(metadata={
+        if self._workflow_builder is None or not self._workflow_builder.has_content():
+            return Workflow(metadata={"agent_class": self.__class__.__name__})
+
+        wf = self._workflow_builder.build()
+        wf.metadata.update({
             "agent_class": self.__class__.__name__,
-            "steps_count": len(self._execution_trace.steps),
+            "steps_count": self._workflow_builder.steps_count,
         })
-
-        # Group consecutive non-exception steps into linear trace blocks
-        current_steps = []
-        for trace_step in self._execution_trace.steps:
-            if trace_step.is_exception_handler:
-                continue
-            current_steps.append(trace_step.model_dump())
-
-        if current_steps:
-            wf.add_linear_trace_block(name="main", steps=current_steps)
-
         return wf
 
     async def _run_and_report(self, context: CognitiveContextT) -> CognitiveContextT:
