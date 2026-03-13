@@ -1011,15 +1011,12 @@ class Step(BaseModel):
     ----------
     content : str
         Step content or description.
-    status : bool
-        Whether the step completed successfully.
     result : Optional[Any]
         Step execution result.
     metadata : Dict[str, Any]
         Additional metadata (e.g., tools used, timestamps).
     """
     content: str
-    status: bool
     result: Optional[Any] = None
     metadata: Dict[str, Any] = Field(default_factory=dict)
 
@@ -1158,8 +1155,7 @@ class CognitiveHistory(LayeredExposure[Step]):
         """Format steps for compression prompt."""
         lines = []
         for i, step in enumerate(steps):
-            status = "SUCCESS" if step.status else "FAILED"
-            lines.append(f"{i+1}. [{status}] {step.content}")
+            lines.append(f"{i+1}. {step.content}")
             if step.result:
                 result_str = str(step.result)[:200]
                 lines.append(f"   Result: {result_str}")
@@ -1167,8 +1163,7 @@ class CognitiveHistory(LayeredExposure[Step]):
 
     def _format_step_detail(self, step: Step, max_result_len: int = 500) -> str:
         """Format a step with full details for working memory display."""
-        status = "✓" if step.status else "✗"
-        lines = [f"{status} {step.content}"]
+        lines = [step.content]
 
         if step.result is not None:
             result_str = str(step.result)
@@ -1180,8 +1175,7 @@ class CognitiveHistory(LayeredExposure[Step]):
 
     def _format_step_summary(self, step: Step) -> str:
         """Format a step as brief summary for short-term memory display."""
-        status = "✓" if step.status else "✗"
-        return f"{status} {step.content}"
+        return step.content
 
     def summary(self) -> List[str]:
         """
@@ -1245,9 +1239,7 @@ class CognitiveHistory(LayeredExposure[Step]):
             return None
 
         step = self._items[index]
-        status_text = "SUCCESS" if step.status else "FAILED"
         lines = [
-            f"Status: {status_text}",
             f"Content: {step.content}",
         ]
 

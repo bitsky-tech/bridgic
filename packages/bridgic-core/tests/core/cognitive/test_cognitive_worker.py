@@ -132,15 +132,12 @@ class _PromptCustomWorker(CognitiveWorker):
 
 
 class _ActionPipelineWorker(CognitiveWorker):
-    """Worker with before_action + after_action overrides."""
+    """Worker with before_action override."""
     async def thinking(self):
         return "Plan ONE step"
 
     async def before_action(self, matched_list, context):
         return [(tc, spec) for tc, spec in matched_list if spec.tool_name != "book_flight"]
-
-    async def after_action(self, action_results, context):
-        return "; ".join(r.tool_result for r in action_results)
 
 
 # ---------------------------------------------------------------------------
@@ -152,7 +149,7 @@ class TestCognitiveWorker:
     @pytest.mark.asyncio
     async def test_template_method_defaults(self):
         """Default template methods: thinking raises, observation returns _DELEGATE,
-        before_action/after_action pass through, build_thinking_prompt assembles, non-context rejected."""
+        before_action passes through, build_thinking_prompt assembles, non-context rejected."""
         llm = MockLLM()
         worker = CognitiveWorker(llm=llm)
         ctx = _make_context()
@@ -169,15 +166,6 @@ class TestCognitiveWorker:
         tools = get_travel_planning_tools()
         matched = [(ToolCall(id="1", name="search_flights", arguments={}), tools[0])]
         assert await worker.before_action(matched, ctx) is matched
-
-        # after_action() → passthrough (returns raw list)
-        test_results = [
-            ActionStepResult(
-                tool_id="1", tool_name="search_flights",
-                tool_arguments={"origin": "Beijing"}, tool_result="found"
-            )
-        ]
-        assert await worker.after_action(test_results, ctx) is test_results
 
         # build_messages() → standard assembly: system + optional tools + user
         from bridgic.core.model.types import Message
@@ -297,12 +285,11 @@ class TestCognitiveWorker:
 
         assert len(result.cognitive_history) == 2
         # Step 1: search_flights was executed
-        assert result.cognitive_history[0].status is True
         assert "search_flights" in result.cognitive_history[0].metadata.get("tool_calls", [])
 
     @pytest.mark.asyncio
     async def test_override_action_pipeline_via_agent(self):
-        """before_action + after_action: book_flight filtered, result formatted as string via agent."""
+        """before_action: book_flight filtered via agent."""
         llm = MockLLM()
         llm.structured_output_response = ThinkDecision(
             step_content="Search and book",
@@ -335,9 +322,6 @@ class TestCognitiveWorker:
         # before_action filtered out book_flight
         assert "book_flight" not in last_step.metadata.get("tool_calls", [])
         assert "search_flights" in last_step.metadata.get("tool_calls", [])
-        # after_action formatted as joined string
-        assert isinstance(last_step.result, str)
-        assert "Found 3 available flights" in last_step.result
 
     @pytest.mark.asyncio
     async def test_rehearsal_policy(self):
@@ -760,24 +744,16 @@ class TestOutputType:
 
     @pytest.mark.asyncio
     async def test_output_schema_skips_action(self):
-        """When output_schema is set, agent.action() is NOT called; self.run() returns typed instance."""
+        """When output_schema is set, the typed output is stored in context history."""
         expected_output = _PlanResult(phases=[
             _PlanPhase(sub_goal="Phase 1", skill_name="skill-1"),
         ])
 
-        # Track whether action() was called
-        action_called = []
         planner_worker = _PlannerWorker(llm=MockLLM())
 
         class _TrackingAgent(AgentAutoma[CognitiveContext]):
-            async def action(self, decision, ctx, *, _worker):
-                action_called.append(decision)
-
             async def cognition(self, ctx):
-                nonlocal captured_result
-                captured_result = await self.run(planner_worker, name="plan_step")
-
-        captured_result = None
+                await self.run(planner_worker, name="plan_step")
 
         llm = MockLLM()
         planner_worker.set_llm(llm)
@@ -788,12 +764,10 @@ class TestOutputType:
 
         result = await _TrackingAgent(llm=llm).arun(goal="Test output_schema")
 
-        # action() must NOT have been called
-        assert len(action_called) == 0
-
-        # self.run() extracts decision.output → typed _PlanResult
-        assert captured_result is expected_output
-        assert isinstance(captured_result, _PlanResult)
+        # The typed output is stored as the step result in history
+        last_step = result.cognitive_history[-1]
+        assert last_step.result is expected_output
+        assert isinstance(last_step.result, _PlanResult)
 
     @pytest.mark.asyncio
     async def test_output_schema_uses_schema_constraint(self):
@@ -881,11 +855,11 @@ class TestFinishSignal:
 
 
 class TestActionDefensive:
-    """Tests for action() TypeError when output_schema decision is passed."""
+    """Tests for _action() handling of output_schema decisions."""
 
     @pytest.mark.asyncio
-    async def test_action_raises_type_error_for_non_list_output(self):
-        """action() raises TypeError when decision.output is not a list."""
+    async def test_action_custom_output_stores_result(self):
+        """_action() stores custom output in step when decision is not a tool-call list."""
         from pydantic import BaseModel
 
         class _MySchema(BaseModel):
@@ -906,8 +880,10 @@ class TestActionDefensive:
             'step_content': "done",
         })()
 
-        with pytest.raises(TypeError, match="action\\(\\) received"):
-            await agent.action(schema_decision, ctx, _worker=worker)
+        await agent._action(schema_decision, ctx, _worker=worker)
+        last_step = ctx.cognitive_history._items[-1]
+        assert last_step.content == "done"
+        assert last_step.result.value == "result"
 
 
 class TestSkillRevealPersistence:

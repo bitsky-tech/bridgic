@@ -1,29 +1,28 @@
 import inspect
 import time
 import traceback
-
 from abc import abstractmethod
+from contextlib import contextmanager
 from enum import Enum
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any, Awaitable, Callable, Dict, Generic, List, Optional, Tuple, Type, TypeVar, Union, get_args, get_origin
+from typing import (
+    Annotated, 
+    Any, Awaitable, Callable, Dict, Generic, List, Optional, Tuple, Type, TypeVar, Union, 
+    get_args, get_origin
+)
+
+from pydantic import BaseModel, ConfigDict
 
 from bridgic.core.automa import GraphAutoma, worker
 from bridgic.core.automa._automa import RunningOptions
 from bridgic.core.automa.interaction import InteractionFeedback
 from bridgic.core.automa.args import ArgsMappingRule, InOrder
-from bridgic.core.utils._console import printer
-from bridgic.core.model import BaseLlm
-from bridgic.core.model.types import Message, ToolCall
+from bridgic.core.model.types import ToolCall
 from bridgic.core.agentic import ConcurrentAutoma
 from bridgic.core.agentic.tool_specs import ToolSpec
-
-from pydantic import BaseModel, ConfigDict
-
 from bridgic.core.cognitive._context import CognitiveContext, CognitiveTools, CognitiveSkills, Exposure, Step
-from bridgic.core.cognitive._cognitive_worker import (
-    CognitiveWorker, _DELEGATE,
-    ThinkDecision,
-)
+from bridgic.core.cognitive._cognitive_worker import CognitiveWorker, _DELEGATE, StepToolCall
+from bridgic.core.utils._console import printer
 
 
 ################################################################################################################
@@ -72,11 +71,10 @@ class ActionResult(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
         json_schema_extra={
-            "required": ["status", "results"],
+            "required": ["results"],
             "additionalProperties": False,
         }
     )
-    status: bool
     results: List[ActionStepResult]
 
 
@@ -128,6 +126,15 @@ class _WorkflowBuilder:
     def end_phase(self) -> None:
         if self._stack:
             self._completed.append(self._stack.pop())
+
+    @contextmanager
+    def phase(self, phase_type: str, name: str):
+        """Context manager that brackets a structural phase."""
+        self.begin_phase(phase_type, name)
+        try:
+            yield
+        finally:
+            self.end_phase()
 
     def record_step(self, step_data: dict) -> None:
         if self._stack:
@@ -372,25 +379,23 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT]):
         return self._llm
 
     ############################################################################
-    # Worker methods (GraphAutoma execution flow)
+    # Internal core methods (GraphAutoma execution flow)
     ############################################################################
-
     @worker(is_start=True, is_output=True)
-    async def _cognition(self, context: CognitiveContextT) -> CognitiveContextT:
+    async def _cognition(self) -> str:
         """
         Cognition: runs the user-defined cognition method.
 
         This is the start worker of AgentAutoma. It sets up the context
         and delegates to the cognition() method for orchestration logic.
         """
-        self._current_context = context
-        await self.cognition(context)
-        return self._current_context
+        await self.cognition(self._current_context)
+        return self._current_context.summary()
+
 
     ############################################################################
     # Template methods (override by user to customize the behavior)
     ############################################################################
-
     async def observation(self, ctx: CognitiveContextT) -> Optional[str]:
         """
         Agent-level default observation, shared across all workers.
@@ -435,183 +440,51 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT]):
         """
         ...
 
-    async def action(
-        self,
-        decision: Any,
-        ctx: CognitiveContextT,
-        *,
-        _worker: CognitiveWorker,
-    ) -> None:
+    async def action_tool_call(self, tool_list: List[Tuple[ToolCall, ToolSpec]], context: CognitiveContextT) -> Any:
         """
-        Agent-level action execution. Override to change the execution engine.
-
-        Calls worker.before_action() and worker.after_action() as callbacks.
-
-        Parameters
-        ----------
-        decision : Any
-            The thinking decision with 'output' field (List[StepToolCall]).
-        ctx : CognitiveContextT
-            The cognitive context.
-        _worker : CognitiveWorker
-            The worker that produced this decision (used for callbacks).
+        Define the action logic.
         """
-        # Get the tool calls from the decision, which are the core obj in action()
-        calls = getattr(decision, 'output', None)
+        # The sand box is used to execute the tools in parallel
+        sandbox = ConcurrentAutoma()
 
-        # Validate the type of the tool calls
-        if not isinstance(calls, list):
-            raise TypeError(
-                f"action() received a non-tool-call decision (output type: {type(calls).__name__}). "
-                "output_schema decisions should not reach action()."
+        # Create the tool calls and add them to the sandbox
+        tool_calls = []
+        for tool_call, tool_spec in tool_list:
+            tool_calls.append(tool_call)
+            tool_worker = tool_spec.create_worker()
+            worker_key = f"tool_{tool_call.name}_{tool_call.id}"
+            sandbox.add_worker(
+                key=worker_key,
+                worker=tool_worker,
+                args_mapping_rule=ArgsMappingRule.UNPACK
             )
+        tool_args = [tc.arguments for tc in tool_calls]
 
-        ########################
-        # If no tool calls
-        ########################
-        if not calls:
-            ctx.add_info(Step(
-                content=decision.step_content,
-                status=True,
-                result=None,
-                metadata={"tool_calls": []}
-            ))
-            return
-
-        ########################
-        # If there are tool calls
-        ########################
-        def _convert_decision_to_tool_calls(calls: List, ctx: CognitiveContextT) -> List[ToolCall]:
-            """Convert a list of StepToolCall into ToolCall objects with type-coerced arguments."""
-            _, tool_specs = ctx.get_field('tools')
-            tool_calls = []
-
-            for idx, call in enumerate(calls):
-                tool_spec = next((s for s in tool_specs if s.tool_name == call.tool), None)
-                param_types: Dict[str, str] = {}
-                if tool_spec and tool_spec.tool_parameters:
-                    for name, info in tool_spec.tool_parameters.get('properties', {}).items():
-                        param_types[name] = info.get('type', 'string')
-
-                arguments: Dict[str, Any] = {}
-                for arg in call.tool_arguments:
-                    value: Any = arg.value
-                    param_type = param_types.get(arg.name, 'string')
-                    if param_type == 'integer':
-                        try:
-                            value = int(value)
-                        except (ValueError, TypeError):
-                            pass
-                    elif param_type == 'number':
-                        try:
-                            value = float(value)
-                        except (ValueError, TypeError):
-                            pass
-                    elif param_type == 'boolean':
-                        value = value.lower() in ('true', '1', 'yes')
-                    arguments[arg.name] = value
-
-                tool_calls.append(ToolCall(id=f"call_{idx}", name=call.tool, arguments=arguments))
-
-            return tool_calls
-
-        def _match_tool_calls(tool_calls: List[ToolCall], ctx: CognitiveContextT) -> List[Tuple[ToolCall, ToolSpec]]:
-            """Match each ToolCall to its ToolSpec by name."""
-            _, tool_specs = ctx.get_field('tools')
-            matched: List[Tuple[ToolCall, ToolSpec]] = []
-            for tc in tool_calls:
-                for spec in tool_specs:
-                    if tc.name == spec.tool_name:
-                        if tc.arguments.get("__args__") is not None:
-                            props = list(spec.tool_parameters.get('properties', {}).keys())
-                            args = tc.arguments.get("__args__")
-                            if isinstance(args, list):
-                                tc.arguments = dict(zip(props, args))
-                            else:
-                                tc.arguments = {props[0]: args} if props else {}
-                        matched.append((tc, spec))
-                        break
-            return matched
-        
-        async def _run_tools(matched_list: List[Tuple[ToolCall, ToolSpec]]) -> ActionResult:
-            """Execute a list of (ToolCall, ToolSpec) pairs and return ActionResult."""
-            # The sand box is used to execute the tools in parallel
-            sandbox = ConcurrentAutoma()
-
-            # Create the tool calls and add them to the sandbox
-            tool_calls = []
-            for tool_call, tool_spec in matched_list:
-                tool_calls.append(tool_call)
-                tool_worker = tool_spec.create_worker()
-                worker_key = f"tool_{tool_call.name}_{tool_call.id}"
-                sandbox.add_worker(
-                    key=worker_key,
-                    worker=tool_worker,
-                    args_mapping_rule=ArgsMappingRule.UNPACK
+        # Execute the tools in parallel
+        try:
+            results = await sandbox.arun(InOrder(tool_args))
+            step_results = [
+                ActionStepResult(
+                    tool_id=tc.id,
+                    tool_name=tc.name,
+                    tool_arguments=tc.arguments,
+                    tool_result=result
                 )
-            tool_args = [tc.arguments for tc in tool_calls]
+                for tc, result in zip(tool_calls, results)
+            ]
+            return ActionResult(results=step_results)
+        except Exception:
+            return ActionResult(results=[])
 
-            # Execute the tools in parallel
-            try:
-                results = await sandbox.arun(InOrder(tool_args))
-                step_results = [
-                    ActionStepResult(
-                        tool_id=tc.id,
-                        tool_name=tc.name,
-                        tool_arguments=tc.arguments,
-                        tool_result=result
-                    )
-                    for tc, result in zip(tool_calls, results)
-                ]
-                return ActionResult(status=True, results=step_results)
-            except Exception:
-                return ActionResult(
-                    status=False,
-                    results=[ActionStepResult(
-                        tool_id="",
-                        tool_name="",
-                        tool_arguments={},
-                        tool_result=traceback.format_exc()
-                    )]
-                )
-        
-        tool_calls = _convert_decision_to_tool_calls(calls, ctx)
-        matched = _match_tool_calls(tool_calls, ctx)
-
-        # 1. BEFORE ACTION (worker callback)
-        verified = await _worker.before_action(matched, ctx)
-        if not verified:
-            raise ValueError(f"No matching tools found for: {[tc.name for tc in tool_calls]}")
-        for tc, _ in verified:
-            _worker._log("Action", f"Executing: {tc.name}({tc.arguments})", color="green")
-
-        # 2. EXECUTE TOOLS
-        action_result = await _run_tools(verified)
-
-        # 3. AFTER ACTION (worker callback)
-        consequence = await _worker.after_action(action_result.results, ctx)
-
-        ctx.add_info(Step(
-            content=decision.step_content,
-            status=action_result.status,
-            result=consequence,
-            metadata={
-                "tool_calls": [tc[0].name for tc in verified],
-                "action_results": [
-                    {
-                        "tool_name": r.tool_name,
-                        "tool_arguments": r.tool_arguments,
-                        "tool_result": r.tool_result,
-                    }
-                    for r in action_result.results
-                ],
-            }
-        ))
+    async def action_custom_output(self, decision_result: Any, context: CognitiveContextT) -> Any:
+        """
+        Define the action logic for custom output.
+        """
+        return decision_result
 
     ############################################################################
     # Core: self.run() — the primary execution method
     ############################################################################
-
     async def run(
         self,
         worker: CognitiveWorker,
@@ -624,7 +497,7 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT]):
         on_error: ErrorStrategy = ErrorStrategy.RAISE,
         max_retries: int = 0,
         _phase_type: str = "sequential",
-    ) -> Any:
+    ) -> None:
         """
         Execute a CognitiveWorker through observe-think-act cycle(s).
 
@@ -668,6 +541,28 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT]):
         ...                until=lambda ctx: ctx.done, max_attempts=20,
         ...                tools=["click", "type"])
         """
+        async def _execute():
+            if until is not None or max_attempts > 1:
+                for _ in range(max_attempts):
+                    finished = await self._run_once(
+                        worker, name=step_name, tools=tools, skills=skills,
+                        on_error=on_error, max_retries=max_retries,
+                    )
+                    if finished:
+                        return
+                    if until is not None:
+                        cond_result = until(context)
+                        if inspect.iscoroutine(cond_result):
+                            cond_result = await cond_result
+                        if cond_result:
+                            return
+            else:
+                await self._run_once(
+                    worker, name=step_name, tools=tools, skills=skills,
+                    on_error=on_error, max_retries=max_retries,
+                )
+
+        step_name = name or worker.__class__.__name__
         context = self._current_context
         if context is None:
             raise RuntimeError(
@@ -675,40 +570,12 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT]):
                 "run() must be called within a cognition() method."
             )
 
-        step_name = name or worker.__class__.__name__
 
-        # Default phase annotation: every run() opens a phase
         if self._workflow_builder:
-            self._workflow_builder.begin_phase(_phase_type, step_name)
-
-        try:
-            if until is not None or max_attempts > 1:
-                # Looping execution
-                result = None
-                for attempt in range(max_attempts):
-                    result, finished = await self._run_once(
-                        worker, name=step_name, tools=tools, skills=skills,
-                        on_error=on_error, max_retries=max_retries,
-                    )
-                    if finished:
-                        return result
-                    if until is not None:
-                        cond_result = until(context)
-                        if inspect.iscoroutine(cond_result):
-                            cond_result = await cond_result
-                        if cond_result:
-                            return result
-                return result
-            else:
-                # Single execution
-                result, _ = await self._run_once(
-                    worker, name=step_name, tools=tools, skills=skills,
-                    on_error=on_error, max_retries=max_retries,
-                )
-                return result
-        finally:
-            if self._workflow_builder:
-                self._workflow_builder.end_phase()
+            with self._workflow_builder.phase(_phase_type, step_name):
+                await _execute()
+        else:
+            await _execute()
 
     async def sequential(
         self,
@@ -778,26 +645,55 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT]):
         skills: Optional[List[str]] = None,
         on_error: ErrorStrategy = ErrorStrategy.RAISE,
         max_retries: int = 0,
-    ) -> Tuple[Any, bool]:
-        """Execute a single observe-think-act cycle. Returns (result, finished)."""
+    ) -> bool:
+        """Execute a single observe-think-act cycle. Returns whether the worker signalled finish."""
+        async def _run_observe_think_act(worker: CognitiveWorker, context: CognitiveContextT) -> bool:
+            # 1. Observe
+            obs = await worker.observation(context)
+            if obs is _DELEGATE:
+                obs = await self.observation(context)
+            context.observation = obs
+
+            # TODO: log design
+            # if worker._verbose:
+            #     obs_str = str(obs) if obs is not None else "None"
+            #     worker._log(
+            #         "Observe", "Observation",
+            #         obs_str[:200] + ("..." if len(obs_str) > 200 else ""),
+            #         color="cyan"
+            #     )
+
+            # 2. Think
+            decision = await worker.arun(context=context)
+
+            # 3. Act
+            if decision is not None:
+                await self._action(decision, context, _worker=worker)
+
+            # Record trace step
+            self._record_trace_step(name, obs, decision, context)
+
+            return decision.finish
+
+
+        ########################
+        # Initialize CognitiveWorker 
+        # runtime environment
+        ########################
         context = self._current_context
 
-        # Inject agent's default LLM if worker doesn't have one
+        # Init LLM
         if worker._llm is None and self._llm is not None:
             worker.set_llm(self._llm)
 
-        # Inject verbose
+        # Init verbose
         injected_verbose = False
         if worker._verbose is None:
             worker._verbose = self._verbose
             injected_verbose = True
 
-        # Apply tool/skill filtering
+        # Init tools
         original_tools = None
-        original_skills = None
-        filtered_skills = None
-        filtered_to_orig: Dict[int, int] = {}
-
         if tools is not None:
             original_tools = context.tools
             filtered_tools = CognitiveTools()
@@ -806,6 +702,9 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT]):
                     filtered_tools.add(tool)
             context.tools = filtered_tools
 
+        # Init skills
+        original_skills = None
+        filtered_to_orig: Dict[int, int] = {}
         if skills is not None:
             original_skills = context.skills
             filtered_skills = CognitiveSkills()
@@ -821,49 +720,36 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT]):
                     filtered_skills._revealed[orig_to_filtered[orig_idx]] = detail
             context.skills = filtered_skills
 
+        # Init spend status
         tokens_before = worker.spend_tokens
 
-        result = None
+        ########################
+        # Run CognitiveWorker
+        ########################
         finished = False
         try:
-            # ① Observe
-            default_obs = await self.observation(context)
-            obs = await worker.observation(context, default_observation=default_obs)
-            if obs is _DELEGATE:
-                obs = default_obs
-            context.observation = obs
-
-            if worker._verbose:
-                obs_str = str(obs) if obs is not None else "None"
-                worker._log(
-                    "Observe", "Observation",
-                    obs_str[:200] + ("..." if len(obs_str) > 200 else ""),
-                    color="cyan"
-                )
-
-            # ② Think
-            decision = await self._run_worker_with_error_handling(
-                worker, context, on_error, max_retries
-            )
-
-            # ③ Act
-            if decision is not None:
-                if worker.output_schema is not None:
-                    result = decision.output
-                    finished = getattr(decision, 'finish', False)
-                else:
-                    await self.action(decision, context, _worker=worker)
-                    result = None
-                    finished = getattr(decision, 'finish', False)
-
-                    # Record step name in metadata for workflow building
-                    if name and context.cognitive_history._items:
-                        context.cognitive_history._items[-1].metadata["step_key"] = name
-
-            # Record trace step
-            self._record_trace_step(name, obs, decision, context)
-
+            finished = await _run_observe_think_act(worker, context)
+        except Exception as e:
+            if on_error == ErrorStrategy.RAISE:
+                raise RuntimeError(
+                    f"Worker '{name or worker.__class__.__name__}' failed during "
+                    f"observe-think-act cycle: {e}"
+                ) from e
+            elif on_error == ErrorStrategy.IGNORE:
+                pass
+            elif on_error == ErrorStrategy.RETRY:
+                for attempt in range(max_retries + 1):
+                    try:
+                        finished = await _run_observe_think_act(worker, context)
+                        break
+                    except Exception as e:
+                        if attempt == max_retries:
+                            raise RuntimeError(
+                                f"Worker '{name or worker.__class__.__name__}' failed after "
+                                f"{max_retries + 1} retries: {e}"
+                            ) from e
         finally:
+            # Record and restore the execution status of the worker
             self.spend_tokens += worker.spend_tokens - tokens_before
             if injected_verbose:
                 worker._verbose = None
@@ -877,26 +763,8 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT]):
                             original_skills._revealed[orig_idx] = detail
                 context.skills = original_skills
 
-        return result, finished
+        return finished
 
-    async def _run_worker_with_error_handling(
-        self, worker: CognitiveWorker, context, on_error: ErrorStrategy, max_retries: int
-    ) -> Any:
-        """Run the worker with configured error handling strategy."""
-        if on_error == ErrorStrategy.RAISE:
-            return await worker.arun(context=context)
-        elif on_error == ErrorStrategy.IGNORE:
-            try:
-                return await worker.arun(context=context)
-            except Exception:
-                return None
-        elif on_error == ErrorStrategy.RETRY:
-            for attempt in range(max_retries + 1):
-                try:
-                    return await worker.arun(context=context)
-                except Exception as e:
-                    if attempt == max_retries:
-                        raise
 
     def _record_trace_step(self, name: str, obs: Any, decision: Any, context: Any) -> None:
         """Record a trace step to the workflow builder (if capture is active)."""
@@ -932,47 +800,150 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT]):
             "tool_results": tool_results,
         })
 
-    ############################################################################
-    # Task completion check
-    ############################################################################
-
-    async def check_task_completion(self, ctx: CognitiveContextT) -> bool:
+    async def _action(
+        self,
+        decision: Any,
+        ctx: CognitiveContextT,
+        *,
+        _worker: CognitiveWorker,
+    ) -> None:
         """
-        Use LLM to determine if the task has been completed.
+        Agent-level action execution. Override to change the execution engine.
 
-        Not called automatically — use in until() conditions or cognition() logic.
-        """
-        if self._llm is None:
-            raise RuntimeError(
-                "check_task_completion requires an LLM. "
-                "Set llm= when creating the agent."
-            )
+        Calls worker.before_action() as callback.
 
-        prompt = self._build_completion_check_prompt(ctx)
+        Parameters
+        ----------
+        decision : Any
+            The thinking decision with 'output' field (List[StepToolCall]).
+        ctx : CognitiveContextT
+            The cognitive context.
+        _worker : CognitiveWorker
+            The worker that produced this decision (used for callbacks).
+        """ 
+        def _is_list_step_tool_call(d: Any) -> bool:
+            # Get the declared type of the output field
+            if not isinstance(d, BaseModel):
+                return None
+            fi = type(d).model_fields.get('output')
+            if fi is None:
+                return None
+            ann = fi.annotation
+            if get_origin(ann) is Annotated:
+                ann = get_args(ann)[0]
 
-        system_msg = (
-            "You are a task completion evaluator. Determine if the task has been completed "
-            "based on the goal, execution history, and current observation.\n\n"
-            "Respond with ONLY 'YES' if the task is fully completed, or 'NO' if more work is needed.\n"
-            "Do not include any explanation or other text."
-        )
+            # if the type is not List[StepToolCall], return False
+            if ann is None:
+                return False
+            origin = get_origin(ann)
+            if origin is list:
+                args = get_args(ann)
+                return len(args) == 1 and args[0] is StepToolCall
+            return False
 
-        response = await self._llm.agenerate(
-            messages=[
-                Message.from_text(text=system_msg, role="system"),
-                Message.from_text(text=prompt, role="user")
-            ]
-        )
+        def _convert_decision_to_tool_calls(calls: List, ctx: CognitiveContextT) -> List[ToolCall]:
+            """Convert a list of StepToolCall into ToolCall objects with type-coerced arguments."""
+            _, tool_specs = ctx.get_field('tools')
+            tool_calls = []
 
-        return response.strip().upper() == "YES"
+            for idx, call in enumerate(calls):
+                tool_spec = next((s for s in tool_specs if s.tool_name == call.tool), None)
+                param_types: Dict[str, str] = {}
+                if tool_spec and tool_spec.tool_parameters:
+                    for name, info in tool_spec.tool_parameters.get('properties', {}).items():
+                        param_types[name] = info.get('type', 'string')
 
-    def _build_completion_check_prompt(self, ctx: CognitiveContextT) -> str:
-        """Build the prompt for task completion check."""
-        context_info = ctx.format_summary()
-        if ctx.observation:
-            context_info += f"\n\nCurrent Observation:\n{ctx.observation}"
-        prompt = f"{context_info}\n\nIs the task completed? Respond with YES or NO."
-        return prompt
+                arguments: Dict[str, Any] = {}
+                for arg in call.tool_arguments:
+                    value: Any = arg.value
+                    param_type = param_types.get(arg.name, 'string')
+                    if param_type == 'integer':
+                        try:
+                            value = int(value)
+                        except (ValueError, TypeError):
+                            pass
+                    elif param_type == 'number':
+                        try:
+                            value = float(value)
+                        except (ValueError, TypeError):
+                            pass
+                    elif param_type == 'boolean':
+                        value = value.lower() in ('true', '1', 'yes')
+                    arguments[arg.name] = value
+
+                tool_calls.append(ToolCall(id=f"call_{idx}", name=call.tool, arguments=arguments))
+
+            return tool_calls
+
+        def _match_tool_calls(tool_calls: List[ToolCall], ctx: CognitiveContextT) -> List[Tuple[ToolCall, ToolSpec]]:
+            """Match each ToolCall to its ToolSpec by name."""
+            _, tool_specs = ctx.get_field('tools')
+            matched: List[Tuple[ToolCall, ToolSpec]] = []
+            for tc in tool_calls:
+                for spec in tool_specs:
+                    if tc.name == spec.tool_name:
+                        if tc.arguments.get("__args__") is not None:
+                            props = list(spec.tool_parameters.get('properties', {}).keys())
+                            args = tc.arguments.get("__args__")
+                            if isinstance(args, list):
+                                tc.arguments = dict(zip(props, args))
+                            else:
+                                tc.arguments = {props[0]: args} if props else {}
+                        matched.append((tc, spec))
+                        break
+            return matched
+
+        ########################
+        # Analysis of the decision output
+        ########################
+        # Get the output structure of the decision
+        output = getattr(decision, 'output', None)
+
+        # If the output is a list of StepToolCall
+        if _is_list_step_tool_call(decision):
+            calls = output
+            if not calls:
+                ctx.add_info(Step(
+                    content=decision.step_content,
+                    result=None,
+                    metadata={"tool_calls": []}
+                ))
+                return
+            
+            tool_calls = _convert_decision_to_tool_calls(calls, ctx)
+            decision_result = _match_tool_calls(tool_calls, ctx)
+        
+        # If the output is a BaseModel
+        else:
+            decision_result = output
+
+
+        ########################
+        # Execution of the action based on the decision result
+        ########################
+        decision_result = await _worker.before_action(decision_result, ctx)
+        if _is_list_step_tool_call(decision):
+            action_result = await self.action_tool_call(decision_result, ctx)
+            ctx.add_info(Step(
+                content=decision.step_content,
+                result=action_result.results,
+                metadata={
+                    "tool_calls": [tc[0].name for tc in decision_result],
+                    "tool_arguments": [tc[0].arguments for tc in decision_result],
+                    "action_results": [
+                        {
+                            "tool_name": r.tool_name,
+                            "tool_arguments": r.tool_arguments,
+                            "tool_result": r.tool_result,
+                        }
+                        for r in action_result.results
+                    ]
+                }
+            ))
+        else:
+            action_result = await self.action_custom_output(decision_result, ctx)
+            ctx.add_info(Step(content=decision.step_content, result=action_result, metadata={}))
+
 
     ############################################################################
     # Entry point
@@ -1036,6 +1007,30 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT]):
         >>> # Capture workflow for later replay
         >>> ctx, wf = await agent.arun(goal="...", capture_workflow=True)
         """
+        async def _run_and_report(context: CognitiveContextT) -> CognitiveContextT:
+            """Run the agent, measure time, and log summary."""
+            start_time = time.time()
+            await super().arun(context=context)
+            self.spend_time = time.time() - start_time
+
+            result = self._current_context
+
+            if self._verbose:
+                agent_name = self.name or self.__class__.__name__
+                steps_count = len(result.cognitive_history) if hasattr(result, 'cognitive_history') else 0
+                separator = "=" * 50
+                printer.print(separator, color="cyan")
+                printer.print(
+                    f"  {agent_name} | Completed\n"
+                    f"  Steps: {steps_count} | "
+                    f"Tokens: {self.spend_tokens} | "
+                    f"Time: {self.spend_time:.2f}s",
+                    color="cyan"
+                )
+                printer.print(separator, color="cyan")
+
+            return result
+        
         ########################
         # Pre-initialize status
         ########################
@@ -1096,7 +1091,7 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT]):
         if workflow is not None:
             return await self._run_amphibious(context, workflow)
         else:
-            result = await self._run_and_report(context=context)
+            result = await _run_and_report(context=context)
             if capture_workflow:  # If capture_workflow is True, return the result and the workflow
                 return result, self._build_workflow()
             return result
@@ -1127,25 +1122,3 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT]):
             "steps_count": self._workflow_builder.steps_count,
         })
         return wf
-
-    async def _run_and_report(self, context: CognitiveContextT) -> CognitiveContextT:
-        """Run the agent, measure time, and log summary."""
-        start_time = time.time()
-        result = await super().arun(context=context)
-        self.spend_time = time.time() - start_time
-
-        if self._verbose:
-            agent_name = self.name or self.__class__.__name__
-            steps_count = len(result.cognitive_history) if hasattr(result, 'cognitive_history') else 0
-            separator = "=" * 50
-            printer.print(separator, color="cyan")
-            printer.print(
-                f"  {agent_name} | Completed\n"
-                f"  Steps: {steps_count} | "
-                f"Tokens: {self.spend_tokens} | "
-                f"Time: {self.spend_time:.2f}s",
-                color="cyan"
-            )
-            printer.print(separator, color="cyan")
-
-        return result

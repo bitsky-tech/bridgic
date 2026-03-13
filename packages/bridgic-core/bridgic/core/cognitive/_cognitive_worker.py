@@ -160,7 +160,6 @@ def _coerce_none_to_list(v: Any) -> list:
 
 _DELEGATE = object()  # Worker returns this to delegate observation to Agent
 
-
 #############################################################################
 # CognitiveWorker
 #############################################################################
@@ -210,9 +209,6 @@ class CognitiveWorker(GraphAutoma):
 
     before_action(matched_tools, context) -> List[Tuple[ToolCall, ToolSpec]]
         Verify/adjust matched tools before execution. Called by agent.action().
-
-    after_action(action_results, context) -> Any
-        Process tool execution results. Called by agent.action().
 
     Examples
     --------
@@ -798,11 +794,7 @@ class CognitiveWorker(GraphAutoma):
     # Template methods (override by user to customize the behavior)
     ############################################################################
 
-    async def observation(
-        self,
-        context: CognitiveContext,
-        default_observation: Optional[str] = None
-    ) -> Any:
+    async def observation(self, context: CognitiveContext) -> Any:
         """
         Enhance or customize the observation before thinking.
 
@@ -810,9 +802,6 @@ class CognitiveWorker(GraphAutoma):
         ----------
         context : CognitiveContext
             The cognitive context.
-        default_observation : Optional[str]
-            The default observation from Agent. If None, this is a legacy call
-            (for backward compatibility).
 
         Returns
         -------
@@ -822,23 +811,10 @@ class CognitiveWorker(GraphAutoma):
 
         Examples
         --------
-        >>> async def observation(self, context, default_observation=None):
-        ...     # Legacy mode: delegate
-        ...     if default_observation is None:
-        ...         return _DELEGATE
-        ...
-        ...     # Enhancement mode: add context
-        ...     if len(context.cognitive_history) > 0:
-        ...         latest = context.cognitive_history[-1]
-        ...         return f"{default_observation}\\n\\nLast step: {latest.content}"
-        ...     return default_observation
+        >>> async def observation(self, context):
+        ...     return _DELEGATE
         """
-        # Backward compatibility: if no default_observation, return _DELEGATE
-        if default_observation is None:
-            return _DELEGATE
-
-        # New semantics: default is to return as-is (no modification)
-        return default_observation
+        return _DELEGATE
 
     async def thinking(self) -> str:
         """
@@ -917,70 +893,31 @@ class CognitiveWorker(GraphAutoma):
 
     async def before_action(
         self,
-        matched_tools: List[Tuple[ToolCall, ToolSpec]],
-        context: CognitiveContext
-    ) -> List[Tuple[ToolCall, ToolSpec]]:
-        """
-        Verify and optionally adjust matched tools before execution.
-
-        Called after tool matching, before actual execution. Override to
-        validate, filter, or modify the tools that will be executed.
-
-        Default: return as-is (no verification).
-
-        Parameters
-        ----------
-        matched_tools : List[Tuple[ToolCall, ToolSpec]]
-            Pairs of (tool_call, tool_spec) ready for execution.
-        context : CognitiveContext
-            Current cognitive context.
-
-        Returns
-        -------
-        List[Tuple[ToolCall, ToolSpec]]
-            Verified/adjusted list of tools to execute.
-
-        Examples
-        --------
-        >>> async def before_action(self, matched_tools, context):
-        ...     # Filter out dangerous tools
-        ...     return [(tc, spec) for tc, spec in matched_tools
-        ...             if spec.tool_name not in ["delete", "drop"]]
-        """
-        return matched_tools
-
-    async def after_action(
-        self,
-        action_results: "List[ActionStepResult]",
+        decision_result: Any,
         context: CognitiveContext
     ) -> Any:
         """
-        Process tool execution results (format or summarize).
-
-        Called after all tools have been executed. Override to transform
-        the raw results into a more useful format.
-
-        Default: return raw list.
+        Verify and optionally adjust the output before execution.
 
         Parameters
         ----------
-        action_results : List[ActionStepResult]
-            Per-tool results from the action phase.
+        decision_result : Any
+            The result of the decision.
         context : CognitiveContext
             Current cognitive context.
 
         Returns
         -------
         Any
-            Value stored as the step result in cognitive history.
+            Verified/adjusted decision result.
 
         Examples
         --------
-        >>> async def after_action(self, action_results, context):
-        ...     # Format results as summary
-        ...     return {"results": [r.tool_result for r in action_results]}
+        >>> async def before_action(self, decision_result, context):
+        ...     # Filter out dangerous tools
+        ...     return decision_result.filter(lambda x: x.tool_name not in ["delete", "drop"])
         """
-        return action_results
+        return decision_result
 
     ############################################################################
     # Entry point
@@ -1067,9 +1004,11 @@ class CognitiveWorker(GraphAutoma):
         return result
 
 
-#############################################################################
-# Standard ThinkDecision — no output_schema, no policy fields, no details_needed
-#############################################################################
-
-# Created after CognitiveWorker so the factory and cache are available.
-ThinkDecision = CognitiveWorker._create_think_model(False, False, False, None)
+# Module-level default decision model (no policies, no output_schema).
+# Used by tests and as a convenience for simple tool-call decisions.
+ThinkDecision = CognitiveWorker._create_think_model(
+    enable_rehearsal=False,
+    enable_reflection=False,
+    enable_acquiring=False,
+    output_schema=None,
+)
