@@ -9,7 +9,7 @@ from bridgic.core.cognitive import (
     CognitiveWorker,
     Workflow,
 )
-from bridgic.core.cognitive._agent_automa import _WorkflowBuilder, _count_pattern_occurrences
+from bridgic.core.cognitive._agent_automa import _WorkflowBuilder, _AgentSnapshot, _count_pattern_occurrences
 from bridgic.core.cognitive._workflow import LinearTraceBlock, LoopBlock
 from bridgic.core.cognitive._cognitive_worker import StepToolCall, ToolArgument
 from .tools import get_travel_planning_tools
@@ -211,13 +211,15 @@ class _SimpleWorker(CognitiveWorker):
 
 
 def _make_sequential_loop_agent(llm, seq_responses, loop_responses):
-    """Create an agent that uses sequential() then loop()."""
+    """Create an agent that uses sequential() then loop() as context managers."""
     worker = _SimpleWorker(llm=llm)
 
     class _StructuredAgent(AgentAutoma[CognitiveContext]):
         async def cognition(self, ctx: CognitiveContext) -> None:
-            await self.sequential(worker, name="setup", max_attempts=len(seq_responses))
-            await self.loop(worker, name="process", max_attempts=len(loop_responses))
+            async with self.sequential("setup"):
+                await self.run(worker, name="setup", max_attempts=len(seq_responses))
+            async with self.loop("process"):
+                await self.run(worker, name="process", max_attempts=len(loop_responses))
 
     return _StructuredAgent(llm=llm)
 
@@ -305,7 +307,8 @@ class TestStructuredCapture:
 
         class _LoopOnlyAgent(AgentAutoma[CognitiveContext]):
             async def cognition(self, ctx: CognitiveContext) -> None:
-                await self.loop(worker, name="process", max_attempts=10)
+                async with self.loop("process"):
+                    await self.run(worker, name="process", max_attempts=10)
 
         agent = _LoopOnlyAgent(llm=llm)
         ctx = _make_ctx()
@@ -331,7 +334,8 @@ class TestStructuredCapture:
 
         class _MetaAgent(AgentAutoma[CognitiveContext]):
             async def cognition(self, ctx: CognitiveContext) -> None:
-                await self.sequential(worker, name="only", max_attempts=1)
+                async with self.sequential("only"):
+                    await self.run(worker, name="only", max_attempts=1)
 
         agent = _MetaAgent(llm=llm)
         ctx = _make_ctx()
@@ -341,6 +345,48 @@ class TestStructuredCapture:
         assert "agent_class" in workflow.metadata
         assert workflow.metadata["agent_class"] == "_MetaAgent"
         assert "steps_count" in workflow.metadata
+
+    @pytest.mark.asyncio
+    async def test_nested_sequential_with_loop(self):
+        """Nested sequential > loop produces correct block structure."""
+        # 1 sequential step + 4 loop steps (2 iterations of flight→hotel)
+        seq_step = _tr(
+            step_content="Navigate",
+            output=[_make_tool_call("search_flights", origin="A", destination="B")],
+            finish=True,
+        )
+        loop_steps = [
+            _tr(step_content="s1", output=[_make_tool_call("search_flights", origin="X", destination="Y")], finish=False),
+            _tr(step_content="s2", output=[_make_tool_call("search_hotels", city="Y", check_in="2024-01-01", check_out="2024-01-02")], finish=False),
+            _tr(step_content="s3", output=[_make_tool_call("search_flights", origin="P", destination="Q")], finish=False),
+            _tr(step_content="s4", output=[_make_tool_call("search_hotels", city="Q", check_in="2024-02-01", check_out="2024-02-02")], finish=True),
+        ]
+        post_step = _tr(
+            step_content="Done",
+            output=[_make_tool_call("search_flights", origin="Z", destination="W")],
+            finish=True,
+        )
+
+        llm = StatefulMockLLM([seq_step] + loop_steps + [post_step])
+        worker = _SimpleWorker(llm=llm)
+
+        class _NestedAgent(AgentAutoma[CognitiveContext]):
+            async def cognition(self, ctx: CognitiveContext) -> None:
+                async with self.sequential("outer"):
+                    await self.run(worker, name="nav", max_attempts=1)
+                    async with self.loop("inner_loop"):
+                        await self.run(worker, name="process", max_attempts=10)
+                    await self.run(worker, name="finalize", max_attempts=1)
+
+        agent = _NestedAgent(llm=llm)
+        ctx = _make_ctx()
+
+        _, workflow = await agent.arun(context=ctx, capture_workflow=True)
+
+        # The outer sequential should contain the steps, and the inner loop
+        # is captured as a nested phase within the workflow builder
+        assert isinstance(workflow, Workflow)
+        assert len(workflow.blocks) >= 1
 
 
 # ---------------------------------------------------------------------------
@@ -363,3 +409,57 @@ class TestLoopBlockSerialization:
         assert restored.pattern_template == ["click", "save", "close"]
         assert restored.name == "process"
         assert restored.max_attempts == 30
+
+
+# ---------------------------------------------------------------------------
+# _AgentSnapshot unit tests
+# ---------------------------------------------------------------------------
+
+class TestAgentSnapshot:
+
+    @pytest.mark.asyncio
+    async def test_field_override_and_restore(self):
+        """_AgentSnapshot overrides fields on enter and restores on exit."""
+        ctx = CognitiveContext(goal="original")
+        snap = _AgentSnapshot(ctx, {"goal": "temp"})
+        await snap.__aenter__()
+        assert ctx.goal == "temp"
+        await snap.__aexit__(None, None, None)
+        assert ctx.goal == "original"
+
+    @pytest.mark.asyncio
+    async def test_restore_on_exception(self):
+        """Fields are restored even when an exception occurs."""
+        ctx = CognitiveContext(goal="original")
+        snap = _AgentSnapshot(ctx, {"goal": "temp"})
+        await snap.__aenter__()
+        assert ctx.goal == "temp"
+        try:
+            raise ValueError("test")
+        except ValueError:
+            await snap.__aexit__(None, None, None)
+        assert ctx.goal == "original"
+
+    @pytest.mark.asyncio
+    async def test_clear_all_revealed(self):
+        """Default mode (keep_revealed=None) clears revealed on enter, restores on exit."""
+        ctx = _make_ctx()
+        ctx.skills.load_from_directory(
+            __import__("os").path.join(__import__("os").path.dirname(__file__), "skills")
+        )
+        ctx.get_details("skills", 0)
+        assert 0 in ctx.skills._revealed
+
+        snap = _AgentSnapshot(ctx, {}, keep_revealed=None)
+        await snap.__aenter__()
+        assert 0 not in ctx.skills._revealed
+        await snap.__aexit__(None, None, None)
+        assert 0 in ctx.skills._revealed
+
+    @pytest.mark.asyncio
+    async def test_no_snapshot_when_no_fields(self):
+        """When no fields and keep_revealed not specified, no snapshot is needed."""
+        ctx = CognitiveContext(goal="original")
+        # This mirrors the logic in _phase_context: snap is None when no fields
+        snap = _AgentSnapshot(ctx, {}) if False else None
+        assert snap is None

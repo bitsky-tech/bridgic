@@ -8,97 +8,6 @@ from bridgic.core.model.types import Message
 
 
 ################################################################################################################
-# Helpers
-################################################################################################################
-
-def _iter_layered(ctx: "Context"):
-    """Yield (field_name, LayeredExposure_instance) for all LayeredExposure fields on ctx."""
-    exposure_fields = type(ctx)._exposure_fields or {}
-    for fname, finfo in exposure_fields.items():
-        if finfo.get('exposure_type') == 'layered':
-            fval = getattr(ctx, fname, None)
-            if fval is not None:
-                yield fname, fval
-
-
-################################################################################################################
-# _SnapshotContext — async context manager for safe field mutation + revealed state management
-################################################################################################################
-
-class _SnapshotContext:
-    """
-    Async context manager for exception-safe temporary field overrides on a Context,
-    with additional management of LayeredExposure._revealed state.
-
-    On enter:
-    1. Saves original field values and applies overrides.
-    2. Snapshots all LayeredExposure._revealed dicts.
-    3. Manages _revealed according to the chosen mode.
-
-    On exit:
-    - Restores all field values.
-    - Restores all _revealed dicts to their pre-enter state.
-
-    Modes (keep_revealed parameter)
-    --------------------------------
-    None (default)  — Clear All: clears all _revealed on enter, restores on exit.
-    dict            — Custom: {field_name: [indices]} specifying which items to keep.
-
-    Usage
-    -----
-    async with ctx.snapshot(goal="new goal") as ctx:
-        ...  # all _revealed cleared, goal overridden
-    # _revealed and goal restored on exit
-    """
-
-    def __init__(self, ctx: "Context", fields: Dict[str, Any], keep_revealed=None):
-        self._ctx = ctx
-        self._fields = fields
-        self._keep_revealed = keep_revealed
-        self._originals: Dict[str, Any] = {}
-        self._saved_revealed: Dict[str, Dict[int, str]] = {}
-
-    async def __aenter__(self) -> "Context":
-        # 1. Save field values and apply overrides
-        self._originals = {k: getattr(self._ctx, k) for k in self._fields}
-        for k, v in self._fields.items():
-            setattr(self._ctx, k, v)
-
-        # 2. Save all LayeredExposure._revealed snapshots
-        for fname, fval in _iter_layered(self._ctx):
-            self._saved_revealed[fname] = dict(fval._revealed)
-
-        # 3. Apply revealed management based on mode
-        if self._keep_revealed is None:
-            # Mode 1: Clear All
-            for _, fval in _iter_layered(self._ctx):
-                fval._revealed.clear()
-        else:
-            # Mode 2: Custom dict {field: [indices]}
-            self._apply_filter(self._keep_revealed)
-
-        return self._ctx
-
-    async def __aexit__(self, *exc) -> None:
-        # Restore field values
-        for k, v in self._originals.items():
-            setattr(self._ctx, k, v)
-        # Restore _revealed state for all LayeredExposure fields
-        for fname, fval in _iter_layered(self._ctx):
-            fval._revealed.clear()
-            if fname in self._saved_revealed:
-                fval._revealed.update(self._saved_revealed[fname])
-
-    def _apply_filter(self, keep: Dict[str, List[int]]) -> None:
-        """Remove revealed items not in the keep dict."""
-        for fname, fval in _iter_layered(self._ctx):
-            allowed = set(keep.get(fname, []))
-            to_remove = [idx for idx in fval._revealed if idx not in allowed]
-            for idx in to_remove:
-                del fval._revealed[idx]
-
-
-################################################################################################################
 # Abstract Base Classes
 ################################################################################################################
 T = TypeVar('T')
@@ -303,10 +212,6 @@ class Context(BaseModel):
         Get all (field, index) pairs that have been revealed so far.
     reset_revealed()
         Clear reveal caches on all LayeredExposure fields.
-    snapshot(**fields, keep_revealed=None, llm=None)
-        Async context manager for field overrides + _revealed state management.
-    override(**fields)
-        Alias for snapshot() with keep_revealed=None.
 
     Examples
     --------
@@ -598,9 +503,10 @@ class Context(BaseModel):
             Ordered list of (field_name, item_index) that have cached reveals.
         """
         result: List[Tuple[str, int]] = []
-        for fname, fval in _iter_layered(self):
-            for idx in fval._revealed:
-                result.append((fname, idx))
+        for fname, fval in self:
+            if isinstance(fval, LayeredExposure):
+                for idx in fval._revealed:
+                    result.append((fname, idx))
         return result
 
     def reset_revealed(self) -> None:
@@ -610,70 +516,14 @@ class Context(BaseModel):
         Equivalent to calling field.reset_revealed() on every LayeredExposure
         field. Use at phase boundaries so the next phase can request fresh details.
         """
-        for _, fval in _iter_layered(self):
-            fval.reset_revealed()
+        for _, fval in self:
+            if isinstance(fval, LayeredExposure):
+                fval.reset_revealed()
 
-    def snapshot(
-        self,
-        keep_revealed=None,
-        **fields: Any,
-    ) -> "_SnapshotContext":
-        """
-        Create an async context manager for exception-safe field overrides + revealed state management.
-
-        On enter: saves field values, applies overrides, and manages LayeredExposure._revealed
-        according to the chosen mode. On exit: restores both field values and _revealed state.
-
-        Parameters
-        ----------
-        keep_revealed : None | Dict[str, List[int]]
-            Revealed state management mode:
-            - None (default): Clear All — all _revealed caches are cleared on enter, restored on exit.
-            - dict: Custom — {field_name: [indices]} specifying which items to keep.
-        **fields
-            Field name to temporary value mappings.
-
-        Returns
-        -------
-        _SnapshotContext
-            An async context manager that yields this context.
-
-        Examples
-        --------
-        >>> # Default: clear all revealed on phase entry (no explicit reset needed)
-        >>> async with ctx.snapshot(goal="phase goal", browser=None):
-        ...     await self.execute_step.until(max_attempts=20, skills=["my-skill"])
-        ... # goal, browser, and _revealed all restored on exit
-
-        >>> # Keep specific revealed items across phase boundary
-        >>> async with ctx.snapshot(goal="new phase", keep_revealed={"skills": [0]}):
-        ...     ...
-        """
-        return _SnapshotContext(self, fields, keep_revealed=keep_revealed)
-
-    def override(self, **fields: Any) -> "_SnapshotContext":
-        """
-        Alias for snapshot() with keep_revealed=None (clear all revealed).
-
-        Provided for backward compatibility. Prefer snapshot() for new code.
-
-        Parameters
-        ----------
-        **fields
-            Field name to temporary value mappings.
-
-        Returns
-        -------
-        _SnapshotContext
-            An async context manager that yields this context with overrides applied.
-
-        Examples
-        --------
-        >>> async with ctx.override(goal="new goal", browser=None):
-        ...     await self.execute_step.until(...)
-        ... # ctx.goal and _revealed restored here, even on exception
-        """
-        return _SnapshotContext(self, fields, keep_revealed=None)
+    def __iter__(self) -> Iterator[Tuple[str, Any]]:
+        """Yield ``(field_name, field_value)`` for every model field on this context."""
+        for field_name in type(self).model_fields:
+            yield field_name, getattr(self, field_name)
 
     def __str__(self) -> str:
         """
@@ -1359,7 +1209,9 @@ class CognitiveContext(Context):
         # Format disclosed details from LayeredExposure fields' _revealed dicts
         disclosed_lines = ["Previously Disclosed Details:"]
         has_disclosed = False
-        for fname, fval in _iter_layered(self):
+        for fname, fval in self:
+            if not isinstance(fval, LayeredExposure):
+                continue
             for idx, detail in fval._revealed.items():
                 disclosed_lines.append(f"\n[{fname}[{idx}]]:\n{detail}")
                 has_disclosed = True

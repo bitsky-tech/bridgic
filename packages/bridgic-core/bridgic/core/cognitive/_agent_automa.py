@@ -2,7 +2,7 @@ import inspect
 import time
 import traceback
 from abc import abstractmethod
-from contextlib import contextmanager
+from contextlib import asynccontextmanager, contextmanager
 from enum import Enum
 from concurrent.futures import ThreadPoolExecutor
 from typing import (
@@ -20,9 +20,23 @@ from bridgic.core.automa.args import ArgsMappingRule, InOrder
 from bridgic.core.model.types import ToolCall
 from bridgic.core.agentic import ConcurrentAutoma
 from bridgic.core.agentic.tool_specs import ToolSpec
-from bridgic.core.cognitive._context import CognitiveContext, CognitiveTools, CognitiveSkills, Exposure, Step
+from bridgic.core.cognitive._context import CognitiveContext, CognitiveTools, CognitiveSkills, Exposure, LayeredExposure, Step
 from bridgic.core.cognitive._cognitive_worker import CognitiveWorker, _DELEGATE, StepToolCall
 from bridgic.core.utils._console import printer
+
+
+################################################################################################################
+# Type Aliases
+################################################################################################################
+
+CognitiveContextT = TypeVar("CognitiveContextT", bound=CognitiveContext)
+
+
+class ErrorStrategy(Enum):
+    """Error handling strategy for worker execution via ``self.run()``."""
+    RAISE = "raise"    # Re-raise exceptions (default)
+    IGNORE = "ignore"  # Silently ignore exceptions
+    RETRY = "retry"    # Retry up to max_retries times
 
 
 ################################################################################################################
@@ -79,17 +93,79 @@ class ActionResult(BaseModel):
 
 
 ################################################################################################################
-# Type Aliases
+# _AgentSnapshot — async context manager for safe field mutation + revealed state management
 ################################################################################################################
 
-CognitiveContextT = TypeVar("CognitiveContextT", bound=CognitiveContext)
+class _AgentSnapshot:
+    """
+    Async context manager for exception-safe temporary field overrides on a Context,
+    with additional management of LayeredExposure._revealed state.
 
+    Used internally by ``sequential()`` and ``loop()`` context managers in AgentAutoma.
 
-class ErrorStrategy(Enum):
-    """Error handling strategy for worker execution via ``self.run()``."""
-    RAISE = "raise"    # Re-raise exceptions (default)
-    IGNORE = "ignore"  # Silently ignore exceptions
-    RETRY = "retry"    # Retry up to max_retries times
+    On enter:
+    1. Saves original field values and applies overrides.
+    2. Snapshots all LayeredExposure._revealed dicts.
+    3. Manages _revealed according to the chosen mode.
+
+    On exit:
+    - Restores all field values.
+    - Restores all _revealed dicts to their pre-enter state.
+
+    Modes (keep_revealed parameter)
+    --------------------------------
+    None (default)  — Clear All: clears all _revealed on enter, restores on exit.
+    dict            — Custom: {field_name: [indices]} specifying which items to keep.
+    """
+
+    def __init__(self, ctx, fields: Dict[str, Any], keep_revealed=None):
+        self._ctx = ctx
+        self._fields = fields
+        self._keep_revealed = keep_revealed
+        self._originals: Dict[str, Any] = {}
+        self._saved_revealed: Dict[str, Dict[int, str]] = {}
+
+    async def __aenter__(self):
+        # 1. Save field values and apply overrides
+        self._originals = {k: getattr(self._ctx, k) for k in self._fields}
+        for k, v in self._fields.items():
+            setattr(self._ctx, k, v)
+
+        # 2. Save all LayeredExposure._revealed snapshots
+        for fname, fval in self._ctx:
+            if isinstance(fval, LayeredExposure):
+                self._saved_revealed[fname] = dict(fval._revealed)
+
+        # 3. Apply revealed management based on mode
+        if self._keep_revealed is None:
+            for _, fval in self._ctx:
+                if isinstance(fval, LayeredExposure):
+                    fval._revealed.clear()
+        else:
+            self._apply_filter(self._keep_revealed)
+
+        return self._ctx
+
+    async def __aexit__(self, *exc) -> None:
+        # Restore field values
+        for k, v in self._originals.items():
+            setattr(self._ctx, k, v)
+        # Restore _revealed state for all LayeredExposure fields
+        for fname, fval in self._ctx:
+            if isinstance(fval, LayeredExposure):
+                fval._revealed.clear()
+                if fname in self._saved_revealed:
+                    fval._revealed.update(self._saved_revealed[fname])
+
+    def _apply_filter(self, keep: Dict[str, List[int]]) -> None:
+        """Remove revealed items not in the keep dict."""
+        for fname, fval in self._ctx:
+            if not isinstance(fval, LayeredExposure):
+                continue
+            allowed = set(keep.get(fname, []))
+            to_remove = [idx for idx in fval._revealed if idx not in allowed]
+            for idx in to_remove:
+                del fval._revealed[idx]
 
 
 ################################################################################################################
@@ -496,7 +572,6 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT]):
         skills: Optional[List[str]] = None,
         on_error: ErrorStrategy = ErrorStrategy.RAISE,
         max_retries: int = 0,
-        _phase_type: str = "sequential",
     ) -> None:
         """
         Execute a CognitiveWorker through observe-think-act cycle(s).
@@ -570,71 +645,123 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT]):
                 "run() must be called within a cognition() method."
             )
 
+        await _execute()
 
-        if self._workflow_builder:
-            with self._workflow_builder.phase(_phase_type, step_name):
-                await _execute()
-        else:
-            await _execute()
-
-    async def sequential(
-        self,
-        worker: CognitiveWorker,
-        *,
-        name: Optional[str] = None,
-        goal: Optional[str] = None,
-        max_attempts: int = 20,
-        **kwargs,
-    ) -> Any:
-        """Alias for ``self.run()`` with optional phase-level goal injection.
-
-        Every ``run()`` call already records a sequential phase, so this method
-        only adds the *goal* convenience (temporarily sets ``context._phase_goal``
-        so the LLM knows when the phase is complete).
+    @asynccontextmanager
+    async def sequential(self, name: str, *, goal: Optional[str] = None,
+                         keep_revealed: Optional[Dict[str, List[int]]] = None,
+                         **snapshot_fields):
         """
-        context = self._current_context
-        prev_goal = getattr(context, '_phase_goal', None)
-        if context is not None and goal is not None:
-            context._phase_goal = goal
-        try:
-            return await self.run(worker, name=name, max_attempts=max_attempts, **kwargs)
-        finally:
-            if context is not None:
-                context._phase_goal = prev_goal
+        Mark a structural phase as sequential for workflow capture.
 
-    async def loop(
-        self,
-        worker: CognitiveWorker,
-        *,
-        name: Optional[str] = None,
-        goal: Optional[str] = None,
-        max_attempts: int = 60,
-        **kwargs,
-    ) -> Any:
-        """Mark an execution phase as a *loop* (repeating iterations).
-
-        Behaves identically to ``self.run()`` but annotates the phase as ``"loop"``
-        so that ``capture_workflow=True`` produces a ``LoopBlock`` with pattern
-        detection.
+        Use as an async context manager around ``self.run()`` calls to group them
+        into a ``LinearTraceBlock`` when ``capture_workflow=True``.
 
         Parameters
         ----------
+        name : str
+            Phase name, used in the workflow block.
         goal : Optional[str]
-            Phase-level goal injected into the LLM prompt so it knows when this
-            phase is complete and should set ``finish=True``.
+            Phase-level goal injected into the context so the LLM knows
+            the purpose of this phase.
+        keep_revealed : Optional[Dict[str, List[int]]]
+            Passed to ``_AgentSnapshot`` for revealed state management.
+        **snapshot_fields
+            Additional context fields to temporarily override during this phase.
+        """
+        async with self._phase_context("sequential", name,
+                                       keep_revealed=keep_revealed,
+                                       _phase_goal=goal, **snapshot_fields):
+            yield
+
+    @asynccontextmanager
+    async def loop(self, name: str, *, goal: Optional[str] = None,
+                   keep_revealed: Optional[Dict[str, List[int]]] = None,
+                   **snapshot_fields):
+        """
+        Mark a structural phase as a loop for workflow capture.
+
+        Use as an async context manager around ``self.run()`` calls to group them
+        into a ``LoopBlock`` with pattern detection when ``capture_workflow=True``.
+
+        Parameters
+        ----------
+        name : str
+            Phase name, used in the workflow block.
+        goal : Optional[str]
+            Phase-level goal injected into the context so the LLM knows
+            the purpose of this phase.
+        keep_revealed : Optional[Dict[str, List[int]]]
+            Passed to ``_AgentSnapshot`` for revealed state management.
+        **snapshot_fields
+            Additional context fields to temporarily override during this phase.
+        """
+        async with self._phase_context("loop", name,
+                                       keep_revealed=keep_revealed,
+                                       _phase_goal=goal, **snapshot_fields):
+            yield
+
+    @asynccontextmanager
+    async def snapshot(self, name: str, *, goal: Optional[str] = None,
+                   keep_revealed: Optional[Dict[str, List[int]]] = None,
+                   **snapshot_fields):
+        """
+        Take a snapshot of the context temporarily for the duration of the agent manager.
+
+        Parameters
+        ----------
+        name : str
+            Phase name, used in the workflow block.
+        goal : Optional[str]
+            Phase-level goal injected into the context so the LLM knows
+            the purpose of this phase.
+        keep_revealed : Optional[Dict[str, List[int]]]
+            Passed to ``_AgentSnapshot`` for revealed state management.
+        **snapshot_fields
+            Additional context fields to temporarily override during this phase.
+        """
+        async with self._phase_context("loop", name,
+                                       keep_revealed=keep_revealed,
+                                       _phase_goal=goal, **snapshot_fields):
+            yield
+
+    @asynccontextmanager
+    async def _phase_context(self, phase_type: str, name: str, *,
+                             keep_revealed: Optional[Dict[str, List[int]]] = None,
+                             **snapshot_fields):
+        """Shared implementation for sequential() and loop() context managers.
+
+        Parameters
+        ----------
+        phase_type : str
+            Phase type identifier (``"sequential"`` or ``"loop"``).
+        name : str
+            Phase name, used in the workflow block.
+        keep_revealed : Optional[Dict[str, List[int]]]
+            Revealed state management mode for ``_AgentSnapshot``.
+        **snapshot_fields
+            Context fields to temporarily override during this phase.
         """
         context = self._current_context
-        prev_goal = getattr(context, '_phase_goal', None)
-        if context is not None and goal is not None:
-            context._phase_goal = goal
-        try:
-            return await self.run(
-                worker, name=name, max_attempts=max_attempts,
-                _phase_type="loop", **kwargs,
+        fields = {k: v for k, v in snapshot_fields.items() if v is not None}
+
+        if not fields and keep_revealed is None:
+            raise ValueError(
+                f"_phase_context('{name}'): no snapshot fields or keep_revealed provided. "
+                f"If no context state needs to be scoped for this phase, "
+                f"use self.run() directly — the behavior is identical."
             )
+
+        snap = _AgentSnapshot(context, fields, keep_revealed=keep_revealed)
+        await snap.__aenter__()
+        if self._workflow_builder:
+            self._workflow_builder.begin_phase(phase_type, name)
+        try:
+            yield
         finally:
-            if context is not None:
-                context._phase_goal = prev_goal
+            if self._workflow_builder:
+                self._workflow_builder.end_phase()
+            await snap.__aexit__(None, None, None)
 
     async def _run_once(
         self,
@@ -672,7 +799,6 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT]):
 
             # Record trace step
             self._record_trace_step(name, obs, decision, context)
-
             return decision.finish
 
 
@@ -768,6 +894,7 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT]):
 
     def _record_trace_step(self, name: str, obs: Any, decision: Any, context: Any) -> None:
         """Record a trace step to the workflow builder (if capture is active)."""
+        # TODO: Here, you have to judge for yourself whether it is a step that needs to be recorded.
         if self._workflow_builder is None:
             return
 
