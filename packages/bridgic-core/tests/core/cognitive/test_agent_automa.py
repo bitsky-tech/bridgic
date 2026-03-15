@@ -103,7 +103,7 @@ class TestRunMethod:
 
         steps = agent._current_context.cognitive_history.get_all()
         assert len(steps) == 1
-        assert steps[0].metadata["action_results"][0]["tool_name"] == "search_flights"
+        assert steps[0].result.results[0].tool_name == "search_flights"
 
     @pytest.mark.asyncio
     async def test_run_with_until(self):
@@ -278,5 +278,5 @@ class TestAgentAutomaMisc:
 
         steps = agent._current_context.cognitive_history.get_all()
         assert len(steps) == 2
-        assert steps[0].metadata["action_results"][0]["tool_name"] == "search_flights"
-        assert steps[1].metadata["action_results"][0]["tool_name"] == "search_hotels"
+        assert steps[0].result.results[0].tool_name == "search_flights"
+        assert steps[1].result.results[0].tool_name == "search_hotels"

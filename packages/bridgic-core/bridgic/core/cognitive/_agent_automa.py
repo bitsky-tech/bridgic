@@ -884,16 +884,7 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT]):
                 result = Step(
                     content=decision.step_content,
                     result=action_result,
-                    metadata={
-                        "action_results": [
-                            {
-                                "tool_name": r.tool_name,
-                                "tool_arguments": r.tool_arguments,
-                                "tool_result": r.tool_result,
-                            }
-                            for r in action_result.results
-                        ],
-                    }
+                    metadata={}
                 )
                 ctx.add_info(result)
         else:
