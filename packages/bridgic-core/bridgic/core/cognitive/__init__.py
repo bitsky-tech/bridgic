@@ -32,12 +32,6 @@ Architecture Layers
   - self.run(worker, ...) — primary execution method (observe-think-act)
 - ErrorStrategy: Error handling strategies for self.run() (RAISE, IGNORE, RETRY)
 
-**Workflow & Trace:**
-- Workflow: Serialisable structured workflow (StepBlock/LoopBlock/LinearTraceBlock)
-- WorkflowStepWorker: Flat-replay worker node (re-executes recorded tool calls)
-- TraceStep: Per-step execution recording
-- DivergenceDetector, DivergenceLevel: Replay divergence detection
-
 Example
 -------
 >>> class MyAgent(AgentAutoma[CognitiveContext]):
@@ -83,21 +77,6 @@ from ._agent_automa import (
     ActionResult,
     ActionStepResult,
 )
-from ._workflow import (
-    WorkflowToolCall,
-    WorkflowStepWorker,
-    # Amphibious workflow data models
-    Workflow,
-    StepBlock,
-    LoopBlock,
-    LinearTraceBlock,
-    WorkflowPatch,
-)
-from ._trace import (
-    TraceStep,
-    DivergenceDetector,
-    DivergenceLevel,
-)
 
 __all__ = [
     # Abstraction layer
@@ -129,20 +108,4 @@ __all__ = [
     # Orchestration layer
     "AgentAutoma",
     "ErrorStrategy",
-
-    # Workflow capture & replay
-    "WorkflowToolCall",
-    "WorkflowStepWorker",
-
-    # Amphibious workflow
-    "Workflow",
-    "StepBlock",
-    "LoopBlock",
-    "LinearTraceBlock",
-    "WorkflowPatch",
-
-    # Trace
-    "TraceStep",
-    "DivergenceDetector",
-    "DivergenceLevel",
 ]

@@ -212,28 +212,6 @@ class _WorkflowBuilder:
         finally:
             self.end_phase()
 
-    def record_step(self, step_data: dict) -> None:
-        if self._stack:
-            self._stack[-1].steps.append(step_data)
-        else:
-            self._orphan_steps.append(step_data)
-
-    def has_content(self) -> bool:
-        return bool(self._completed) or bool(self._orphan_steps)
-
-    def has_phases(self) -> bool:
-        """True if at least one phase was opened (sequential/loop was used)."""
-        return bool(self._completed) or bool(self._stack)
-
-    @property
-    def steps_count(self) -> int:
-        """Total number of recorded steps across all phases and orphans."""
-        total = len(self._orphan_steps)
-        for phase in self._completed:
-            total += len(phase.steps)
-        for phase in self._stack:
-            total += len(phase.steps)
-        return total
 
     # ------------------------------------------------------------------
     # Build
@@ -241,128 +219,7 @@ class _WorkflowBuilder:
 
     def build(self):
         """Convert accumulated phases into a ``Workflow``."""
-        from bridgic.core.cognitive._workflow import (
-            LinearTraceBlock,
-            LoopBlock,
-            Workflow,
-        )
-
-        wf = Workflow(metadata={"structured": True})
-
-        # Flush any remaining open phases (shouldn't happen, but be safe)
-        while self._stack:
-            self._completed.append(self._stack.pop())
-
-        # Prepend orphan steps that arrived before the first phase
-        if self._orphan_steps:
-            wf.blocks.append(LinearTraceBlock(name="pre", steps=list(self._orphan_steps)))
-
-        for phase in self._completed:
-            if phase.phase_type == "loop":
-                pattern, iterations = self._detect_loop_pattern(phase.steps)
-                wf.blocks.append(LoopBlock(
-                    name=phase.name,
-                    pattern_template=pattern,
-                    iterations=iterations,
-                    max_attempts=max(len(iterations) * 3, 10),
-                ))
-            else:
-                # sequential (or any other type) → LinearTraceBlock
-                wf.blocks.append(LinearTraceBlock(
-                    name=phase.name,
-                    steps=list(phase.steps),
-                ))
-
-        return wf
-
-    # ------------------------------------------------------------------
-    # Loop pattern detection
-    # ------------------------------------------------------------------
-
-    @staticmethod
-    def _detect_loop_pattern(steps: List[dict]) -> tuple:
-        """Detect repeating tool-name subsequences and split steps into iterations.
-
-        Returns ``(pattern_template, iterations)`` where *pattern_template* is
-        the canonical tool-name sequence for one iteration and *iterations* is
-        a list of step-data lists, one per detected iteration.
-        """
-        # 1. Extract tool name sequence (flatten multi-tool steps)
-        tool_names: List[str] = []
-        step_indices: List[int] = []  # maps each tool_name entry → step index
-        for idx, step in enumerate(steps):
-            tcs = step.get("tool_calls", [])
-            for tc in tcs:
-                name = tc.get("tool_name") or tc.get("name", "")
-                if name:
-                    tool_names.append(name)
-                    step_indices.append(idx)
-
-        if not tool_names:
-            return [], [list(steps)] if steps else []
-
-        # 2. Find best repeating pattern via sliding window + frequency
-        #    Prefer longer patterns when counts are equal (more specific).
-        best_pattern: List[str] = []
-        best_count = 0
-
-        for length in range(2, min(len(tool_names) // 2 + 1, 16)):
-            candidate = tool_names[:length]
-            count = _count_pattern_occurrences(tool_names, candidate)
-            if count >= 2 and count >= best_count:
-                best_count = count
-                best_pattern = candidate
-
-        if best_count < 2:
-            # No repeating pattern found — treat as single iteration
-            return tool_names, [list(steps)]
-
-        # 3. Split steps into iterations using the detected pattern
-        iterations: List[List[dict]] = []
-        current_iter_steps: List[dict] = []
-        pattern_pos = 0
-
-        for step in steps:
-            current_iter_steps.append(step)
-
-            tcs = step.get("tool_calls", [])
-            for tc in tcs:
-                tn = tc.get("tool_name") or tc.get("name", "")
-                if tn and pattern_pos < len(best_pattern) and tn == best_pattern[pattern_pos]:
-                    pattern_pos += 1
-                    if pattern_pos >= len(best_pattern):
-                        # Completed one iteration
-                        iterations.append(current_iter_steps)
-                        current_iter_steps = []
-                        pattern_pos = 0
-                        break
-
-        # Remaining steps go into a partial iteration
-        if current_iter_steps:
-            iterations.append(current_iter_steps)
-
-        return best_pattern, iterations
-
-
-def _count_pattern_occurrences(sequence: List[str], pattern: List[str]) -> int:
-    """Count non-overlapping occurrences of *pattern* in *sequence*, tolerating noise."""
-    if not pattern:
-        return 0
-    count = 0
-    seq_pos = 0
-    while seq_pos < len(sequence):
-        pat_pos = 0
-        scan = seq_pos
-        while scan < len(sequence) and pat_pos < len(pattern):
-            if sequence[scan] == pattern[pat_pos]:
-                pat_pos += 1
-            scan += 1
-        if pat_pos == len(pattern):
-            count += 1
-            seq_pos = scan
-        else:
-            break
-    return count
+        ...
 
 
 ################################################################################################################
@@ -894,40 +751,9 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT]):
         return finished
 
 
-    def _record_trace_step(self, name: str, obs: Any, decision: Any, context: Any) -> None:
+    def _record_trace_step(self, name: str, obs: Any, decision: Any, action_result: Any, context: Any) -> None:
         """Record a trace step to the workflow builder (if capture is active)."""
-        # TODO: Here, you have to judge for yourself whether it is a step that needs to be recorded.
-        if self._workflow_builder is None:
-            return
-
-        from bridgic.core.cognitive._workflow import WorkflowToolCall
-
-        tool_calls = []
-        tool_results = []
-        step_content = ""
-
-        if decision is not None:
-            step_content = getattr(decision, 'step_content', '')
-            calls = getattr(decision, 'output', None)
-            if isinstance(calls, list):
-                if context.cognitive_history._items:
-                    last_step = context.cognitive_history._items[-1]
-                    action_results = last_step.metadata.get("action_results", [])
-                    for ar in action_results:
-                        tool_calls.append(WorkflowToolCall(
-                            tool_name=ar["tool_name"],
-                            tool_arguments=ar["tool_arguments"],
-                            tool_result=ar.get("tool_result"),
-                        ))
-                        tool_results.append(ar.get("tool_result"))
-
-        self._workflow_builder.record_step({
-            "name": name,
-            "observation": str(obs) if obs is not None else None,
-            "step_content": step_content,
-            "tool_calls": [tc.model_dump() for tc in tool_calls],
-            "tool_results": tool_results,
-        })
+        ...
 
     async def _action(
         self,
@@ -1144,7 +970,7 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT]):
         async def _run_and_report(context: CognitiveContextT) -> CognitiveContextT:
             """Run the agent, measure time, and log summary."""
             start_time = time.time()
-            await super().arun(context=context)
+            await GraphAutoma.arun(self, context=context)
             self.spend_time = time.time() - start_time
 
             result = self._current_context
@@ -1223,36 +1049,16 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT]):
         # Run the amphibious agent
         ########################
         if workflow is not None:
-            return await self._run_amphibious(context, workflow)
+            # TODO: Implement the Running workflow mode
+            pass
         else:
             result = await _run_and_report(context=context)
             if capture_workflow:  # If capture_workflow is True, return the result and the workflow
                 return result, self._build_workflow()
             return result
 
-    async def _run_amphibious(self, context: CognitiveContextT, workflow) -> CognitiveContextT:
-        """Run in amphibious mode using AmphibiousRunner."""
-        from bridgic.core.cognitive._amphibious import AmphibiousRunner
-        runner = AmphibiousRunner(agent=self, workflow=workflow)
-        return await runner.run(context)
-
     def _build_workflow(self) -> Any:
         """
         Build a Workflow from the workflow builder of the last run.
-
-        Returns
-        -------
-        Workflow
-            Structured Workflow from the captured steps.
         """
-        from bridgic.core.cognitive._workflow import Workflow
-
-        if self._workflow_builder is None or not self._workflow_builder.has_content():
-            return Workflow(metadata={"agent_class": self.__class__.__name__})
-
-        wf = self._workflow_builder.build()
-        wf.metadata.update({
-            "agent_class": self.__class__.__name__,
-            "steps_count": self._workflow_builder.steps_count,
-        })
-        return wf
+        ...

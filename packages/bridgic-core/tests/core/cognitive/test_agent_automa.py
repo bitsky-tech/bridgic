@@ -1,5 +1,4 @@
-"""Tests for the amphibious refactoring: self.run(), trace, workflow patcher, etc."""
-import types
+"""Tests for AgentAutoma: self.run(), error strategies, tool filtering, etc."""
 import pytest
 from typing import Any, List, Optional
 
@@ -7,21 +6,10 @@ from bridgic.core.cognitive import (
     AgentAutoma,
     CognitiveContext,
     CognitiveWorker,
-    think_step,
     ErrorStrategy,
-    Workflow,
-    TraceStep,
-    DivergenceDetector,
-    DivergenceLevel,
-    WorkflowToolCall,
+    ThinkDecision,
 )
 from bridgic.core.cognitive._cognitive_worker import StepToolCall, ToolArgument
-from bridgic.core.cognitive._amphibious import (
-    AmphibiousRunner,
-    WorkflowPatcher,
-    DivergenceError,
-    ExecutionMode,
-)
 from .tools import get_travel_planning_tools
 
 
@@ -30,9 +18,8 @@ from .tools import get_travel_planning_tools
 # ---------------------------------------------------------------------------
 
 def _tr(**kwargs):
-    defaults = {"step_content": "", "output": [], "finish": False, "details": []}
-    defaults.update(kwargs)
-    return types.SimpleNamespace(**defaults)
+    """Create a ThinkDecision instance for mock LLM responses."""
+    return ThinkDecision(**kwargs)
 
 
 class MockLLM:
@@ -223,201 +210,10 @@ class TestRunMethod:
 
 
 # ---------------------------------------------------------------------------
-# Tests — TraceStep and DivergenceDetector
+# Tests — AgentAutoma properties and context initialization
 # ---------------------------------------------------------------------------
 
-class TestTraceAndDivergence:
-
-    def test_trace_step_hash(self):
-        """TraceStep computes stable hashes."""
-        ts = TraceStep(index=0, name="test")
-        ts.observation = "hello world"
-        h = ts.compute_observation_hash()
-        assert len(h) == 16
-        # Same input → same hash
-        assert h == TraceStep.compute_hash("hello world")
-
-    def test_trace_step_result_hashes(self):
-        """TraceStep computes result hashes."""
-        ts = TraceStep(index=0, name="test")
-        ts.tool_results = ["result1", "result2"]
-        hashes = ts.compute_result_hashes()
-        assert len(hashes) == 2
-        assert hashes[0] != hashes[1]
-
-    def test_divergence_detector_match(self):
-        """DivergenceDetector returns MATCH for identical data."""
-        detector = DivergenceDetector()
-        recorded = TraceStep(
-            index=0, name="test",
-            observation="hello",
-            tool_calls=[WorkflowToolCall(tool_name="search", tool_arguments={})],
-        )
-        recorded.compute_observation_hash()
-        recorded.tool_results = ["result1"]
-        recorded.compute_result_hashes()
-
-        level = detector.check(
-            recorded=recorded,
-            actual_observation="hello",
-            actual_tool_names=["search"],
-            actual_results=["result1"],
-        )
-        assert level == DivergenceLevel.MATCH
-
-    def test_divergence_detector_minor(self):
-        """DivergenceDetector returns MINOR for same tools, different data."""
-        detector = DivergenceDetector()
-        recorded = TraceStep(
-            index=0, name="test",
-            observation="hello",
-            tool_calls=[WorkflowToolCall(tool_name="search", tool_arguments={})],
-        )
-        recorded.compute_observation_hash()
-        recorded.tool_results = ["result1"]
-        recorded.compute_result_hashes()
-
-        level = detector.check(
-            recorded=recorded,
-            actual_observation="world",  # Different observation
-            actual_tool_names=["search"],
-            actual_results=["result1"],
-        )
-        assert level == DivergenceLevel.MINOR
-
-    def test_divergence_detector_major(self):
-        """DivergenceDetector returns MAJOR for different tool names."""
-        detector = DivergenceDetector()
-        recorded = TraceStep(
-            index=0, name="test",
-            tool_calls=[WorkflowToolCall(tool_name="search", tool_arguments={})],
-        )
-        recorded.compute_observation_hash()
-
-        level = detector.check(
-            recorded=recorded,
-            actual_observation=None,
-            actual_tool_names=["click"],  # Different tool
-            actual_results=[],
-        )
-        assert level == DivergenceLevel.MAJOR
-
-
-# ---------------------------------------------------------------------------
-# Tests — Workflow data model
-# ---------------------------------------------------------------------------
-
-class TestWorkflowDataModel:
-
-    def test_workflow_serialization_roundtrip(self):
-        """Workflow serializes and deserializes correctly."""
-        wf = Workflow()
-        wf.add_step_block("step1", tool_calls=[
-            WorkflowToolCall(tool_name="search", tool_arguments={"q": "test"})
-        ])
-        wf.add_loop_block("loop1", max_attempts=5)
-        wf.add_linear_trace_block("trace1", steps=[
-            {"index": 0, "name": "s1", "tool_calls": []}
-        ])
-
-        data = wf.model_dump()
-        restored = Workflow(**data)
-
-        assert len(restored.blocks) == 3
-        assert restored.blocks[0].type == "step"
-        assert restored.blocks[1].type == "loop"
-        assert restored.blocks[2].type == "linear_trace"
-
-    def test_workflow_version_starts_at_1(self):
-        """New workflow starts at version 1."""
-        wf = Workflow()
-        assert wf.version == 1
-
-
-# ---------------------------------------------------------------------------
-# Tests — backward compatibility with think_step
-# ---------------------------------------------------------------------------
-
-class TestBackwardCompatibility:
-
-    @pytest.mark.asyncio
-    async def test_think_step_still_works(self):
-        """Legacy think_step class attribute API still works."""
-        llm = MockLLM([_make_search_step(), _make_hotel_step()])
-
-        class Agent(AgentAutoma[CognitiveContext]):
-            step = think_step(CognitiveWorker.inline("Plan step"))
-
-            async def cognition(self, ctx):
-                await self.step.until(max_attempts=5)
-
-        agent = Agent(llm=llm)
-        ctx = _make_ctx()
-        result = await agent.arun(context=ctx)
-
-        steps = result.cognitive_history.get_all()
-        assert len(steps) == 2
-
-    @pytest.mark.asyncio
-    async def test_think_step_inline_still_works(self):
-        """think_step.inline() convenience method still works."""
-        llm = MockLLM([_make_search_step()])
-
-        class Agent(AgentAutoma[CognitiveContext]):
-            step = think_step.inline("Plan step")
-
-            async def cognition(self, ctx):
-                await self.step
-
-        agent = Agent(llm=llm)
-        ctx = _make_ctx()
-        result = await agent.arun(context=ctx)
-
-        steps = result.cognitive_history.get_all()
-        assert len(steps) == 1
-
-    @pytest.mark.asyncio
-    async def test_mixed_old_and_new_api(self):
-        """Can mix think_step and self.run() in the same agent."""
-        llm = MockLLM([_make_search_step(), _make_hotel_step()])
-
-        class Agent(AgentAutoma[CognitiveContext]):
-            legacy_step = think_step(CognitiveWorker.inline("Legacy"))
-
-            async def cognition(self, ctx):
-                await self.legacy_step
-                worker = CognitiveWorker.inline("New API", llm=self.llm)
-                await self.run(worker, name="new_step")
-
-        agent = Agent(llm=llm)
-        ctx = _make_ctx()
-        result = await agent.arun(context=ctx)
-
-        steps = result.cognitive_history.get_all()
-        assert len(steps) == 2
-
-    @pytest.mark.asyncio
-    async def test_ctx_init_still_works(self):
-        """ctx_init parameter still works for backward compatibility."""
-        llm = MockLLM([_make_search_step()])
-
-        class Agent(AgentAutoma[CognitiveContext]):
-            async def cognition(self, ctx):
-                await self.run(
-                    CognitiveWorker.inline("Test"),
-                    name="test",
-                )
-
-        from .tools import get_travel_planning_tools
-        agent = Agent(
-            llm=llm,
-            ctx_init={"tools": get_travel_planning_tools()},
-        )
-        result = await agent.arun(goal="Test goal")
-
-        assert isinstance(result, CognitiveContext)
-        steps = result.cognitive_history.get_all()
-        assert len(steps) == 1
+class TestAgentAutomaMisc:
 
     @pytest.mark.asyncio
     async def test_llm_property(self):
@@ -434,37 +230,53 @@ class TestBackwardCompatibility:
         ctx = _make_ctx()
         await agent.arun(context=ctx)
 
+    @pytest.mark.asyncio
+    async def test_arun_auto_create_context(self):
+        """arun() auto-creates context from kwargs when no context is provided."""
+        llm = MockLLM([_make_search_step()])
 
-# ---------------------------------------------------------------------------
-# Tests — WorkflowPatcher
-# ---------------------------------------------------------------------------
+        class Agent(AgentAutoma[CognitiveContext]):
+            async def cognition(self, ctx):
+                assert ctx.goal == "Test goal"
+                worker = CognitiveWorker.inline("Test", llm=self.llm)
+                await self.run(worker, name="test")
 
-class TestWorkflowPatcher:
+        agent = Agent(llm=llm)
+        result = await agent.arun(
+            goal="Test goal",
+            tools=get_travel_planning_tools(),
+        )
+        assert isinstance(result, CognitiveContext)
+        assert len(result.cognitive_history.get_all()) == 1
 
-    def test_no_patches_when_no_divergence(self):
-        """WorkflowPatcher produces no patches for normal execution."""
-        wf = Workflow()
-        wf.add_linear_trace_block("main", steps=[
-            {
-                "index": 0, "name": "s1",
-                "tool_calls": [
-                    {"tool_name": "search", "tool_arguments": {"q": "test"}, "tool_result": None}
-                ],
-            },
-        ])
+    @pytest.mark.asyncio
+    async def test_arun_requires_llm(self):
+        """arun() raises if no LLM is provided."""
+        class Agent(AgentAutoma[CognitiveContext]):
+            async def cognition(self, ctx):
+                pass
 
-        log = [
-            TraceStep(
-                index=0, name="s1",
-                tool_calls=[WorkflowToolCall(
-                    tool_name="search",
-                    tool_arguments={"q": "test"},
-                )],
-            ),
-        ]
+        agent = Agent()
+        with pytest.raises(RuntimeError, match="must be initialized with an LLM"):
+            await agent.arun(goal="Test")
 
-        patcher = WorkflowPatcher(wf, log)
-        patches = patcher.analyze_and_patch()
+    @pytest.mark.asyncio
+    async def test_multiple_workers_in_cognition(self):
+        """cognition() can orchestrate multiple workers sequentially."""
+        llm = MockLLM([_make_search_step(), _make_hotel_step()])
 
-        assert len(patches) == 0
-        assert wf.version == 1  # Not incremented
+        class Agent(AgentAutoma[CognitiveContext]):
+            async def cognition(self, ctx):
+                planner = CognitiveWorker.inline("Plan", llm=self.llm)
+                executor = CognitiveWorker.inline("Execute", llm=self.llm)
+                await self.run(planner, name="plan")
+                await self.run(executor, name="execute")
+
+        agent = Agent(llm=llm)
+        ctx = _make_ctx()
+        result = await agent.arun(context=ctx)
+
+        steps = result.cognitive_history.get_all()
+        assert len(steps) == 2
+        assert steps[0].metadata["action_results"][0]["tool_name"] == "search_flights"
+        assert steps[1].metadata["action_results"][0]["tool_name"] == "search_hotels"
