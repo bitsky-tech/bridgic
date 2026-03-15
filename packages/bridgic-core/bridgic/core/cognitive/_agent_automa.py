@@ -475,7 +475,7 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT]):
         """
         async with self._phase_context("sequential",
                                        keep_revealed=keep_revealed,
-                                       _phase_goal=goal, **snapshot_fields):
+                                       goal=goal, **snapshot_fields):
             yield
 
     @asynccontextmanager
@@ -500,7 +500,7 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT]):
         """
         async with self._phase_context("loop",
                                        keep_revealed=keep_revealed,
-                                       _phase_goal=goal, **snapshot_fields):
+                                       goal=goal, **snapshot_fields):
             yield
 
     @asynccontextmanager
@@ -522,7 +522,7 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT]):
         """
         async with self._phase_context("snapshot",
                                        keep_revealed=keep_revealed,
-                                       _phase_goal=goal, **snapshot_fields):
+                                       goal=goal, **snapshot_fields):
             yield
 
     @asynccontextmanager
@@ -1002,7 +1002,7 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT]):
         # Run the amphibious agent
         ########################
         if self._workflow is not None:
-            result = await self._run_workflow(self._workflow, context)
+            result = await self._workflow.arun(agent=self, context=context)
         else:
             result = await _run_and_report(context=context)
             if capture_workflow:  # If capture_workflow is True, return the result and the workflow
