@@ -412,15 +412,47 @@ class Workflow(BaseModel):
         context : CognitiveContext
             The context to replay into.
         """
+        agent._log("Workflow", f"Replay starting: {len(self.blocks)} block(s)", color="magenta")
+
         for block_idx, block in enumerate(self.blocks):
+            block_type = type(block).__name__
+            block_goal = getattr(block, 'goal', None) or ''
+            goal_preview = (block_goal[:80] + '...') if len(block_goal) > 80 else block_goal
+
+            if isinstance(block, SequentialBlock):
+                agent._log(
+                    "Workflow",
+                    f"Block {block_idx}: {block_type} "
+                    f"({len(block.steps)} steps) | goal={goal_preview}",
+                    color="magenta",
+                )
+            elif isinstance(block, LoopBlock):
+                has_code = block.code_slot.generated_code is not None
+                agent._log(
+                    "Workflow",
+                    f"Block {block_idx}: {block_type} "
+                    f"({len(block.body_steps)} body steps, "
+                    f"{block.observed_iterations} iterations, "
+                    f"has_code={has_code}) | goal={goal_preview}",
+                    color="magenta",
+                )
+
             try:
                 if isinstance(block, SequentialBlock):
                     await self._replay_sequential(agent, block, block_idx, context)
                 elif isinstance(block, LoopBlock):
                     await self._replay_loop(agent, block, block_idx, context)
-            except WorkflowDivergenceError:
+            except WorkflowDivergenceError as e:
+                agent._log(
+                    "Workflow",
+                    f"Divergence at block {block_idx}: {e.reason}. "
+                    f"Falling back to agent mode.",
+                    color="red",
+                )
                 await self._fallback_from(agent, block_idx, context)
                 break
+
+        agent._log("Workflow", "Replay finished.", color="magenta")
         return context
 
     # ------------------------------------------------------------------
@@ -441,29 +473,26 @@ class Workflow(BaseModel):
         worker = resolve_worker(block.run_config, agent._llm)
 
         for step_idx, step in enumerate(block.steps):
-            # 1. Observe current state
+            # 1. Observe current state (for context, not for divergence check)
             obs = await worker.observation(context)
             if obs is _DELEGATE:
                 obs = await agent.observation(context)
             context.observation = obs
 
-            # 2. Check for divergence
-            if step.observation_hash is not None:
-                current_hash = observation_fingerprint(obs)
-                if current_hash is not None and current_hash != step.observation_hash:
-                    raise WorkflowDivergenceError(
-                        block_index=block_idx,
-                        step_index=step_idx,
-                        reason=(
-                            f"Observation hash mismatch: "
-                            f"expected {step.observation_hash}, got {current_hash}"
-                        ),
-                    )
+            # Sequential blocks replay tool calls unconditionally —
+            # no divergence check, deterministic re-execution.
 
-            # 3. Replay tool calls (skip LLM)
+            # 2. Replay tool calls (skip LLM)
             if step.tool_calls:
                 tool_call_pairs = _match_recorded_tools(step.tool_calls, context)
                 if tool_call_pairs:
+                    tool_names = [tc.tool_name for tc in step.tool_calls]
+                    agent._log(
+                        "Workflow",
+                        f"Replay step {step_idx}/{len(block.steps)-1}: "
+                        f"tools={tool_names}",
+                        color="magenta",
+                    )
                     tool_call_pairs = await worker.before_action(tool_call_pairs, context)
                     action_result = await agent.action_tool_call(tool_call_pairs, context)
                     result_step = Step(
@@ -502,6 +531,12 @@ class Workflow(BaseModel):
 
         if block.code_slot.generated_code is None:
             # No code slot filled — run in agent mode
+            agent._log(
+                "Workflow",
+                f"Loop block {block_idx}: no generated code, "
+                f"falling back to agent mode",
+                color="red",
+            )
             worker = resolve_worker(block.run_config, agent._llm)
             await agent.run(
                 worker,
@@ -563,8 +598,20 @@ class Workflow(BaseModel):
         starts from scratch — the agent observes current state and adapts.
         """
         remaining_blocks = self.blocks[block_idx:]
+        agent._log(
+            "Workflow",
+            f"Fallback: running {len(remaining_blocks)} "
+            f"remaining block(s) in agent mode",
+            color="red",
+        )
 
-        for block in remaining_blocks:
+        for fb_idx, block in enumerate(remaining_blocks):
+            agent._log(
+                "Workflow",
+                f"Fallback block {block_idx + fb_idx}: "
+                f"{type(block).__name__} (agent mode)",
+                color="red",
+            )
             worker = resolve_worker(block.run_config, agent._llm)
             await agent.run(
                 worker,

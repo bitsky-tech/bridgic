@@ -259,6 +259,36 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT]):
         """Access the agent's default LLM."""
         return self._llm
 
+    def _log(self, stage: str, message: str, data: Any = None, color: str = "white"):
+        """Log formatted message with timestamp and caller location.
+
+        Format: ``[HH:MM:SS.mmm] [Stage] (file:line) message``
+
+        Only prints when ``self._verbose`` is True.
+        """
+        if not self._verbose:
+            return
+        import inspect
+        from datetime import datetime
+        from os.path import basename
+
+        frame = inspect.currentframe()
+        try:
+            caller = frame.f_back if frame is not None else None
+            if caller is not None:
+                filename = basename(caller.f_code.co_filename)
+                lineno = caller.f_lineno
+            else:
+                filename, lineno = "?", 0
+        finally:
+            del frame
+
+        ts = datetime.now().strftime("%H:%M:%S.%f")[:-3]
+        line = f"[{ts}] [{stage}] ({filename}:{lineno}) {message}"
+        printer.print(line, color=color)
+        if data is not None:
+            printer.print(str(data), color="gray")
+
     ############################################################################
     # Internal core methods (GraphAutoma execution flow)
     ############################################################################
@@ -546,11 +576,16 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT]):
         fields = {k: v for k, v in snapshot_fields.items() if v is not None}
         phase_type = phase_type if phase_type != "snapshot" else "sequential"
 
-        if not fields and keep_revealed is None:
+        # If goal was passed as a snapshot field (e.g. sequential(goal=...)),
+        # use it as the phase goal for the workflow builder as well.
+        if _phase_goal is None and "goal" in fields:
+            _phase_goal = fields["goal"]
+
+        if not fields and keep_revealed is None and _phase_goal is None:
             raise ValueError(
-                f"_phase_context('{phase_type}'): no snapshot fields or keep_revealed provided. "
-                f"If no context state needs to be scoped for this phase, "
-                f"use self.run() directly — the behavior is identical."
+                f"_phase_context('{phase_type}'): no snapshot fields, keep_revealed, "
+                f"or goal provided. If no context state needs to be scoped for "
+                f"this phase, use self.run() directly — the behavior is identical."
             )
 
         # Create the snapshot
@@ -576,26 +611,37 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT]):
     ) -> bool:
         """Execute a single observe-think-act cycle. Returns whether the worker signalled finish."""
         async def _run_observe_think_act(worker: CognitiveWorker, context: CognitiveContextT) -> bool:
+            worker_name = worker.__class__.__name__
+
             # 1. Observe
             obs = await worker.observation(context)
             if obs is _DELEGATE:
                 obs = await self.observation(context)
             context.observation = obs
 
-            # TODO: log design
-            # if worker._verbose:
-            #     obs_str = str(obs) if obs is not None else "None"
-            #     worker._log(
-            #         "Observe", "Observation",
-            #         obs_str[:200] + ("..." if len(obs_str) > 200 else ""),
-            #         color="cyan"
-            #     )
+            obs_str = str(obs) if obs is not None else "None"
+            if len(obs_str) > 200:
+                obs_str = obs_str[:200] + "..."
+            self._log("Observe", f"{worker_name}: {obs_str}", color="cyan")
 
             # 2. Think
             decision = await worker.arun(context=context)
 
+            if decision is not None:
+                step_str = getattr(decision, 'step_content', str(decision))
+                if len(step_str) > 200:
+                    step_str = step_str[:200] + "..."
+                finished = getattr(decision, 'finish', False)
+                self._log("Think", f"{worker_name}: finish={finished}, step={step_str}", color="yellow")
+
             # 3. Act
             action_result = await self._action(decision, context, _worker=worker) if decision is not None else None
+
+            if action_result is not None:
+                tool_names = []
+                for ar in action_result.metadata.get("action_results", []):
+                    tool_names.append(ar.get("tool_name", "?"))
+                self._log("Act", f"{worker_name}: tools={tool_names}", color="green")
 
             # Record trace step
             self._record_trace_step(worker, obs, decision, action_result, context)

@@ -397,7 +397,6 @@ class CognitiveWorker(GraphAutoma):
 
     async def _run_thinking(self, observation: Optional[str], context: CognitiveContext) -> Any:
         """Thinking phase with cognitive policies support. Returns the final decision."""
-        self._log("Think", "Thinking with tool selection", color="blue")
 
         ###############################
         # Call the LLM to get the decision
@@ -450,8 +449,6 @@ class CognitiveWorker(GraphAutoma):
             if acquiring_open:
                 reqs = getattr(think_result, 'details', None) or []
                 if reqs:
-                    req_labels = [f"{r.field}[{r.index}]" for r in reqs]
-                    self._log("Think", f"Requesting details (batch): {req_labels}", color="blue")
                     for req in reqs:
                         context.get_details(req.field, req.index)
                     acquiring_open = False  # close — never fires again
@@ -462,7 +459,6 @@ class CognitiveWorker(GraphAutoma):
                 rehearsal_val = getattr(think_result, 'rehearsal', None)
                 if rehearsal_val is not None:
                     policy_context.append(f"## Mental Simulation (Rehearsal):\n{rehearsal_val}")
-                    self._log("Think", f"Rehearsal output: {rehearsal_val}", color="blue")
                     rehearsal_open = False  # close
                     re_think = True
 
@@ -471,7 +467,6 @@ class CognitiveWorker(GraphAutoma):
                 reflection_val = getattr(think_result, 'reflection', None)
                 if reflection_val is not None:
                     policy_context.append(f"## Information Assessment (Reflection):\n{reflection_val}")
-                    self._log("Think", f"Reflection output: {reflection_val}", color="blue")
                     reflection_open = False  # close
                     re_think = True
 
@@ -480,42 +475,38 @@ class CognitiveWorker(GraphAutoma):
 
             break  # No operator activated — LLM gave a direct decision
 
-        # Log and return decision
-        if self.output_schema is not None:
-            self._log("Think", "output_schema result", str(think_result.output), color="green")
-        else:
-            tools = [c.tool for c in think_result.output]
-            self._log("Think", f"Result: step=\"{think_result.step_content}\" tools={tools}", color="blue")
         return think_result
 
     ############################################################################
     # Internal helpers
     ############################################################################
 
-    def _log(self, stage: str, message: str, data: Any = None, color: str = "white"):
-        """Log formatted message if verbose mode is enabled."""
-        if not self._verbose:
-            return
-
-        prefix = f"[{stage}]"
-        if data is not None:
-            data_str = str(data)
-            printer.print(f"{prefix} {message}", color=color)
-            printer.print(f"{data_str}", color="gray")
-        else:
-            printer.print(f"{prefix} {message}", color=color)
-
     def _log_prompt(self, stage: str, messages: List[Message]):
-        """Log prompts if verbose_prompt mode is enabled."""
+        """Log prompts with timestamp and caller location if verbose_prompt is enabled."""
         if not self._verbose_prompt:
             return
+        import inspect
+        from datetime import datetime
+        from os.path import basename
 
+        frame = inspect.currentframe()
+        try:
+            caller = frame.f_back if frame is not None else None
+            if caller is not None:
+                filename = basename(caller.f_code.co_filename)
+                lineno = caller.f_lineno
+            else:
+                filename, lineno = "?", 0
+        finally:
+            del frame
+
+        ts = datetime.now().strftime("%H:%M:%S.%f")[:-3]
         total_tokens = sum(self._count_tokens(m.content) for m in messages)
         for i, msg in enumerate(messages):
             tokens = self._count_tokens(msg.content)
-            printer.print(f"[{stage}] Message {i+1} ({msg.role}, {tokens} tokens):", color="cyan")
+            printer.print(f"[{ts}] [{stage}] ({filename}:{lineno}) Message {i+1} ({msg.role}, {tokens} tokens):", color="cyan")
             printer.print(msg.content, color="gray")
-        printer.print(f"[{stage}] Total: {total_tokens} tokens (cumulative: {self.spend_tokens})", color="yellow")
+        printer.print(f"[{ts}] [{stage}] ({filename}:{lineno}) Total: {total_tokens} tokens (cumulative: {self.spend_tokens})", color="yellow")
 
     @staticmethod
     def _generate_schema_example(schema: dict, defs: dict = None) -> Any:
