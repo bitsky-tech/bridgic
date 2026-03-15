@@ -638,10 +638,18 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT]):
             action_result = await self._action(decision, context, _worker=worker) if decision is not None else None
 
             if action_result is not None:
-                tool_names = []
                 for ar in action_result.metadata.get("action_results", []):
-                    tool_names.append(ar.get("tool_name", "?"))
-                self._log("Act", f"{worker_name}: tools={tool_names}", color="green")
+                    tool_name = ar.get("tool_name", "?")
+                    tool_args = ar.get("tool_arguments", {})
+                    tool_result = ar.get("tool_result", "")
+                    result_str = str(tool_result)
+                    if len(result_str) > 300:
+                        result_str = result_str[:300] + "..."
+                    self._log(
+                        "Act",
+                        f"{worker_name}: {tool_name}({tool_args}) -> {result_str}",
+                        color="green",
+                    )
 
             # Record trace step
             self._record_trace_step(worker, obs, decision, action_result, context)
