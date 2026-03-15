@@ -286,7 +286,7 @@ class TestCognitiveWorker:
 
         assert len(agent._current_context.cognitive_history) == 2
         # Step 1: search_flights was executed
-        assert "search_flights" in agent._current_context.cognitive_history[0].metadata.get("tool_calls", [])
+        assert agent._current_context.cognitive_history[0].metadata["action_results"][0]["tool_name"] == "search_flights"
 
     @pytest.mark.asyncio
     async def test_override_action_pipeline_via_agent(self):
@@ -322,8 +322,9 @@ class TestCognitiveWorker:
 
         last_step = agent._current_context.cognitive_history[-1]
         # before_action filtered out book_flight
-        assert "book_flight" not in last_step.metadata.get("tool_calls", [])
-        assert "search_flights" in last_step.metadata.get("tool_calls", [])
+        tool_names = [r["tool_name"] for r in last_step.metadata.get("action_results", [])]
+        assert "book_flight" not in tool_names
+        assert "search_flights" in tool_names
 
     @pytest.mark.asyncio
     async def test_rehearsal_policy(self):

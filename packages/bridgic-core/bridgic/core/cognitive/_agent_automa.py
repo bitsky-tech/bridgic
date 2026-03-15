@@ -739,13 +739,14 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT]):
 
         tool_calls = []
         if action_result is not None and isinstance(action_result, Step):
-            action_results = action_result.metadata.get("action_results", [])
-            for ar in action_results:
-                tool_calls.append({
-                    "tool_name": ar["tool_name"],
-                    "tool_arguments": ar["tool_arguments"],
-                    "tool_result": ar["tool_result"],
-                })
+            result_obj = action_result.result
+            if isinstance(result_obj, ActionResult):
+                for r in result_obj.results:
+                    tool_calls.append({
+                        "tool_name": r.tool_name,
+                        "tool_arguments": r.tool_arguments,
+                        "tool_result": r.tool_result,
+                    })
 
         self._workflow_builder.record_step({
             "name": worker.__class__.__name__,
@@ -883,7 +884,16 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT]):
                 result = Step(
                     content=decision.step_content,
                     result=action_result,
-                    metadata={}
+                    metadata={
+                        "action_results": [
+                            {
+                                "tool_name": r.tool_name,
+                                "tool_arguments": r.tool_arguments,
+                                "tool_result": r.tool_result,
+                            }
+                            for r in action_result.results
+                        ],
+                    }
                 )
                 ctx.add_info(result)
         else:
