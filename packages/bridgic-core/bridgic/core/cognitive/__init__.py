@@ -38,8 +38,8 @@ Example
 ...     async def cognition(self, ctx):
 ...         planner = CognitiveWorker.inline("Plan approach", llm=self.llm)
 ...         executor = CognitiveWorker.inline("Execute step", llm=self.llm)
-...         await self.run(planner, name="plan")
-...         await self.run(executor, name="execute",
+...         await self.run(planner)
+...         await self.run(executor,
 ...                        until=lambda ctx: ctx.done, max_attempts=20)
 ...
 >>> ctx = await MyAgent(llm=llm).arun(goal="Complete the task")
@@ -77,6 +77,19 @@ from ._agent_automa import (
     ActionResult,
     ActionStepResult,
 )
+from ._workflow import (
+    # Workflow data models
+    Workflow,
+    SequentialBlock,
+    LoopBlock,
+    LoopCodeSlot,
+    TraceStep,
+    RunConfig,
+    RecordedToolCall,
+    WorkflowDivergenceError,
+    # Workflow builder
+    WorkflowBuilder,
+)
 
 __all__ = [
     # Abstraction layer
@@ -108,4 +121,15 @@ __all__ = [
     # Orchestration layer
     "AgentAutoma",
     "ErrorStrategy",
+
+    # Workflow data models
+    "Workflow",
+    "SequentialBlock",
+    "LoopBlock",
+    "LoopCodeSlot",
+    "TraceStep",
+    "RunConfig",
+    "RecordedToolCall",
+    "WorkflowDivergenceError",
+    "WorkflowBuilder",
 ]

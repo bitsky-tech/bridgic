@@ -2,7 +2,7 @@ import inspect
 import time
 import traceback
 from abc import abstractmethod
-from contextlib import asynccontextmanager, contextmanager
+from contextlib import asynccontextmanager
 from enum import Enum
 from concurrent.futures import ThreadPoolExecutor
 from typing import (
@@ -22,6 +22,7 @@ from bridgic.core.agentic import ConcurrentAutoma
 from bridgic.core.agentic.tool_specs import ToolSpec
 from bridgic.core.cognitive._context import CognitiveContext, CognitiveTools, CognitiveSkills, Exposure, LayeredExposure, Step
 from bridgic.core.cognitive._cognitive_worker import CognitiveWorker, _DELEGATE, StepToolCall
+from bridgic.core.cognitive._workflow import Workflow, WorkflowBuilder, observation_fingerprint
 from bridgic.core.utils._console import printer
 
 
@@ -169,60 +170,6 @@ class _AgentSnapshot:
 
 
 ################################################################################################################
-# Workflow Builder (internal)
-################################################################################################################
-
-class _PhaseAccumulator:
-    """Accumulates trace steps for a single structural phase (sequential or loop)."""
-
-    __slots__ = ("phase_type", "name", "steps")
-
-    def __init__(self, phase_type: str, name: str):
-        self.phase_type: str = phase_type  # "sequential" | "loop"
-        self.name: str = name
-        self.steps: List[dict] = []
-
-
-class _WorkflowBuilder:
-    """Stack-based builder that converts phase-annotated trace steps into structured Workflow blocks.
-
-    ``begin_phase()`` / ``end_phase()`` bracket a structural phase.
-    ``record_step()`` routes step data to the active phase (or orphan list).
-    ``build()`` converts completed phases into the appropriate block types.
-    """
-
-    def __init__(self):
-        self._stack: List[_PhaseAccumulator] = []
-        self._completed: List[_PhaseAccumulator] = []
-        self._orphan_steps: List[dict] = []
-
-    def begin_phase(self, phase_type: str, name: str) -> None:
-        self._stack.append(_PhaseAccumulator(phase_type, name or phase_type))
-
-    def end_phase(self) -> None:
-        if self._stack:
-            self._completed.append(self._stack.pop())
-
-    @contextmanager
-    def phase(self, phase_type: str, name: str):
-        """Context manager that brackets a structural phase."""
-        self.begin_phase(phase_type, name)
-        try:
-            yield
-        finally:
-            self.end_phase()
-
-
-    # ------------------------------------------------------------------
-    # Build
-    # ------------------------------------------------------------------
-
-    def build(self):
-        """Convert accumulated phases into a ``Workflow``."""
-        ...
-
-
-################################################################################################################
 # AgentAutoma
 ################################################################################################################
 
@@ -251,8 +198,8 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT]):
     ...     async def cognition(self, ctx: CognitiveContext):
     ...         planner = CognitiveWorker.inline("Plan approach", llm=self.llm)
     ...         executor = CognitiveWorker.inline("Execute step", llm=self.llm)
-    ...         await self.run(planner, name="plan")
-    ...         await self.run(executor, name="execute",
+    ...         await self.run(planner)
+    ...         await self.run(executor,
     ...                        until=lambda ctx: ctx.done, max_attempts=20)
     ...
     >>> ctx = await MyAgent(llm=llm).arun(goal="Complete the task", tools=[...])
@@ -300,7 +247,8 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT]):
         self._verbose = verbose
 
         # Workflow capture
-        self._workflow_builder: Optional[_WorkflowBuilder] = None
+        self._workflow_builder: Optional[WorkflowBuilder] = None
+        self._workflow: Optional[Workflow] = None
 
         # Usage stats (reset per arun call)
         self.spend_tokens: int = 0
@@ -367,8 +315,8 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT]):
         >>> async def cognition(self, ctx: MyContext):
         ...     planner = CognitiveWorker.inline("Plan", llm=self.llm)
         ...     executor = CognitiveWorker.inline("Execute", llm=self.llm)
-        ...     await self.run(planner, name="plan")
-        ...     await self.run(executor, name="execute",
+        ...     await self.run(planner)
+        ...     await self.run(executor,
         ...                    until=lambda ctx: ctx.done, max_attempts=20)
         """
         ...
@@ -422,7 +370,6 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT]):
         self,
         worker: CognitiveWorker,
         *,
-        name: Optional[str] = None,
         until: Optional[Union[Callable[..., bool], Callable[..., Awaitable[bool]]]] = None,
         max_attempts: int = 1,
         tools: Optional[List[str]] = None,
@@ -441,8 +388,6 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT]):
         ----------
         worker : CognitiveWorker
             The worker to execute.
-        name : Optional[str]
-            Step name, used for trace/workflow mapping.
         until : Optional callable
             Loop condition: if provided, the step repeats until this returns True
             or LLM signals finish. Supports sync and async callables.
@@ -457,19 +402,13 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT]):
         max_retries : int
             Max retries for RETRY strategy.
 
-        Returns
-        -------
-        Any
-            The result from the last execution (typed instance in output_schema mode,
-            or None in standard tool-call mode).
-
         Examples
         --------
         >>> # Single step
-        >>> await self.run(planner, name="plan")
+        >>> await self.run(planner)
         >>>
         >>> # Looping step
-        >>> await self.run(executor, name="execute",
+        >>> await self.run(executor,
         ...                until=lambda ctx: ctx.done, max_attempts=20,
         ...                tools=["click", "type"])
         """
@@ -477,7 +416,7 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT]):
             if until is not None or max_attempts > 1:
                 for _ in range(max_attempts):
                     finished = await self._run_once(
-                        worker, name=step_name, tools=tools, skills=skills,
+                        worker, tools=tools, skills=skills,
                         on_error=on_error, max_retries=max_retries,
                     )
                     if finished:
@@ -490,11 +429,10 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT]):
                             return
             else:
                 await self._run_once(
-                    worker, name=step_name, tools=tools, skills=skills,
+                    worker, tools=tools, skills=skills,
                     on_error=on_error, max_retries=max_retries,
                 )
 
-        step_name = name or worker.__class__.__name__
         context = self._current_context
         if context is None:
             raise RuntimeError(
@@ -502,22 +440,31 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT]):
                 "run() must be called within a cognition() method."
             )
 
+        # Capture run config for workflow builder
+        if self._workflow_builder:
+            self._workflow_builder.set_run_config({
+                "worker_class": f"{worker.__class__.__module__}.{worker.__class__.__qualname__}",
+                "worker_thinking_prompt": getattr(worker, '_thinking_prompt', None),
+                "tools": tools,
+                "skills": skills,
+                "max_attempts": max_attempts,
+                "on_error": on_error.value,
+            })
+
         await _execute()
 
     @asynccontextmanager
-    async def sequential(self, name: str, *, goal: Optional[str] = None,
+    async def sequential(self, *, goal: Optional[str] = None,
                          keep_revealed: Optional[Dict[str, List[int]]] = None,
                          **snapshot_fields):
         """
         Mark a structural phase as sequential for workflow capture.
 
         Use as an async context manager around ``self.run()`` calls to group them
-        into a ``LinearTraceBlock`` when ``capture_workflow=True``.
+        into a ``SequentialBlock`` when ``capture_workflow=True``.
 
         Parameters
         ----------
-        name : str
-            Phase name, used in the workflow block.
         goal : Optional[str]
             Phase-level goal injected into the context so the LLM knows
             the purpose of this phase.
@@ -526,13 +473,13 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT]):
         **snapshot_fields
             Additional context fields to temporarily override during this phase.
         """
-        async with self._phase_context("sequential", name,
+        async with self._phase_context("sequential",
                                        keep_revealed=keep_revealed,
                                        _phase_goal=goal, **snapshot_fields):
             yield
 
     @asynccontextmanager
-    async def loop(self, name: str, *, goal: Optional[str] = None,
+    async def loop(self, *, goal: Optional[str] = None,
                    keep_revealed: Optional[Dict[str, List[int]]] = None,
                    **snapshot_fields):
         """
@@ -543,8 +490,6 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT]):
 
         Parameters
         ----------
-        name : str
-            Phase name, used in the workflow block.
         goal : Optional[str]
             Phase-level goal injected into the context so the LLM knows
             the purpose of this phase.
@@ -553,13 +498,13 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT]):
         **snapshot_fields
             Additional context fields to temporarily override during this phase.
         """
-        async with self._phase_context("loop", name,
+        async with self._phase_context("loop",
                                        keep_revealed=keep_revealed,
                                        _phase_goal=goal, **snapshot_fields):
             yield
 
     @asynccontextmanager
-    async def snapshot(self, name: str, *, goal: Optional[str] = None,
+    async def snapshot(self, *, goal: Optional[str] = None,
                    keep_revealed: Optional[Dict[str, List[int]]] = None,
                    **snapshot_fields):
         """
@@ -567,8 +512,6 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT]):
 
         Parameters
         ----------
-        name : str
-            Phase name, used in the workflow block.
         goal : Optional[str]
             Phase-level goal injected into the context so the LLM knows
             the purpose of this phase.
@@ -577,13 +520,13 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT]):
         **snapshot_fields
             Additional context fields to temporarily override during this phase.
         """
-        async with self._phase_context("snapshot", name,
+        async with self._phase_context("snapshot",
                                        keep_revealed=keep_revealed,
                                        _phase_goal=goal, **snapshot_fields):
             yield
 
     @asynccontextmanager
-    async def _phase_context(self, phase_type: str, name: str, *,
+    async def _phase_context(self, phase_type: str, *,
                              keep_revealed: Optional[Dict[str, List[int]]] = None,
                              **snapshot_fields):
         """Shared implementation for sequential() and loop() context managers.
@@ -592,8 +535,6 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT]):
         ----------
         phase_type : str
             Phase type identifier (``"sequential"`` or ``"loop"`` or ``"snapshot"``).
-        name : str
-            Phase name, used in the workflow block.
         keep_revealed : Optional[Dict[str, List[int]]]
             Revealed state management mode for ``_AgentSnapshot``.
         **snapshot_fields
@@ -601,12 +542,13 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT]):
         """
         # Init the variables
         context = self._current_context
+        _phase_goal = snapshot_fields.pop("_phase_goal", None)
         fields = {k: v for k, v in snapshot_fields.items() if v is not None}
         phase_type = phase_type if phase_type != "snapshot" else "sequential"
 
         if not fields and keep_revealed is None:
             raise ValueError(
-                f"_phase_context('{name}'): no snapshot fields or keep_revealed provided. "
+                f"_phase_context('{phase_type}'): no snapshot fields or keep_revealed provided. "
                 f"If no context state needs to be scoped for this phase, "
                 f"use self.run() directly — the behavior is identical."
             )
@@ -615,7 +557,7 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT]):
         snap = _AgentSnapshot(context, fields, keep_revealed=keep_revealed)
         await snap.__aenter__()
         if self._workflow_builder:
-            self._workflow_builder.begin_phase(phase_type, name)
+            self._workflow_builder.begin_phase(phase_type, goal=_phase_goal)
         try:
             yield
         finally:
@@ -627,7 +569,6 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT]):
         self,
         worker: CognitiveWorker,
         *,
-        name: str = "",
         tools: Optional[List[str]] = None,
         skills: Optional[List[str]] = None,
         on_error: ErrorStrategy = ErrorStrategy.RAISE,
@@ -657,15 +598,16 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT]):
             action_result = await self._action(decision, context, _worker=worker) if decision is not None else None
 
             # Record trace step
-            self._record_trace_step(name, obs, decision, action_result, context)
+            self._record_trace_step(worker, obs, decision, action_result, context)
             return decision.finish
 
 
         ########################
-        # Initialize CognitiveWorker 
+        # Initialize CognitiveWorker
         # runtime environment
         ########################
         context = self._current_context
+        worker_label = worker.__class__.__name__
 
         # Init LLM
         if worker._llm is None and self._llm is not None:
@@ -717,7 +659,7 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT]):
         except Exception as e:
             if on_error == ErrorStrategy.RAISE:
                 raise RuntimeError(
-                    f"Worker '{name or worker.__class__.__name__}' failed during "
+                    f"Worker '{worker_label}' failed during "
                     f"observe-think-act cycle: {e}"
                 ) from e
             elif on_error == ErrorStrategy.IGNORE:
@@ -730,7 +672,7 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT]):
                     except Exception as e:
                         if attempt == max_retries:
                             raise RuntimeError(
-                                f"Worker '{name or worker.__class__.__name__}' failed after "
+                                f"Worker '{worker_label}' failed after "
                                 f"{max_retries + 1} retries: {e}"
                             ) from e
         finally:
@@ -751,9 +693,28 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT]):
         return finished
 
 
-    def _record_trace_step(self, name: str, obs: Any, decision: Any, action_result: Any, context: Any) -> None:
+    def _record_trace_step(self, worker: CognitiveWorker, obs: Any, decision: Any, action_result: Any, context: Any) -> None:
         """Record a trace step to the workflow builder (if capture is active)."""
-        ...
+        if self._workflow_builder is None:
+            return
+
+        tool_calls = []
+        if action_result is not None and isinstance(action_result, Step):
+            action_results = action_result.metadata.get("action_results", [])
+            for ar in action_results:
+                tool_calls.append({
+                    "tool_name": ar["tool_name"],
+                    "tool_arguments": ar["tool_arguments"],
+                    "tool_result": ar["tool_result"],
+                })
+
+        self._workflow_builder.record_step({
+            "name": worker.__class__.__name__,
+            "step_content": getattr(decision, "step_content", ""),
+            "finished": getattr(decision, "finish", False),
+            "tool_calls": tool_calls,
+            "observation_hash": observation_fingerprint(obs),
+        })
 
     async def _action(
         self,
@@ -914,10 +875,9 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT]):
         *,
         context: Optional[CognitiveContextT] = None,
         capture_workflow: bool = False,
-        workflow: Optional[Any] = None,
         feedback_data: Optional[Union[InteractionFeedback, List[InteractionFeedback]]] = None,
         **kwargs
-    ) -> Union[CognitiveContextT, Tuple[CognitiveContextT, Any]]:
+    ) -> str:
         """
         Run the agent.
 
@@ -936,9 +896,6 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT]):
         capture_workflow : bool
             If True, returns a ``(context, Workflow)`` tuple containing the
             structured execution trace of the run.
-        workflow : Optional[Workflow]
-            If provided, runs in amphibious mode: replay the workflow
-            deterministically, falling back to agent mode on divergence.
         feedback_data : Optional[InteractionFeedback | List[InteractionFeedback]]
             Reserved for future use (currently unused).
         **kwargs
@@ -967,22 +924,18 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT]):
         >>> # Capture workflow for later replay
         >>> ctx, wf = await agent.arun(goal="...", capture_workflow=True)
         """
-        async def _run_and_report(context: CognitiveContextT) -> CognitiveContextT:
+        async def _run_and_report(context: CognitiveContextT) -> str:
             """Run the agent, measure time, and log summary."""
             start_time = time.time()
-            await GraphAutoma.arun(self, context=context)
+            result = await GraphAutoma.arun(self, context=context)
             self.spend_time = time.time() - start_time
-
-            result = self._current_context
 
             if self._verbose:
                 agent_name = self.name or self.__class__.__name__
-                steps_count = len(result.cognitive_history) if hasattr(result, 'cognitive_history') else 0
                 separator = "=" * 50
                 printer.print(separator, color="cyan")
                 printer.print(
                     f"  {agent_name} | Completed\n"
-                    f"  Steps: {steps_count} | "
                     f"Tokens: {self.spend_tokens} | "
                     f"Time: {self.spend_time:.2f}s",
                     color="cyan"
@@ -1003,7 +956,7 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT]):
             )
 
         if capture_workflow:
-            self._workflow_builder = _WorkflowBuilder()
+            self._workflow_builder = WorkflowBuilder()
         else:
             self._workflow_builder = None
 
@@ -1048,17 +1001,32 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT]):
         ########################
         # Run the amphibious agent
         ########################
-        if workflow is not None:
-            # TODO: Implement the Running workflow mode
-            pass
+        if self._workflow is not None:
+            result = await self._run_workflow(self._workflow, context)
         else:
             result = await _run_and_report(context=context)
             if capture_workflow:  # If capture_workflow is True, return the result and the workflow
-                return result, self._build_workflow()
-            return result
+                self._build_workflow()
 
-    def _build_workflow(self) -> Any:
-        """
-        Build a Workflow from the workflow builder of the last run.
-        """
-        ...
+        # TODO: Is the result of running an agent the same as that of running a workflow?
+        return result
+
+    def _build_workflow(self) -> Workflow:
+        """Build a Workflow from the workflow builder of the last run and store it."""
+        if self._workflow_builder is None:
+            self._workflow = Workflow(blocks=[], metadata={})
+            return self._workflow
+
+        import time as _time
+        metadata = {
+            "agent_class": f"{self.__class__.__module__}.{self.__class__.__qualname__}",
+            "context_class": (
+                f"{self._context_class.__module__}.{self._context_class.__qualname__}"
+                if self._context_class else None
+            ),
+            "timestamp": _time.time(),
+            "spend_tokens": self.spend_tokens,
+            "spend_time": self.spend_time,
+        }
+        self._workflow = self._workflow_builder.build(metadata=metadata)
+        return self._workflow
