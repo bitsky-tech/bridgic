@@ -720,7 +720,7 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT]):
         **snapshot_fields
             Additional context fields to temporarily override during this phase.
         """
-        async with self._phase_context("loop", name,
+        async with self._phase_context("snapshot", name,
                                        keep_revealed=keep_revealed,
                                        _phase_goal=goal, **snapshot_fields):
             yield
@@ -734,7 +734,7 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT]):
         Parameters
         ----------
         phase_type : str
-            Phase type identifier (``"sequential"`` or ``"loop"``).
+            Phase type identifier (``"sequential"`` or ``"loop"`` or ``"snapshot"``).
         name : str
             Phase name, used in the workflow block.
         keep_revealed : Optional[Dict[str, List[int]]]
@@ -742,8 +742,10 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT]):
         **snapshot_fields
             Context fields to temporarily override during this phase.
         """
+        # Init the variables
         context = self._current_context
         fields = {k: v for k, v in snapshot_fields.items() if v is not None}
+        phase_type = phase_type if phase_type != "snapshot" else "sequential"
 
         if not fields and keep_revealed is None:
             raise ValueError(
@@ -752,6 +754,7 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT]):
                 f"use self.run() directly — the behavior is identical."
             )
 
+        # Create the snapshot
         snap = _AgentSnapshot(context, fields, keep_revealed=keep_revealed)
         await snap.__aenter__()
         if self._workflow_builder:
@@ -794,11 +797,10 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT]):
             decision = await worker.arun(context=context)
 
             # 3. Act
-            if decision is not None:
-                await self._action(decision, context, _worker=worker)
+            action_result = await self._action(decision, context, _worker=worker) if decision is not None else None
 
             # Record trace step
-            self._record_trace_step(name, obs, decision, context)
+            self._record_trace_step(name, obs, decision, action_result, context)
             return decision.finish
 
 
@@ -933,7 +935,7 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT]):
         ctx: CognitiveContextT,
         *,
         _worker: CognitiveWorker,
-    ) -> None:
+    ) -> Step:
         """
         Agent-level action execution. Override to change the execution engine.
 
@@ -1029,14 +1031,6 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT]):
         # If the output is a list of StepToolCall
         if _is_list_step_tool_call(decision):
             calls = output
-            if not calls:
-                ctx.add_info(Step(
-                    content=decision.step_content,
-                    result=None,
-                    metadata={"tool_calls": []}
-                ))
-                return
-            
             tool_calls = _convert_decision_to_tool_calls(calls, ctx)
             decision_result = _match_tool_calls(tool_calls, ctx)
         
@@ -1049,27 +1043,40 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT]):
         # Execution of the action based on the decision result
         ########################
         decision_result = await _worker.before_action(decision_result, ctx)
+        result = None
         if _is_list_step_tool_call(decision):
-            action_result = await self.action_tool_call(decision_result, ctx)
-            ctx.add_info(Step(
-                content=decision.step_content,
-                result=action_result.results,
-                metadata={
-                    "tool_calls": [tc[0].name for tc in decision_result],
-                    "tool_arguments": [tc[0].arguments for tc in decision_result],
-                    "action_results": [
-                        {
-                            "tool_name": r.tool_name,
-                            "tool_arguments": r.tool_arguments,
-                            "tool_result": r.tool_result,
-                        }
-                        for r in action_result.results
-                    ]
-                }
-            ))
+            if not calls:
+                result = Step(
+                    content=decision.step_content,
+                    result=None,
+                    metadata={"tool_calls": []}
+                )
+                ctx.add_info(result)
+            else:
+                action_result = await self.action_tool_call(decision_result, ctx)
+                result = Step(
+                    content=decision.step_content,
+                    result=action_result.results,
+                    metadata={
+                        "tool_calls": [tc[0].name for tc in decision_result],
+                        "tool_arguments": [tc[0].arguments for tc in decision_result],
+                        "action_results": [
+                            {
+                                "tool_name": r.tool_name,
+                                "tool_arguments": r.tool_arguments,
+                                "tool_result": r.tool_result,
+                            }
+                            for r in action_result.results
+                        ]
+                    }
+                )
+                ctx.add_info(result)
         else:
             action_result = await self.action_custom_output(decision_result, ctx)
-            ctx.add_info(Step(content=decision.step_content, result=action_result, metadata={}))
+            result = Step(content=decision.step_content, result=action_result, metadata={})
+            ctx.add_info(result)
+
+        return result
 
 
     ############################################################################
