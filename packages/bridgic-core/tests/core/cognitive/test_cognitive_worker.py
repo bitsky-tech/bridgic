@@ -278,14 +278,15 @@ class TestCognitiveWorker:
 
         class SimpleAgent(AgentAutoma[TravelCtx]):
             async def cognition(self, ctx):
-                await self.run(worker, name="step")  # search_flights
-                await self.run(worker, name="step")  # no tools
+                await self.run(worker)  # search_flights
+                await self.run(worker)  # no tools
 
-        result = await SimpleAgent().arun(goal="Plan a trip to Tokyo")
+        agent = SimpleAgent(llm=llm)
+        await agent.arun(goal="Plan a trip to Tokyo")
 
-        assert len(result.cognitive_history) == 2
+        assert len(agent._current_context.cognitive_history) == 2
         # Step 1: search_flights was executed
-        assert "search_flights" in result.cognitive_history[0].metadata.get("tool_calls", [])
+        assert "search_flights" in agent._current_context.cognitive_history[0].metadata.get("tool_calls", [])
 
     @pytest.mark.asyncio
     async def test_override_action_pipeline_via_agent(self):
@@ -314,11 +315,12 @@ class TestCognitiveWorker:
 
         class PipelineAgent(AgentAutoma[TravelCtx]):
             async def cognition(self, ctx):
-                await self.run(worker, name="step")
+                await self.run(worker)
 
-        result = await PipelineAgent().arun(goal="test")
+        agent = PipelineAgent(llm=llm)
+        await agent.arun(goal="test")
 
-        last_step = result.cognitive_history[-1]
+        last_step = agent._current_context.cognitive_history[-1]
         # before_action filtered out book_flight
         assert "book_flight" not in last_step.metadata.get("tool_calls", [])
         assert "search_flights" in last_step.metadata.get("tool_calls", [])
@@ -483,14 +485,14 @@ class TestCognitiveWorker:
                 return "Default observation from agent"
 
             async def cognition(self, ctx):
-                await self.run(worker, name="step")
+                await self.run(worker)
 
-        result = await EnhancementAgent().arun(goal="test")
+        agent = EnhancementAgent(llm=llm)
+        await agent.arun(goal="test")
 
-        # Check that enhanced observation was used
+        # Check that agent-level observation was used (worker delegates via _DELEGATE)
         user_msg = llm.captured_messages[-1]
         assert "Default observation from agent" in user_msg.content
-        assert "Steps completed: 0" in user_msg.content
 
     @pytest.mark.asyncio
     async def test_from_prompt_convenience(self):
@@ -543,11 +545,12 @@ class TestCognitiveWorker:
 
         class SimpleAgent(AgentAutoma[TravelCtx]):
             async def cognition(self, ctx):
-                await self.run(worker, name="step")
+                await self.run(worker)
 
-        result = await SimpleAgent().arun(goal="test")
-        assert len(result.cognitive_history) == 1
-        assert result.cognitive_history[0].content == "Search flights"
+        agent = SimpleAgent(llm=llm)
+        await agent.arun(goal="test")
+        assert len(agent._current_context.cognitive_history) == 1
+        assert agent._current_context.cognitive_history[0].content == "Search flights"
 
     @pytest.mark.asyncio
     async def test_dynamic_model_fields(self):
@@ -753,7 +756,7 @@ class TestOutputType:
 
         class _TrackingAgent(AgentAutoma[CognitiveContext]):
             async def cognition(self, ctx):
-                await self.run(planner_worker, name="plan_step")
+                await self.run(planner_worker)
 
         llm = MockLLM()
         planner_worker.set_llm(llm)
@@ -762,10 +765,11 @@ class TestOutputType:
             step_content="Done", output=expected_output, finish=False
         )
 
-        result = await _TrackingAgent(llm=llm).arun(goal="Test output_schema")
+        agent = _TrackingAgent(llm=llm)
+        await agent.arun(goal="Test output_schema")
 
         # The typed output is stored as the step result in history
-        last_step = result.cognitive_history[-1]
+        last_step = agent._current_context.cognitive_history[-1]
         assert last_step.result is expected_output
         assert isinstance(last_step.result, _PlanResult)
 
@@ -825,7 +829,7 @@ class TestFinishSignal:
 
         class _SimpleAgent(AgentAutoma[CognitiveContext]):
             async def cognition(self, ctx):
-                await self.run(worker, name="think", max_attempts=10)
+                await self.run(worker, max_attempts=10)
 
         agent = _SimpleAgent(llm=_FinishLLM())
         await agent.arun(goal="Test finish signal")
@@ -846,7 +850,7 @@ class TestFinishSignal:
 
         class _LoopAgent(AgentAutoma[CognitiveContext]):
             async def cognition(self, ctx):
-                await self.run(worker, name="think", max_attempts=3)
+                await self.run(worker, max_attempts=3)
 
         agent = _LoopAgent(llm=_NeverFinishLLM())
         await agent.arun(goal="Test no finish")

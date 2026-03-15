@@ -412,19 +412,18 @@ class Workflow(BaseModel):
         context : CognitiveContext
             The context to replay into.
         """
-        agent._log("Workflow", f"Replay starting: {len(self.blocks)} block(s)", color="magenta")
+        agent._log("Workflow", f"Replay starting: {len(self.blocks)} block(s)", color="green")
 
         for block_idx, block in enumerate(self.blocks):
             block_type = type(block).__name__
             block_goal = getattr(block, 'goal', None) or ''
-            goal_preview = (block_goal[:80] + '...') if len(block_goal) > 80 else block_goal
+            goal_preview = block_goal
 
             if isinstance(block, SequentialBlock):
                 agent._log(
                     "Workflow",
                     f"Block {block_idx}: {block_type} "
-                    f"({len(block.steps)} steps) | goal={goal_preview}",
-                    color="magenta",
+                    f"({len(block.steps)} steps) | goal={goal_preview}"
                 )
             elif isinstance(block, LoopBlock):
                 has_code = block.code_slot.generated_code is not None
@@ -434,7 +433,7 @@ class Workflow(BaseModel):
                     f"({len(block.body_steps)} body steps, "
                     f"{block.observed_iterations} iterations, "
                     f"has_code={has_code}) | goal={goal_preview}",
-                    color="magenta",
+                    color="cyan",
                 )
 
             try:
@@ -452,7 +451,7 @@ class Workflow(BaseModel):
                 await self._fallback_from(agent, block_idx, context)
                 break
 
-        agent._log("Workflow", "Replay finished.", color="magenta")
+        agent._log("Workflow", "Replay finished.", color="green")
         return context
 
     # ------------------------------------------------------------------
@@ -491,7 +490,7 @@ class Workflow(BaseModel):
                         "Workflow",
                         f"Replay step {step_idx}/{len(block.steps)-1}: "
                         f"tools={tool_names}",
-                        color="magenta",
+                        color="purple",
                     )
                     tool_call_pairs = await worker.before_action(tool_call_pairs, context)
                     action_result = await agent.action_tool_call(tool_call_pairs, context)
@@ -535,7 +534,7 @@ class Workflow(BaseModel):
                 "Workflow",
                 f"Loop block {block_idx}: no generated code, "
                 f"falling back to agent mode",
-                color="red",
+                color="cyan",
             )
             worker = resolve_worker(block.run_config, agent._llm)
             await agent.run(
@@ -602,7 +601,7 @@ class Workflow(BaseModel):
             "Workflow",
             f"Fallback: running {len(remaining_blocks)} "
             f"remaining block(s) in agent mode",
-            color="red",
+            color="yellow",
         )
 
         for fb_idx, block in enumerate(remaining_blocks):
@@ -610,7 +609,7 @@ class Workflow(BaseModel):
                 "Workflow",
                 f"Fallback block {block_idx + fb_idx}: "
                 f"{type(block).__name__} (agent mode)",
-                color="red",
+                color="yellow",
             )
             worker = resolve_worker(block.run_config, agent._llm)
             await agent.run(

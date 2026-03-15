@@ -351,7 +351,7 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT]):
         """
         ...
 
-    async def action_tool_call(self, tool_list: List[Tuple[ToolCall, ToolSpec]], context: CognitiveContextT) -> Any:
+    async def action_tool_call(self, tool_list: List[Tuple[ToolCall, ToolSpec]], context: CognitiveContextT) -> ActionResult:
         """
         Define the action logic.
         """
@@ -622,34 +622,19 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT]):
             obs_str = str(obs) if obs is not None else "None"
             if len(obs_str) > 200:
                 obs_str = obs_str[:200] + "..."
-            self._log("Observe", f"{worker_name}: {obs_str}", color="cyan")
+            self._log("Observe", f"{worker_name}: {obs_str}", color="green")
 
             # 2. Think
             decision = await worker.arun(context=context)
-
-            if decision is not None:
-                step_str = getattr(decision, 'step_content', str(decision))
-                if len(step_str) > 200:
-                    step_str = step_str[:200] + "..."
-                finished = getattr(decision, 'finish', False)
-                self._log("Think", f"{worker_name}: finish={finished}, step={step_str}", color="yellow")
+            step_str = getattr(decision, 'step_content', str(decision))
+            finished = getattr(decision, 'finish', False)
+            self._log("Think", f"{worker_name}: finish={finished}, step={step_str}", color="cyan")
 
             # 3. Act
             action_result = await self._action(decision, context, _worker=worker) if decision is not None else None
-
             if action_result is not None:
-                for ar in action_result.metadata.get("action_results", []):
-                    tool_name = ar.get("tool_name", "?")
-                    tool_args = ar.get("tool_arguments", {})
-                    tool_result = ar.get("tool_result", "")
-                    result_str = str(tool_result)
-                    if len(result_str) > 300:
-                        result_str = result_str[:300] + "..."
-                    self._log(
-                        "Act",
-                        f"{worker_name}: {tool_name}({tool_args}) -> {result_str}",
-                        color="green",
-                    )
+                formatted = action_result.model_dump_json(indent=4)
+                self._log("Act", f"{worker_name}:\n{formatted}", color="purple")
 
             # Record trace step
             self._record_trace_step(worker, obs, decision, action_result, context)
@@ -897,7 +882,7 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT]):
                 action_result = await self.action_tool_call(decision_result, ctx)
                 result = Step(
                     content=decision.step_content,
-                    result=action_result.results,
+                    result=action_result,
                     metadata={
                         "tool_calls": [tc[0].name for tc in decision_result],
                         "tool_arguments": [tc[0].arguments for tc in decision_result],

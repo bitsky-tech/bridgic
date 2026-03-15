@@ -95,13 +95,13 @@ class TestRunMethod:
 
         class Agent(AgentAutoma[CognitiveContext]):
             async def cognition(self, ctx):
-                await self.run(worker, name="search")
+                await self.run(worker)
 
         agent = Agent(llm=llm)
         ctx = _make_ctx()
-        result = await agent.arun(context=ctx)
+        await agent.arun(context=ctx)
 
-        steps = result.cognitive_history.get_all()
+        steps = agent._current_context.cognitive_history.get_all()
         assert len(steps) == 1
         assert steps[0].metadata["action_results"][0]["tool_name"] == "search_flights"
 
@@ -113,13 +113,13 @@ class TestRunMethod:
 
         class Agent(AgentAutoma[CognitiveContext]):
             async def cognition(self, ctx):
-                await self.run(worker, name="execute", max_attempts=5)
+                await self.run(worker, max_attempts=5)
 
         agent = Agent(llm=llm)
         ctx = _make_ctx()
-        result = await agent.arun(context=ctx)
+        await agent.arun(context=ctx)
 
-        steps = result.cognitive_history.get_all()
+        steps = agent._current_context.cognitive_history.get_all()
         # LLM signals finish=True on step 2, so 2 steps total
         assert len(steps) == 2
 
@@ -142,13 +142,13 @@ class TestRunMethod:
 
         class Agent(AgentAutoma[CognitiveContext]):
             async def cognition(self, ctx):
-                await self.run(worker, name="loop", until=condition, max_attempts=10)
+                await self.run(worker, until=condition, max_attempts=10)
 
         agent = Agent(llm=llm)
         ctx = _make_ctx()
-        result = await agent.arun(context=ctx)
+        await agent.arun(context=ctx)
 
-        steps = result.cognitive_history.get_all()
+        steps = agent._current_context.cognitive_history.get_all()
         assert len(steps) == 2
 
     @pytest.mark.asyncio
@@ -159,15 +159,15 @@ class TestRunMethod:
 
         class Agent(AgentAutoma[CognitiveContext]):
             async def cognition(self, ctx):
-                await self.run(worker, name="search",
+                await self.run(worker,
                                tools=["search_flights", "search_hotels"])
 
         agent = Agent(llm=llm)
         ctx = _make_ctx()
-        result = await agent.arun(context=ctx)
+        await agent.arun(context=ctx)
 
         # Should complete successfully with filtered tools
-        steps = result.cognitive_history.get_all()
+        steps = agent._current_context.cognitive_history.get_all()
         assert len(steps) == 1
 
     @pytest.mark.asyncio
@@ -186,13 +186,13 @@ class TestRunMethod:
 
         class Agent(AgentAutoma[CognitiveContext]):
             async def cognition(self, ctx):
-                await self.run(worker, name="fail", on_error=ErrorStrategy.IGNORE)
+                await self.run(worker, on_error=ErrorStrategy.IGNORE)
 
         agent = Agent(llm=llm)
         ctx = _make_ctx()
         # Should not raise
-        result = await agent.arun(context=ctx)
-        assert isinstance(result, CognitiveContext)
+        await agent.arun(context=ctx)
+        assert isinstance(agent._current_context, CognitiveContext)
 
     @pytest.mark.asyncio
     async def test_run_no_context_raises(self):
@@ -206,7 +206,7 @@ class TestRunMethod:
 
         agent = Agent(llm=llm)
         with pytest.raises(RuntimeError, match="no active context"):
-            await agent.run(worker, name="test")
+            await agent.run(worker)
 
 
 # ---------------------------------------------------------------------------
@@ -224,7 +224,7 @@ class TestAgentAutomaMisc:
             async def cognition(self, ctx):
                 assert self.llm is not None
                 worker = CognitiveWorker.inline("Test", llm=self.llm)
-                await self.run(worker, name="test")
+                await self.run(worker)
 
         agent = Agent(llm=llm)
         ctx = _make_ctx()
@@ -239,15 +239,15 @@ class TestAgentAutomaMisc:
             async def cognition(self, ctx):
                 assert ctx.goal == "Test goal"
                 worker = CognitiveWorker.inline("Test", llm=self.llm)
-                await self.run(worker, name="test")
+                await self.run(worker)
 
         agent = Agent(llm=llm)
-        result = await agent.arun(
+        await agent.arun(
             goal="Test goal",
             tools=get_travel_planning_tools(),
         )
-        assert isinstance(result, CognitiveContext)
-        assert len(result.cognitive_history.get_all()) == 1
+        assert isinstance(agent._current_context, CognitiveContext)
+        assert len(agent._current_context.cognitive_history.get_all()) == 1
 
     @pytest.mark.asyncio
     async def test_arun_requires_llm(self):
@@ -269,14 +269,14 @@ class TestAgentAutomaMisc:
             async def cognition(self, ctx):
                 planner = CognitiveWorker.inline("Plan", llm=self.llm)
                 executor = CognitiveWorker.inline("Execute", llm=self.llm)
-                await self.run(planner, name="plan")
-                await self.run(executor, name="execute")
+                await self.run(planner)
+                await self.run(executor)
 
         agent = Agent(llm=llm)
         ctx = _make_ctx()
-        result = await agent.arun(context=ctx)
+        await agent.arun(context=ctx)
 
-        steps = result.cognitive_history.get_all()
+        steps = agent._current_context.cognitive_history.get_all()
         assert len(steps) == 2
         assert steps[0].metadata["action_results"][0]["tool_name"] == "search_flights"
         assert steps[1].metadata["action_results"][0]["tool_name"] == "search_hotels"
