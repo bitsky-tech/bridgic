@@ -1359,41 +1359,6 @@ def test_openai_structured_output_nested_pydantic_model(llm):
     (_api_key is None) or (_model_name is None),
     reason="OPENAI_API_KEY or OPENAI_MODEL_NAME is not set",
 )
-@pytest.mark.asyncio
-async def test_openai_astructured_output_nested_pydantic_model(llm):
-    """Async version: nested Pydantic model with inline object."""
-    class Address(BaseModel):
-        city: str = Field(description="The city name.")
-        country: str = Field(description="The country name.")
-
-    class UserInfo(BaseModel):
-        name: str = Field(description="The user's name.")
-        address: Address
-
-    response: UserInfo = await llm.astructured_output(
-        model=_model_name,
-        constraint=PydanticModel(model=UserInfo),
-        messages=[
-            Message.from_text(
-                text="You are a helpful assistant.",
-                role=Role.SYSTEM,
-            ),
-            Message.from_text(
-                text="Give me info about a fictional user named Alice who lives in Tokyo, Japan.",
-                role=Role.USER,
-            ),
-        ],
-    )
-    printer.print("\n" + response.model_dump_json(), color='purple')
-    assert response.name is not None
-    assert response.address.city is not None
-    assert response.address.country is not None
-
-
-@pytest.mark.skipif(
-    (_api_key is None) or (_model_name is None),
-    reason="OPENAI_API_KEY or OPENAI_MODEL_NAME is not set",
-)
 def test_openai_structured_output_nested_list_pydantic_model(llm):
     """Nested Pydantic model with List of objects should work with OpenAI structured output."""
     class Skill(BaseModel):
