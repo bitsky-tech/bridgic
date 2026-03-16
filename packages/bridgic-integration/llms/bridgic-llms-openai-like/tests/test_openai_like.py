@@ -1,14 +1,97 @@
 import pytest
 import os
 import httpx_aiohttp
+from types import SimpleNamespace
 
 from bridgic.core.model.types import *
+from bridgic.core.model import ModelRetryLimitError, ModelUnrecoverableError
 from bridgic.core.utils._console import printer
 from bridgic.llms.openai_like import OpenAILikeLlm
 
 _api_base = os.environ.get("OPENAI_LIKE_API_BASE")
 _api_key = os.environ.get("OPENAI_LIKE_API_KEY")
 _model_name = os.environ.get("OPENAI_LIKE_MODEL_NAME")
+
+
+def _mock_chat_completion(content: str):
+    """Build the minimal OpenAI-like response shape used by OpenAILikeLlm."""
+    message = SimpleNamespace(content=content, refusal=None)
+    choice = SimpleNamespace(message=message)
+    return SimpleNamespace(choices=[choice])
+
+
+def test_openai_like_chat_recoverable_error(monkeypatch):
+    llm = OpenAILikeLlm(api_base="http://test.local", api_key="test-key")
+    attempts = {"count": 0}
+
+    def fake_create(**kwargs):
+        attempts["count"] += 1
+        if attempts["count"] < 3:
+            raise TimeoutError("temporary timeout")
+        return _mock_chat_completion("ok")
+
+    monkeypatch.setattr(llm.client.chat.completions, "create", fake_create)
+
+    response = llm.chat(
+        messages=[Message.from_text(text="hello", role=Role.USER)],
+        model="test-model",
+    )
+    assert response.message is not None
+    assert response.message.content == "ok"
+    assert attempts["count"] == 3
+
+
+def test_openai_like_chat_unrecoverable_error(monkeypatch):
+    llm = OpenAILikeLlm(api_base="http://test.local", api_key="test-key")
+
+    def fake_create(**kwargs):
+        raise ValueError("invalid request")
+
+    monkeypatch.setattr(llm.client.chat.completions, "create", fake_create)
+
+    with pytest.raises(ModelUnrecoverableError):
+        llm.chat(
+            messages=[Message.from_text(text="hello", role=Role.USER)],
+            model="test-model",
+        )
+
+
+@pytest.mark.asyncio
+async def test_openai_like_achat_recoverable_error(monkeypatch):
+    llm = OpenAILikeLlm(api_base="http://test.local", api_key="test-key")
+    attempts = {"count": 0}
+
+    async def fake_create(**kwargs):
+        attempts["count"] += 1
+        if attempts["count"] < 3:
+            raise ConnectionError("temporary connection issue")
+        return _mock_chat_completion("ok-async")
+
+    monkeypatch.setattr(llm.async_client.chat.completions, "create", fake_create)
+
+    response = await llm.achat(
+        messages=[Message.from_text(text="hello", role=Role.USER)],
+        model="test-model",
+    )
+    assert response.message is not None
+    assert response.message.content == "ok-async"
+    assert attempts["count"] == 3
+
+
+@pytest.mark.asyncio
+async def test_openai_like_achat_retry_limit_error(monkeypatch):
+    llm = OpenAILikeLlm(api_base="http://test.local", api_key="test-key")
+
+    async def fake_create(**kwargs):
+        raise TimeoutError("still timing out")
+
+    monkeypatch.setattr(llm.async_client.chat.completions, "create", fake_create)
+
+    with pytest.raises(ModelRetryLimitError):
+        await llm.achat(
+            messages=[Message.from_text(text="hello", role=Role.USER)],
+            model="test-model",
+        )
 
 @pytest.fixture
 def llm():

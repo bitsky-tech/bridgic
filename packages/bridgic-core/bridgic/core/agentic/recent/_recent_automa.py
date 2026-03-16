@@ -299,10 +299,16 @@ class ReCentAutoma(GraphAutoma):
         if not isinstance(observe_llm, StructuredOutput):
             raise TypeError(f"LLM must support StructuredOutput protocol, but {type(observe_llm)} does not.")
 
-        goal_status: GoalStatus = await observe_llm.astructured_output(
-            messages=messages,
-            constraint=PydanticModel(model=GoalStatus),
-        )
+        try:
+            goal_status: GoalStatus = await observe_llm.astructured_output(
+                messages=messages,
+                constraint=PydanticModel(model=GoalStatus),
+            )
+        except Exception as error:
+            goal_status = GoalStatus(
+                brief_thinking="The observation could not be completed because the model did not respond as expected.",
+                goal_achieved=False,
+            )
         observation_template = EjinjaPromptTemplate(
             "Goal Status:\n"
             "- Achieved: {%- if goal_status.goal_achieved %}goal_status.goal_achieved{% else %}No{% endif %}\n"
@@ -390,10 +396,14 @@ class ReCentAutoma(GraphAutoma):
             raise TypeError(f"LLM must support ToolSelection protocol, but {type(tool_select_llm)} does not.")
 
         # Call tool selection method.
-        tool_calls, tool_response = await tool_select_llm.aselect_tool(
-            messages=messages,
-            tools=tools,
-        )
+        try:
+            tool_calls, tool_response = await tool_select_llm.aselect_tool(
+                messages=messages,
+                tools=tools,
+            )
+        except Exception as error:
+            tool_calls = []
+            tool_response = "The tool selection could not be completed because the model did not respond as expected. "
 
         # Log selected tools in debug mode.
         top_options = self._get_top_running_options()
@@ -555,8 +565,14 @@ class ReCentAutoma(GraphAutoma):
 
         # 3. Call LLM to generate final answer.
         answer_llm = self._answer_task_config.llm
-        response = await answer_llm.achat(messages=messages)
-        final_answer = response.message.content
+        try:
+            response = await answer_llm.achat(messages=messages)
+            final_answer = response.message.content
+        except Exception as error:
+            final_answer = (
+                f"Failed to generate the final answer because the model did not respond as expected.\n"
+                f"Error: {error}"
+            )
 
         # 4. Push final answer as a Message into the memory
         final_answer_msg = Message.from_text(text=final_answer, role=Role.AI)

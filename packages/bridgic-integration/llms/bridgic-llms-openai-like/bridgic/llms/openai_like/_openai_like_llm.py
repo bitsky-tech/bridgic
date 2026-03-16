@@ -14,8 +14,7 @@ from openai.types.chat.chat_completion_tool_message_param import ChatCompletionT
 from openai.types.chat.chat_completion_message_function_tool_call_param import ChatCompletionMessageFunctionToolCallParam
 from pydantic import BaseModel
 
-from bridgic.core.model import BaseLlm
-from bridgic.core.model.types import TokenUsage
+from bridgic.core.model import BaseLlm, RetryPolicyConfig, retryable_model_call
 from bridgic.core.model.types import *
 from bridgic.core.utils._collection import filter_dict, merge_dict, validate_required_params
 
@@ -92,6 +91,7 @@ class OpenAILikeLlm(BaseLlm):
         self.client = OpenAI(base_url=api_base, api_key=api_key, timeout=timeout, http_client=http_client)
         self.async_client = AsyncOpenAI(base_url=api_base, api_key=api_key, timeout=timeout, http_client=http_async_client)
 
+    @retryable_model_call(RetryPolicyConfig())
     def chat(
         self,
         messages: List[Message],
@@ -224,6 +224,7 @@ class OpenAILikeLlm(BaseLlm):
             delta_content = delta_content if delta_content else ""
             yield MessageChunk(delta=delta_content, raw=chunk)
 
+    @retryable_model_call(RetryPolicyConfig())
     async def achat(
         self,
         messages: List[Message],
