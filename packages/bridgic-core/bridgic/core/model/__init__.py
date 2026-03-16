@@ -19,8 +19,8 @@ from bridgic.core.model._model_error import (
 __all__ = [
     "BaseLlm",
     "retryable_model_call",
-    "RetryPolicyConfig",
     "is_recoverable_exception",
+    "RetryPolicyConfig",
     "ModelRetryLimitError",
     "ModelUnrecoverableError",
 ]
