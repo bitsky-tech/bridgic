@@ -451,6 +451,17 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT]):
                     )
                     if finished:
                         return
+                    # Early termination — stop once loop pattern is confirmed
+                    if (self._workflow_builder
+                            and self._workflow_builder.is_loop_pattern_confirmed()):
+                        self._log(
+                            "Workflow",
+                            "Loop pattern confirmed after "
+                            f"{len(self._workflow_builder._stack[-1].steps)} steps "
+                            "— stopping early (probe mode)",
+                            color="green",
+                        )
+                        return
                     if until is not None:
                         cond_result = until(context)
                         if inspect.iscoroutine(cond_result):
@@ -808,6 +819,7 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT]):
             "finished": getattr(decision, "finish", False),
             "tool_calls": tool_calls,
             "observation_hash": observation_fingerprint(obs),
+            "observation_text": str(obs) if obs is not None else None,
             "output_type": output_type.value,
             "structured_output": structured_output,
             "structured_output_class": structured_output_class,
