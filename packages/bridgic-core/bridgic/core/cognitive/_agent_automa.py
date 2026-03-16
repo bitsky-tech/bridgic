@@ -22,7 +22,7 @@ from bridgic.core.agentic import ConcurrentAutoma
 from bridgic.core.agentic.tool_specs import ToolSpec
 from bridgic.core.cognitive._context import CognitiveContext, CognitiveTools, CognitiveSkills, Exposure, LayeredExposure, Step
 from bridgic.core.cognitive._cognitive_worker import CognitiveWorker, _DELEGATE, StepToolCall
-from bridgic.core.cognitive._workflow import Workflow, WorkflowBuilder, observation_fingerprint
+from bridgic.core.cognitive._workflow import Workflow, WorkflowBuilder, StepOutputType, observation_fingerprint
 from bridgic.core.utils._console import printer
 
 
@@ -600,6 +600,33 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT]):
                 self._workflow_builder.end_phase()
             await snap.__aexit__(None, None, None)
 
+    @asynccontextmanager
+    async def untracked(self, name: str = "", *, goal: str = ""):
+        """Mark enclosed steps as untracked — they will not enter the workflow for replay.
+
+        Use this for framework-internal control logic (e.g. loop-continue checks)
+        or user-defined transient operations that should not be replayed.
+
+        Usage is analogous to ``sequential()`` / ``loop()``:
+
+        .. code-block:: python
+
+            async with self.untracked("check_loop_continue"):
+                should_continue = await self.run(checker, name="is_done")
+
+        Parameters
+        ----------
+        name : str
+            Optional label for logging/debugging purposes.
+        goal : str
+            Optional goal description (unused in suppression, kept for API symmetry).
+        """
+        if self._workflow_builder:
+            with self._workflow_builder.suppress():
+                yield
+        else:
+            yield
+
     async def _run_once(
         self,
         worker: CognitiveWorker,
@@ -732,21 +759,48 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT]):
         return finished
 
 
-    def _record_trace_step(self, worker: CognitiveWorker, obs: Any, decision: Any, action_result: Any, context: Any) -> None:
-        """Record a trace step to the workflow builder (if capture is active)."""
+    def _record_trace_step(self, worker: CognitiveWorker, obs: str, decision: Any, action_result: Step, context: Any) -> None:
+        """Record a trace step to the workflow builder (if capture is active).
+
+        Detects the output type from the action_result:
+        - Tool calls (ActionResult with results) → TOOL_CALLS
+        - Structured BaseModel output → STRUCTURED
+        - Everything else (content only, no action) → CONTENT_ONLY
+        """
         if self._workflow_builder is None:
             return
 
         tool_calls = []
+        output_type = StepOutputType.CONTENT_ONLY
+        structured_output = None
+        structured_output_class = None
+
         if action_result is not None and isinstance(action_result, Step):
             result_obj = action_result.result
             if isinstance(result_obj, ActionResult):
+                # Tool call output
+                output_type = StepOutputType.TOOL_CALLS
                 for r in result_obj.results:
                     tool_calls.append({
                         "tool_name": r.tool_name,
                         "tool_arguments": r.tool_arguments,
                         "tool_result": r.tool_result,
                     })
+            elif result_obj is not None and isinstance(result_obj, BaseModel):
+                # Structured BaseModel output
+                output_type = StepOutputType.STRUCTURED
+                structured_output = result_obj.model_dump()
+                structured_output_class = (
+                    f"{result_obj.__class__.__module__}.{result_obj.__class__.__qualname__}"
+                )
+            elif result_obj is not None:
+                # Non-BaseModel custom output — store as structured with no class
+                output_type = StepOutputType.STRUCTURED
+                try:
+                    structured_output = {"__value__": result_obj}
+                except Exception:
+                    structured_output = {"__value__": str(result_obj)}
+            # else: result_obj is None → CONTENT_ONLY (default)
 
         self._workflow_builder.record_step({
             "name": worker.__class__.__name__,
@@ -754,6 +808,9 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT]):
             "finished": getattr(decision, "finish", False),
             "tool_calls": tool_calls,
             "observation_hash": observation_fingerprint(obs),
+            "output_type": output_type.value,
+            "structured_output": structured_output,
+            "structured_output_class": structured_output_class,
         })
 
     async def _action(
@@ -980,9 +1037,7 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT]):
         self.spend_time = 0.0
 
         if self._llm is None:
-            raise RuntimeError(
-                "AgentAutoma must be initialized with an LLM."
-            )
+            raise RuntimeError("AgentAutoma must be initialized with an LLM.")
 
         if capture_workflow:
             self._workflow_builder = WorkflowBuilder()
@@ -1031,7 +1086,7 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT]):
         # Run the amphibious agent
         ########################
         if self._workflow is not None:
-            result = await self._workflow.arun(agent=self, context=context)
+            result = await self._workflow.arun(agent=self, context=context, fill_llm=self._llm)
         else:
             result = await _run_and_report(context=context)
             if capture_workflow:  # If capture_workflow is True, return the result and the workflow
