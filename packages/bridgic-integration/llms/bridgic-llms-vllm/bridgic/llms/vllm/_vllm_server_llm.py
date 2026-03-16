@@ -6,7 +6,7 @@ from typing_extensions import override, overload
 from pydantic import BaseModel
 from openai.types.chat import ChatCompletionNamedToolChoiceParam, ChatCompletionMessageFunctionToolCall
 
-from bridgic.core.model import BaseLlm
+from bridgic.core.model import BaseLlm, RetryPolicyConfig, retryable_model_call
 from bridgic.core.model.types import *
 from bridgic.core.model.protocols import StructuredOutput, ToolSelection, PydanticModel, JsonSchema, Constraint, EbnfGrammar, Regex, Choice
 from bridgic.llms.openai_like import OpenAILikeLlm, OpenAILikeConfiguration
@@ -110,6 +110,7 @@ class VllmServerLlm(OpenAILikeLlm, StructuredOutput, ToolSelection):
         **kwargs,
     ) -> str: ...
 
+    @retryable_model_call(RetryPolicyConfig())
     def structured_output(
         self,
         messages: List[Message],
@@ -167,6 +168,49 @@ class VllmServerLlm(OpenAILikeLlm, StructuredOutput, ToolSelection):
         )
         return self._convert_response(constraint, response)
 
+    @overload
+    def astructured_output(
+        self,
+        messages: List[Message],
+        constraint: PydanticModel,
+        model: Optional[str] = None,
+        temperature: Optional[float] = ...,
+        top_p: Optional[float] = ...,
+        presence_penalty: Optional[float] = ...,
+        frequency_penalty: Optional[float] = ...,
+        extra_body: Optional[Dict[str, Any]] = ...,
+        **kwargs,
+    ) -> BaseModel: ...
+
+    @overload
+    def astructured_output(
+        self,
+        messages: List[Message],
+        constraint: JsonSchema,
+        model: Optional[str] = None,
+        temperature: Optional[float] = ...,
+        top_p: Optional[float] = ...,
+        presence_penalty: Optional[float] = ...,
+        frequency_penalty: Optional[float] = ...,
+        extra_body: Optional[Dict[str, Any]] = ...,
+        **kwargs,
+    ) -> Dict[str, Any]: ...
+
+    @overload
+    def astructured_output(
+        self,
+        messages: List[Message],
+        constraint: Choice,
+        model: Optional[str] = None,
+        temperature: Optional[float] = ...,
+        top_p: Optional[float] = ...,
+        presence_penalty: Optional[float] = ...,
+        frequency_penalty: Optional[float] = ...,
+        extra_body: Optional[Dict[str, Any]] = ...,
+        **kwargs,
+    ) -> str: ...
+
+    @retryable_model_call(RetryPolicyConfig())
     async def astructured_output(
         self,
         messages: List[Message],
@@ -259,6 +303,7 @@ class VllmServerLlm(OpenAILikeLlm, StructuredOutput, ToolSelection):
             return json.loads(content)
         return content
 
+    @retryable_model_call(RetryPolicyConfig())
     def select_tool(
         self,
         messages: List[Message],
@@ -364,6 +409,7 @@ class VllmServerLlm(OpenAILikeLlm, StructuredOutput, ToolSelection):
 
         return (output_tool_calls, output_content)
 
+    @retryable_model_call(RetryPolicyConfig())
     async def aselect_tool(
         self,
         messages: List[Message],
