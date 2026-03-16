@@ -274,20 +274,22 @@ class VllmServerLlm(OpenAILikeLlm, StructuredOutput, ToolSelection):
         extra_body: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         extra_body = {} if extra_body is None else extra_body
+        structured_outputs = dict(extra_body.get("structured_outputs", {}))
 
         if isinstance(constraint, PydanticModel):
-            extra_body["guided_json"] = constraint.model.model_json_schema()
+            structured_outputs["json"] = constraint.model.model_json_schema()
         elif isinstance(constraint, JsonSchema):
-            extra_body["guided_json"] = constraint.schema_dict
+            structured_outputs["json"] = constraint.schema_dict
         elif isinstance(constraint, Regex):
-            extra_body["guided_regex"] = constraint.pattern
+            structured_outputs["regex"] = constraint.pattern
         elif isinstance(constraint, Choice):
-            extra_body["guided_choice"] = constraint.choices
+            structured_outputs["choice"] = constraint.choices
         elif isinstance(constraint, EbnfGrammar):
-            extra_body["guided_grammar"] = constraint.syntax
+            structured_outputs["grammar"] = constraint.syntax
         else:
             raise ValueError(f"Invalid constraint: {constraint}")
 
+        extra_body["structured_outputs"] = structured_outputs
         return extra_body
 
     def _convert_response(
