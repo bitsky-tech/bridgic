@@ -837,35 +837,36 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
         response = await self.async_client.chat.completions.parse(**params)
         return self._convert_response(constraint, response.choices[0].message.content)
 
-    def _add_schema_properties(self, schema: Dict[str, Any]) -> Dict[str, Any]:
+    def _adjust_schema(self, schema: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Recursively adjust a JSON Schema to comply with OpenAI strict structured
-        output requirements:
-
-        1. ``additionalProperties`` must be ``False`` on every object.
-           https://platform.openai.com/docs/guides/structured-outputs#additionalproperties-false-must-always-be-set-in-objects
-        2. ``required`` must list **all** keys in ``properties`` (even those
-           with defaults).
-           https://platform.openai.com/docs/guides/structured-outputs#all-fields-must-be-required
+        Recursively adjust a JSON Schema to comply with OpenAI strict structured output requirements.
+        
+        See:
+        - https://platform.openai.com/docs/guides/structured-outputs#additionalproperties-false-must-always-be-set-in-objects
+        - https://platform.openai.com/docs/guides/structured-outputs#all-fields-must-be-required
         """
         properties = schema.get("properties")
-        if schema.get("type") == "object" or properties is not None:
+
+        # OpenAI strict mode: every property must be required in objects.
+        if schema.get("type") == "object":
             schema["additionalProperties"] = False
-            # OpenAI strict mode: every property must be required
             if properties is not None:
                 schema["required"] = list(properties.keys())
-        # Recursively process nested objects in $defs
-        for def_schema in schema.get("$defs", {}).values():
-            self._add_schema_properties(def_schema)
-        # Recursively process properties that are inline objects
+
+        # Recursively process properties that are inline objects.
         if properties is not None:
             for prop_schema in properties.values():
                 if prop_schema.get("type") == "object":
-                    self._add_schema_properties(prop_schema)
-                # Handle items in arrays (e.g., List[SomeModel] without $ref)
-                items = prop_schema.get("items")
-                if isinstance(items, dict) and items.get("type") == "object":
-                    self._add_schema_properties(items)
+                    self._adjust_schema(prop_schema)
+                if prop_schema.get("type") == "array":
+                    items = prop_schema.get("items")
+                    if isinstance(items, dict) and items.get("type") == "object":
+                        self._adjust_schema(items)
+
+        # Recursively process related objects schemas in $defs.
+        for def_schema in schema.get("$defs", {}).values():
+            self._adjust_schema(def_schema)
+
         return schema
     
     def _get_response_format(self, constraint: Union[PydanticModel, JsonSchema]) -> Dict[str, Any]:
@@ -873,7 +874,7 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
             result = {
                 "type": "json_schema",
                 "json_schema": {
-                    "schema": self._add_schema_properties(constraint.model.model_json_schema()),
+                    "schema": self._adjust_schema(constraint.model.model_json_schema()),
                     "name": constraint.model.__name__,
                     "strict": True,
                 },
@@ -883,7 +884,7 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
             return {
                 "type": "json_schema",
                 "json_schema": {
-                    "schema": self._add_schema_properties(constraint.schema_dict),
+                    "schema": self._adjust_schema(constraint.schema_dict),
                     # default name for schema
                     "name": "schema",
                     "strict": True,
