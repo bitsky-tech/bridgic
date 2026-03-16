@@ -839,13 +839,36 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
         response = await self.async_client.chat.completions.parse(**params)
         return self._convert_response(constraint, response.choices[0].message.content)
 
-    def _add_schema_properties(self, schema: Dict[str, Any]) -> Dict[str, Any]:
+    def _adjust_schema(self, schema: Dict[str, Any]) -> Dict[str, Any]:
         """
-        OpenAI requires additionalProperties to be set to False for all objects
-        in structured output schemas. See:
-        [AdditionalProperties False Must Always Be Set in Objects](https://platform.openai.com/docs/guides/structured-outputs?example=moderation#additionalproperties-false-must-always-be-set-in-objects)
+        Recursively adjust a JSON Schema to comply with OpenAI strict structured output requirements.
+        
+        See:
+        - https://platform.openai.com/docs/guides/structured-outputs#additionalproperties-false-must-always-be-set-in-objects
+        - https://platform.openai.com/docs/guides/structured-outputs#all-fields-must-be-required
         """
-        schema["additionalProperties"] = False
+        properties = schema.get("properties")
+
+        # OpenAI strict mode: every property must be required in objects.
+        if schema.get("type") == "object":
+            schema["additionalProperties"] = False
+            if properties is not None:
+                schema["required"] = list(properties.keys())
+
+        # Recursively process properties that are inline objects.
+        if properties is not None:
+            for prop_schema in properties.values():
+                if prop_schema.get("type") == "object":
+                    self._adjust_schema(prop_schema)
+                if prop_schema.get("type") == "array":
+                    items = prop_schema.get("items")
+                    if isinstance(items, dict) and items.get("type") == "object":
+                        self._adjust_schema(items)
+
+        # Recursively process related objects schemas in $defs.
+        for def_schema in schema.get("$defs", {}).values():
+            self._adjust_schema(def_schema)
+
         return schema
     
     def _get_response_format(self, constraint: Union[PydanticModel, JsonSchema]) -> Dict[str, Any]:
@@ -853,7 +876,7 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
             result = {
                 "type": "json_schema",
                 "json_schema": {
-                    "schema": self._add_schema_properties(constraint.model.model_json_schema()),
+                    "schema": self._adjust_schema(constraint.model.model_json_schema()),
                     "name": constraint.model.__name__,
                     "strict": True,
                 },
@@ -863,7 +886,7 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
             return {
                 "type": "json_schema",
                 "json_schema": {
-                    "schema": self._add_schema_properties(constraint.schema_dict),
+                    "schema": self._adjust_schema(constraint.schema_dict),
                     # default name for schema
                     "name": "schema",
                     "strict": True,

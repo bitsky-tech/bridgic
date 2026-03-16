@@ -4,7 +4,7 @@ import json
 import datetime
 
 from pydantic import BaseModel, Field
-from typing import Dict, Any
+from typing import Dict, Any, List
 
 from bridgic.core.model.types import *
 from bridgic.core.model.protocols import *
@@ -242,6 +242,78 @@ async def test_openai_astructured_output_json_schema(llm):
     printer.print("\n" + json.dumps(response), color='purple')
     assert isinstance(response["thought"], str)
     assert isinstance(response["answer"], str)
+
+# ---------------------------------------------------------------------------
+# Nested structured output tests (requires OPENAI_API_KEY)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.skipif(
+    (_api_key is None) or (_model_name is None),
+    reason="OPENAI_API_KEY or OPENAI_MODEL_NAME is not set",
+)
+def test_openai_structured_output_nested_pydantic_model(llm):
+    """Nested Pydantic model with inline object should work with OpenAI structured output."""
+    class Address(BaseModel):
+        city: str = Field(description="The city name.")
+        country: str = Field(description="The country name.")
+
+    class UserInfo(BaseModel):
+        name: str = Field(description="The user's name.")
+        address: Address
+
+    response: UserInfo = llm.structured_output(
+        model=_model_name,
+        constraint=PydanticModel(model=UserInfo),
+        messages=[
+            Message.from_text(
+                text="You are a helpful assistant.",
+                role=Role.SYSTEM,
+            ),
+            Message.from_text(
+                text="Give me info about a fictional user named Alice who lives in Tokyo, Japan.",
+                role=Role.USER,
+            ),
+        ],
+    )
+    printer.print("\n" + response.model_dump_json(), color='purple')
+    assert response.name is not None
+    assert response.address.city is not None
+    assert response.address.country is not None
+
+
+@pytest.mark.skipif(
+    (_api_key is None) or (_model_name is None),
+    reason="OPENAI_API_KEY or OPENAI_MODEL_NAME is not set",
+)
+def test_openai_structured_output_nested_list_pydantic_model(llm):
+    """Nested Pydantic model with List of objects should work with OpenAI structured output."""
+    class Skill(BaseModel):
+        name: str = Field(description="The skill name.")
+        level: str = Field(description="The skill level, e.g. beginner, intermediate, expert.")
+
+    class Profile(BaseModel):
+        username: str = Field(description="The username.")
+        skills: List[Skill] = Field(description="A list of skills.")
+
+    response: Profile = llm.structured_output(
+        model=_model_name,
+        constraint=PydanticModel(model=Profile),
+        messages=[
+            Message.from_text(
+                text="You are a helpful assistant.",
+                role=Role.SYSTEM,
+            ),
+            Message.from_text(
+                text="Create a fictional developer profile with username 'bob' and 2 skills.",
+                role=Role.USER,
+            ),
+        ],
+    )
+    printer.print("\n" + response.model_dump_json(), color='purple')
+    assert response.username is not None
+    assert len(response.skills) >= 1
+    assert response.skills[0].name is not None
+    assert response.skills[0].level is not None
 
 @pytest.mark.skipif(
     (_api_key is None) or (_model_name is None),
