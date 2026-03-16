@@ -34,6 +34,8 @@ from pydantic import BaseModel, ConfigDict, Field
 if TYPE_CHECKING:
     from bridgic.core.cognitive._agent_automa import AgentAutoma
     from bridgic.core.cognitive._context import CognitiveContext
+    from bridgic.core.cognitive._cognitive_worker import _DELEGATE
+    from bridgic.core.cognitive._context import Step
 
 
 ################################################################################################################
@@ -329,52 +331,7 @@ class WorkflowBuilder:
                 ))
 
             elif phase.phase_type == "loop":
-                # Split steps into iterations by finished=True boundaries
-                iterations: List[List[dict]] = []
-                current_iter: List[dict] = []
-                for s in phase.steps:
-                    current_iter.append(s)
-                    if s.get("finished", False):
-                        iterations.append(current_iter)
-                        current_iter = []
-                if current_iter:  # trailing incomplete iteration
-                    iterations.append(current_iter)
-
-                # First iteration as body template
-                body_raw = iterations[0] if iterations else []
-                body_steps = [
-                    TraceStep(
-                        name=s["name"],
-                        step_content=s.get("step_content", ""),
-                        tool_calls=[
-                            RecordedToolCall(**tc) for tc in s.get("tool_calls", [])
-                        ],
-                        finished=s.get("finished", False),
-                        observation_hash=s.get("observation_hash"),
-                    )
-                    for s in body_raw
-                ]
-
-                # Heuristic extraction from goal
-                iterator_hint, termination_hint = _extract_loop_hints(phase.goal)
-
-                code_slot = LoopCodeSlot(
-                    slot_id=f"loop_{idx}_{uuid.uuid4().hex[:8]}",
-                    description=f"Loop control for block {idx}",
-                    iterator_hint=iterator_hint,
-                    termination_hint=termination_hint,
-                    generated_code=None,
-                )
-
-                blocks.append(LoopBlock(
-                    goal=phase.goal,
-                    run_config=run_config,
-                    body_steps=body_steps,
-                    observed_iterations=len(iterations),
-                    code_slot=code_slot,
-                ))
-
-        return Workflow(blocks=blocks, metadata=metadata or {})
+                pass
 
 
 ################################################################################################################
@@ -426,21 +383,13 @@ class Workflow(BaseModel):
                     f"({len(block.steps)} steps) | goal={goal_preview}"
                 )
             elif isinstance(block, LoopBlock):
-                has_code = block.code_slot.generated_code is not None
-                agent._log(
-                    "Workflow",
-                    f"Block {block_idx}: {block_type} "
-                    f"({len(block.body_steps)} body steps, "
-                    f"{block.observed_iterations} iterations, "
-                    f"has_code={has_code}) | goal={goal_preview}",
-                    color="cyan",
-                )
+                pass
 
             try:
                 if isinstance(block, SequentialBlock):
                     await self._replay_sequential(agent, block, block_idx, context)
                 elif isinstance(block, LoopBlock):
-                    await self._replay_loop(agent, block, block_idx, context)
+                    pass
             except WorkflowDivergenceError as e:
                 agent._log(
                     "Workflow",
@@ -466,9 +415,6 @@ class Workflow(BaseModel):
         context: CognitiveContext,
     ) -> None:
         """Replay a sequential block by re-executing recorded tool calls."""
-        from bridgic.core.cognitive._cognitive_worker import _DELEGATE
-        from bridgic.core.cognitive._context import Step
-
         worker = resolve_worker(block.run_config, agent._llm)
 
         for step_idx, step in enumerate(block.steps):
@@ -478,8 +424,9 @@ class Workflow(BaseModel):
                 obs = await agent.observation(context)
             context.observation = obs
 
-            # Sequential blocks replay tool calls unconditionally —
-            # no divergence check, deterministic re-execution.
+            # TODO: How to detect whether the external execution environment information has changed 
+            # and then determine if the current execution is impossible, requiring a switch back to 
+            # the agent?
 
             # 2. Replay tool calls (skip LLM)
             if step.tool_calls:
@@ -525,61 +472,7 @@ class Workflow(BaseModel):
         If the code_slot has generated_code, use it for iteration control.
         Otherwise, fall back to agent mode for this block.
         """
-        from bridgic.core.cognitive._cognitive_worker import _DELEGATE
-        from bridgic.core.cognitive._context import Step
-
-        if block.code_slot.generated_code is None:
-            # No code slot filled — run in agent mode
-            agent._log(
-                "Workflow",
-                f"Loop block {block_idx}: no generated code, "
-                f"falling back to agent mode",
-                color="cyan",
-            )
-            worker = resolve_worker(block.run_config, agent._llm)
-            await agent.run(
-                worker,
-                max_attempts=block.run_config.max_attempts,
-                tools=block.run_config.tools,
-                skills=block.run_config.skills,
-            )
-            return
-
-        # Execute with generated loop control code
-        loop_ns: Dict[str, Any] = {"context": context}
-        exec(block.code_slot.generated_code, loop_ns)  # noqa: S102
-        should_continue = loop_ns.get("should_continue")
-        if not callable(should_continue):
-            raise RuntimeError(
-                f"Loop code slot '{block.code_slot.slot_id}' must define a "
-                f"'should_continue(context)' function."
-            )
-
-        iteration = 0
-        while should_continue(context):
-            for step in block.body_steps:
-                worker = resolve_worker(block.run_config, agent._llm)
-                obs = await worker.observation(context)
-                if obs is _DELEGATE:
-                    obs = await agent.observation(context)
-                context.observation = obs
-
-                if step.tool_calls:
-                    tool_call_pairs = _match_recorded_tools(step.tool_calls, context)
-                    if tool_call_pairs:
-                        action_result = await agent.action_tool_call(tool_call_pairs, context)
-                        result_step = Step(
-                            content=step.step_content,
-                            result=action_result.results,
-                            metadata={
-                                "tool_calls": [tc[0].name for tc in tool_call_pairs],
-                                "replayed": True,
-                                "loop_iteration": iteration,
-                            },
-                        )
-                        context.add_info(result_step)
-
-            iteration += 1
+        pass
 
     # ------------------------------------------------------------------
     # Fallback
