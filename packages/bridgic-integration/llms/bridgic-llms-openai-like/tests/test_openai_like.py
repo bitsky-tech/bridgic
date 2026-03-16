@@ -118,6 +118,12 @@ def test_openai_like_chat(llm):
     printer.print(response)
     assert response.message.role == Role.AI
     assert response.message.content is not None
+    # Test token usage
+    assert response.usage is not None
+    assert response.usage.prompt_tokens > 0
+    assert response.usage.completion_tokens > 0
+    assert response.usage.total_tokens == response.usage.prompt_tokens + response.usage.completion_tokens
+    assert response.usage.timestamp is not None
 
 @pytest.mark.skipif(
     (_api_key is None) or (_api_base is None) or (_model_name is None),
@@ -148,6 +154,12 @@ async def test_openai_like_achat(llm):
     printer.print(response)
     assert response.message.role == Role.AI
     assert response.message.content is not None
+    # Test token usage
+    assert response.usage is not None
+    assert response.usage.prompt_tokens > 0
+    assert response.usage.completion_tokens > 0
+    assert response.usage.total_tokens == response.usage.prompt_tokens + response.usage.completion_tokens
+    assert response.usage.timestamp is not None
 
 @pytest.mark.skipif(
     (_api_key is None) or (_api_base is None) or (_model_name is None),

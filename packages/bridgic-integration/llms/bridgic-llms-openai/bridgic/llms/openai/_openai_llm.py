@@ -497,37 +497,39 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
         return params
 
     def _handle_chat_response(self, response: ChatCompletion) -> Response:
+        """
+        Handle chat completion response from OpenAI.
+
+        Parameters
+        ----------
+        response : ChatCompletion
+            The response from OpenAI chat completions API.
+
+        Returns
+        -------
+        Response
+            Bridgic response with message and usage info.
+        """
         openai_message = response.choices[0].message
         text = openai_message.content if openai_message.content else ""
-        
+
         if openai_message.refusal:
             warnings.warn(openai_message.refusal, RuntimeWarning)
 
-        # Handle tool calls in the response
-        # if openai_message.tool_calls:
-        #     # Create a message with both text content and tool calls
-        #     blocks = []
-        #     if text:
-        #         blocks.append(TextBlock(text=text))
-        #     else:
-        #         # Ensure there's always some text content, even if empty
-        #         blocks.append(TextBlock(text=""))
-            
-        #     for tool_call in openai_message.tool_calls:
-        #         tool_call_block = ToolCallBlock(
-        #             id=tool_call.id,
-        #             name=tool_call.function.name,
-        #             arguments=json.loads(tool_call.function.arguments)
-        #         )
-        #         blocks.append(tool_call_block)
-            
-        #     message = Message(role=Role.AI, blocks=blocks)
-        # else:
-        #     # Regular text response
-        #     message = Message.from_text(text, role=Role.AI)
+        # Extract usage information
+        if hasattr(response, "usage") and response.usage is not None:
+            usage = TokenUsage(
+                model=response.model,
+                prompt_tokens=response.usage.prompt_tokens,
+                completion_tokens=response.usage.completion_tokens,
+                total_tokens=response.usage.total_tokens,
+            )
+        else:
+            usage = None
 
         return Response(
             message=Message.from_text(text, role=Role.AI),
+            usage=usage,
             raw=response,
         )
 

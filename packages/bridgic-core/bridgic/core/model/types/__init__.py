@@ -10,6 +10,7 @@ from bridgic.core.model.types._content_block import *
 from bridgic.core.model.types._tool_use import Tool, ToolCall, ToolCallDict
 from bridgic.core.model.types._message import *
 from bridgic.core.model.types._response import *
+from bridgic.core.model.types._usage import TokenUsage
 
 __all__ = [
     "Role",
@@ -19,6 +20,7 @@ __all__ = [
     "ToolResultBlock",
     "Message",
     "MessageChunk",
+    "TokenUsage",
     "Response",
     "StreamResponse",
     "AsyncStreamResponse",
