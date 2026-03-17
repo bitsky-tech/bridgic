@@ -1014,22 +1014,28 @@ class CognitiveHistory(LayeredExposure[Step]):
             result.append(f"[History Summary] {self.compressed_summary}")
 
         # 2. Long-term memory: pending (uncompressed, awaiting batch compression)
-        for i in range(self.compressed_count, short_term_start):
-            step = self._items[i]
-            summary = self._format_step_summary(step)
-            result.append(f"[{i}] {summary}")
+        if self.compressed_count < short_term_start:
+            result.append(f"[Long-term Pending ({self.compressed_count}-{short_term_start - 1})]")
+            for i in range(self.compressed_count, short_term_start):
+                step = self._items[i]
+                summary = self._format_step_summary(step)
+                result.append(f"  [{i}] {summary}")
 
         # 3. Short-term memory: summary only, queryable for details
-        for i in range(short_term_start, working_start):
-            step = self._items[i]
-            summary = self._format_step_summary(step)
-            result.append(f"[{i}] {summary}")
+        if short_term_start < working_start:
+            result.append(f"[Short-term Memory ({short_term_start}-{working_start - 1}), query details via 'details']")
+            for i in range(short_term_start, working_start):
+                step = self._items[i]
+                summary = self._format_step_summary(step)
+                result.append(f"  [{i}] {summary}")
 
         # 4. Working memory: full details
-        for i in range(working_start, total):
-            step = self._items[i]
-            detail = self._format_step_detail(step)
-            result.append(f"[{i}] {detail}")
+        if working_start < total:
+            result.append(f"[Working Memory ({working_start}-{total - 1})]")
+            for i in range(working_start, total):
+                step = self._items[i]
+                detail = self._format_step_detail(step)
+                result.append(f"  [{i}] {detail}")
 
         return result
 

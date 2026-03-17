@@ -1,16 +1,15 @@
 import inspect
 import time
 from abc import abstractmethod
-from contextlib import asynccontextmanager, contextmanager
-from enum import Enum
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import asynccontextmanager, contextmanager
 from typing import (
     Annotated,
     Any, AsyncGenerator, Awaitable, Callable, Dict, Generic, List, Optional, Tuple, Type, TypeVar, Union,
     get_args, get_origin
 )
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel
 
 from bridgic.core.automa import GraphAutoma, worker
 from bridgic.core.automa._automa import RunningOptions
@@ -20,9 +19,13 @@ from bridgic.core.model.types import ToolCall
 from bridgic.core.agentic import ConcurrentAutoma
 from bridgic.core.agentic.tool_specs import ToolSpec
 from bridgic.core.cognitive._context import CognitiveContext, CognitiveTools, CognitiveSkills, Exposure, LayeredExposure
-from bridgic.core.cognitive._cognitive_worker import CognitiveWorker, _DELEGATE, StepToolCall, WorkflowDecision, WorkflowStep, AgentFallback
+from bridgic.core.cognitive._cognitive_worker import CognitiveWorker, _DELEGATE
 from bridgic.core.cognitive._type import (
     Step,
+    StepToolCall,
+    WorkflowDecision,
+    WorkflowStep,
+    AgentFallback,
     ErrorStrategy,
     ActionStepResult,
     ActionResult,
@@ -865,10 +868,10 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT]):
         def _is_list_step_tool_call(d: Any) -> bool:
             # Get the declared type of the output field
             if not isinstance(d, BaseModel):
-                return None
+                return False
             fi = type(d).model_fields.get('output')
             if fi is None:
-                return None
+                return False
             ann = fi.annotation
             if get_origin(ann) is Annotated:
                 ann = get_args(ann)[0]
@@ -945,7 +948,7 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT]):
             calls = output
             tool_calls = _convert_decision_to_tool_calls(calls, ctx)
             decision_result = _match_tool_calls(tool_calls, ctx)
-        
+
         # If the output is a BaseModel
         else:
             decision_result = output

@@ -22,7 +22,7 @@ Design:
 
 import time
 import json
-from typing import TYPE_CHECKING, Annotated, Any, Dict, List, Optional, Tuple, Type, Union
+from typing import Annotated, Any, Dict, List, Optional, Tuple, Type, Union
 
 from pydantic import BaseModel, Field, ConfigDict, field_validator, create_model
 from pydantic.functional_validators import BeforeValidator
@@ -42,11 +42,8 @@ from bridgic.core.cognitive._type import (
     _ThinkBase,
     _coerce_none_to_list,
     WorkflowDecision,
-    WorkflowStep,
-    AgentFallback,
+    WorkflowStep
 )
-if TYPE_CHECKING:
-    from bridgic.core.cognitive._agent_automa import ActionStepResult
 
 
 #############################################################################
