@@ -274,7 +274,7 @@ class VllmServerLlm(OpenAILikeLlm, StructuredOutput, ToolSelection):
         extra_body: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         extra_body = {} if extra_body is None else extra_body
-        structured_outputs = dict(extra_body.get("structured_outputs", {}))
+        structured_outputs = extra_body.setdefault("structured_outputs", {})
 
         if isinstance(constraint, PydanticModel):
             structured_outputs["json"] = constraint.model.model_json_schema()
@@ -289,7 +289,6 @@ class VllmServerLlm(OpenAILikeLlm, StructuredOutput, ToolSelection):
         else:
             raise ValueError(f"Invalid constraint: {constraint}")
 
-        extra_body["structured_outputs"] = structured_outputs
         return extra_body
 
     def _convert_response(
