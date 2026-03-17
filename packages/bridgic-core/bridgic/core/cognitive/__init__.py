@@ -68,6 +68,11 @@ from ._cognitive_worker import (
     ToolArgument,
     StepToolCall,
     ThinkDecision,
+    # Workflow mode
+    WorkflowDecision,
+    WorkflowStep,
+    AgentFallback,
+    step,
 )
 from ._agent_automa import (
     # Orchestration
@@ -78,15 +83,11 @@ from ._agent_automa import (
     ActionStepResult,
 )
 from ._workflow import (
-    # Workflow data models
-    Workflow,
-    SequentialBlock,
-    LoopBlock,
-    LoopCodeSlot,
+    # Trace data models
     TraceStep,
     RunConfig,
     RecordedToolCall,
-    WorkflowDivergenceError,
+    StepOutputType,
     # Workflow builder
     WorkflowBuilder,
 )
@@ -117,19 +118,20 @@ __all__ = [
     "ThinkDecision",
     "ActionResult",
     "ActionStepResult",
+    # Workflow mode
+    "WorkflowDecision",
+    "WorkflowStep",
+    "AgentFallback",
+    "step",
 
     # Orchestration layer
     "AgentAutoma",
     "ErrorStrategy",
 
-    # Workflow data models
-    "Workflow",
-    "SequentialBlock",
-    "LoopBlock",
-    "LoopCodeSlot",
+    # Trace data models
     "TraceStep",
     "RunConfig",
     "RecordedToolCall",
-    "WorkflowDivergenceError",
+    "StepOutputType",
     "WorkflowBuilder",
 ]

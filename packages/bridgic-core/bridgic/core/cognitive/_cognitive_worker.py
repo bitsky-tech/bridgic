@@ -22,6 +22,7 @@ Design:
 
 import time
 import json
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Annotated, Any, Dict, List, Optional, Tuple, Type, Union
 
 from pydantic import BaseModel, Field, ConfigDict, field_validator, create_model
@@ -369,7 +370,7 @@ class CognitiveWorker(GraphAutoma):
 
 
     ############################################################################
-    # Worker methods (GraphAutoma execution flow)
+    # Core methods
     ############################################################################
 
     @worker(is_start=True, is_output=True)
@@ -1003,3 +1004,79 @@ ThinkDecision = CognitiveWorker._create_think_model(
     enable_acquiring=False,
     output_schema=None,
 )
+
+
+#############################################################################
+# Workflow mode — data types and helpers
+#############################################################################
+
+class WorkflowDecision(BaseModel):
+    """Single-step deterministic decision for workflow mode.
+
+    Field layout is compatible with _action(): it reads .step_content and
+    .output (List[StepToolCall]), so no changes to _action() are needed.
+    """
+    model_config = ConfigDict(extra="forbid")
+
+    step_content: str = ""
+    output: List[StepToolCall] = Field(default_factory=list)
+
+
+@dataclass
+class WorkflowStep:
+    """Yielded by cognition_workflow() for deterministic execution.
+
+    Carries both the business worker (for observation/before_action) and
+    the decision (for action execution).
+    """
+    worker: CognitiveWorker
+    decision: WorkflowDecision
+
+
+@dataclass
+class AgentFallback:
+    """Yielded by cognition_workflow() to fall back to agent mode.
+
+    The framework switches to self.run() for a sub-task that requires
+    LLM-driven observe-think-act cycles.
+    """
+    worker: CognitiveWorker
+    goal: str
+    tools: List[str] = field(default_factory=list)
+    skills: List[str] = field(default_factory=list)
+    max_attempts: int = 1
+
+
+def step(
+    worker: CognitiveWorker,
+    tool: str,
+    *,
+    content: str = "",
+    **kwargs: Any,
+) -> WorkflowStep:
+    """Shorthand for constructing a single-tool WorkflowStep.
+
+    Usage::
+
+        yield step(worker, "navigate_to_url", url="http://example.com")
+
+    Instead of::
+
+        yield WorkflowStep(worker, WorkflowDecision(
+            step_content="...",
+            output=[StepToolCall(tool="navigate_to_url",
+                                 tool_arguments=[ToolArgument(name="url", value="http://example.com")])]
+        ))
+    """
+    return WorkflowStep(
+        worker=worker,
+        decision=WorkflowDecision(
+            step_content=content,
+            output=[StepToolCall(
+                tool=tool,
+                tool_arguments=[
+                    ToolArgument(name=k, value=str(v)) for k, v in kwargs.items()
+                ],
+            )],
+        ),
+    )
