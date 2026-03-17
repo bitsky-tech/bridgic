@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Optional, Generic, TypeVar, Tuple, get_origi
 from pydantic import BaseModel, Field, ConfigDict
 from bridgic.core.agentic.tool_specs import ToolSpec
 from bridgic.core.model.types import Message
+from bridgic.core.cognitive._type import Step, Skill
 
 
 ################################################################################################################
@@ -614,27 +615,6 @@ class CognitiveTools(EntireExposure[ToolSpec]):
         return result
 
 
-class Skill(BaseModel):
-    """
-    A single skill definition following Claude Code SKILL.md format.
-
-    Attributes
-    ----------
-    name : str
-        Skill name (used as /command-name).
-    description : str
-        What the skill does and when to use it (triggers skill invocation).
-    content : str
-        The full markdown instructions that Claude follows when skill is invoked.
-    metadata : Dict[str, Any]
-        Additional YAML frontmatter fields (e.g., disable-model-invocation, allowed-tools).
-    """
-    name: str
-    description: str
-    content: str
-    metadata: Dict[str, Any] = Field(default_factory=dict)
-
-
 class CognitiveSkills(LayeredExposure[Skill]):
     """
     Manages available skills with progressive disclosure (LayeredExposure).
@@ -851,24 +831,6 @@ class CognitiveSkills(LayeredExposure[Skill]):
         lines.append(skill.content)
 
         return "\n".join(lines)
-
-
-class Step(BaseModel):
-    """
-    A single step in task execution.
-
-    Attributes
-    ----------
-    content : str
-        Step content or description.
-    result : Optional[Any]
-        Step execution result.
-    metadata : Dict[str, Any]
-        Additional metadata (e.g., tools used, timestamps).
-    """
-    content: str
-    result: Optional[Any] = None
-    metadata: Dict[str, Any] = Field(default_factory=dict)
 
 
 class CognitiveHistory(LayeredExposure[Step]):

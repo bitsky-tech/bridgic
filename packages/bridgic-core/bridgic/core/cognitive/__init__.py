@@ -77,19 +77,18 @@ from ._cognitive_worker import (
 from ._agent_automa import (
     # Orchestration
     AgentAutoma,
+    AgentTrace,
     ErrorStrategy,
     # Action result data structures
     ActionResult,
     ActionStepResult,
 )
-from ._workflow import (
+from ._type import (
     # Trace data models
     TraceStep,
     RunConfig,
     RecordedToolCall,
     StepOutputType,
-    # Workflow builder
-    WorkflowBuilder,
 )
 
 __all__ = [
@@ -133,5 +132,5 @@ __all__ = [
     "RunConfig",
     "RecordedToolCall",
     "StepOutputType",
-    "WorkflowBuilder",
+    "AgentTrace",
 ]

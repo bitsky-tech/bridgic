@@ -22,7 +22,6 @@ Design:
 
 import time
 import json
-from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Annotated, Any, Dict, List, Optional, Tuple, Type, Union
 
 from pydantic import BaseModel, Field, ConfigDict, field_validator, create_model
@@ -36,123 +35,18 @@ from bridgic.core.automa.interaction import InteractionFeedback
 from bridgic.core.agentic.tool_specs import ToolSpec
 from bridgic.core.utils._console import printer
 from bridgic.core.cognitive._context import CognitiveContext
+from bridgic.core.cognitive._type import (
+    DetailRequest,
+    ToolArgument,
+    StepToolCall,
+    _ThinkBase,
+    _coerce_none_to_list,
+    WorkflowDecision,
+    WorkflowStep,
+    AgentFallback,
+)
 if TYPE_CHECKING:
     from bridgic.core.cognitive._agent_automa import ActionStepResult
-
-
-#############################################################################
-# Data structures
-#############################################################################
-
-class DetailRequest(BaseModel):
-    """
-    Request for detailed information about a specific item in a LayeredExposure field.
-
-    Used in layered disclosure: LLM can request to see details of a specific
-    item (e.g., a step in history, a skill) before making a decision.
-
-    Attributes
-    ----------
-    field : str
-        Name of the LayeredExposure field (e.g., "cognitive_history", "skills").
-    index : int
-        0-based index of the item to get details for.
-    """
-    model_config = ConfigDict(
-        extra="forbid",
-        json_schema_extra={
-            "required": ["field", "index"],
-            "additionalProperties": False,
-        }
-    )
-    field: str = Field(description="Name of the field to get details from (e.g., 'cognitive_history', 'skills')")
-    index: int = Field(description="0-based index of the item to get details for")
-
-
-class ToolArgument(BaseModel):
-    """
-    A single tool argument as name-value pair.
-
-    Attributes
-    ----------
-    name : str
-        Parameter name.
-    value : str
-        Parameter value (as string, will be converted to appropriate type).
-    """
-    model_config = ConfigDict(
-        extra="forbid",
-        json_schema_extra={
-            "required": ["name", "value"],
-            "additionalProperties": False,
-        }
-    )
-    name: str = Field(description="Parameter name")
-    value: str = Field(description="Parameter value as string")
-
-    @field_validator('value', mode='before')
-    @classmethod
-    def coerce_to_str(cls, v: Any) -> str:
-        return str(v) if not isinstance(v, str) else v
-
-
-class StepToolCall(BaseModel):
-    """
-    A single tool call specification.
-
-    Attributes
-    ----------
-    tool : str
-        Name of the tool to call.
-    tool_arguments : List[ToolArgument]
-        Arguments to pass to the tool as list of name-value pairs.
-    """
-    model_config = ConfigDict(
-        extra="forbid",
-        json_schema_extra={
-            "required": ["tool", "tool_arguments"],
-            "additionalProperties": False,
-        }
-    )
-    tool: str = Field(description="Name of the tool to call")
-    tool_arguments: List[ToolArgument] = Field(
-        description="Arguments as list of name-value pairs, e.g., [{name: 'city', value: 'Beijing'}]"
-    )
-
-
-class _ThinkBase(BaseModel):
-    """
-    Unified base for all dynamically-generated ThinkModel variants.
-
-    Factory (_create_think_model) adds: output, details, rehearsal,
-    reflection — all optional and conditional on configuration.
-    """
-    model_config = ConfigDict(
-        extra="forbid",
-        json_schema_extra={
-            "required": ["step_content"],
-            "additionalProperties": False,
-        }
-    )
-
-    step_content: str = Field(
-        default="",
-        description="Description of what to do in this step, or your analysis/reasoning"
-    )
-    finish: bool = Field(
-        default=False,
-        description="Set True when your current sub-task is FULLY complete and no more steps are needed."
-    )
-
-    @field_validator('step_content', mode='before')
-    @classmethod
-    def coerce_step_content(cls, v: Any) -> str:
-        return "" if v is None else str(v)
-
-
-def _coerce_none_to_list(v: Any) -> list:
-    """Coerce None to empty list for field validation."""
-    return [] if v is None else v
 
 
 #############################################################################
@@ -1004,47 +898,6 @@ ThinkDecision = CognitiveWorker._create_think_model(
     enable_acquiring=False,
     output_schema=None,
 )
-
-
-#############################################################################
-# Workflow mode — data types and helpers
-#############################################################################
-
-class WorkflowDecision(BaseModel):
-    """Single-step deterministic decision for workflow mode.
-
-    Field layout is compatible with _action(): it reads .step_content and
-    .output (List[StepToolCall]), so no changes to _action() are needed.
-    """
-    model_config = ConfigDict(extra="forbid")
-
-    step_content: str = ""
-    output: List[StepToolCall] = Field(default_factory=list)
-
-
-@dataclass
-class WorkflowStep:
-    """Yielded by cognition_workflow() for deterministic execution.
-
-    Carries both the business worker (for observation/before_action) and
-    the decision (for action execution).
-    """
-    worker: CognitiveWorker
-    decision: WorkflowDecision
-
-
-@dataclass
-class AgentFallback:
-    """Yielded by cognition_workflow() to fall back to agent mode.
-
-    The framework switches to self.run() for a sub-task that requires
-    LLM-driven observe-think-act cycles.
-    """
-    worker: CognitiveWorker
-    goal: str
-    tools: List[str] = field(default_factory=list)
-    skills: List[str] = field(default_factory=list)
-    max_attempts: int = 1
 
 
 def step(

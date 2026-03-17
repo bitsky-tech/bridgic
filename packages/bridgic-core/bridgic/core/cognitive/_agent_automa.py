@@ -1,8 +1,7 @@
 import inspect
 import time
-import traceback
 from abc import abstractmethod
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, contextmanager
 from enum import Enum
 from concurrent.futures import ThreadPoolExecutor
 from typing import (
@@ -20,9 +19,19 @@ from bridgic.core.automa.args import ArgsMappingRule, InOrder
 from bridgic.core.model.types import ToolCall
 from bridgic.core.agentic import ConcurrentAutoma
 from bridgic.core.agentic.tool_specs import ToolSpec
-from bridgic.core.cognitive._context import CognitiveContext, CognitiveTools, CognitiveSkills, Exposure, LayeredExposure, Step
+from bridgic.core.cognitive._context import CognitiveContext, CognitiveTools, CognitiveSkills, Exposure, LayeredExposure
 from bridgic.core.cognitive._cognitive_worker import CognitiveWorker, _DELEGATE, StepToolCall, WorkflowDecision, WorkflowStep, AgentFallback
-from bridgic.core.cognitive._workflow import WorkflowBuilder, StepOutputType, observation_fingerprint
+from bridgic.core.cognitive._type import (
+    Step,
+    ErrorStrategy,
+    ActionStepResult,
+    ActionResult,
+    StepOutputType,
+    TraceStep,
+    RecordedToolCall,
+    RunConfig,
+    observation_fingerprint,
+)
 from bridgic.core.utils._console import printer
 
 
@@ -33,64 +42,120 @@ from bridgic.core.utils._console import printer
 CognitiveContextT = TypeVar("CognitiveContextT", bound=CognitiveContext)
 
 
-class ErrorStrategy(Enum):
-    """Error handling strategy for worker execution via ``self.run()``."""
-    RAISE = "raise"    # Re-raise exceptions (default)
-    IGNORE = "ignore"  # Silently ignore exceptions
-    RETRY = "retry"    # Retry up to max_retries times
-
-
 ################################################################################################################
-# Action Result Data Structures
+# AgentTrace — trace collection (replaces WorkflowBuilder)
 ################################################################################################################
 
-class ActionStepResult(BaseModel):
-    """
-    Result of executing one tool in the action phase.
 
-    Attributes
-    ----------
-    tool_id : str
-        ID of the tool call.
-    tool_name : str
-        Name of the tool.
-    tool_arguments : Dict[str, Any]
-        Arguments passed to the tool.
-    tool_result : Any
-        Raw result returned by the tool.
+class _PhaseAccumulator:
+    """Accumulates trace steps for a single structural phase (sequential or loop)."""
+    __slots__ = ("phase_type", "goal", "steps", "run_config")
+
+    def __init__(self, phase_type: str, goal: Optional[str] = None):
+        self.phase_type: str = phase_type  # "sequential" | "loop"
+        self.goal: Optional[str] = goal
+        self.steps: List[dict] = []
+        self.run_config: Optional[dict] = None
+
+
+class AgentTrace:
+    """Stack-based builder that captures phase-annotated trace steps.
+
+    ``begin_phase()`` / ``end_phase()`` bracket a structural phase.
+    ``record_step()`` routes step data to the active phase (or orphan list).
+    ``set_run_config()`` attaches run() parameters to the current phase.
+    ``build()`` returns the collected phases as structured dicts for inspection.
     """
-    model_config = ConfigDict(
-        extra="forbid",
-        json_schema_extra={
-            "required": ["tool_id", "tool_name", "tool_arguments", "tool_result"],
-            "additionalProperties": False,
+
+    def __init__(self):
+        self._stack: List[_PhaseAccumulator] = []
+        self._completed: List[_PhaseAccumulator] = []
+        self._orphan_steps: List[dict] = []
+
+    def begin_phase(self, phase_type: str, goal: Optional[str] = None) -> None:
+        self._stack.append(_PhaseAccumulator(phase_type, goal=goal))
+
+    def end_phase(self) -> None:
+        if self._stack:
+            self._completed.append(self._stack.pop())
+
+    def record_step(self, step_data: dict) -> None:
+        """Route a trace step to the active phase or the orphan list."""
+        if self._stack:
+            self._stack[-1].steps.append(step_data)
+        else:
+            self._orphan_steps.append(step_data)
+
+    def set_run_config(self, config: dict) -> None:
+        """Attach run() parameters to the current (topmost) phase."""
+        if self._stack:
+            self._stack[-1].run_config = config
+
+    def is_loop_pattern_confirmed(self) -> bool:
+        """Check if the current loop phase has detected a repeating pattern (probe mode)."""
+        if not self._stack:
+            return False
+        acc = self._stack[-1]
+        if acc.phase_type != "loop":
+            return False
+        # Minimal implementation: require at least 6 steps to consider pattern detected
+        return len(acc.steps) >= 6
+
+    @contextmanager
+    def phase(self, phase_type: str, goal: Optional[str] = None):
+        """Context manager that brackets a structural phase."""
+        self.begin_phase(phase_type, goal=goal)
+        try:
+            yield
+        finally:
+            self.end_phase()
+
+    def build(self, metadata: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """Return collected trace data as a structured dict."""
+        phases = []
+        for phase in self._completed:
+            trace_steps = [
+                TraceStep(
+                    name=s["name"],
+                    step_content=s.get("step_content", ""),
+                    tool_calls=[
+                        RecordedToolCall(**tc) for tc in s.get("tool_calls", [])
+                    ],
+                    finished=s.get("finished", False),
+                    observation_hash=s.get("observation_hash"),
+                    output_type=StepOutputType(s.get("output_type", StepOutputType.TOOL_CALLS)),
+                    structured_output=s.get("structured_output"),
+                    structured_output_class=s.get("structured_output_class"),
+                )
+                for s in phase.steps
+            ]
+            run_config = RunConfig(**(phase.run_config or {"worker_class": "unknown"}))
+            phases.append({
+                "phase_type": phase.phase_type,
+                "goal": phase.goal,
+                "run_config": run_config,
+                "steps": trace_steps,
+            })
+
+        orphan_steps = [
+            TraceStep(
+                name=s["name"],
+                step_content=s.get("step_content", ""),
+                tool_calls=[RecordedToolCall(**tc) for tc in s.get("tool_calls", [])],
+                finished=s.get("finished", False),
+                observation_hash=s.get("observation_hash"),
+                output_type=StepOutputType(s.get("output_type", StepOutputType.TOOL_CALLS)),
+                structured_output=s.get("structured_output"),
+                structured_output_class=s.get("structured_output_class"),
+            )
+            for s in self._orphan_steps
+        ]
+
+        return {
+            "phases": phases,
+            "orphan_steps": orphan_steps,
+            "metadata": metadata or {},
         }
-    )
-    tool_id: str
-    tool_name: str
-    tool_arguments: Dict[str, Any]
-    tool_result: Any
-
-
-class ActionResult(BaseModel):
-    """
-    Overall result of the action phase (one or more tool executions).
-
-    Attributes
-    ----------
-    status : bool
-        True if all tools succeeded, False otherwise.
-    results : List[ActionStepResult]
-        Per-tool results in order.
-    """
-    model_config = ConfigDict(
-        extra="forbid",
-        json_schema_extra={
-            "required": ["results"],
-            "additionalProperties": False,
-        }
-    )
-    results: List[ActionStepResult]
 
 
 ################################################################################################################
@@ -246,8 +311,8 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT]):
         self._current_context: Optional[CognitiveContextT] = None
         self._verbose = verbose
 
-        # Workflow capture
-        self._workflow_builder: Optional[WorkflowBuilder] = None
+        # Trace capture
+        self._agent_trace: Optional[AgentTrace] = None
 
         # Usage stats (reset per arun call)
         self.spend_tokens: int = 0
@@ -438,12 +503,12 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT]):
                     if finished:
                         return
                     # Early termination — stop once loop pattern is confirmed
-                    if (self._workflow_builder
-                            and self._workflow_builder.is_loop_pattern_confirmed()):
+                    if (self._agent_trace
+                            and self._agent_trace.is_loop_pattern_confirmed()):
                         self._log(
                             "Workflow",
                             "Loop pattern confirmed after "
-                            f"{len(self._workflow_builder._stack[-1].steps)} steps "
+                            f"{len(self._agent_trace._stack[-1].steps)} steps "
                             "— stopping early (probe mode)",
                             color="green",
                         )
@@ -467,9 +532,9 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT]):
                 "run() must be called within a cognition() method."
             )
 
-        # Capture run config for workflow builder
-        if self._workflow_builder:
-            self._workflow_builder.set_run_config({
+        # Capture run config for trace
+        if self._agent_trace:
+            self._agent_trace.set_run_config({
                 "worker_class": f"{worker.__class__.__module__}.{worker.__class__.__qualname__}",
                 "worker_thinking_prompt": getattr(worker, '_thinking_prompt', None),
                 "tools": tools,
@@ -719,13 +784,13 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT]):
         # Create the snapshot
         snap = _AgentSnapshot(context, fields, keep_revealed=keep_revealed)
         await snap.__aenter__()
-        if self._workflow_builder:
-            self._workflow_builder.begin_phase(phase_type, goal=_phase_goal)
+        if self._agent_trace:
+            self._agent_trace.begin_phase(phase_type, goal=_phase_goal)
         try:
             yield
         finally:
-            if self._workflow_builder:
-                self._workflow_builder.end_phase()
+            if self._agent_trace:
+                self._agent_trace.end_phase()
             await snap.__aexit__(None, None, None)
 
     def _has_workflow(self) -> bool:
@@ -956,7 +1021,7 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT]):
         - Structured BaseModel output → STRUCTURED
         - Everything else (content only, no action) → CONTENT_ONLY
         """
-        if self._workflow_builder is None:
+        if self._agent_trace is None:
             return
 
         tool_calls = []
@@ -991,7 +1056,7 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT]):
                     structured_output = {"__value__": str(result_obj)}
             # else: result_obj is None → CONTENT_ONLY (default)
 
-        self._workflow_builder.record_step({
+        self._agent_trace.record_step({
             "name": worker.__class__.__name__,
             "step_content": getattr(decision, "step_content", ""),
             "finished": getattr(decision, "finish", False),
@@ -1030,7 +1095,7 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT]):
         context : Optional[CognitiveContextT]
             Pre-created context object. If provided, uses this context directly.
         capture_workflow : bool
-            If True, enables trace capture via WorkflowBuilder during execution.
+            If True, enables trace capture via AgentTrace during execution.
         feedback_data : Optional[InteractionFeedback | List[InteractionFeedback]]
             Reserved for future use (currently unused).
         **kwargs
@@ -1072,9 +1137,9 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT]):
             raise RuntimeError("AgentAutoma must be initialized with an LLM.")
 
         if capture_workflow:
-            self._workflow_builder = WorkflowBuilder()
+            self._agent_trace = AgentTrace()
         else:
-            self._workflow_builder = None
+            self._agent_trace = None
 
         ########################
         # Initialize context
@@ -1123,7 +1188,7 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT]):
             result = context.summary()
         else:
             result = await _run_and_report(context=context)
-            if capture_workflow and self._workflow_builder:
+            if capture_workflow and self._agent_trace:
                 self._build_trace()
 
         return result
@@ -1141,4 +1206,4 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT]):
             "spend_tokens": self.spend_tokens,
             "spend_time": self.spend_time,
         }
-        return self._workflow_builder.build(metadata=metadata)
+        return self._agent_trace.build(metadata=metadata)
