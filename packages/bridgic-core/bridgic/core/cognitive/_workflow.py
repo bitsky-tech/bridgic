@@ -20,6 +20,8 @@ Key Types
 from __future__ import annotations
 import hashlib
 import json
+import re
+import uuid
 from contextlib import contextmanager
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
@@ -28,8 +30,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 if TYPE_CHECKING:
     from bridgic.core.cognitive._agent_automa import AgentAutoma
-    from bridgic.core.cognitive._context import CognitiveContext, Step
-    from bridgic.core.cognitive._cognitive_worker import _DELEGATE, CognitiveWorker
+    
 
 
 ################################################################################################################
@@ -99,6 +100,47 @@ def observation_fingerprint(obs: Any) -> Optional[str]:
     except (TypeError, ValueError):
         serialized = str(obs)
     return hashlib.sha256(serialized.encode()).hexdigest()[:16]
+
+
+def _detect_iteration_boundary(
+    steps: List[dict],
+) -> Tuple[List[dict], int]:
+    """Detect repeating pattern in a flat step list and extract the first iteration.
+
+    Uses tool-name signature sequences with KMP failure function to find the
+    minimal repeating period.  Returns ``(first_iteration_steps, iteration_count)``.
+    If no clean repetition is found, returns ``(steps, 1)``.
+    """
+    if not steps:
+        return steps, 0
+
+    # Build signature sequence from tool names
+    signatures: List[Tuple[str, ...]] = []
+    for s in steps:
+        tool_calls = s.get("tool_calls", [])
+        if tool_calls:
+            sig = tuple(tc["tool_name"] for tc in tool_calls)
+        else:
+            sig = ("__content__",)
+        signatures.append(sig)
+
+    # KMP failure function
+    n = len(signatures)
+    fail = [0] * n
+    for i in range(1, n):
+        j = fail[i - 1]
+        while j > 0 and signatures[i] != signatures[j]:
+            j = fail[j - 1]
+        if signatures[i] == signatures[j]:
+            j += 1
+        fail[i] = j
+
+    period = n - fail[-1]
+    if period < n and n % period == 0:
+        return steps[:period], n // period
+
+    # No clean repetition detected
+    return steps, 1
 
 
 ################################################################################################################
