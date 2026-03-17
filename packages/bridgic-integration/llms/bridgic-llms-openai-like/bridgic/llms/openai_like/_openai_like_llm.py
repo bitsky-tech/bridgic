@@ -14,7 +14,7 @@ from openai.types.chat.chat_completion_tool_message_param import ChatCompletionT
 from openai.types.chat.chat_completion_message_function_tool_call_param import ChatCompletionMessageFunctionToolCallParam
 from pydantic import BaseModel
 
-from bridgic.core.model import BaseLlm
+from bridgic.core.model import BaseLlm, RetryPolicyConfig, retryable_model_call
 from bridgic.core.model.types import *
 from bridgic.core.utils._collection import filter_dict, merge_dict, validate_required_params
 
@@ -91,6 +91,7 @@ class OpenAILikeLlm(BaseLlm):
         self.client = OpenAI(base_url=api_base, api_key=api_key, timeout=timeout, http_client=http_client)
         self.async_client = AsyncOpenAI(base_url=api_base, api_key=api_key, timeout=timeout, http_client=http_async_client)
 
+    @retryable_model_call(RetryPolicyConfig())
     def chat(
         self,
         messages: List[Message],
@@ -153,6 +154,7 @@ class OpenAILikeLlm(BaseLlm):
             **kwargs,
         )
         validate_required_params(params, ["messages", "model"])
+        model_name = params["model"]
         response = self.client.chat.completions.create(**params)
         openai_message: ChatCompletionMessage = response.choices[0].message
         text: str = openai_message.content if openai_message.content else ""
@@ -162,6 +164,7 @@ class OpenAILikeLlm(BaseLlm):
 
         return Response(
             message=Message.from_text(text, role=Role.AI),
+            usage=self._extract_usage(response, model_name),
             raw=response,
         )
 
@@ -221,6 +224,7 @@ class OpenAILikeLlm(BaseLlm):
             delta_content = delta_content if delta_content else ""
             yield MessageChunk(delta=delta_content, raw=chunk)
 
+    @retryable_model_call(RetryPolicyConfig())
     async def achat(
         self,
         messages: List[Message],
@@ -266,6 +270,7 @@ class OpenAILikeLlm(BaseLlm):
             **kwargs,
         )
         validate_required_params(params, ["messages", "model"])
+        model_name = params["model"]
         response = await self.async_client.chat.completions.create(**params)
         openai_message: ChatCompletionMessage = response.choices[0].message
         text: str = openai_message.content if openai_message.content else ""
@@ -276,6 +281,7 @@ class OpenAILikeLlm(BaseLlm):
         return Response(
             message=Message.from_text(text, role=Role.AI),
             raw=response,
+            usage=self._extract_usage(response, model_name),
         )
 
     async def astream(
@@ -452,6 +458,37 @@ class OpenAILikeLlm(BaseLlm):
             return ChatCompletionToolMessageParam(content=content_txt, tool_call_id=tool_result_call_id, role="tool")
         else:
             raise ValueError(f"Invalid role: {message.role}")
+
+    def _extract_usage(self, response: Any, model: str) -> Optional[TokenUsage]:
+        """
+        Extract token usage from OpenAI-compatible response.
+
+        Parameters
+        ----------
+        response : Any
+            The response object from OpenAI-compatible API.
+        model : str
+            The model identifier used for this call.
+
+        Returns
+        -------
+        Optional[TokenUsage]
+            Token usage info if available, None otherwise.
+        """
+        usage_data = getattr(response, "usage", None)
+        if usage_data is None:
+            return None
+
+        prompt_tokens = getattr(usage_data, "prompt_tokens", 0)
+        completion_tokens = getattr(usage_data, "completion_tokens", 0)
+        total_tokens = getattr(usage_data, "total_tokens", 0)
+
+        return TokenUsage(
+            model=model,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            total_tokens=total_tokens,
+        )
 
     @override
     def dump_to_dict(self) -> Dict[str, Any]:
