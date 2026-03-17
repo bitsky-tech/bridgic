@@ -805,10 +805,18 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT]):
 
         For each yielded item:
         - ``WorkflowStep``: run observe → log → act deterministically.
+          If execution fails, fall back to agent mode for the current step.
         - ``AgentFallback``: delegate to ``self.run()`` for LLM-driven execution.
-        """
-        async for item in self.cognition_workflow(ctx):
 
+        If consecutive failures exceed ``max_consecutive_fallbacks``, abandon
+        the workflow and delegate the remaining task to ``cognition()``
+        (full agent mode).
+        """
+        consecutive_failures = 0
+        max_consecutive_fallbacks = 3
+        step_index = 0
+
+        async for item in self.cognition_workflow(ctx):
             if isinstance(item, AgentFallback):
                 await self.run(
                     item.worker,
@@ -816,6 +824,7 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT]):
                     tools=item.tools or None,
                     skills=item.skills or None,
                 )
+                consecutive_failures = 0
                 continue
 
             # Deterministic execution
@@ -834,15 +843,60 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT]):
             self._log("Observe", f"workflow: {obs_str}", color="green")
             self._log("Think", f"workflow: {decision.step_content}", color="cyan")
 
-            # 2. Act — reuse existing _action() pipeline
-            action_result = await self._action(decision, ctx, _worker=worker)
+            # 2. Act — with fallback on failure
+            try:
+                action_result = await self._action(decision, ctx, _worker=worker)
 
-            if action_result is not None:
-                formatted = action_result.model_dump_json(indent=4)
-                self._log("Act", f"workflow:\n{formatted}", color="purple")
+                if action_result is not None:
+                    formatted = action_result.model_dump_json(indent=4)
+                    self._log("Act", f"workflow:\n{formatted}", color="purple")
 
-            # 3. Record trace step (if capturing)
-            self._record_trace_step(worker, obs, decision, action_result, ctx)
+                # 3. Record trace step (if capturing)
+                self._record_trace_step(worker, obs, decision, action_result, ctx)
+                consecutive_failures = 0
+                step_index += 1
+
+            except Exception as e:
+                consecutive_failures += 1
+                step_index += 1
+                self._log(
+                    "Workflow",
+                    f"Step {step_index} failed "
+                    f"({consecutive_failures}/{max_consecutive_fallbacks}): {e}",
+                    color="red",
+                )
+
+                # Check if consecutive failures exceed threshold → full fallback
+                if consecutive_failures >= max_consecutive_fallbacks:
+                    self._log(
+                        "Workflow",
+                        f"Consecutive failures reached {max_consecutive_fallbacks}, "
+                        f"falling back to full agent mode (cognition).",
+                        color="red",
+                    )
+                    await self.cognition(ctx)
+                    return
+
+                # Step-level fallback: construct a scoped goal and let agent fix it
+                fallback_goal = (
+                    f"[Workflow fallback] Step {step_index} failed.\n"
+                    f"Step intent: {decision.step_content}\n"
+                    f"Error: {e}\n"
+                    f"Please resolve this specific step's failure based on the "
+                    f"current page state, then set finish=True. "
+                    f"Do NOT continue with subsequent steps."
+                )
+                self._log(
+                    "Workflow",
+                    f"Falling back to agent mode for step {step_index}: "
+                    f"{decision.step_content}",
+                    color="yellow",
+                )
+                async with self.snapshot(goal=fallback_goal):
+                    await self.run(
+                        worker,
+                        max_attempts=5,
+                    )
 
     async def _action(
         self,
@@ -1079,15 +1133,19 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT]):
         *,
         context: Optional[CognitiveContextT] = None,
         capture_workflow: bool = False,
+        mode: Optional[str] = None,
         feedback_data: Optional[Union[InteractionFeedback, List[InteractionFeedback]]] = None,
         **kwargs
     ) -> str:
         """
         Run the agent.
 
-        Routes to one of three modes:
+        Routes to one of two modes:
         1. Generator workflow mode — if ``cognition_workflow()`` is overridden.
         2. Agent mode — the default LLM-driven ``cognition()`` path.
+
+        The ``mode`` parameter allows explicit control over which mode is used,
+        overriding the automatic detection based on ``_has_workflow()``.
 
         Context initialization has two paths:
         1. Pre-created: ``arun(context=my_ctx)``
@@ -1099,6 +1157,11 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT]):
             Pre-created context object. If provided, uses this context directly.
         capture_workflow : bool
             If True, enables trace capture via AgentTrace during execution.
+        mode : Optional[str]
+            Execution mode override. ``"agent"`` forces agent mode (cognition),
+            ``"workflow"`` forces workflow mode (cognition_workflow),
+            ``None`` auto-detects based on whether cognition_workflow() is
+            overridden (backward compatible).
         feedback_data : Optional[InteractionFeedback | List[InteractionFeedback]]
             Reserved for future use (currently unused).
         **kwargs
@@ -1185,7 +1248,24 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT]):
         ########################
         # Run the amphibious agent
         ########################
-        if self._has_workflow():
+        # Resolve execution mode
+        if mode is not None and mode not in ("agent", "workflow"):
+            raise ValueError(
+                f"Invalid mode: {mode!r}. Must be 'agent', 'workflow', or None."
+            )
+
+        use_workflow = (
+            mode == "workflow"
+            or (mode is None and self._has_workflow())
+        )
+
+        if mode == "workflow" and not self._has_workflow():
+            raise RuntimeError(
+                f"{type(self).__name__} does not override cognition_workflow(). "
+                f"Cannot run in workflow mode."
+            )
+
+        if use_workflow:
             # Generator-based workflow mode (cognition_workflow() overridden)
             await self._run_workflow(context)
             result = context.summary()
