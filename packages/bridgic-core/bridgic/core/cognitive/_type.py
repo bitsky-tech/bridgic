@@ -205,7 +205,7 @@ class ActionStepResult(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
         json_schema_extra={
-            "required": ["tool_id", "tool_name", "tool_arguments", "tool_result"],
+            "required": ["tool_id", "tool_name", "tool_arguments", "tool_result", "success"],
             "additionalProperties": False,
         }
     )
@@ -213,6 +213,8 @@ class ActionStepResult(BaseModel):
     tool_name: str
     tool_arguments: Dict[str, Any]
     tool_result: Any
+    success: bool = True
+    error: Optional[str] = None
 
 
 class ActionResult(BaseModel):

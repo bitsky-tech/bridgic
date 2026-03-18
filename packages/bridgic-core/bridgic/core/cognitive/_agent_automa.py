@@ -1,3 +1,4 @@
+import asyncio
 import inspect
 import time
 from abc import abstractmethod
@@ -397,38 +398,44 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT]):
     async def action_tool_call(self, tool_list: List[Tuple[ToolCall, ToolSpec]], context: CognitiveContextT) -> ActionResult:
         """
         Define the action logic.
-        """
-        # The sand box is used to execute the tools in parallel
-        sandbox = ConcurrentAutoma()
 
-        # Create the tool calls and add them to the sandbox
-        tool_calls = []
-        for tool_call, tool_spec in tool_list:
-            tool_calls.append(tool_call)
+        Executes tools concurrently via ``asyncio.gather`` while capturing
+        per-tool success/failure in ``ActionStepResult``.
+        """
+
+        async def _run_one(tool_call: ToolCall, tool_spec: ToolSpec) -> ActionStepResult:
             tool_worker = tool_spec.create_worker()
+            sandbox = ConcurrentAutoma()
             worker_key = f"tool_{tool_call.name}_{tool_call.id}"
             sandbox.add_worker(
                 key=worker_key,
                 worker=tool_worker,
-                args_mapping_rule=ArgsMappingRule.UNPACK
+                args_mapping_rule=ArgsMappingRule.UNPACK,
             )
-        tool_args = [tc.arguments for tc in tool_calls]
-
-        # Execute the tools in parallel
-        try:
-            results = await sandbox.arun(InOrder(tool_args))
-            step_results = [
-                ActionStepResult(
-                    tool_id=tc.id,
-                    tool_name=tc.name,
-                    tool_arguments=tc.arguments,
-                    tool_result=result
+            try:
+                results = await sandbox.arun(InOrder([tool_call.arguments]))
+                result = results[0] if results else None
+                return ActionStepResult(
+                    tool_id=tool_call.id,
+                    tool_name=tool_call.name,
+                    tool_arguments=tool_call.arguments,
+                    tool_result=result,
+                    success=True,
                 )
-                for tc, result in zip(tool_calls, results)
-            ]
-            return ActionResult(results=step_results)
-        except Exception:
-            return ActionResult(results=[])
+            except Exception as e:
+                return ActionStepResult(
+                    tool_id=tool_call.id,
+                    tool_name=tool_call.name,
+                    tool_arguments=tool_call.arguments,
+                    tool_result=None,
+                    success=False,
+                    error=str(e),
+                )
+
+        step_results = await asyncio.gather(
+            *(_run_one(tc, ts) for tc, ts in tool_list)
+        )
+        return ActionResult(results=list(step_results))
 
     async def action_custom_output(self, decision_result: Any, context: CognitiveContextT) -> Any:
         """
@@ -847,6 +854,24 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT]):
             try:
                 action_result = await self._action(decision, ctx, _worker=worker)
 
+                # Check if any tool execution failed
+                if (
+                    action_result is not None
+                    and hasattr(action_result, "results")
+                ):
+                    failed = [
+                        r for r in action_result.results
+                        if not r.success
+                    ]
+                    if failed:
+                        errors = "; ".join(
+                            f"{r.tool_name}: {r.error}" for r in failed
+                        )
+                        raise RuntimeError(
+                            f"Tool execution failed for: "
+                            f"{decision.step_content} — {errors}"
+                        )
+
                 if action_result is not None:
                     formatted = action_result.model_dump_json(indent=4)
                     self._log("Act", f"workflow:\n{formatted}", color="purple")
@@ -1096,6 +1121,8 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT]):
                         "tool_name": r.tool_name,
                         "tool_arguments": r.tool_arguments,
                         "tool_result": r.tool_result,
+                        "success": r.success,
+                        "error": r.error,
                     })
             elif result_obj is not None and isinstance(result_obj, BaseModel):
                 # Structured BaseModel output
@@ -1123,6 +1150,21 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT]):
             "structured_output": structured_output,
             "structured_output_class": structured_output_class,
         })
+
+    def _build_trace(self) -> Dict[str, Any]:
+        """Build a trace dict from the workflow builder of the last run."""
+        import time as _time
+        metadata = {
+            "agent_class": f"{self.__class__.__module__}.{self.__class__.__qualname__}",
+            "context_class": (
+                f"{self._context_class.__module__}.{self._context_class.__qualname__}"
+                if self._context_class else None
+            ),
+            "timestamp": _time.time(),
+            "spend_tokens": self.spend_tokens,
+            "spend_time": self.spend_time,
+        }
+        return self._agent_trace.build(metadata=metadata)
 
     ############################################################################
     # Entry point
@@ -1275,18 +1317,3 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT]):
                 self._build_trace()
 
         return result
-
-    def _build_trace(self) -> Dict[str, Any]:
-        """Build a trace dict from the workflow builder of the last run."""
-        import time as _time
-        metadata = {
-            "agent_class": f"{self.__class__.__module__}.{self.__class__.__qualname__}",
-            "context_class": (
-                f"{self._context_class.__module__}.{self._context_class.__qualname__}"
-                if self._context_class else None
-            ),
-            "timestamp": _time.time(),
-            "spend_tokens": self.spend_tokens,
-            "spend_time": self.spend_time,
-        }
-        return self._agent_trace.build(metadata=metadata)
