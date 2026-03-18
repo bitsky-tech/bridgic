@@ -1,5 +1,6 @@
 import asyncio
 import inspect
+import json
 import time
 from abc import abstractmethod
 from concurrent.futures import ThreadPoolExecutor
@@ -125,7 +126,7 @@ class AgentTrace:
                     tool_calls=[
                         RecordedToolCall(**tc) for tc in s.get("tool_calls", [])
                     ],
-                    finished=s.get("finished", False),
+                    observation=s.get("observation"),
                     observation_hash=s.get("observation_hash"),
                     output_type=StepOutputType(s.get("output_type", StepOutputType.TOOL_CALLS)),
                     structured_output=s.get("structured_output"),
@@ -146,7 +147,7 @@ class AgentTrace:
                 name=s["name"],
                 step_content=s.get("step_content", ""),
                 tool_calls=[RecordedToolCall(**tc) for tc in s.get("tool_calls", [])],
-                finished=s.get("finished", False),
+                observation=s.get("observation"),
                 observation_hash=s.get("observation_hash"),
                 output_type=StepOutputType(s.get("output_type", StepOutputType.TOOL_CALLS)),
                 structured_output=s.get("structured_output"),
@@ -160,6 +161,32 @@ class AgentTrace:
             "orphan_steps": orphan_steps,
             "metadata": metadata or {},
         }
+
+    def save(self, path: str, metadata: Optional[Dict[str, Any]] = None) -> None:
+        """Serialize the trace to a JSON file."""
+        trace_data = self.build(metadata=metadata)
+        serializable = self._to_serializable(trace_data)
+        with open(path, 'w', encoding='utf-8') as f:
+            json.dump(serializable, f, indent=2, ensure_ascii=False, default=str)
+
+    @staticmethod
+    def load(path: str) -> Dict[str, Any]:
+        """Deserialize a trace from a JSON file."""
+        with open(path, 'r', encoding='utf-8') as f:
+            return json.load(f)
+
+    def _to_serializable(self, data: Any) -> Any:
+        """Recursively convert Pydantic models and enums to plain dicts/values."""
+        from enum import Enum
+        if isinstance(data, BaseModel):
+            return self._to_serializable(data.model_dump())
+        if isinstance(data, dict):
+            return {k: self._to_serializable(v) for k, v in data.items()}
+        if isinstance(data, list):
+            return [self._to_serializable(item) for item in data]
+        if isinstance(data, Enum):
+            return data.value
+        return data
 
 
 ################################################################################################################
@@ -1143,8 +1170,8 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT]):
         self._agent_trace.record_step({
             "name": worker.__class__.__name__,
             "step_content": getattr(decision, "step_content", ""),
-            "finished": getattr(decision, "finish", False),
             "tool_calls": tool_calls,
+            "observation": str(obs) if obs is not None else None,
             "observation_hash": observation_fingerprint(obs),
             "output_type": output_type.value,
             "structured_output": structured_output,

@@ -8,7 +8,6 @@ from typing import Any, Dict, List, Optional, Tuple
 from bridgic.core.cognitive import (
     CognitiveContext,
     CognitiveWorker,
-    ThinkDecision,
     ActionStepResult,
     StepToolCall,
     ToolArgument,
@@ -18,6 +17,14 @@ from bridgic.core.cognitive import (
 )
 from bridgic.core.model.types import ToolCall
 from .tools import get_travel_planning_tools
+
+# Default decision model for mock LLM responses (no policies, no output_schema)
+ThinkDecision = CognitiveWorker._create_think_model(
+    enable_rehearsal=False,
+    enable_reflection=False,
+    enable_acquiring=False,
+    output_schema=None,
+)
 
 SKILLS_DIR = os.path.join(os.path.dirname(__file__), "skills")
 

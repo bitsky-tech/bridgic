@@ -256,6 +256,8 @@ class RecordedToolCall(BaseModel):
     tool_name: str
     tool_arguments: Dict[str, Any]
     tool_result: Any
+    success: bool = True
+    error: Optional[str] = None
 
 
 class TraceStep(BaseModel):
@@ -268,7 +270,7 @@ class TraceStep(BaseModel):
     name: str
     step_content: str
     tool_calls: List[RecordedToolCall] = Field(default_factory=list)
-    finished: bool = False
+    observation: Optional[str] = None
     observation_hash: Optional[str] = None
     output_type: StepOutputType = StepOutputType.TOOL_CALLS
     structured_output: Optional[Dict[str, Any]] = None

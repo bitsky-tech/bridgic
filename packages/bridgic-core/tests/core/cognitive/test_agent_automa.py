@@ -1,17 +1,31 @@
 """Tests for AgentAutoma: self.run(), error strategies, tool filtering, etc."""
+import json
+import os
+import tempfile
+
 import pytest
 from typing import Any, List, Optional
 
 from bridgic.core.cognitive import (
     AgentAutoma,
+    AgentTrace,
     CognitiveContext,
     CognitiveWorker,
     ErrorStrategy,
-    ThinkDecision,
     StepToolCall,
     ToolArgument,
+    TraceStep,
+    RecordedToolCall,
 )
 from .tools import get_travel_planning_tools
+
+# Default decision model for mock LLM responses (no policies, no output_schema)
+ThinkDecision = CognitiveWorker._create_think_model(
+    enable_rehearsal=False,
+    enable_reflection=False,
+    enable_acquiring=False,
+    output_schema=None,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -281,3 +295,148 @@ class TestAgentAutomaMisc:
         assert len(steps) == 2
         assert steps[0].result.results[0].tool_name == "search_flights"
         assert steps[1].result.results[0].tool_name == "search_hotels"
+
+
+# ---------------------------------------------------------------------------
+# Tests — AgentTrace: observation, success/error, finished removal, save/load
+# ---------------------------------------------------------------------------
+
+class TestAgentTrace:
+
+    @pytest.mark.asyncio
+    async def test_trace_step_has_observation_field(self):
+        """Trace steps should have the observation field (None when no observation provided)."""
+        llm = MockLLM([_make_search_step()])
+        worker = CognitiveWorker.inline("Plan", llm=llm)
+
+        class Agent(AgentAutoma[CognitiveContext]):
+            async def cognition(self, ctx):
+                async with self.sequential(goal="search"):
+                    await self.run(worker)
+
+        agent = Agent(llm=llm)
+        ctx = _make_ctx()
+        await agent.arun(context=ctx, capture_workflow=True)
+
+        trace = agent._build_trace()
+        assert len(trace["phases"]) == 1
+        step: TraceStep = trace["phases"][0]["steps"][0]
+        # observation field exists on the model
+        assert "observation" in TraceStep.model_fields
+        # Default CognitiveContext has no observation() override, so it's None
+        assert step.observation is None
+
+    @pytest.mark.asyncio
+    async def test_trace_records_observation_when_provided(self):
+        """Trace steps should record observation text when the agent provides one."""
+        llm = MockLLM([_make_search_step()])
+        worker = CognitiveWorker.inline("Plan", llm=llm)
+
+        class Agent(AgentAutoma[CognitiveContext]):
+            async def observation(self, ctx):
+                return "Current page: login form with username and password fields"
+
+            async def cognition(self, ctx):
+                async with self.sequential(goal="search"):
+                    await self.run(worker)
+
+        agent = Agent(llm=llm)
+        ctx = _make_ctx()
+        await agent.arun(context=ctx, capture_workflow=True)
+
+        trace = agent._build_trace()
+        step: TraceStep = trace["phases"][0]["steps"][0]
+        assert step.observation is not None
+        assert "login form" in step.observation
+        assert step.observation_hash is not None
+
+    @pytest.mark.asyncio
+    async def test_trace_tool_call_success_error(self):
+        """RecordedToolCall should carry success and error fields."""
+        llm = MockLLM([_make_search_step()])
+        worker = CognitiveWorker.inline("Plan", llm=llm)
+
+        class Agent(AgentAutoma[CognitiveContext]):
+            async def cognition(self, ctx):
+                async with self.sequential(goal="search"):
+                    await self.run(worker)
+
+        agent = Agent(llm=llm)
+        ctx = _make_ctx()
+        await agent.arun(context=ctx, capture_workflow=True)
+
+        trace = agent._build_trace()
+        step: TraceStep = trace["phases"][0]["steps"][0]
+        assert len(step.tool_calls) == 1
+        tc: RecordedToolCall = step.tool_calls[0]
+        assert tc.success is True
+        assert tc.error is None
+
+    @pytest.mark.asyncio
+    async def test_trace_no_finished_field(self):
+        """TraceStep should not have a 'finished' field."""
+        assert "finished" not in TraceStep.model_fields
+
+    @pytest.mark.asyncio
+    async def test_trace_save_load_roundtrip(self):
+        """save() then load() should produce equivalent data."""
+        llm = MockLLM([_make_search_step()])
+        worker = CognitiveWorker.inline("Plan", llm=llm)
+
+        class Agent(AgentAutoma[CognitiveContext]):
+            async def cognition(self, ctx):
+                async with self.sequential(goal="search"):
+                    await self.run(worker)
+
+        agent = Agent(llm=llm)
+        ctx = _make_ctx()
+        await agent.arun(context=ctx, capture_workflow=True)
+
+        with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f:
+            path = f.name
+
+        try:
+            agent._agent_trace.save(path)
+            loaded = AgentTrace.load(path)
+
+            assert "phases" in loaded
+            assert "orphan_steps" in loaded
+            assert "metadata" in loaded
+            assert len(loaded["phases"]) == 1
+
+            phase = loaded["phases"][0]
+            assert phase["phase_type"] == "sequential"
+            assert phase["goal"] == "search"
+            assert len(phase["steps"]) == 1
+
+            step = phase["steps"][0]
+            assert "observation" in step
+            assert "finished" not in step
+            assert len(step["tool_calls"]) == 1
+            assert step["tool_calls"][0]["tool_name"] == "search_flights"
+            assert step["tool_calls"][0]["success"] is True
+            assert step["tool_calls"][0]["error"] is None
+        finally:
+            os.unlink(path)
+
+    @pytest.mark.asyncio
+    async def test_trace_orphan_steps(self):
+        """Steps recorded outside any phase go to orphan_steps."""
+        llm = MockLLM([_make_search_step()])
+        worker = CognitiveWorker.inline("Plan", llm=llm)
+
+        class Agent(AgentAutoma[CognitiveContext]):
+            async def cognition(self, ctx):
+                # No sequential/loop wrapper → orphan steps
+                await self.run(worker)
+
+        agent = Agent(llm=llm)
+        ctx = _make_ctx()
+        await agent.arun(context=ctx, capture_workflow=True)
+
+        trace = agent._build_trace()
+        assert len(trace["phases"]) == 0
+        assert len(trace["orphan_steps"]) == 1
+        step: TraceStep = trace["orphan_steps"][0]
+        assert "observation" in TraceStep.model_fields
+        assert "finished" not in TraceStep.model_fields

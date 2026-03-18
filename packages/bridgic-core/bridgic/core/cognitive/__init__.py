@@ -63,7 +63,6 @@ from ._cognitive_worker import (
     CognitiveWorker,
     # Sentinel
     _DELEGATE,
-    ThinkDecision,
     # Workflow helper
     step,
 )
@@ -110,7 +109,6 @@ __all__ = [
     # Implementation layer - Worker
     "CognitiveWorker",
     "_DELEGATE",
-    "ThinkDecision",
     "step",
 
     # Orchestration layer

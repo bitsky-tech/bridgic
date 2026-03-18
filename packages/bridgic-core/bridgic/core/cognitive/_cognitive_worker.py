@@ -887,16 +887,6 @@ class CognitiveWorker(GraphAutoma):
         return result
 
 
-# Module-level default decision model (no policies, no output_schema).
-# Used by tests and as a convenience for simple tool-call decisions.
-ThinkDecision = CognitiveWorker._create_think_model(
-    enable_rehearsal=False,
-    enable_reflection=False,
-    enable_acquiring=False,
-    output_schema=None,
-)
-
-
 def step(
     worker: CognitiveWorker,
     tool: str,
