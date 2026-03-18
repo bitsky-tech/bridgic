@@ -44,7 +44,8 @@ nav:
 
 theme: 
   name: material
-  logo: assets/logo.png
+  logo: assets/logo.svg
+  logo_dark: assets/logo_dark.svg
   favicon: assets/favicon.ico
   custom_dir: overrides
   features:
@@ -164,6 +165,7 @@ plugins:
             show_symbol_type_toc: true
           paths: 
             - ../packages/bridgic-core
+            - ../packages/bridgic-asl
             - ../packages/bridgic-integration/llms/bridgic-llms-openai
             - ../packages/bridgic-integration/llms/bridgic-llms-openai-like
             - ../packages/bridgic-integration/llms/bridgic-llms-vllm

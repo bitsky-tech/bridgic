@@ -15,7 +15,7 @@ from openai.types.chat.chat_completion_user_message_param import ChatCompletionU
 from openai.types.chat.chat_completion_assistant_message_param import ChatCompletionAssistantMessageParam
 from openai.types.chat.chat_completion_tool_message_param import ChatCompletionToolMessageParam
 
-from bridgic.core.model import BaseLlm
+from bridgic.core.model import BaseLlm, RetryPolicyConfig, retryable_model_call
 from bridgic.core.model.types import *
 from bridgic.core.model.protocols import StructuredOutput, ToolSelection, PydanticModel, JsonSchema, Constraint
 from bridgic.core.utils._console import printer
@@ -131,6 +131,7 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
         self.client = OpenAI(base_url=api_base, api_key=api_key, timeout=timeout, http_client=http_client)
         self.async_client = AsyncOpenAI(base_url=api_base, api_key=api_key, timeout=timeout, http_client=http_async_client)
 
+    @retryable_model_call(RetryPolicyConfig())
     def chat(
         self,
         messages: List[Message],
@@ -287,6 +288,7 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
                 delta_content = delta_content if delta_content else ""
                 yield MessageChunk(delta=delta_content, raw=chunk)
 
+    @retryable_model_call(RetryPolicyConfig())
     async def achat(
         self,
         messages: List[Message],
@@ -495,37 +497,39 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
         return params
 
     def _handle_chat_response(self, response: ChatCompletion) -> Response:
+        """
+        Handle chat completion response from OpenAI.
+
+        Parameters
+        ----------
+        response : ChatCompletion
+            The response from OpenAI chat completions API.
+
+        Returns
+        -------
+        Response
+            Bridgic response with message and usage info.
+        """
         openai_message = response.choices[0].message
         text = openai_message.content if openai_message.content else ""
-        
+
         if openai_message.refusal:
             warnings.warn(openai_message.refusal, RuntimeWarning)
 
-        # Handle tool calls in the response
-        # if openai_message.tool_calls:
-        #     # Create a message with both text content and tool calls
-        #     blocks = []
-        #     if text:
-        #         blocks.append(TextBlock(text=text))
-        #     else:
-        #         # Ensure there's always some text content, even if empty
-        #         blocks.append(TextBlock(text=""))
-            
-        #     for tool_call in openai_message.tool_calls:
-        #         tool_call_block = ToolCallBlock(
-        #             id=tool_call.id,
-        #             name=tool_call.function.name,
-        #             arguments=json.loads(tool_call.function.arguments)
-        #         )
-        #         blocks.append(tool_call_block)
-            
-        #     message = Message(role=Role.AI, blocks=blocks)
-        # else:
-        #     # Regular text response
-        #     message = Message.from_text(text, role=Role.AI)
+        # Extract usage information
+        if hasattr(response, "usage") and response.usage is not None:
+            usage = TokenUsage(
+                model=response.model,
+                prompt_tokens=response.usage.prompt_tokens,
+                completion_tokens=response.usage.completion_tokens,
+                total_tokens=response.usage.total_tokens,
+            )
+        else:
+            usage = None
 
         return Response(
             message=Message.from_text(text, role=Role.AI),
+            usage=usage,
             raw=response,
         )
 
@@ -635,7 +639,7 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
         **kwargs,
     ) -> Dict[str, Any]: ...
 
-
+    @retryable_model_call(RetryPolicyConfig())
     def structured_output(
         self,
         messages: List[Message],
@@ -743,6 +747,35 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
         response = self.client.chat.completions.parse(**params)
         return self._convert_response(constraint, response.choices[0].message.content)
 
+    @overload
+    def astructured_output(
+        self,
+        messages: List[Message],
+        constraint: PydanticModel,
+        model: Optional[str] = None,
+        temperature: Optional[float] = ...,
+        top_p: Optional[float] = ...,
+        presence_penalty: Optional[float] = ...,
+        frequency_penalty: Optional[float] = ...,
+        extra_body: Optional[Dict[str, Any]] = ...,
+        **kwargs,
+    ) -> BaseModel: ...
+
+    @overload
+    def astructured_output(
+        self,
+        messages: List[Message],
+        constraint: JsonSchema,
+        model: Optional[str] = None,
+        temperature: Optional[float] = ...,
+        top_p: Optional[float] = ...,
+        presence_penalty: Optional[float] = ...,
+        frequency_penalty: Optional[float] = ...,
+        extra_body: Optional[Dict[str, Any]] = ...,
+        **kwargs,
+    ) -> Dict[str, Any]: ...
+
+    @retryable_model_call(RetryPolicyConfig())
     async def astructured_output(
         self,
         messages: List[Message],
@@ -837,13 +870,36 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
         response = await self.async_client.chat.completions.parse(**params)
         return self._convert_response(constraint, response.choices[0].message.content)
 
-    def _add_schema_properties(self, schema: Dict[str, Any]) -> Dict[str, Any]:
+    def _adjust_schema(self, schema: Dict[str, Any]) -> Dict[str, Any]:
         """
-        OpenAI requires additionalProperties to be set to False for all objects
-        in structured output schemas. See:
-        [AdditionalProperties False Must Always Be Set in Objects](https://platform.openai.com/docs/guides/structured-outputs?example=moderation#additionalproperties-false-must-always-be-set-in-objects)
+        Recursively adjust a JSON Schema to comply with OpenAI strict structured output requirements.
+        
+        See:
+        - https://platform.openai.com/docs/guides/structured-outputs#additionalproperties-false-must-always-be-set-in-objects
+        - https://platform.openai.com/docs/guides/structured-outputs#all-fields-must-be-required
         """
-        schema["additionalProperties"] = False
+        properties = schema.get("properties")
+
+        # OpenAI strict mode: every property must be required in objects.
+        if schema.get("type") == "object":
+            schema["additionalProperties"] = False
+            if properties is not None:
+                schema["required"] = list(properties.keys())
+
+        # Recursively process properties that are inline objects.
+        if properties is not None:
+            for prop_schema in properties.values():
+                if prop_schema.get("type") == "object":
+                    self._adjust_schema(prop_schema)
+                if prop_schema.get("type") == "array":
+                    items = prop_schema.get("items")
+                    if isinstance(items, dict) and items.get("type") == "object":
+                        self._adjust_schema(items)
+
+        # Recursively process related objects schemas in $defs.
+        for def_schema in schema.get("$defs", {}).values():
+            self._adjust_schema(def_schema)
+
         return schema
     
     def _get_response_format(self, constraint: Union[PydanticModel, JsonSchema]) -> Dict[str, Any]:
@@ -851,7 +907,7 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
             result = {
                 "type": "json_schema",
                 "json_schema": {
-                    "schema": self._add_schema_properties(constraint.model.model_json_schema()),
+                    "schema": self._adjust_schema(constraint.model.model_json_schema()),
                     "name": constraint.model.__name__,
                     "strict": True,
                 },
@@ -861,7 +917,7 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
             return {
                 "type": "json_schema",
                 "json_schema": {
-                    "schema": self._add_schema_properties(constraint.schema_dict),
+                    "schema": self._adjust_schema(constraint.schema_dict),
                     # default name for schema
                     "name": "schema",
                     "strict": True,
@@ -882,6 +938,7 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
         else:
             raise ValueError(f"Unsupported constraint type '{constraint.constraint_type}'. More info about OpenAI structured output: https://platform.openai.com/docs/guides/structured-outputs")
 
+    @retryable_model_call(RetryPolicyConfig())
     def select_tool(
         self,
         messages: List[Message],
@@ -969,6 +1026,7 @@ class OpenAILlm(BaseLlm, StructuredOutput, ToolSelection):
         content = response.choices[0].message.content
         return (self._convert_tool_calls(tool_calls), content)
 
+    @retryable_model_call(RetryPolicyConfig())
     async def aselect_tool(
         self,
         messages: List[Message],

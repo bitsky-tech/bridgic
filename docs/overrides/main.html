@@ -1,5 +1,32 @@
 {% extends "base.html" %}
 
+{% block extrahead %}
+<link rel="icon" id="bridgic-favicon" href="{{ 'assets/favicon.ico' | url }}" type="image/x-icon">
+<script>
+  (function () {
+    var lightHref = "{{ 'assets/favicon.ico' | url }}";
+    var darkHref = "{{ 'assets/favicon_dark.ico' | url }}";
+
+    function setFavicon(href) {
+      var link = document.getElementById("bridgic-favicon");
+      if (!link) return;
+      if (link.getAttribute("href") === href) return;
+      link.setAttribute("href", href);
+    }
+
+    function sync(isDark) {
+      setFavicon(isDark ? darkHref : lightHref);
+    }
+
+    var mq = window.matchMedia("(prefers-color-scheme: dark)");
+    sync(mq.matches);
+    mq.addEventListener("change", function (e) {
+      sync(e.matches);
+    });
+  })();
+</script>
+{% endblock %}
+
 {% block outdated %}
   You're not viewing the latest version.
   <a href="{{ '../' ~ base_url }}">

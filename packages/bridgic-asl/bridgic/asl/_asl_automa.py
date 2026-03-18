@@ -337,7 +337,7 @@ class ASLAutoma(GraphAutoma, metaclass=ASLAutomaMeta):
 
     Examples
     --------
-    >>> from bridgic.core.agentic.asl import graph, ASLAutoma
+    >>> from bridgic.asl import graph, ASLAutoma
     >>> 
     >>> def add_one(x: int):
     ...     return x + 1
