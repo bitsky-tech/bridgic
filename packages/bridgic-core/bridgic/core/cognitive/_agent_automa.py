@@ -15,7 +15,6 @@ from pydantic import BaseModel
 
 from bridgic.core.automa import GraphAutoma, worker
 from bridgic.core.automa._automa import RunningOptions
-from bridgic.core.automa.interaction import InteractionFeedback
 from bridgic.core.automa.args import ArgsMappingRule, InOrder
 from bridgic.core.model.types import ToolCall
 from bridgic.core.agentic import ConcurrentAutoma
@@ -573,7 +572,6 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT]):
         if self._agent_trace:
             self._agent_trace.set_run_config({
                 "worker_class": f"{worker.__class__.__module__}.{worker.__class__.__qualname__}",
-                "worker_thinking_prompt": getattr(worker, '_thinking_prompt', None),
                 "tools": tools,
                 "skills": skills,
                 "max_attempts": max_attempts,
@@ -1203,7 +1201,6 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT]):
         context: Optional[CognitiveContextT] = None,
         capture_workflow: bool = False,
         mode: Optional[str] = None,
-        feedback_data: Optional[Union[InteractionFeedback, List[InteractionFeedback]]] = None,
         **kwargs
     ) -> str:
         """
@@ -1231,8 +1228,6 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT]):
             ``"workflow"`` forces workflow mode (cognition_workflow),
             ``None`` auto-detects based on whether cognition_workflow() is
             overridden (backward compatible).
-        feedback_data : Optional[InteractionFeedback | List[InteractionFeedback]]
-            Reserved for future use (currently unused).
         **kwargs
             Arguments passed to CognitiveContext constructor when ``context``
             is not provided.
