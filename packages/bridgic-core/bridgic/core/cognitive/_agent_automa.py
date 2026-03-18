@@ -845,7 +845,7 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT]):
         (full agent mode).
         """
         consecutive_failures = 0
-        max_consecutive_fallbacks = 3
+        max_consecutive_fallbacks = 2
         step_index = 0
 
         async for item in self.cognition_workflow(ctx):
@@ -880,12 +880,13 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT]):
                 action_result = await self._action(decision, ctx, _worker=worker)
 
                 # Check if any tool execution failed
+                inner = getattr(action_result, "result", None)
                 if (
-                    action_result is not None
-                    and hasattr(action_result, "results")
+                    inner is not None
+                    and hasattr(inner, "results")
                 ):
                     failed = [
-                        r for r in action_result.results
+                        r for r in inner.results
                         if not r.success
                     ]
                     if failed:
@@ -931,9 +932,11 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT]):
                 fallback_goal = (
                     f"[Workflow fallback] Step {step_index} failed.\n"
                     f"Step intent: {decision.step_content}\n"
-                    f"Error: {e}\n"
-                    f"Please resolve this specific step's failure based on the "
-                    f"current page state, then set finish=True. "
+                    f"Error: {e}\n\n"
+                    f"You must do TWO things:\n"
+                    f"1. Resolve the error — fix whatever is blocking this step (e.g. login, navigate, wait for page load).\n"
+                    f"2. Complete the original step intent: {decision.step_content}\n\n"
+                    f"Set finish=True ONLY after both are done. "
                     f"Do NOT continue with subsequent steps."
                 )
                 self._log(
