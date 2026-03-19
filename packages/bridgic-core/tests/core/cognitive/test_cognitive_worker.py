@@ -169,10 +169,10 @@ class TestCognitiveWorker:
         result = await worker.observation(ctx)
         assert result is _DELEGATE
 
-        # before_action() → passthrough
+        # before_action() → _DELEGATE (delegate to Agent)
         tools = get_travel_planning_tools()
         matched = [(ToolCall(id="1", name="search_flights", arguments={}), tools[0])]
-        assert await worker.before_action(matched, ctx) is matched
+        assert await worker.before_action(matched, ctx) is _DELEGATE
 
         # build_messages() → standard assembly: system + optional tools + user
         from bridgic.core.model.types import Message

@@ -275,7 +275,7 @@ class _BoundThinkUnit:
     Created by ThinkUnitDescriptor.__get__() — not instantiated directly by users.
     """
 
-    def __init__(self, agent: AmphibiousAutoma, descriptor: "ThinkUnitDescriptor"):
+    def __init__(self, agent: "AmphibiousAutoma", descriptor: "ThinkUnitDescriptor"):
         self._agent = agent
         self._desc = descriptor
 
@@ -600,6 +600,31 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         ...     yield AgentFallback(worker, goal="Handle complex case", max_attempts=10)
         """
         ...
+
+    async def before_action(
+        self,
+        decision_result: Any,
+        ctx: CognitiveContextT,
+    ) -> Any:
+        """
+        Agent-level before_action hook, shared across all workers.
+
+        Called when a worker's ``before_action()`` returns ``_DELEGATE``.
+        Override to intercept and modify tool calls at the agent level.
+
+        Parameters
+        ----------
+        decision_result : Any
+            The decision result (typically List[Tuple[ToolCall, ToolSpec]]).
+        ctx : CognitiveContextT
+            The cognitive context.
+
+        Returns
+        -------
+        Any
+            Verified/adjusted decision result.
+        """
+        return decision_result
 
     async def action_tool_call(self, tool_list: List[Tuple[ToolCall, ToolSpec]], context: CognitiveContextT) -> ActionResult:
         """
@@ -1036,8 +1061,9 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
                     break
 
                 if isinstance(item, AgentFallback):
+                    fallback_worker = item.worker if item.worker is not None else self._create_fallback_worker()
                     await self._run(
-                        item.worker,
+                        fallback_worker,
                         max_attempts=item.max_attempts,
                         tools=item.tools or None,
                         skills=item.skills or None,
@@ -1050,9 +1076,12 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
                 worker = item.worker
                 decision = item.decision
 
-                # 1. Observe — reuse the business worker's observation
-                obs = await worker.observation(ctx)
-                if obs is _DELEGATE:
+                # 1. Observe
+                if worker is not None:
+                    obs = await worker.observation(ctx)
+                    if obs is _DELEGATE:
+                        obs = await self.observation(ctx)
+                else:
                     obs = await self.observation(ctx)
                 ctx.observation = obs
 
@@ -1137,12 +1166,26 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
                     )
                     async with self.snapshot(goal=fallback_goal):
                         await self._run(
-                            worker,
+                            worker if worker is not None else self._create_fallback_worker(),
                             max_attempts=5,
                         )
                     send_value = None  # No result to send back after fallback
         finally:
             await gen.aclose()
+
+    def _create_fallback_worker(self) -> CognitiveWorker:
+        """Create a default fallback worker for workflow mode.
+
+        Used when a WorkflowStep or AgentFallback has no explicit worker.
+        The worker's observation() and before_action() both return _DELEGATE,
+        delegating to the agent-level hooks. Inherits the full tool/skill set
+        configured via arun().
+
+        Override this method to provide a custom fallback worker.
+        """
+        return CognitiveWorker.inline(
+            "Resolve the current issue and complete the step.",
+        )
 
     @staticmethod
     def _build_tool_results(action_result: Step) -> List[ToolResult]:
@@ -1168,7 +1211,7 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         decision: Any,
         ctx: CognitiveContextT,
         *,
-        _worker: CognitiveWorker,
+        _worker: Optional[CognitiveWorker] = None,
     ) -> Step:
         """
         Agent-level action execution. Override to change the execution engine.
@@ -1276,7 +1319,14 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         ########################
         # Execution of the action based on the decision result
         ########################
-        decision_result = await _worker.before_action(decision_result, ctx)
+        # before_action delegation: worker → agent (if _DELEGATE)
+        original_decision_result = decision_result
+        if _worker is not None:
+            decision_result = await _worker.before_action(decision_result, ctx)
+            if decision_result is _DELEGATE:
+                decision_result = await self.before_action(original_decision_result, ctx)
+        else:
+            decision_result = await self.before_action(decision_result, ctx)
         result = None
         if _is_list_step_tool_call(decision):
             if not calls:
@@ -1335,7 +1385,7 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         if data is not None:
             printer.print(str(data), color="gray")
     
-    def _record_trace_step(self, worker: CognitiveWorker, obs: str, decision: Any, action_result: Step, context: Any) -> None:
+    def _record_trace_step(self, worker: Optional[CognitiveWorker], obs: str, decision: Any, action_result: Step, context: Any) -> None:
         """Record a trace step to the workflow builder (if capture is active).
 
         Detects the output type from the action_result:
@@ -1381,7 +1431,7 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
             # else: result_obj is None → CONTENT_ONLY (default)
 
         self._agent_trace.record_step({
-            "name": worker.__class__.__name__,
+            "name": worker.__class__.__name__ if worker is not None else "workflow",
             "step_content": getattr(decision, "step_content", ""),
             "tool_calls": tool_calls,
             "observation": str(obs) if obs is not None else None,

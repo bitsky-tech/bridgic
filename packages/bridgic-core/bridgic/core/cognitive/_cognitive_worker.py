@@ -777,6 +777,10 @@ class CognitiveWorker(GraphAutoma):
         """
         Verify and optionally adjust the output before execution.
 
+        Returns ``_DELEGATE`` by default, which delegates to the agent-level
+        ``before_action()`` method. Override to intercept and modify tool calls
+        at the worker level.
+
         Parameters
         ----------
         decision_result : Any
@@ -787,7 +791,8 @@ class CognitiveWorker(GraphAutoma):
         Returns
         -------
         Any
-            Verified/adjusted decision result.
+            Verified/adjusted decision result, or ``_DELEGATE`` to delegate
+            to the agent-level hook.
 
         Examples
         --------
@@ -795,7 +800,7 @@ class CognitiveWorker(GraphAutoma):
         ...     # Filter out dangerous tools
         ...     return decision_result.filter(lambda x: x.tool_name not in ["delete", "drop"])
         """
-        return decision_result
+        return _DELEGATE
 
     ############################################################################
     # Entry point
@@ -883,71 +888,29 @@ class CognitiveWorker(GraphAutoma):
 
 
 def step(
-    worker: CognitiveWorker,
-    tool: str,
+    tool_name: str,
     *,
-    content: str = "",
-    **kwargs: Any,
+    description: str = "",
+    worker: Optional[CognitiveWorker] = None,
+    **tool_args: Any,
 ) -> WorkflowStep:
     """Shorthand for constructing a single-tool WorkflowStep.
 
     Usage::
 
-        yield step(worker, "navigate_to_url", url="http://example.com")
-
-    Instead of::
-
-        yield WorkflowStep(worker, WorkflowDecision(
-            step_content="...",
-            output=[StepToolCall(tool="navigate_to_url",
-                                 tool_arguments=[ToolArgument(name="url", value="http://example.com")])]
-        ))
+        yield step("navigate_to", url="http://example.com")
+        yield step("navigate_to", url="http://example.com", worker=my_worker)
+        yield step("click_element_by_ref", description="Click submit", ref="e42")
     """
     return WorkflowStep(
         worker=worker,
         decision=WorkflowDecision(
-            step_content=content,
+            step_content=description,
             output=[StepToolCall(
-                tool=tool,
+                tool=tool_name,
                 tool_arguments=[
-                    ToolArgument(name=k, value=str(v)) for k, v in kwargs.items()
+                    ToolArgument(name=k, value=str(v)) for k, v in tool_args.items()
                 ],
             )],
-        ),
-    )
-
-
-def steps(
-    worker: CognitiveWorker,
-    calls: List[Tuple[str, Dict[str, Any]]],
-    *,
-    content: str = "",
-) -> WorkflowStep:
-    """Shorthand for constructing a multi-tool WorkflowStep (concurrent execution).
-
-    Usage::
-
-        yield steps(worker, [
-            ("navigate_to", {"url": "http://example.com"}),
-            ("wait_for", {"time_seconds": "3"}),
-        ])
-
-    The tools are executed concurrently via asyncio.gather in the action phase.
-    Results are returned as a List[ToolResult] in the same order as the input.
-    """
-    return WorkflowStep(
-        worker=worker,
-        decision=WorkflowDecision(
-            step_content=content,
-            output=[
-                StepToolCall(
-                    tool=tool_name,
-                    tool_arguments=[
-                        ToolArgument(name=k, value=str(v))
-                        for k, v in tool_args.items()
-                    ],
-                )
-                for tool_name, tool_args in calls
-            ],
         ),
     )

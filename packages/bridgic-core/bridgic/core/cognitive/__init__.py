@@ -63,8 +63,7 @@ from ._cognitive_worker import (
     # Sentinel
     _DELEGATE,
     # Workflow helpers
-    step,
-    steps,
+    step
 )
 from ._amphibious_automa import (
     # Orchestration
@@ -117,7 +116,6 @@ __all__ = [
     "CognitiveWorker",
     "_DELEGATE",
     "step",
-    "steps",
 
     # Orchestration layer
     "AmphibiousAutoma",

@@ -162,25 +162,25 @@ class WorkflowDecision(BaseModel):
 
 @dataclass
 class WorkflowStep:
-    """Yielded by cognition_workflow() for deterministic execution.
+    """Yielded by on_workflow() for deterministic execution.
 
     Used by: _amphibious_automa.py (_run_workflow)
     """
-    worker: Any  # CognitiveWorker
     decision: WorkflowDecision
+    worker: Optional[Any] = None  # CognitiveWorker; None → use agent-level hooks
 
 
 @dataclass
 class AgentFallback:
-    """Yielded by cognition_workflow() to fall back to agent mode.
+    """Yielded by on_workflow() to fall back to agent mode.
 
     Used by: _amphibious_automa.py (_run_workflow)
     """
-    worker: Any  # CognitiveWorker
-    goal: str
+    goal: str = ""
     tools: List[str] = field(default_factory=list)
     skills: List[str] = field(default_factory=list)
     max_attempts: int = 1
+    worker: Optional[Any] = None  # CognitiveWorker; None → use framework default fallback worker
 
 
 ################################################################################################################
