@@ -1,8 +1,9 @@
 """
-Cognitive Architecture Module.
+Cognitive Architecture Module — Amphibious Agent Framework.
 
-A framework for building LLM-powered agents with structured thinking,
-progressive information disclosure, and layered memory management.
+A framework for building dual-mode agents that can operate in both
+LLM-driven (agent) and deterministic (workflow) modes, with automatic
+fallback between them.
 
 Architecture Layers
 -------------------
@@ -28,19 +29,17 @@ Architecture Layers
   arun() call when cognitive policies (acquiring, rehearsal, reflection) fire.
 
 **Orchestration Layer:**
-- AgentAutoma: Agent automaton that orchestrates CognitiveWorkers
-  - self.run(worker, ...) — primary execution method (observe-think-act)
-- ErrorStrategy: Error handling strategies for self.run() (RAISE, IGNORE, RETRY)
+- AmphibiousAutoma: Dual-mode agent engine (agent mode + workflow mode)
+  - think_unit: Descriptor for declaring think steps (used in on_agent)
+  - step / steps: Helpers for declaring workflow steps (used in on_workflow)
+- ErrorStrategy: Error handling strategies (RAISE, IGNORE, RETRY)
 
 Example
 -------
->>> class MyAgent(AgentAutoma[CognitiveContext]):
-...     async def cognition(self, ctx):
-...         planner = CognitiveWorker.inline("Plan approach", llm=self.llm)
-...         executor = CognitiveWorker.inline("Execute step", llm=self.llm)
-...         await self.run(planner)
-...         await self.run(executor,
-...                        until=lambda ctx: ctx.done, max_attempts=20)
+>>> class MyAgent(AmphibiousAutoma[CognitiveContext]):
+...     main_think = think_unit(CognitiveWorker.inline("Execute step"), max_attempts=20)
+...     async def on_agent(self, ctx):
+...         await self.main_think
 ...
 >>> ctx = await MyAgent(llm=llm).arun(goal="Complete the task")
 """
@@ -63,13 +62,17 @@ from ._cognitive_worker import (
     CognitiveWorker,
     # Sentinel
     _DELEGATE,
-    # Workflow helper
+    # Workflow helpers
     step,
+    steps,
 )
-from ._agent_automa import (
+from ._amphibious_automa import (
     # Orchestration
-    AgentAutoma,
+    AmphibiousAutoma,
     AgentTrace,
+    # Think unit descriptor
+    think_unit,
+    ThinkUnitDescriptor,
 )
 from ._type import (
     # Worker data structures
@@ -84,12 +87,16 @@ from ._type import (
     ErrorStrategy,
     ActionResult,
     ActionStepResult,
+    ToolResult,
     # Trace data models
     TraceStep,
     RunConfig,
     RecordedToolCall,
     StepOutputType,
 )
+
+# Deprecated alias
+AgentAutoma = AmphibiousAutoma
 
 __all__ = [
     # Abstraction layer
@@ -110,10 +117,14 @@ __all__ = [
     "CognitiveWorker",
     "_DELEGATE",
     "step",
+    "steps",
 
     # Orchestration layer
-    "AgentAutoma",
+    "AmphibiousAutoma",
+    "AgentAutoma",  # deprecated alias
     "AgentTrace",
+    "think_unit",
+    "ThinkUnitDescriptor",
 
     # Worker data structures
     "DetailRequest",
@@ -127,6 +138,7 @@ __all__ = [
     "ErrorStrategy",
     "ActionResult",
     "ActionStepResult",
+    "ToolResult",
     # Trace data models
     "TraceStep",
     "RunConfig",

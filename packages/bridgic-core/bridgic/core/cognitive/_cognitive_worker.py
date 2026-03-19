@@ -915,3 +915,39 @@ def step(
             )],
         ),
     )
+
+
+def steps(
+    worker: CognitiveWorker,
+    calls: List[Tuple[str, Dict[str, Any]]],
+    *,
+    content: str = "",
+) -> WorkflowStep:
+    """Shorthand for constructing a multi-tool WorkflowStep (concurrent execution).
+
+    Usage::
+
+        yield steps(worker, [
+            ("navigate_to", {"url": "http://example.com"}),
+            ("wait_for", {"time_seconds": "3"}),
+        ])
+
+    The tools are executed concurrently via asyncio.gather in the action phase.
+    Results are returned as a List[ToolResult] in the same order as the input.
+    """
+    return WorkflowStep(
+        worker=worker,
+        decision=WorkflowDecision(
+            step_content=content,
+            output=[
+                StepToolCall(
+                    tool=tool_name,
+                    tool_arguments=[
+                        ToolArgument(name=k, value=str(v))
+                        for k, v in tool_args.items()
+                    ],
+                )
+                for tool_name, tool_args in calls
+            ],
+        ),
+    )

@@ -13,7 +13,7 @@ from bridgic.core.cognitive import (
     ToolArgument,
     DetailRequest,
     _DELEGATE,
-    AgentAutoma,
+    AmphibiousAutoma,
 )
 from bridgic.core.model.types import ToolCall
 from .tools import get_travel_planning_tools
@@ -221,7 +221,7 @@ class TestCognitiveWorker:
         worker = _PromptCustomWorker(llm=llm)
         ctx = _make_context()
 
-        # Simulate AgentAutoma.run(): call observation(), write to ctx.observation, then arun()
+        # Simulate AmphibiousAutoma._run(): call observation(), write to ctx.observation, then arun()
         obs = await worker.observation(ctx)
         assert obs == "Custom observation: environment is ready"
         ctx.observation = obs
@@ -283,10 +283,10 @@ class TestCognitiveWorker:
         ])
         worker = _SimpleWorker(llm=llm)
 
-        class SimpleAgent(AgentAutoma[TravelCtx]):
-            async def cognition(self, ctx):
-                await self.run(worker)  # search_flights
-                await self.run(worker)  # no tools
+        class SimpleAgent(AmphibiousAutoma[TravelCtx]):
+            async def on_agent(self, ctx):
+                await self._run(worker)  # search_flights
+                await self._run(worker)  # no tools
 
         agent = SimpleAgent(llm=llm)
         await agent.arun(goal="Plan a trip to Tokyo")
@@ -320,9 +320,9 @@ class TestCognitiveWorker:
         )
         worker = _ActionPipelineWorker(llm=llm)
 
-        class PipelineAgent(AgentAutoma[TravelCtx]):
-            async def cognition(self, ctx):
-                await self.run(worker)
+        class PipelineAgent(AmphibiousAutoma[TravelCtx]):
+            async def on_agent(self, ctx):
+                await self._run(worker)
 
         agent = PipelineAgent(llm=llm)
         await agent.arun(goal="test")
@@ -488,12 +488,12 @@ class TestCognitiveWorker:
         )
         worker = EnhancementWorker(llm=llm)
 
-        class EnhancementAgent(AgentAutoma[TravelCtx]):
+        class EnhancementAgent(AmphibiousAutoma[TravelCtx]):
             async def observation(self, ctx):
                 return "Default observation from agent"
 
-            async def cognition(self, ctx):
-                await self.run(worker)
+            async def on_agent(self, ctx):
+                await self._run(worker)
 
         agent = EnhancementAgent(llm=llm)
         await agent.arun(goal="test")
@@ -531,7 +531,7 @@ class TestCognitiveWorker:
 
     @pytest.mark.asyncio
     async def test_inline_worker_via_agent(self):
-        """CognitiveWorker.inline() creates a worker used with self.run() in cognition."""
+        """CognitiveWorker.inline() creates a worker used with _run() in on_agent."""
         llm = MockLLM()
         llm.structured_output_response = ThinkDecision(
             step_content="Search flights",
@@ -551,9 +551,9 @@ class TestCognitiveWorker:
             enable_rehearsal=False
         )
 
-        class SimpleAgent(AgentAutoma[TravelCtx]):
-            async def cognition(self, ctx):
-                await self.run(worker)
+        class SimpleAgent(AmphibiousAutoma[TravelCtx]):
+            async def on_agent(self, ctx):
+                await self._run(worker)
 
         agent = SimpleAgent(llm=llm)
         await agent.arun(goal="test")
@@ -762,9 +762,9 @@ class TestOutputType:
 
         planner_worker = _PlannerWorker(llm=MockLLM())
 
-        class _TrackingAgent(AgentAutoma[CognitiveContext]):
-            async def cognition(self, ctx):
-                await self.run(planner_worker)
+        class _TrackingAgent(AmphibiousAutoma[CognitiveContext]):
+            async def on_agent(self, ctx):
+                await self._run(planner_worker)
 
         llm = MockLLM()
         planner_worker.set_llm(llm)
@@ -814,11 +814,11 @@ class TestOutputType:
 
 
 class TestFinishSignal:
-    """Tests for finish=True signal stopping the loop early via self.run(max_attempts=...)."""
+    """Tests for finish=True signal stopping the loop early via _run(max_attempts=...)."""
 
     @pytest.mark.asyncio
     async def test_finish_true_stops_run_loop(self):
-        """When LLM sets finish=True, self.run(max_attempts=...) stops after that round."""
+        """When LLM sets finish=True, _run(max_attempts=...) stops after that round."""
 
         call_idx = [0]
 
@@ -835,9 +835,9 @@ class TestFinishSignal:
 
         worker = CognitiveWorker.inline("Plan one step.")
 
-        class _SimpleAgent(AgentAutoma[CognitiveContext]):
-            async def cognition(self, ctx):
-                await self.run(worker, max_attempts=10)
+        class _SimpleAgent(AmphibiousAutoma[CognitiveContext]):
+            async def on_agent(self, ctx):
+                await self._run(worker, max_attempts=10)
 
         agent = _SimpleAgent(llm=_FinishLLM())
         await agent.arun(goal="Test finish signal")
@@ -856,9 +856,9 @@ class TestFinishSignal:
 
         worker = CognitiveWorker.inline("Plan one step.")
 
-        class _LoopAgent(AgentAutoma[CognitiveContext]):
-            async def cognition(self, ctx):
-                await self.run(worker, max_attempts=3)
+        class _LoopAgent(AmphibiousAutoma[CognitiveContext]):
+            async def on_agent(self, ctx):
+                await self._run(worker, max_attempts=3)
 
         agent = _LoopAgent(llm=_NeverFinishLLM())
         await agent.arun(goal="Test no finish")
@@ -879,8 +879,8 @@ class TestActionDefensive:
 
         worker = CognitiveWorker.inline("Plan.", output_schema=_MySchema)
 
-        class _SchemaAgent(AgentAutoma[CognitiveContext]):
-            async def cognition(self, ctx): pass
+        class _SchemaAgent(AmphibiousAutoma[CognitiveContext]):
+            async def on_agent(self, ctx): pass
 
         agent = _SchemaAgent(llm=MockLLM())
         ctx = CognitiveContext(goal="Test")
@@ -912,7 +912,7 @@ class TestSkillRevealPersistence:
         ctx.get_details("skills", 0)
         assert 0 in ctx.skills._revealed
 
-        # Simulate what self.run() does when tools filter is active:
+        # Simulate what _run() does when tools filter is active:
         # create filtered_skills with only skill[0], copy reveals, then write back.
         original_skills = ctx.skills
         filtered_skills = CognitiveSkills()

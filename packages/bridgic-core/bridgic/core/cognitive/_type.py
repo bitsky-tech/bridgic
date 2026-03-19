@@ -27,7 +27,7 @@ class Step(BaseModel):
     """A single execution step with content, result, and metadata.
 
     Used by: _context.py (CognitiveHistory, CognitiveContext.add_info),
-             _agent_automa.py (_action, _record_trace_step)
+             _amphibious_automa.py (_action, _record_trace_step)
     """
     model_config = ConfigDict(extra="forbid")
 
@@ -51,7 +51,7 @@ class Skill(BaseModel):
 
 
 #################################################################################################################
-# Worker layer models  (used by: _cognitive_worker.py, _agent_automa.py)
+# Worker layer models  (used by: _cognitive_worker.py, _amphibious_automa.py)
 #################################################################################################################
 
 class DetailRequest(BaseModel):
@@ -73,7 +73,7 @@ class DetailRequest(BaseModel):
 class ToolArgument(BaseModel):
     """A single tool argument as name-value pair.
 
-    Used by: _cognitive_worker.py (StepToolCall, step()), _agent_automa.py (action phase)
+    Used by: _cognitive_worker.py (StepToolCall, step()), _amphibious_automa.py (action phase)
     """
     model_config = ConfigDict(
         extra="forbid",
@@ -94,7 +94,7 @@ class ToolArgument(BaseModel):
 class StepToolCall(BaseModel):
     """A single tool call specification.
 
-    Used by: _cognitive_worker.py (ThinkModel output, step()), _agent_automa.py (action phase)
+    Used by: _cognitive_worker.py (ThinkModel output, step()), _amphibious_automa.py (action phase)
     """
     model_config = ConfigDict(
         extra="forbid",
@@ -146,13 +146,13 @@ def _coerce_none_to_list(v: Any) -> list:
 
 
 ################################################################################################################
-# Workflow mode models  (used by: _cognitive_worker.py, _agent_automa.py)
+# Workflow mode models  (used by: _cognitive_worker.py, _amphibious_automa.py)
 ################################################################################################################
 
 class WorkflowDecision(BaseModel):
     """Single-step deterministic decision for workflow mode.
 
-    Used by: _cognitive_worker.py (step() helper), _agent_automa.py (_run_workflow)
+    Used by: _cognitive_worker.py (step() helper), _amphibious_automa.py (_run_workflow)
     """
     model_config = ConfigDict(extra="forbid")
 
@@ -164,7 +164,7 @@ class WorkflowDecision(BaseModel):
 class WorkflowStep:
     """Yielded by cognition_workflow() for deterministic execution.
 
-    Used by: _agent_automa.py (_run_workflow)
+    Used by: _amphibious_automa.py (_run_workflow)
     """
     worker: Any  # CognitiveWorker
     decision: WorkflowDecision
@@ -174,7 +174,7 @@ class WorkflowStep:
 class AgentFallback:
     """Yielded by cognition_workflow() to fall back to agent mode.
 
-    Used by: _agent_automa.py (_run_workflow)
+    Used by: _amphibious_automa.py (_run_workflow)
     """
     worker: Any  # CognitiveWorker
     goal: str
@@ -184,13 +184,13 @@ class AgentFallback:
 
 
 ################################################################################################################
-# Action result models  (used by: _agent_automa.py)
+# Action result models  (used by: _amphibious_automa.py)
 ################################################################################################################
 
 class ErrorStrategy(Enum):
-    """Error handling strategy for worker execution via ``self.run()``.
+    """Error handling strategy for worker execution via ``_run()``.
 
-    Used by: _agent_automa.py (run method)
+    Used by: _amphibious_automa.py (_run method), _amphibious_automa.py (ThinkUnitDescriptor)
     """
     RAISE = "raise"    # Re-raise exceptions (default)
     IGNORE = "ignore"  # Silently ignore exceptions
@@ -200,7 +200,7 @@ class ErrorStrategy(Enum):
 class ActionStepResult(BaseModel):
     """Result of executing one tool in the action phase.
 
-    Used by: _agent_automa.py (action_tool_call)
+    Used by: _amphibious_automa.py (action_tool_call)
     """
     model_config = ConfigDict(
         extra="forbid",
@@ -220,7 +220,7 @@ class ActionStepResult(BaseModel):
 class ActionResult(BaseModel):
     """Overall result of the action phase (one or more tool executions).
 
-    Used by: _agent_automa.py (action_tool_call, _record_trace_step)
+    Used by: _amphibious_automa.py (action_tool_call, _record_trace_step)
     """
     model_config = ConfigDict(
         extra="forbid",
@@ -232,14 +232,27 @@ class ActionResult(BaseModel):
     results: List[ActionStepResult]
 
 
+@dataclass
+class ToolResult:
+    """Single tool execution result returned to workflow generator via asend().
+
+    Used by: _amphibious_automa.py (_run_workflow), on_workflow user code
+    """
+    tool_name: str
+    tool_arguments: Dict[str, Any]
+    result: Any
+    success: bool = True
+    error: Optional[str] = None
+
+
 ################################################################################################################
-# Trace data models  (used by: _agent_automa.py — AgentTrace)
+# Trace data models  (used by: _amphibious_automa.py — AgentTrace)
 ################################################################################################################
 
 class StepOutputType(str, Enum):
     """Discriminator for the kind of output a trace step produced.
 
-    Used by: _agent_automa.py (AgentTrace, _record_trace_step)
+    Used by: _amphibious_automa.py (AgentTrace, _record_trace_step)
     """
     TOOL_CALLS = "tool_calls"
     STRUCTURED = "structured"
@@ -249,7 +262,7 @@ class StepOutputType(str, Enum):
 class RecordedToolCall(BaseModel):
     """A complete record of one tool invocation.
 
-    Used by: _agent_automa.py (AgentTrace.build)
+    Used by: _amphibious_automa.py (AgentTrace.build)
     """
     model_config = ConfigDict(extra="forbid")
 
@@ -263,7 +276,7 @@ class RecordedToolCall(BaseModel):
 class TraceStep(BaseModel):
     """Record of one observe-think-act cycle.
 
-    Used by: _agent_automa.py (AgentTrace.build)
+    Used by: _amphibious_automa.py (AgentTrace.build)
     """
     model_config = ConfigDict(extra="forbid")
 
@@ -280,7 +293,7 @@ class TraceStep(BaseModel):
 class RunConfig(BaseModel):
     """Parameters captured from self.run(), used for trace metadata.
 
-    Used by: _agent_automa.py (AgentTrace)
+    Used by: _amphibious_automa.py (AgentTrace)
     """
     model_config = ConfigDict(extra="forbid")
 
@@ -293,7 +306,7 @@ class RunConfig(BaseModel):
 
 
 ################################################################################################################
-# Utility functions  (used by: _agent_automa.py)
+# Utility functions  (used by: _amphibious_automa.py)
 ################################################################################################################
 
 def observation_fingerprint(obs: Any) -> Optional[str]:

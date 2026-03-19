@@ -24,12 +24,12 @@ from bridgic.core.cognitive._cognitive_worker import CognitiveWorker, _DELEGATE
 from bridgic.core.cognitive._type import (
     Step,
     StepToolCall,
-    WorkflowDecision,
     WorkflowStep,
     AgentFallback,
     ErrorStrategy,
     ActionStepResult,
     ActionResult,
+    ToolResult,
     StepOutputType,
     TraceStep,
     RecordedToolCall,
@@ -197,7 +197,7 @@ class _AgentSnapshot:
     Async context manager for exception-safe temporary field overrides on a Context,
     with additional management of LayeredExposure._revealed state.
 
-    Used internally by ``sequential()`` and ``loop()`` context managers in AgentAutoma.
+    Used internally by ``sequential()`` and ``loop()`` context managers in AmphibiousAutoma.
 
     On enter:
     1. Saves original field values and applies overrides.
@@ -265,17 +265,202 @@ class _AgentSnapshot:
 
 
 ################################################################################################################
-# AgentAutoma
+# ThinkUnit — Descriptor-based think step declaration
 ################################################################################################################
 
-class AgentAutoma(GraphAutoma, Generic[CognitiveContextT]):
-    """
-    Base class for cognitive agents — the "amphibious" engine.
 
-    Subclasses define agent behavior by implementing ``cognition()`` using:
-    - ``self.run(worker, ...)`` for observe-think-act cycles
-    - ``self.execute_plan(operator)`` for structured flow operators
-    - Standard Python control flow (if/else, while, for)
+class _BoundThinkUnit:
+    """A think unit bound to a specific agent instance. Supports await and .until().
+
+    Created by ThinkUnitDescriptor.__get__() — not instantiated directly by users.
+    """
+
+    def __init__(self, agent: AmphibiousAutoma, descriptor: "ThinkUnitDescriptor"):
+        self._agent = agent
+        self._desc = descriptor
+
+    def __await__(self):
+        """Support ``await self.main_think`` syntax."""
+        return self._execute().__await__()
+
+    async def _execute(
+        self,
+        until: Optional[Union[Callable[..., bool], Callable[..., Awaitable[bool]]]] = None,
+        max_attempts: Optional[int] = None,
+        tools: Optional[List[str]] = None,
+        skills: Optional[List[str]] = None,
+    ) -> Any:
+        """Execute the think unit. Clones the worker template for state isolation."""
+        desc = self._desc
+        worker = self._clone_worker(desc._worker_template)
+
+        await self._agent._run(
+            worker,
+            until=until if until is not None else desc._until,
+            max_attempts=max_attempts if max_attempts is not None else desc._max_attempts,
+            tools=tools if tools is not None else desc._tools,
+            skills=skills if skills is not None else desc._skills,
+            on_error=desc._on_error,
+            max_retries=desc._max_retries,
+        )
+
+        # Return output_schema result if the worker has one
+        if worker.output_schema is not None:
+            ctx = self._agent._current_context
+            if ctx is not None and len(ctx.cognitive_history) > 0:
+                last_step = ctx.cognitive_history.get_all()[-1]
+                if last_step.result is not None:
+                    return last_step.result
+        return None
+
+    async def until(
+        self,
+        condition: Union[Callable[..., bool], Callable[..., Awaitable[bool]]],
+        *,
+        max_attempts: Optional[int] = None,
+        tools: Optional[List[str]] = None,
+        skills: Optional[List[str]] = None,
+    ) -> Any:
+        """Execute with a dynamic loop condition, optionally overriding parameters.
+
+        Usage::
+
+            await self.exec_think.until(
+                lambda ctx: not ctx.last_step_has_tools,
+                max_attempts=50,
+                tools=["save_information"],
+            )
+        """
+        return await self._execute(
+            until=condition,
+            max_attempts=max_attempts,
+            tools=tools,
+            skills=skills,
+        )
+
+    @staticmethod
+    def _clone_worker(template: CognitiveWorker) -> CognitiveWorker:
+        """Clone a worker from its template for state isolation.
+
+        Copies configuration (policies, output_schema, verbose settings) but
+        creates a fresh instance with clean runtime state (tokens, time,
+        GraphAutoma execution state). LLM is left as None — injected by
+        the agent at runtime via _run().
+        """
+        clone = type(template)(
+            llm=None,
+            enable_rehearsal=template.enable_rehearsal,
+            enable_reflection=template.enable_reflection,
+            verbose=template._verbose,
+            verbose_prompt=template._verbose_prompt,
+            output_schema=template.output_schema,
+        )
+        return clone
+
+
+class ThinkUnitDescriptor:
+    """Python descriptor enabling class-level think unit declaration.
+
+    When accessed on an instance (``self.main_think``), returns a
+    ``_BoundThinkUnit`` that is awaitable and supports ``.until()``.
+
+    When accessed on the class, returns the descriptor itself.
+    """
+
+    def __init__(
+        self,
+        worker: CognitiveWorker,
+        *,
+        until: Optional[Union[Callable[..., bool], Callable[..., Awaitable[bool]]]] = None,
+        max_attempts: int = 1,
+        tools: Optional[List[str]] = None,
+        skills: Optional[List[str]] = None,
+        on_error: ErrorStrategy = ErrorStrategy.RAISE,
+        max_retries: int = 0,
+    ):
+        self._worker_template = worker
+        self._until = until
+        self._max_attempts = max_attempts
+        self._tools = tools
+        self._skills = skills
+        self._on_error = on_error
+        self._max_retries = max_retries
+
+    def __set_name__(self, owner: type, name: str) -> None:
+        """Record the attribute name (Python 3.6+ descriptor protocol)."""
+        self._attr_name = name
+
+    def __get__(self, obj: Any, objtype: type = None) -> Any:
+        if obj is None:
+            return self  # Class-level access returns the descriptor
+        return _BoundThinkUnit(obj, self)
+
+
+def think_unit(
+    worker: CognitiveWorker,
+    *,
+    until: Optional[Union[Callable[..., bool], Callable[..., Awaitable[bool]]]] = None,
+    max_attempts: int = 1,
+    tools: Optional[List[str]] = None,
+    skills: Optional[List[str]] = None,
+    on_error: ErrorStrategy = ErrorStrategy.RAISE,
+    max_retries: int = 0,
+) -> ThinkUnitDescriptor:
+    """Declare a think unit for use in on_agent().
+
+    Factory function that returns a ThinkUnitDescriptor. Use as a class variable::
+
+        class MyAgent(AmphibiousAutoma[MyContext]):
+            main_think = think_unit(
+                CognitiveWorker.inline("Plan ONE immediate next step"),
+                max_attempts=80,
+                on_error=ErrorStrategy.RAISE,
+            )
+
+            async def on_agent(self, ctx):
+                await self.main_think
+
+    Parameters
+    ----------
+    worker : CognitiveWorker
+        The worker template. A fresh clone is created for each execution.
+    until : Optional callable
+        Loop condition: repeats until this returns True or LLM signals finish.
+    max_attempts : int
+        Maximum execution attempts (default 1 = single shot).
+    tools : Optional[List[str]]
+        Tool filter: only these tools are visible to the worker.
+    skills : Optional[List[str]]
+        Skill filter: only these skills are visible to the worker.
+    on_error : ErrorStrategy
+        Error handling strategy (default: RAISE).
+    max_retries : int
+        Max retries for RETRY strategy.
+    """
+    return ThinkUnitDescriptor(
+        worker,
+        until=until,
+        max_attempts=max_attempts,
+        tools=tools,
+        skills=skills,
+        on_error=on_error,
+        max_retries=max_retries,
+    )
+
+
+################################################################################################################
+# AmphibiousAutoma
+################################################################################################################
+
+class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
+    """
+    Base class for amphibious agents — dual-mode orchestration engine.
+
+    Supports two execution modes:
+    - **Agent mode** (``on_agent``): LLM-driven observe-think-act cycles via think_unit
+    - **Workflow mode** (``on_workflow``): Deterministic step execution via yield
+
+    Subclasses define behavior by implementing ``on_agent()`` and/or ``on_workflow()``.
 
     Parameters
     ----------
@@ -289,13 +474,10 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT]):
 
     Examples
     --------
-    >>> class MyAgent(AgentAutoma[CognitiveContext]):
-    ...     async def cognition(self, ctx: CognitiveContext):
-    ...         planner = CognitiveWorker.inline("Plan approach", llm=self.llm)
-    ...         executor = CognitiveWorker.inline("Execute step", llm=self.llm)
-    ...         await self.run(planner)
-    ...         await self.run(executor,
-    ...                        until=lambda ctx: ctx.done, max_attempts=20)
+    >>> class MyAgent(AmphibiousAutoma[CognitiveContext]):
+    ...     main_think = think_unit(CognitiveWorker.inline("Execute step"), max_attempts=20)
+    ...     async def on_agent(self, ctx: CognitiveContext):
+    ...         await self.main_think
     ...
     >>> ctx = await MyAgent(llm=llm).arun(goal="Complete the task", tools=[...])
     """
@@ -324,7 +506,7 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT]):
         if cls._context_class is None or not issubclass(cls._context_class, CognitiveContext):
             raise TypeError(
                 f"{cls.__name__} must specify a CognitiveContext type via generic parameter, "
-                f"e.g., class {cls.__name__}(AgentAutoma[MyContext])"
+                f"e.g., class {cls.__name__}(AmphibiousAutoma[MyContext])"
             )
 
     def __init__(
@@ -360,7 +542,7 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT]):
         """
         Agent-level default observation, shared across all workers.
 
-        Called by ``self.run()`` before each thinking phase. Workers can
+        Called by ``_run()`` before each thinking phase. Workers can
         enhance this via their own ``observation()`` method.
 
         Parameters
@@ -376,13 +558,13 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT]):
         return None
 
     @abstractmethod
-    async def cognition(self, ctx: CognitiveContextT) -> None:
+    async def on_agent(self, ctx: CognitiveContextT) -> None:
         """
-        Define the cognitive orchestration logic.
+        Agent mode: LLM-driven orchestration logic.
 
-        Subclasses must implement this method to define how thinking steps
-        are orchestrated. Use standard Python control flow combined with
-        ``self.run()`` and ``self.execute_plan()``.
+        Subclasses implement this method to define how think_units are
+        orchestrated. Use standard Python control flow combined with
+        ``await self.think_unit`` calls.
 
         Parameters
         ----------
@@ -391,32 +573,30 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT]):
 
         Examples
         --------
-        >>> async def cognition(self, ctx: MyContext):
-        ...     planner = CognitiveWorker.inline("Plan", llm=self.llm)
-        ...     executor = CognitiveWorker.inline("Execute", llm=self.llm)
-        ...     await self.run(planner)
-        ...     await self.run(executor,
-        ...                    until=lambda ctx: ctx.done, max_attempts=20)
+        >>> async def on_agent(self, ctx: MyContext):
+        ...     await self.main_think
+        ...     await self.exec_think.until(lambda ctx: ctx.done, max_attempts=20)
         """
         ...
 
-    async def cognition_workflow(self, ctx: CognitiveContextT) -> AsyncGenerator[Union[WorkflowStep, AgentFallback], None]:
-        """Workflow mode: deterministic cognitive flow as an async generator.
+    async def on_workflow(self, ctx: CognitiveContextT) -> AsyncGenerator[Union[WorkflowStep, AgentFallback], None]:
+        """Workflow mode: deterministic execution as an async generator.
 
         Override this method to define a deterministic workflow. When overridden,
-        ``arun()`` automatically routes to workflow mode instead of ``cognition()``.
+        ``arun()`` automatically routes to workflow mode instead of ``on_agent()``.
 
         Yield ``WorkflowStep`` for deterministic tool execution, or
         ``AgentFallback`` to delegate a sub-task to agent mode.
 
         The generator exhausting signals workflow completion — no finish signal needed.
+        Use ``result = yield step(...)`` to receive tool execution results via asend().
 
         Examples
         --------
-        >>> async def cognition_workflow(self, ctx):
+        >>> async def on_workflow(self, ctx):
         ...     worker = MyWorker()
         ...     yield step(worker, "navigate_to_url", url="http://example.com")
-        ...     yield step(worker, "click_element_by_ref", ref="42")
+        ...     result = yield step(worker, "click_element_by_ref", ref="42")
         ...     yield AgentFallback(worker, goal="Handle complex case", max_attempts=10)
         """
         ...
@@ -475,15 +655,15 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT]):
     @worker(is_start=True, is_output=True)
     async def _cognition(self) -> str:
         """
-        Cognition: runs the user-defined cognition method.
+        Entry point: runs the user-defined on_agent method.
 
-        This is the start worker of AgentAutoma. It sets up the context
-        and delegates to the cognition() method for orchestration logic.
+        This is the start worker of AmphibiousAutoma. It sets up the context
+        and delegates to the on_agent() method for orchestration logic.
         """
-        await self.cognition(self._current_context)
+        await self.on_agent(self._current_context)
         return self._current_context.summary()
 
-    async def run(
+    async def _run(
         self,
         worker: CognitiveWorker,
         *,
@@ -497,9 +677,8 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT]):
         """
         Execute a CognitiveWorker through observe-think-act cycle(s).
 
-        This is the primary method for orchestrating workers in ``cognition()``.
-        It handles LLM injection, tool/skill filtering, observation, thinking,
-        action, trace recording, and looping.
+        Internal method used by think_unit descriptors and _run_workflow.
+        Not intended for direct use by subclasses — use think_unit instead.
 
         Parameters
         ----------
@@ -518,16 +697,6 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT]):
             Error handling strategy.
         max_retries : int
             Max retries for RETRY strategy.
-
-        Examples
-        --------
-        >>> # Single step
-        >>> await self.run(planner)
-        >>>
-        >>> # Looping step
-        >>> await self.run(executor,
-        ...                until=lambda ctx: ctx.done, max_attempts=20,
-        ...                tools=["click", "type"])
         """
         async def _execute():
             if until is not None or max_attempts > 1:
@@ -564,8 +733,8 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT]):
         context = self._current_context
         if context is None:
             raise RuntimeError(
-                "Cannot call self.run(): no active context. "
-                "run() must be called within a cognition() method."
+                "Cannot call _run(): no active context. "
+                "_run() must be called within an on_agent() method."
             )
 
         # Capture run config for trace
@@ -718,7 +887,7 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT]):
         """
         Mark a structural phase as sequential for workflow capture.
 
-        Use as an async context manager around ``self.run()`` calls to group them
+        Use as an async context manager around ``_run()`` calls to group them
         into a ``SequentialBlock`` when ``capture_workflow=True``.
 
         Parameters
@@ -743,7 +912,7 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT]):
         """
         Mark a structural phase as a loop for workflow capture.
 
-        Use as an async context manager around ``self.run()`` calls to group them
+        Use as an async context manager around ``_run()`` calls to group them
         into a ``LoopBlock`` with pattern detection when ``capture_workflow=True``.
 
         Parameters
@@ -813,7 +982,7 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT]):
             raise ValueError(
                 f"_phase_context('{phase_type}'): no snapshot fields, keep_revealed, "
                 f"or goal provided. If no context state needs to be scoped for "
-                f"this phase, use self.run() directly — the behavior is identical."
+                f"this phase, use _run() directly — the behavior is identical."
             )
 
         # Create the snapshot
@@ -829,127 +998,170 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT]):
             await snap.__aexit__(None, None, None)
 
     def _has_workflow(self) -> bool:
-        """Check whether the subclass has overridden cognition_workflow()."""
-        return type(self).cognition_workflow is not AgentAutoma.cognition_workflow
+        """Check whether the subclass has overridden on_workflow()."""
+        return type(self).on_workflow is not AmphibiousAutoma.on_workflow
 
     async def _run_workflow(self, ctx: CognitiveContextT) -> None:
-        """Consume cognition_workflow() generator, executing each step.
+        """Consume on_workflow() generator, executing each step.
+
+        Uses asend() to return tool execution results (List[ToolResult]) back
+        to the generator, enabling ``result = yield step(...)`` syntax.
 
         For each yielded item:
         - ``WorkflowStep``: run observe → log → act deterministically.
           If execution fails, fall back to agent mode for the current step.
-        - ``AgentFallback``: delegate to ``self.run()`` for LLM-driven execution.
+        - ``AgentFallback``: delegate to ``_run()`` for LLM-driven execution.
 
         If consecutive failures exceed ``max_consecutive_fallbacks``, abandon
-        the workflow and delegate the remaining task to ``cognition()``
+        the workflow and delegate the remaining task to ``on_agent()``
         (full agent mode).
         """
         consecutive_failures = 0
         max_consecutive_fallbacks = 2
         step_index = 0
 
-        async for item in self.cognition_workflow(ctx):
-            if isinstance(item, AgentFallback):
-                await self.run(
-                    item.worker,
-                    max_attempts=item.max_attempts,
-                    tools=item.tools or None,
-                    skills=item.skills or None,
-                )
-                consecutive_failures = 0
-                continue
+        gen = self.on_workflow(ctx)
+        send_value = None  # First iteration uses None (equivalent to __anext__)
 
-            # Deterministic execution
-            worker = item.worker
-            decision = item.decision
+        try:
+            while True:
+                # Get next item from generator (send previous result back)
+                try:
+                    if send_value is None:
+                        item = await gen.__anext__()
+                    else:
+                        item = await gen.asend(send_value)
+                    send_value = None  # Reset for next iteration
+                except StopAsyncIteration:
+                    break
 
-            # 1. Observe — reuse the business worker's observation
-            obs = await worker.observation(ctx)
-            if obs is _DELEGATE:
-                obs = await self.observation(ctx)
-            ctx.observation = obs
+                if isinstance(item, AgentFallback):
+                    await self._run(
+                        item.worker,
+                        max_attempts=item.max_attempts,
+                        tools=item.tools or None,
+                        skills=item.skills or None,
+                    )
+                    consecutive_failures = 0
+                    send_value = None
+                    continue
 
-            obs_str = str(obs) if obs is not None else "None"
-            if len(obs_str) > 200:
-                obs_str = obs_str[:200] + "..."
-            self._log("Observe", f"workflow: {obs_str}", color="green")
-            self._log("Think", f"workflow: {decision.step_content}", color="cyan")
+                # Deterministic execution
+                worker = item.worker
+                decision = item.decision
 
-            # 2. Act — with fallback on failure
-            try:
-                action_result = await self._action(decision, ctx, _worker=worker)
+                # 1. Observe — reuse the business worker's observation
+                obs = await worker.observation(ctx)
+                if obs is _DELEGATE:
+                    obs = await self.observation(ctx)
+                ctx.observation = obs
 
-                # Check if any tool execution failed
-                inner = getattr(action_result, "result", None)
-                if (
-                    inner is not None
-                    and hasattr(inner, "results")
-                ):
-                    failed = [
-                        r for r in inner.results
-                        if not r.success
-                    ]
-                    if failed:
-                        errors = "; ".join(
-                            f"{r.tool_name}: {r.error}" for r in failed
-                        )
-                        raise RuntimeError(
-                            f"Tool execution failed for: "
-                            f"{decision.step_content} — {errors}"
-                        )
+                obs_str = str(obs) if obs is not None else "None"
+                if len(obs_str) > 200:
+                    obs_str = obs_str[:200] + "..."
+                self._log("Observe", f"workflow: {obs_str}", color="green")
+                self._log("Think", f"workflow: {decision.step_content}", color="cyan")
 
-                if action_result is not None:
-                    formatted = action_result.model_dump_json(indent=4)
-                    self._log("Act", f"workflow:\n{formatted}", color="purple")
+                # 2. Act — with fallback on failure
+                try:
+                    action_result = await self._action(decision, ctx, _worker=worker)
 
-                # 3. Record trace step (if capturing)
-                self._record_trace_step(worker, obs, decision, action_result, ctx)
-                consecutive_failures = 0
-                step_index += 1
+                    # Check if any tool execution failed
+                    inner = getattr(action_result, "result", None)
+                    if (
+                        inner is not None
+                        and hasattr(inner, "results")
+                    ):
+                        failed = [
+                            r for r in inner.results
+                            if not r.success
+                        ]
+                        if failed:
+                            errors = "; ".join(
+                                f"{r.tool_name}: {r.error}" for r in failed
+                            )
+                            raise RuntimeError(
+                                f"Tool execution failed for: "
+                                f"{decision.step_content} — {errors}"
+                            )
 
-            except Exception as e:
-                consecutive_failures += 1
-                step_index += 1
-                self._log(
-                    "Workflow",
-                    f"Step {step_index} failed "
-                    f"({consecutive_failures}/{max_consecutive_fallbacks}): {e}",
-                    color="red",
-                )
+                    if action_result is not None:
+                        formatted = action_result.model_dump_json(indent=4)
+                        self._log("Act", f"workflow:\n{formatted}", color="purple")
 
-                # Check if consecutive failures exceed threshold → full fallback
-                if consecutive_failures >= max_consecutive_fallbacks:
+                    # 3. Record trace step (if capturing)
+                    self._record_trace_step(worker, obs, decision, action_result, ctx)
+                    consecutive_failures = 0
+                    step_index += 1
+
+                    # 4. Build ToolResult list to send back via asend()
+                    send_value = self._build_tool_results(action_result)
+
+                except Exception as e:
+                    consecutive_failures += 1
+                    step_index += 1
                     self._log(
                         "Workflow",
-                        f"Consecutive failures reached {max_consecutive_fallbacks}, "
-                        f"falling back to full agent mode (cognition).",
+                        f"Step {step_index} failed "
+                        f"({consecutive_failures}/{max_consecutive_fallbacks}): {e}",
                         color="red",
                     )
-                    await self.cognition(ctx)
-                    return
 
-                # Step-level fallback: construct a scoped goal and let agent fix it
-                fallback_goal = (
-                    f"[Workflow fallback] Step {step_index} failed.\n"
-                    f"Step intent: {decision.step_content}\n"
-                    f"Error: {e}\n\n"
-                    f"You must do TWO things:\n"
-                    f"1. Resolve the error — fix whatever is blocking this step (e.g. login, navigate, wait for page load).\n"
-                    f"2. Complete the original step intent: {decision.step_content}\n\n"
-                    f"Set finish=True ONLY after both are done. "
-                    f"Do NOT continue with subsequent steps."
-                )
-                self._log(
-                    "Workflow",
-                    f"Falling back to agent mode for step {step_index}: "
-                    f"{decision.step_content}",
-                    color="yellow",
-                )
-                async with self.snapshot(goal=fallback_goal):
-                    await self.run(
-                        worker,
-                        max_attempts=5,
+                    # Check if consecutive failures exceed threshold → full fallback
+                    if consecutive_failures >= max_consecutive_fallbacks:
+                        self._log(
+                            "Workflow",
+                            f"Consecutive failures reached {max_consecutive_fallbacks}, "
+                            f"falling back to full agent mode (on_agent).",
+                            color="red",
+                        )
+                        await self.on_agent(ctx)
+                        return
+
+                    # Step-level fallback: construct a scoped goal and let agent fix it
+                    fallback_goal = (
+                        f"[Workflow fallback] Step {step_index} failed.\n"
+                        f"Step intent: {decision.step_content}\n"
+                        f"Error: {e}\n\n"
+                        f"You must do TWO things:\n"
+                        f"1. Resolve the error — fix whatever is blocking this step (e.g. login, navigate, wait for page load).\n"
+                        f"2. Complete the original step intent: {decision.step_content}\n\n"
+                        f"Set finish=True ONLY after both are done. "
+                        f"Do NOT continue with subsequent steps."
                     )
+                    self._log(
+                        "Workflow",
+                        f"Falling back to agent mode for step {step_index}: "
+                        f"{decision.step_content}",
+                        color="yellow",
+                    )
+                    async with self.snapshot(goal=fallback_goal):
+                        await self._run(
+                            worker,
+                            max_attempts=5,
+                        )
+                    send_value = None  # No result to send back after fallback
+        finally:
+            await gen.aclose()
+
+    @staticmethod
+    def _build_tool_results(action_result: Step) -> List[ToolResult]:
+        """Convert an action Step result into a List[ToolResult] for asend()."""
+        if action_result is None:
+            return []
+        inner = getattr(action_result, "result", None)
+        if inner is not None and isinstance(inner, ActionResult):
+            return [
+                ToolResult(
+                    tool_name=r.tool_name,
+                    tool_arguments=r.tool_arguments,
+                    result=r.tool_result,
+                    success=r.success,
+                    error=r.error,
+                )
+                for r in inner.results
+            ]
+        return []
 
     async def _action(
         self,
@@ -1211,7 +1423,7 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT]):
 
         Routes to one of two modes:
         1. Generator workflow mode — if ``cognition_workflow()`` is overridden.
-        2. Agent mode — the default LLM-driven ``cognition()`` path.
+        2. Agent mode — the default LLM-driven ``on_agent()`` path.
 
         The ``mode`` parameter allows explicit control over which mode is used,
         overriding the automatic detection based on ``_has_workflow()``.
@@ -1227,7 +1439,7 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT]):
         capture_workflow : bool
             If True, enables trace capture via AgentTrace during execution.
         mode : Optional[str]
-            Execution mode override. ``"agent"`` forces agent mode (cognition),
+            Execution mode override. ``"agent"`` forces agent mode (on_agent),
             ``"workflow"`` forces workflow mode (cognition_workflow),
             ``None`` auto-detects based on whether cognition_workflow() is
             overridden (backward compatible).
@@ -1267,7 +1479,7 @@ class AgentAutoma(GraphAutoma, Generic[CognitiveContextT]):
         self.spend_time = 0.0
 
         if self._llm is None:
-            raise RuntimeError("AgentAutoma must be initialized with an LLM.")
+            raise RuntimeError("AmphibiousAutoma must be initialized with an LLM.")
 
         if capture_workflow:
             self._agent_trace = AgentTrace()
