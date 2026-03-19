@@ -316,9 +316,9 @@ class TestAgentTrace:
 
         agent = Agent(llm=llm)
         ctx = _make_ctx()
-        await agent.arun(context=ctx, capture_workflow=True)
+        await agent.arun(context=ctx, trace_running=True)
 
-        trace = agent._build_trace()
+        trace = agent._agent_trace.build()
         assert len(trace["phases"]) == 1
         step: TraceStep = trace["phases"][0]["steps"][0]
         # observation field exists on the model
@@ -342,9 +342,9 @@ class TestAgentTrace:
 
         agent = Agent(llm=llm)
         ctx = _make_ctx()
-        await agent.arun(context=ctx, capture_workflow=True)
+        await agent.arun(context=ctx, trace_running=True)
 
-        trace = agent._build_trace()
+        trace = agent._agent_trace.build()
         step: TraceStep = trace["phases"][0]["steps"][0]
         assert step.observation is not None
         assert "login form" in step.observation
@@ -363,9 +363,9 @@ class TestAgentTrace:
 
         agent = Agent(llm=llm)
         ctx = _make_ctx()
-        await agent.arun(context=ctx, capture_workflow=True)
+        await agent.arun(context=ctx, trace_running=True)
 
-        trace = agent._build_trace()
+        trace = agent._agent_trace.build()
         step: TraceStep = trace["phases"][0]["steps"][0]
         assert len(step.tool_calls) == 1
         tc: RecordedToolCall = step.tool_calls[0]
@@ -390,7 +390,7 @@ class TestAgentTrace:
 
         agent = Agent(llm=llm)
         ctx = _make_ctx()
-        await agent.arun(context=ctx, capture_workflow=True)
+        await agent.arun(context=ctx, trace_running=True)
 
         with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f:
             path = f.name
@@ -432,9 +432,9 @@ class TestAgentTrace:
 
         agent = Agent(llm=llm)
         ctx = _make_ctx()
-        await agent.arun(context=ctx, capture_workflow=True)
+        await agent.arun(context=ctx, trace_running=True)
 
-        trace = agent._build_trace()
+        trace = agent._agent_trace.build()
         assert len(trace["phases"]) == 0
         assert len(trace["orphan_steps"]) == 1
         step: TraceStep = trace["orphan_steps"][0]

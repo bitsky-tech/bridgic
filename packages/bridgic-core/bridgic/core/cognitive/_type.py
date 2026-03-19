@@ -54,6 +54,16 @@ class Skill(BaseModel):
 # Worker layer models  (used by: _cognitive_worker.py, _amphibious_automa.py)
 #################################################################################################################
 
+class RunMode(str, Enum):
+    """The mode of the run.
+
+    Used by: _amphibious_automa.py (RunConfig)
+    """
+    AGENT = "agent"
+    WORKFLOW = "workflow"
+    AMPHIBIOUS = "amphibious"
+    AUTO = "auto"
+
 class DetailRequest(BaseModel):
     """Request for detailed information about a specific item in a LayeredExposure field.
 

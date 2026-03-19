@@ -75,6 +75,7 @@ from ._amphibious_automa import (
 )
 from ._type import (
     # Worker data structures
+    RunMode,
     DetailRequest,
     ToolArgument,
     StepToolCall,
@@ -125,6 +126,7 @@ __all__ = [
     "ThinkUnitDescriptor",
 
     # Worker data structures
+    "RunMode",
     "DetailRequest",
     "ToolArgument",
     "StepToolCall",

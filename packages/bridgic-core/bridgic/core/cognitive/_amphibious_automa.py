@@ -22,6 +22,7 @@ from bridgic.core.agentic.tool_specs import ToolSpec
 from bridgic.core.cognitive._context import CognitiveContext, CognitiveTools, CognitiveSkills, Exposure, LayeredExposure
 from bridgic.core.cognitive._cognitive_worker import CognitiveWorker, _DELEGATE
 from bridgic.core.cognitive._type import (
+    RunMode,
     Step,
     StepToolCall,
     WorkflowStep,
@@ -677,17 +678,6 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
     ############################################################################
     # Core methods
     ############################################################################
-    @worker(is_start=True, is_output=True)
-    async def _cognition(self) -> str:
-        """
-        Entry point: runs the user-defined on_agent method.
-
-        This is the start worker of AmphibiousAutoma. It sets up the context
-        and delegates to the on_agent() method for orchestration logic.
-        """
-        await self.on_agent(self._current_context)
-        return self._current_context.summary()
-
     async def _run(
         self,
         worker: CognitiveWorker,
@@ -913,7 +903,7 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         Mark a structural phase as sequential for workflow capture.
 
         Use as an async context manager around ``_run()`` calls to group them
-        into a ``SequentialBlock`` when ``capture_workflow=True``.
+        into a ``SequentialBlock`` when ``trace_running=True``.
 
         Parameters
         ----------
@@ -938,7 +928,7 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         Mark a structural phase as a loop for workflow capture.
 
         Use as an async context manager around ``_run()`` calls to group them
-        into a ``LoopBlock`` with pattern detection when ``capture_workflow=True``.
+        into a ``LoopBlock`` with pattern detection when ``trace_running=True``.
 
         Parameters
         ----------
@@ -1022,11 +1012,13 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
                 self._agent_trace.end_phase()
             await snap.__aexit__(None, None, None)
 
-    def _has_workflow(self) -> bool:
-        """Check whether the subclass has overridden on_workflow()."""
-        return type(self).on_workflow is not AmphibiousAutoma.on_workflow
-
-    async def _run_workflow(self, ctx: CognitiveContextT) -> None:
+    async def _run_workflow(
+        self,
+        ctx: CognitiveContextT,
+        *,
+        will_fallback: bool = True,
+        max_consecutive_fallbacks: int = 1,
+    ) -> None:
         """Consume on_workflow() generator, executing each step.
 
         Uses asend() to return tool execution results (List[ToolResult]) back
@@ -1042,8 +1034,10 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         (full agent mode).
         """
         consecutive_failures = 0
-        max_consecutive_fallbacks = 2
+        if not will_fallback:
+            max_consecutive_fallbacks = 0
         step_index = 0
+        failed_steps = []  # Track failed step info for error reporting
 
         gen = self.on_workflow(ctx)
         send_value = None  # First iteration uses None (equivalent to __anext__)
@@ -1127,8 +1121,12 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
                     send_value = self._build_tool_results(action_result)
 
                 except Exception as e:
+                    if not will_fallback:
+                        raise e
+
                     consecutive_failures += 1
                     step_index += 1
+                    failed_steps.append(f"Step {step_index}: {decision.step_content} — {e}")
                     self._log(
                         "Workflow",
                         f"Step {step_index} failed "
@@ -1138,6 +1136,14 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
 
                     # Check if consecutive failures exceed threshold → full fallback
                     if consecutive_failures >= max_consecutive_fallbacks:
+                        if not self._has_agent():
+                            failed_summary = "\n".join(failed_steps)
+                            raise RuntimeError(
+                                f"Workflow degradation failed: consecutive failures reached "
+                                f"{max_consecutive_fallbacks}, but on_agent() is not overridden "
+                                f"so fallback cannot proceed.\n"
+                                f"Failed steps:\n{failed_summary}"
+                            )
                         self._log(
                             "Workflow",
                             f"Consecutive failures reached {max_consecutive_fallbacks}, "
@@ -1173,6 +1179,8 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         finally:
             await gen.aclose()
 
+    # TODO: This locally downgraded CognitiveWorker needs to have a good way to be opened up 
+    # in the future to allow for customization.
     def _create_fallback_worker(self) -> CognitiveWorker:
         """Create a default fallback worker for workflow mode.
 
@@ -1184,7 +1192,10 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         Override this method to provide a custom fallback worker.
         """
         return CognitiveWorker.inline(
-            "Resolve the current issue and complete the step.",
+            "Fix the current error you observe, then complete the step that failed. "
+            "Work in ReAct style: observe the situation, reason about the next action, "
+            "act once, then observe again. Take one step at a time—do not plan ahead; "
+            "react to what you see after each action.",
         )
 
     @staticmethod
@@ -1441,31 +1452,79 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
             "structured_output_class": structured_output_class,
         })
 
-    def _build_trace(self) -> Dict[str, Any]:
-        """Build a trace dict from the workflow builder of the last run."""
-        import time as _time
-        metadata = {
-            "agent_class": f"{self.__class__.__module__}.{self.__class__.__qualname__}",
-            "context_class": (
-                f"{self._context_class.__module__}.{self._context_class.__qualname__}"
-                if self._context_class else None
-            ),
-            "timestamp": _time.time(),
-            "spend_tokens": self.spend_tokens,
-            "spend_time": self.spend_time,
-        }
-        return self._agent_trace.build(metadata=metadata)
+    def _has_workflow(self) -> bool:
+        """Check whether the subclass has overridden on_workflow()."""
+        return type(self).on_workflow is not AmphibiousAutoma.on_workflow
+
+    def _has_agent(self) -> bool:
+        """Check whether the subclass has overridden on_agent()."""
+        return type(self).on_agent is not AmphibiousAutoma.on_agent
 
     ############################################################################
     # Entry point
     ############################################################################
+    @worker(is_start=True)
+    async def router(self, mode: RunMode, will_fallback: bool, max_consecutive_fallbacks: int) -> str:
+        """
+        Router worker: determines the execution mode based on the mode parameter.
+        """
+        if mode is RunMode.AGENT:
+            self._log("Router", f"> Ferrying to AGENT mode", color="green")
+            self._log("Router", f"In AGENT mode, will_fallback and max_consecutive_fallbacks are ignored!", color="yellow")
+            self.ferry_to("_cognition")
+        elif mode is RunMode.WORKFLOW:
+            self._log("Router", f"> Ferrying to WORKFLOW mode", color="green")
+            self._log("Router", f"In WORKFLOW mode, will_fallback and max_consecutive_fallbacks are ignored!", color="yellow")
+            self.ferry_to("_workflow")
+        elif mode is RunMode.AMPHIBIOUS:
+            self._log("Router", f"> Ferrying to AMPHIBIOUS mode, will_fallback={will_fallback}, max_consecutive_fallbacks={max_consecutive_fallbacks}", color="green")
+            self.ferry_to("_amphibious", will_fallback=will_fallback, max_consecutive_fallbacks=max_consecutive_fallbacks)
+        elif mode is RunMode.AUTO:
+            self._log("Router", f"> Auto-detecting execution mode", color="green")
+            has_workflow = self._has_workflow()
+            if has_workflow:
+                self._log("Router", f"> Detected AMPHIBIOUS mode (on_workflow overridden), will_fallback={will_fallback}, max_consecutive_fallbacks={max_consecutive_fallbacks}", color="green")
+                self.ferry_to("_amphibious", will_fallback=will_fallback, max_consecutive_fallbacks=max_consecutive_fallbacks)
+            else:
+                self._log("Router", f"> Detected AGENT mode", color="green")
+                self._log("Router", f"In AGENT mode, will_fallback and max_consecutive_fallbacks are ignored!", color="yellow")
+                self.ferry_to("_cognition")
+
+    @worker(is_output=True)
+    async def _cognition(self) -> str:
+        """
+        Entry point: runs the user-defined on_agent method.
+
+        This is the start worker of AmphibiousAutoma. It sets up the context
+        and delegates to the on_agent() method for orchestration logic.
+        """
+        await self.on_agent(self._current_context)
+        return self._current_context.summary()
+
+    @worker(is_output=True)
+    async def _workflow(self) -> str:
+        """
+        Entry point: runs the user-defined on_workflow method.
+        """
+        await self._run_workflow(self._current_context, will_fallback=False)
+        return self._current_context.summary()
+
+    @worker(is_output=True)
+    async def _amphibious(self, will_fallback: bool, max_consecutive_fallbacks: int) -> str:
+        """
+        Entry point: runs the user-defined on_workflow method.
+        """
+        await self._run_workflow(self._current_context, will_fallback=will_fallback, max_consecutive_fallbacks=max_consecutive_fallbacks)
+        return self._current_context.summary()
 
     async def arun(
         self,
         *,
         context: Optional[CognitiveContextT] = None,
-        capture_workflow: bool = False,
-        mode: Optional[str] = None,
+        trace_running: bool = False,
+        mode: Optional[RunMode] = RunMode.AUTO,
+        will_fallback: bool = True,
+        max_consecutive_fallbacks: int = 1,
         **kwargs
     ) -> str:
         """
@@ -1486,7 +1545,7 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         ----------
         context : Optional[CognitiveContextT]
             Pre-created context object. If provided, uses this context directly.
-        capture_workflow : bool
+        trace_running : bool
             If True, enables trace capture via AgentTrace during execution.
         mode : Optional[str]
             Execution mode override. ``"agent"`` forces agent mode (on_agent),
@@ -1502,10 +1561,29 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         str
             Summary of the context after execution.
         """
+        def _build_trace(automa: "AmphibiousAutoma") -> Dict[str, Any]:
+            """Build a trace dict from the workflow builder of the last run."""
+            import time as _time
+            metadata = {
+                "automa_class": f"{automa.__class__.__module__}.{automa.__class__.__qualname__}",
+                "context_class": (
+                    f"{automa._context_class.__module__}.{automa._context_class.__qualname__}"
+                    if automa._context_class else None
+                ),
+                "timestamp": _time.time(),
+                "spend_tokens": automa.spend_tokens,
+                "spend_time": automa.spend_time,
+            }
+            return automa._agent_trace.build(metadata=metadata)
+
         async def _run_and_report(context: CognitiveContextT) -> str:
             """Run the agent, measure time, and log summary."""
             start_time = time.time()
-            result = await GraphAutoma.arun(self, context=context)
+            result = await GraphAutoma.arun(
+                self, mode, context,
+                will_fallback=will_fallback,
+                max_consecutive_fallbacks=max_consecutive_fallbacks,
+            )
             self.spend_time = time.time() - start_time
 
             if self._verbose:
@@ -1531,7 +1609,7 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         if self._llm is None:
             raise RuntimeError("AmphibiousAutoma must be initialized with an LLM.")
 
-        if capture_workflow:
+        if trace_running:
             self._agent_trace = AgentTrace()
         else:
             self._agent_trace = None
@@ -1575,32 +1653,8 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         
     
         ########################
-        # Run the amphibious agent
+        # Run the amphibious automa
         ########################
-        # Resolve execution mode
-        if mode is not None and mode not in ("agent", "workflow"):
-            raise ValueError(
-                f"Invalid mode: {mode!r}. Must be 'agent', 'workflow', or None."
-            )
-
-        use_workflow = (
-            mode == "workflow"
-            or (mode is None and self._has_workflow())
-        )
-
-        if mode == "workflow" and not self._has_workflow():
-            raise RuntimeError(
-                f"{type(self).__name__} does not override cognition_workflow(). "
-                f"Cannot run in workflow mode."
-            )
-
-        if use_workflow:
-            # Generator-based workflow mode (cognition_workflow() overridden)
-            await self._run_workflow(context)
-            result = context.summary()
-        else:
-            result = await _run_and_report(context=context)
-            if capture_workflow and self._agent_trace:
-                self._build_trace()
-
-        return result
+        await _run_and_report(context=context)
+        if trace_running and self._agent_trace:
+            _build_trace(self)
