@@ -2,7 +2,7 @@
 import os
 import pytest
 
-from bridgic.core.cognitive import CognitiveContext, CognitiveSkills, Skill, Step
+from bridgic.amphibious import CognitiveContext, CognitiveSkills, Skill, Step
 from .tools import get_travel_planning_tools
 
 SKILLS_DIR = os.path.join(os.path.dirname(__file__), "skills")

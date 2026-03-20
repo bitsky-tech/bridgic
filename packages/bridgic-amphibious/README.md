@@ -74,40 +74,28 @@ class ResilientAgent(AmphibiousAutoma[MyContext]):
 ```mermaid
 graph TB
     subgraph AmphibiousAutoma
-
-        subgraph Row1["CognitiveContext — global shared state"]
+        subgraph Row1["Running Mode"]
             direction LR
-            data["goal · observation\n(plain fields)"]
-            exposure["tools (EntireExposure)\nskills · history (LayeredExposure)"]
+            Workflow -. "Auto-degradation" .-> Agent
+            Agent -. "Auto-swith" .-> Workflow
         end
 
-        subgraph Row2["Observe → Think → Act cycle"]
+        subgraph Row2["Observe → Think → Act "]
             direction LR
             Observe["Observe"]
             Think["Think"]
             Act["Act"]
-            Observe --> Think --> Act
+            Observe --> Think --> Act --> Observe
         end
 
-        subgraph Row3["Think — two interchangeable strategies"]
-            direction LR
-            LLM["on_agent()\nCognitiveWorker · LLM decides"]
-            Code["on_workflow()\nyield step() · developer code decides"]
-            LLM -. "fallback on failure" .-> Code
-            Code -. "AgentFallback / auto-degradation" .-> LLM
+        subgraph Row3["CognitiveContext — global shared state"]
+            Data
+            Exposure
         end
-
-        Row1 -- "context feeds into each cycle" --> Row2
-        Think -- "delegates decision to" --> Row3
-        Act -- "results written back" --> Row1
-
     end
 ```
 
-The three rows capture the essence of the framework:
-- **Row 1 — Context**: the global state that all modes share, with Exposure controlling how data is disclosed to the LLM
-- **Row 2 — OTA cycle**: the fixed observe-think-act loop that every execution passes through
-- **Row 3 — Think strategies**: the decision point where `on_agent` (LLM) and `on_workflow` (code) are interchangeable, with dynamic fallback between them
+The key insight: **Context sits on top as the global state**, and the **on_agent / on_workflow duality lives inside the Think phase** — they are two interchangeable strategies for the same decision point in the observe-think-act cycle.
 
 ### Layer 1: Data Exposure
 

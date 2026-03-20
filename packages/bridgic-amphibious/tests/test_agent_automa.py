@@ -6,7 +6,7 @@ import tempfile
 import pytest
 from typing import Any, List, Optional
 
-from bridgic.core.cognitive import (
+from bridgic.amphibious import (
     AmphibiousAutoma,
     AgentTrace,
     CognitiveContext,

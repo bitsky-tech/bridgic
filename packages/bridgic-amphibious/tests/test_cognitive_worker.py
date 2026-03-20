@@ -5,7 +5,7 @@ import pytest
 from unittest.mock import MagicMock
 from typing import Any, Dict, List, Optional, Tuple
 
-from bridgic.core.cognitive import (
+from bridgic.amphibious import (
     CognitiveContext,
     CognitiveWorker,
     ActionStepResult,
@@ -904,7 +904,7 @@ class TestSkillRevealPersistence:
     @pytest.mark.asyncio
     async def test_revealed_state_persists_across_iterations(self):
         """Skills revealed in iteration N are available in iteration N+1 via index remapping."""
-        from bridgic.core.cognitive import CognitiveSkills
+        from bridgic.amphibious import CognitiveSkills
 
         ctx = _make_context()  # already loads skills from SKILLS_DIR
 
