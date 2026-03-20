@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Optional, Generic, TypeVar, Tuple, get_origi
 from pydantic import BaseModel, Field, ConfigDict
 from bridgic.core.agentic.tool_specs import ToolSpec
 from bridgic.core.model.types import Message
-from bridgic.core.cognitive._type import Step, Skill
+from bridgic.amphibious._type import Step, Skill
 
 
 ################################################################################################################

@@ -34,8 +34,8 @@ from bridgic.core.automa import GraphAutoma, worker
 from bridgic.core.automa.interaction import InteractionFeedback
 from bridgic.core.agentic.tool_specs import ToolSpec
 from bridgic.core.utils._console import printer
-from bridgic.core.cognitive._context import CognitiveContext
-from bridgic.core.cognitive._type import (
+from bridgic.amphibious._context import CognitiveContext
+from bridgic.amphibious._type import (
     DetailRequest,
     ToolArgument,
     StepToolCall,

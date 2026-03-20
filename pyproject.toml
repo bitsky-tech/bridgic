@@ -45,6 +45,7 @@ include = ["/meta/bridgic/"]
 members = [
     "packages/bridgic-core",
     "packages/bridgic-asl",
+    "packages/bridgic-amphibious",
     "packages/bridgic-integration/llms/*",
     "packages/bridgic-integration/protocols/*",
     "packages/bridgic-integration/traces/*",
@@ -54,6 +55,7 @@ members = [
 [tool.uv.sources]
 bridgic-core = { workspace = true }
 bridgic-asl = { workspace = true }
+bridgic-amphibious = { workspace = true }
 bridgic-llms-openai-like = { workspace = true }
 bridgic-llms-openai = { workspace = true }
 bridgic-llms-vllm = { workspace = true }

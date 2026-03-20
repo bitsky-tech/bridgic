@@ -19,9 +19,10 @@ from bridgic.core.automa.args import ArgsMappingRule, InOrder
 from bridgic.core.model.types import ToolCall
 from bridgic.core.agentic import ConcurrentAutoma
 from bridgic.core.agentic.tool_specs import ToolSpec
-from bridgic.core.cognitive._context import CognitiveContext, CognitiveTools, CognitiveSkills, Exposure, LayeredExposure
-from bridgic.core.cognitive._cognitive_worker import CognitiveWorker, _DELEGATE
-from bridgic.core.cognitive._type import (
+from bridgic.core.utils._console import printer
+from bridgic.amphibious._context import CognitiveContext, CognitiveTools, CognitiveSkills, Exposure, LayeredExposure
+from bridgic.amphibious._cognitive_worker import CognitiveWorker, _DELEGATE
+from bridgic.amphibious._type import (
     RunMode,
     Step,
     StepToolCall,
@@ -37,7 +38,6 @@ from bridgic.core.cognitive._type import (
     RunConfig,
     observation_fingerprint,
 )
-from bridgic.core.utils._console import printer
 
 
 ################################################################################################################

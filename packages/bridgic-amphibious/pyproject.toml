@@ -1,6 +1,6 @@
 [project]
 name = "bridgic-amphibious"
-version = "0.1.0"
+version = "0.1.0.dev2"
 classifiers = [
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.9",
@@ -9,7 +9,7 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
 ]
-description = "Bridgic-cognitive has implemented an "amphibious" execution model: the same system can operate in both LLM-driven agent mode (on_agent()) and deterministic code-driven workflow mode (on_workflow()), and can switch between the two modes autonomously when necessary."
+description = "Bridgic-cognitive has implemented an amphibious execution model: the same system can operate in both LLM-driven agent mode (on_agent()) and deterministic code-driven workflow mode (on_workflow()), and can switch between the two modes autonomously when necessary."
 readme = "README.md"
 requires-python = ">=3.10"
 authors = [
