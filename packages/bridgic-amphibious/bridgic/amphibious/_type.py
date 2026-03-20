@@ -1,8 +1,8 @@
 """
-Cognitive Architecture — Consolidated Data Models.
+Amphibious Agent Framework — Consolidated Data Models.
 
 All Pydantic models, dataclasses, enums, and type aliases used across the
-cognitive module are gathered here for a single source of truth.
+amphibious module are gathered here as a single source of truth.
 
 Sections are annotated with the module(s) that consume each model.
 """
@@ -13,10 +13,9 @@ import hashlib
 import json
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Annotated, Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, ConfigDict, Field, create_model, field_validator
-from pydantic.functional_validators import BeforeValidator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 #################################################################################################################
@@ -34,7 +33,7 @@ class Step(BaseModel):
     content: str = ""
     result: Optional[Any] = None
     metadata: Dict[str, Any] = Field(default_factory=dict)
-    status: Optional[bool] = None  # 兼容旧测试，可选
+    status: Optional[bool] = None  # Optional status flag for backward compatibility
 
 
 class Skill(BaseModel):

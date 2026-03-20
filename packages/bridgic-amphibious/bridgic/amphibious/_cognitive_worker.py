@@ -1,13 +1,13 @@
 """
-CognitiveWorker - Core thinking unit of the cognitive architecture.
+CognitiveWorker — Core thinking unit of the amphibious agent framework.
 
 A CognitiveWorker represents the "think" phase of one observe-think-act cycle.
-Observation (before) and action (after) are orchestrated by AgentAutoma.
+Observation (before) and action (after) are orchestrated by AmphibiousAutoma.
 
 Design:
 1. Think-only unit: Each arun() call performs exactly the thinking phase.
-   Observation is injected via context.observation (set by AgentAutoma._run_once
-   before calling arun). Action is executed by AgentAutoma.action() after arun
+   Observation is injected via context.observation (set by AmphibiousAutoma._run_once
+   before calling arun). Action is executed by AmphibiousAutoma.action() after arun
    returns.
 
 2. Multi-round thinking loop: The thinking phase calls the LLM at least once.
@@ -24,12 +24,12 @@ import time
 import json
 from typing import Annotated, Any, Dict, List, Optional, Tuple, Type, Union
 
-from pydantic import BaseModel, Field, ConfigDict, field_validator, create_model
+from pydantic import BaseModel, Field, create_model
 from pydantic.functional_validators import BeforeValidator
 
 from bridgic.core.model import BaseLlm
 from bridgic.core.model.protocols import PydanticModel
-from bridgic.core.model.types import ToolCall, Message
+from bridgic.core.model.types import Message
 from bridgic.core.automa import GraphAutoma, worker
 from bridgic.core.automa.interaction import InteractionFeedback
 from bridgic.core.agentic.tool_specs import ToolSpec
@@ -58,11 +58,11 @@ _DELEGATE = object()  # Worker returns this to delegate observation to Agent
 
 class CognitiveWorker(GraphAutoma):
     """
-    Cognitive worker: pure thinking unit of an Agent.
+    Cognitive worker: pure thinking unit of an agent.
 
     A CognitiveWorker represents one thinking cycle and is responsible for
     "what to think and how to think". Observation and action execution are
-    handled by AgentAutoma as shared infrastructure.
+    handled by AmphibiousAutoma as shared infrastructure.
 
     Subclass and override template methods to customize behavior.
 
@@ -84,7 +84,7 @@ class CognitiveWorker(GraphAutoma):
     output_schema : Optional[Type[BaseModel]]
         If set, the worker produces a typed Pydantic instance directly using the
         output_schema as the LLM constraint. The agent's action() phase is skipped
-        entirely. ``await step`` returns the typed instance.
+        entirely. ``await think_unit`` returns the typed instance.
         Policy rounds (rehearsal/reflection) still run if enabled.
 
     Template Methods (override in subclasses)
@@ -96,11 +96,11 @@ class CognitiveWorker(GraphAutoma):
         Assemble the final messages for the thinking phase. Returns List[Message].
 
     observation(context, default_observation) -> Union[str, _DELEGATE]
-        Enhance or customize observation. Default returns default_observation as-is.
-        Return _DELEGATE for legacy behavior (delegate to Agent).
+        Enhance or customize observation. Default returns _DELEGATE.
+        Return _DELEGATE to delegate observation to AmphibiousAutoma.
 
-    before_action(matched_tools, context) -> List[Tuple[ToolCall, ToolSpec]]
-        Verify/adjust matched tools before execution. Called by agent.action().
+    before_action(decision_result, context) -> Any
+        Verify/adjust the decision before execution. Called by AmphibiousAutoma._action().
 
     Examples
     --------
@@ -241,7 +241,7 @@ class CognitiveWorker(GraphAutoma):
 
     @property
     def _ThinkResultModel(self) -> Type[BaseModel]:
-        """Backward-compat: model for normal rounds (acquiring open, all enabled policies)."""
+        """Model for normal rounds: acquiring open, all enabled policies active."""
         return self._create_think_model(
             enable_rehearsal=self.enable_rehearsal,
             enable_reflection=self.enable_reflection,
@@ -251,7 +251,7 @@ class CognitiveWorker(GraphAutoma):
 
     @property
     def _ThinkDecisionModel(self) -> Type[BaseModel]:
-        """Backward-compat: model for forced-decision rounds (all operators closed)."""
+        """Model for forced-decision rounds: all policy operators closed."""
         return self._create_think_model(
             enable_rehearsal=False,
             enable_reflection=False,
@@ -684,13 +684,16 @@ class CognitiveWorker(GraphAutoma):
         Returns
         -------
         Any
-            _DELEGATE (legacy mode) to delegate to agent.observation().
-            A string to use as the observation (can be enhanced from default).
+            _DELEGATE to delegate observation to AmphibiousAutoma.observation().
+            A string to use as the observation directly.
 
         Examples
         --------
         >>> async def observation(self, context):
-        ...     return _DELEGATE
+        ...     return _DELEGATE  # Use agent-level observation (default)
+        ...
+        >>> async def observation(self, context):
+        ...     return f"Current state: {context.goal}"  # Custom observation
         """
         return _DELEGATE
 

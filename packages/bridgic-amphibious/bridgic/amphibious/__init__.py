@@ -1,37 +1,35 @@
 """
-Cognitive Architecture Module — Amphibious Agent Framework.
+Amphibious Agent Framework — Dual-Mode Agent Orchestration.
 
-A framework for building dual-mode agents that can operate in both
-LLM-driven (agent) and deterministic (workflow) modes, with automatic
-fallback between them.
+A framework for building agents that can operate in both LLM-driven (agent)
+and deterministic (workflow) modes, with automatic fallback between them.
 
 Architecture Layers
 -------------------
 
-**Abstraction Layer:**
-- Exposure: Base abstraction for layered data exposure
+**Abstraction Layer (Data Exposure):**
+- Exposure: Base abstraction for field-level data management
 - LayeredExposure: Supports progressive disclosure (summary + per-item details)
 - EntireExposure: Summary only, no per-item detail queries
 - Context: Base class for agent context with automatic Exposure field detection
 
-**Implementation Layer - Context:**
-- Step: A single execution step with content, status, and result
+**Implementation Layer — Context:**
+- Step: A single execution step with content, result, and metadata
 - Skill: A skill definition following SKILL.md format
-- CognitiveTools: Tool management (EntireExposure implementation)
-- CognitiveSkills: Skill management (LayeredExposure implementation)
-- CognitiveHistory: Execution history with layered memory (LayeredExposure implementation)
+- CognitiveTools: Tool management (EntireExposure)
+- CognitiveSkills: Skill management with progressive disclosure (LayeredExposure)
+- CognitiveHistory: Execution history with layered memory (LayeredExposure)
 - CognitiveContext: The default cognitive context combining all above
 
-**Implementation Layer - Worker:**
-- CognitiveWorker: The "think" unit of one observe-think-act cycle.
-  Observation is injected before calling arun(); action is executed by the
-  agent after arun() returns. Multiple LLM rounds may occur within a single
-  arun() call when cognitive policies (acquiring, rehearsal, reflection) fire.
+**Implementation Layer — Worker (Think Unit):**
+- CognitiveWorker: Pure thinking unit of one observe-think-act cycle.
+  Cognitive policies (acquiring, rehearsal, reflection) enable multi-round
+  thinking within a single call.
 
 **Orchestration Layer:**
 - AmphibiousAutoma: Dual-mode agent engine (agent mode + workflow mode)
-  - think_unit: Descriptor for declaring think steps (used in on_agent)
-  - step / steps: Helpers for declaring workflow steps (used in on_workflow)
+  - think_unit: Descriptor for declaring think units (used in on_agent)
+  - step: Helper for declaring workflow steps (used in on_workflow)
 - ErrorStrategy: Error handling strategies (RAISE, IGNORE, RETRY)
 
 Example

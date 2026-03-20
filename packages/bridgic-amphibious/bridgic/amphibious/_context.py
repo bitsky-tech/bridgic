@@ -11,6 +11,7 @@ from bridgic.amphibious._type import Step, Skill
 ################################################################################################################
 # Abstract Base Classes
 ################################################################################################################
+
 T = TypeVar('T')
 
 
@@ -1078,23 +1079,23 @@ class CognitiveHistory(LayeredExposure[Step]):
 
 class CognitiveContext(Context):
     """
-    The default implementation of the CognitiveContext.
+    Default cognitive context providing all fields needed by CognitiveWorker.
 
-    Provides all fields and methods needed by CognitiveWorker.
-    Users can extend this class to add custom fields.
+    Combines goal, tools, skills, execution history, and observation into
+    a unified context. Users can extend this class to add custom fields.
 
     Attributes
     ----------
     goal : str
         The goal to achieve.
     tools : CognitiveTools
-        Available tools (EntireExposure - summary only, no per-item details).
+        Available tools (EntireExposure — summary only, no per-item details).
     skills : CognitiveSkills
-        Available skills (LayeredExposure - supports progressive disclosure).
+        Available skills (LayeredExposure — supports progressive disclosure).
     cognitive_history : CognitiveHistory
-        History of cognitive steps (LayeredExposure - supports progressive disclosure).
+        History of cognitive steps (LayeredExposure — supports progressive disclosure).
     observation : Optional[str]
-        Current observation from the last observation phase (not displayed in summary).
+        Current observation from the last observation phase (hidden from summary).
 
     Examples
     --------
