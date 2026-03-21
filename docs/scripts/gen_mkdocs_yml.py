@@ -69,8 +69,8 @@ class DocumentationConfig:
         # Module identifiers (e.g. "bridgic.core") for which index.md should NOT be generated
         self.exclude_index_modules = set()
         
-        # Package directories to process
-        self.packages = ["bridgic-core", "bridgic-asl"]
+        # Package directories to process (overridden by doc_config.yaml when present)
+        self.packages = ["bridgic-core", "bridgic-amphibious", "bridgic-asl"]
         self.package_info = {}
         
         # Base path for documentation generation
@@ -378,11 +378,33 @@ class SafeMkDocsConfigUpdater:
         
         return "\n".join(lines)
     
+    @staticmethod
+    def _is_integration_package_nav_key(pkg_name: str) -> bool:
+        """Packages routed under Bridgic-Integration (llms / traces / protocols)."""
+        return (
+            pkg_name.startswith("bridgic-llms-")
+            or pkg_name.startswith("bridgic-traces-")
+            or pkg_name.startswith("bridgic-protocols-")
+        )
+
+    def _top_level_api_package_order(self, nav_structure: Dict[str, Any]) -> List[str]:
+        """Order of standalone API packages in nav (matches doc_config.yaml intent)."""
+        preferred = ["bridgic-core", "bridgic-amphibious", "bridgic-asl"]
+        ordered = [n for n in preferred if n in nav_structure]
+        rest = sorted(
+            k
+            for k in nav_structure
+            if not self._is_integration_package_nav_key(k) and k not in ordered
+        )
+        return ordered + rest
+
     def _generate_api_reference_content(self, nav_structure: Dict[str, Any]) -> str:
         """Generate API Reference content from navigation structure"""
         try:
             # Build custom layout:
             # - Bridgic-Core: keep existing structure
+            # - Bridgic-Amphibious: amphibious API
+            # - Bridgic-ASL: ASL API
             # - Bridgic-Integration:
             #     - llms:
             #         - bridgic.llms.openai: <path>
@@ -391,9 +413,8 @@ class SafeMkDocsConfigUpdater:
 
             lines: List[str] = []
 
-            # 1) Top-level packages (bridgic-core, bridgic-asl, etc.)
-            top_level_names = ['bridgic-core', 'bridgic-asl']
-            for top_level_name in top_level_names:
+            # 1) Top-level packages (bridgic-core, bridgic-amphibious, bridgic-asl, …)
+            for top_level_name in self._top_level_api_package_order(nav_structure):
                 top_key_candidates = [k for k in nav_structure.keys() if k.lower() == top_level_name]
                 if top_key_candidates:
                     top_key = top_key_candidates[0]
