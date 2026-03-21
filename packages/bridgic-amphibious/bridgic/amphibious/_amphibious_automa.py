@@ -538,6 +538,11 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         return self._llm
 
     @property
+    def context(self) -> Optional[CognitiveContextT]:
+        """Access the current context."""
+        return self._current_context
+
+    @property
     def final_answer(self) -> Optional[str]:
         """The final answer produced by the last ``arun()`` call.
 
@@ -725,6 +730,22 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
             The (optionally processed) result to store in execution history.
         """
         return decision_result
+
+    async def after_action(self, step_result: Any, ctx: CognitiveContextT) -> None:
+        """
+        Agent-level after_action hook.
+
+        Called after action execution and before the result is returned.
+        Override to update custom context fields based on tool results.
+
+        Parameters
+        ----------
+        step_result : Any
+            The result of the action step.
+        ctx : CognitiveContextT
+            The current cognitive context.
+        """
+        pass
 
     ############################################################################
     # Core methods
@@ -1254,7 +1275,8 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
             "Fix the current error you observe, then complete the step that failed. "
             "Work in ReAct style: observe the situation, reason about the next action, "
             "act once, then observe again. Take one step at a time—do not plan ahead; "
-            "react to what you see after each action.",
+            "react to what you see after each action.\n"
+            "Respond in JSON format."
         )
 
     @staticmethod
@@ -1421,6 +1443,14 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
             action_result = await self.action_custom_output(decision_result, ctx)
             result = Step(content=decision.step_content, result=action_result, metadata={})
             ctx.add_info(result)
+
+        # after_action delegation: worker → agent (if _DELEGATE)
+        if _worker is not None:
+            delegate = await _worker.after_action(result, ctx)
+            if delegate is _DELEGATE:
+                await self.after_action(result, ctx)
+        else:
+            await self.after_action(result, ctx)
 
         return result
 
@@ -1644,7 +1674,7 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
             """Run the agent, measure time, and log summary."""
             start_time = time.time()
             result = await GraphAutoma.arun(
-                self, mode, context,
+                self, mode,
                 will_fallback=will_fallback,
                 max_consecutive_fallbacks=max_consecutive_fallbacks,
             )
