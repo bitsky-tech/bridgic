@@ -35,7 +35,6 @@ nav:
       - Cognitive Policies: tutorials/items/amphibious/cognitive_policies.ipynb
       - Phase Annotation: tutorials/items/amphibious/phase_annotation.ipynb
       - Cognitive History: tutorials/items/amphibious/cognitive_history.ipynb
-      - Structured Output: tutorials/items/amphibious/structured_output.ipynb
       - Execution Tracing: tutorials/items/amphibious/execution_tracing.ipynb
     - Agent Structure Language: tutorials/items/asl/quick_start.ipynb
     - Model Integration:

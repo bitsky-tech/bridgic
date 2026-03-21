@@ -25,7 +25,6 @@ These tutorials dive deeper into specific capabilities for advanced use cases:
 7. [Cognitive Policies](../amphibious/cognitive_policies.ipynb): Enable multi-round deliberation before action — let the agent gather details (Acquiring), mentally rehearse plans (Rehearsal), and assess information quality (Reflection).
 8. [Phase Annotation](../amphibious/phase_annotation.ipynb): Organize complex agent execution into structured phases using `sequential`, `loop`, and `snapshot` context managers.
 9. [Cognitive History](../amphibious/cognitive_history.ipynb): Understand the three-tier memory system — Working Memory, Short-term Memory, and Long-term Memory — that automatically manages execution history.
-10. [Structured Output](../amphibious/structured_output.ipynb): Skip the tool-call loop and produce typed Pydantic instances directly, then combine LLM decisions with custom Python logic.
-11. [Execution Tracing](../amphibious/execution_tracing.ipynb): Record, export, and analyze the full execution trace of your agent for debugging and optimization.
+10. [Execution Tracing](../amphibious/execution_tracing.ipynb): Record, export, and analyze the full execution trace of your agent for debugging and optimization.
 
 This architecture makes Bridgic Amphibious a powerful platform for building agents that are both reliable and adaptive — bridging the precision of deterministic workflows with the creative problem-solving of LLM reasoning.
