@@ -71,6 +71,8 @@ from ._amphibious_automa import (
     think_unit,
     ThinkUnitDescriptor,
 )
+from .scaffold import create_project
+
 from ._type import (
     # Worker data structures
     RunMode,
@@ -142,4 +144,6 @@ __all__ = [
     "RunConfig",
     "RecordedToolCall",
     "StepOutputType",
+    # Scaffolding
+    "create_project",
 ]

@@ -4,7 +4,7 @@ import json
 import time
 from abc import abstractmethod
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import asynccontextmanager, contextmanager
+from contextlib import asynccontextmanager
 from typing import (
     Annotated,
     Any, AsyncGenerator, Awaitable, Callable, Dict, Generic, List, Optional, Tuple, Type, TypeVar, Union,
@@ -35,7 +35,6 @@ from bridgic.amphibious._type import (
     StepOutputType,
     TraceStep,
     RecordedToolCall,
-    RunConfig,
     observation_fingerprint,
 )
 
@@ -48,117 +47,45 @@ CognitiveContextT = TypeVar("CognitiveContextT", bound=CognitiveContext)
 
 
 ################################################################################################################
-# AgentTrace — trace collection (replaces WorkflowBuilder)
+# AgentTrace — flat execution path recorder
 ################################################################################################################
 
 
-class _PhaseAccumulator:
-    """Accumulates trace steps for a single structural phase (sequential or loop)."""
-    __slots__ = ("phase_type", "goal", "steps", "run_config")
-
-    def __init__(self, phase_type: str, goal: Optional[str] = None):
-        self.phase_type: str = phase_type  # "sequential" | "loop"
-        self.goal: Optional[str] = goal
-        self.steps: List[dict] = []
-        self.run_config: Optional[dict] = None
-
-
 class AgentTrace:
-    """Stack-based builder that captures phase-annotated trace steps.
+    """Flat trace recorder that captures each observe-think-act cycle.
 
-    ``begin_phase()`` / ``end_phase()`` bracket a structural phase.
-    ``record_step()`` routes step data to the active phase (or orphan list).
-    ``set_run_config()`` attaches run() parameters to the current phase.
-    ``build()`` returns the collected phases as structured dicts for inspection.
+    ``record_step()`` appends step data to the execution path.
+    ``build()`` returns the collected steps as a structured dict.
+    ``save()`` / ``load()`` provide JSON serialization.
     """
 
     def __init__(self):
-        self._stack: List[_PhaseAccumulator] = []
-        self._completed: List[_PhaseAccumulator] = []
-        self._orphan_steps: List[dict] = []
-
-    def begin_phase(self, phase_type: str, goal: Optional[str] = None) -> None:
-        self._stack.append(_PhaseAccumulator(phase_type, goal=goal))
-
-    def end_phase(self) -> None:
-        if self._stack:
-            self._completed.append(self._stack.pop())
+        self._steps: List[dict] = []
 
     def record_step(self, step_data: dict) -> None:
-        """Route a trace step to the active phase or the orphan list."""
-        if self._stack:
-            self._stack[-1].steps.append(step_data)
-        else:
-            self._orphan_steps.append(step_data)
-
-    def set_run_config(self, config: dict) -> None:
-        """Attach run() parameters to the current (topmost) phase."""
-        if self._stack:
-            self._stack[-1].run_config = config
-
-    def is_loop_pattern_confirmed(self) -> bool:
-        """Check if the current loop phase has detected a repeating pattern (probe mode)."""
-        if not self._stack:
-            return False
-        acc = self._stack[-1]
-        if acc.phase_type != "loop":
-            return False
-        # Minimal implementation: require at least 6 steps to consider pattern detected
-        return len(acc.steps) >= 6
-
-    @contextmanager
-    def phase(self, phase_type: str, goal: Optional[str] = None):
-        """Context manager that brackets a structural phase."""
-        self.begin_phase(phase_type, goal=goal)
-        try:
-            yield
-        finally:
-            self.end_phase()
+        """Append a trace step to the execution path."""
+        self._steps.append(step_data)
 
     def build(self, metadata: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """Return collected trace data as a structured dict."""
-        phases = []
-        for phase in self._completed:
-            trace_steps = [
-                TraceStep(
-                    name=s["name"],
-                    step_content=s.get("step_content", ""),
-                    tool_calls=[
-                        RecordedToolCall(**tc) for tc in s.get("tool_calls", [])
-                    ],
-                    observation=s.get("observation"),
-                    observation_hash=s.get("observation_hash"),
-                    output_type=StepOutputType(s.get("output_type", StepOutputType.TOOL_CALLS)),
-                    structured_output=s.get("structured_output"),
-                    structured_output_class=s.get("structured_output_class"),
-                )
-                for s in phase.steps
-            ]
-            run_config = RunConfig(**(phase.run_config or {"worker_class": "unknown"}))
-            phases.append({
-                "phase_type": phase.phase_type,
-                "goal": phase.goal,
-                "run_config": run_config,
-                "steps": trace_steps,
-            })
-
-        orphan_steps = [
+        steps = [
             TraceStep(
                 name=s["name"],
                 step_content=s.get("step_content", ""),
-                tool_calls=[RecordedToolCall(**tc) for tc in s.get("tool_calls", [])],
+                tool_calls=[
+                    RecordedToolCall(**tc) for tc in s.get("tool_calls", [])
+                ],
                 observation=s.get("observation"),
                 observation_hash=s.get("observation_hash"),
                 output_type=StepOutputType(s.get("output_type", StepOutputType.TOOL_CALLS)),
                 structured_output=s.get("structured_output"),
                 structured_output_class=s.get("structured_output_class"),
             )
-            for s in self._orphan_steps
+            for s in self._steps
         ]
 
         return {
-            "phases": phases,
-            "orphan_steps": orphan_steps,
+            "steps": steps,
             "metadata": metadata or {},
         }
 
@@ -198,7 +125,7 @@ class _AgentSnapshot:
     Async context manager for exception-safe temporary field overrides on a Context,
     with additional management of LayeredExposure._revealed state.
 
-    Used internally by ``sequential()`` and ``loop()`` context managers in AmphibiousAutoma.
+    Used internally by ``snapshot()`` context manager in AmphibiousAutoma.
 
     On enter:
     1. Saves original field values and applies overrides.
@@ -794,17 +721,6 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
                     )
                     if finished:
                         return
-                    # Early termination — stop once loop pattern is confirmed
-                    if (self._agent_trace
-                            and self._agent_trace.is_loop_pattern_confirmed()):
-                        self._log(
-                            "Workflow",
-                            "Loop pattern confirmed after "
-                            f"{len(self._agent_trace._stack[-1].steps)} steps "
-                            "— stopping early (probe mode)",
-                            color="green",
-                        )
-                        return
                     if until is not None:
                         cond_result = until(context)
                         if inspect.iscoroutine(cond_result):
@@ -823,16 +739,6 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
                 "Cannot call _run(): no active context. "
                 "_run() must be called within an on_agent() method."
             )
-
-        # Capture run config for trace
-        if self._agent_trace:
-            self._agent_trace.set_run_config({
-                "worker_class": f"{worker.__class__.__module__}.{worker.__class__.__qualname__}",
-                "tools": tools,
-                "skills": skills,
-                "max_attempts": max_attempts,
-                "on_error": on_error.value,
-            })
 
         await _execute()
     
@@ -973,123 +879,57 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         return finished
 
     @asynccontextmanager
-    async def sequential(self, *, goal: Optional[str] = None,
-                         keep_revealed: Optional[Dict[str, List[int]]] = None,
-                         **snapshot_fields):
-        """
-        Mark a structural phase as sequential for workflow capture.
-
-        Use as an async context manager around ``_run()`` calls to group them
-        into a ``SequentialBlock`` when ``trace_running=True``.
-
-        Parameters
-        ----------
-        goal : Optional[str]
-            Phase-level goal injected into the context so the LLM knows
-            the purpose of this phase.
-        keep_revealed : Optional[Dict[str, List[int]]]
-            Passed to ``_AgentSnapshot`` for revealed state management.
-        **snapshot_fields
-            Additional context fields to temporarily override during this phase.
-        """
-        async with self._phase_context("sequential",
-                                       keep_revealed=keep_revealed,
-                                       goal=goal, **snapshot_fields):
-            yield
-
-    @asynccontextmanager
-    async def loop(self, *, goal: Optional[str] = None,
-                   keep_revealed: Optional[Dict[str, List[int]]] = None,
-                   **snapshot_fields):
-        """
-        Mark a structural phase as a loop for workflow capture.
-
-        Use as an async context manager around ``_run()`` calls to group them
-        into a ``LoopBlock`` with pattern detection when ``trace_running=True``.
-
-        Parameters
-        ----------
-        goal : Optional[str]
-            Phase-level goal injected into the context so the LLM knows
-            the purpose of this phase.
-        keep_revealed : Optional[Dict[str, List[int]]]
-            Passed to ``_AgentSnapshot`` for revealed state management.
-        **snapshot_fields
-            Additional context fields to temporarily override during this phase.
-        """
-        async with self._phase_context("loop",
-                                       keep_revealed=keep_revealed,
-                                       goal=goal, **snapshot_fields):
-            yield
-
-    @asynccontextmanager
     async def snapshot(self, *, goal: Optional[str] = None,
                    keep_revealed: Optional[Dict[str, List[int]]] = None,
                    **snapshot_fields):
         """
         Temporarily override context fields for the duration of the block.
 
-        A non-structural snapshot that does not create a named phase in the trace.
-        Use ``sequential()`` or ``loop()`` when you need phase annotation.
-
         Parameters
         ----------
         goal : Optional[str]
-            Phase-level goal injected into the context so the LLM knows
+            Temporary goal injected into the context so the LLM knows
             the purpose of this phase.
         keep_revealed : Optional[Dict[str, List[int]]]
             Passed to ``_AgentSnapshot`` for revealed state management.
         **snapshot_fields
             Additional context fields to temporarily override during this phase.
         """
-        async with self._phase_context("snapshot",
-                                       keep_revealed=keep_revealed,
+        async with self._phase_context(keep_revealed=keep_revealed,
                                        goal=goal, **snapshot_fields):
             yield
 
     @asynccontextmanager
-    async def _phase_context(self, phase_type: str, *,
+    async def _phase_context(self, *,
                              keep_revealed: Optional[Dict[str, List[int]]] = None,
                              **snapshot_fields):
-        """Shared implementation for sequential() and loop() context managers.
+        """Shared implementation for snapshot() context manager.
+
+        Subclasses can override this to inject custom behavior around
+        snapshot blocks (e.g., logging, metrics, extended trace capture).
 
         Parameters
         ----------
-        phase_type : str
-            Phase type identifier (``"sequential"`` or ``"loop"`` or ``"snapshot"``).
         keep_revealed : Optional[Dict[str, List[int]]]
             Revealed state management mode for ``_AgentSnapshot``.
         **snapshot_fields
             Context fields to temporarily override during this phase.
         """
-        # Init the variables
         context = self._current_context
-        _phase_goal = snapshot_fields.pop("_phase_goal", None)
         fields = {k: v for k, v in snapshot_fields.items() if v is not None}
-        phase_type = phase_type if phase_type != "snapshot" else "sequential"
 
-        # If goal was passed as a snapshot field (e.g. sequential(goal=...)),
-        # use it as the phase goal for the workflow builder as well.
-        if _phase_goal is None and "goal" in fields:
-            _phase_goal = fields["goal"]
-
-        if not fields and keep_revealed is None and _phase_goal is None:
+        if not fields and keep_revealed is None:
             raise ValueError(
-                f"_phase_context('{phase_type}'): no snapshot fields, keep_revealed, "
-                f"or goal provided. If no context state needs to be scoped for "
-                f"this phase, use _run() directly — the behavior is identical."
+                "snapshot(): no snapshot fields, keep_revealed, "
+                "or goal provided. If no context state needs to be scoped, "
+                "use _run() directly — the behavior is identical."
             )
 
-        # Create the snapshot
         snap = _AgentSnapshot(context, fields, keep_revealed=keep_revealed)
         await snap.__aenter__()
-        if self._agent_trace:
-            self._agent_trace.begin_phase(phase_type, goal=_phase_goal)
         try:
             yield
         finally:
-            if self._agent_trace:
-                self._agent_trace.end_phase()
             await snap.__aexit__(None, None, None)
 
     async def _run_workflow(
