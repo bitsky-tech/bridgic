@@ -23,7 +23,7 @@ These tutorials dive deeper into specific capabilities for advanced use cases:
 
 6. [Customizing the OTC Cycle](../amphibious/custom_otc.ipynb): Override hooks in the Observe-Think-Act cycle — inject custom observations, reshape LLM messages, intercept tool calls, and post-process outputs.
 7. [Cognitive Policies](../amphibious/cognitive_policies.ipynb): Enable multi-round deliberation before action — let the agent gather details (Acquiring), mentally rehearse plans (Rehearsal), and assess information quality (Reflection).
-8. [Phase Annotation](../amphibious/phase_annotation.ipynb): Organize complex agent execution into structured phases using `sequential`, `loop`, and `snapshot` context managers.
+8. [Phase Annotation](../amphibious/phase_annotation.ipynb): Organize complex agent execution into structured phases using the `snapshot` context manager.
 9. [Cognitive History](../amphibious/cognitive_history.ipynb): Understand the three-tier memory system — Working Memory, Short-term Memory, and Long-term Memory — that automatically manages execution history.
 10. [Execution Tracing](../amphibious/execution_tracing.ipynb): Record, export, and analyze the full execution trace of your agent for debugging and optimization.
 

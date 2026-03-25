@@ -18,10 +18,10 @@ class TravelAgent(AmphibiousAutoma[TravelContext]):
 
     async def on_agent(self, ctx: TravelContext):
         # Orchestrate think units with context scoping
-        async with self.sequential(goal="Plan the trip"):
+        async with self.snapshot(goal="Plan the trip"):
             await self.planner
 
-        async with self.loop(goal="Execute each step of the plan"):
+        async with self.snapshot(goal="Execute each step of the plan"):
             await self.planner
 ```
 
@@ -199,18 +199,9 @@ class MyAgent(AmphibiousAutoma[CognitiveContext]):
 
 ```python
 async def on_agent(self, ctx):
-    async with self.sequential(goal="Gather information"):
-        await self.research_think
-
-    async with self.loop(goal="Process each item"):
-        await self.process_think
-
     async with self.snapshot(goal="Handle edge case", custom_field="override"):
         await self.fix_think
 ```
-
-- `sequential()` — groups steps into a linear phase
-- `loop()` — groups steps into a loop phase with pattern detection
 - `snapshot()` — temporarily overrides context fields
 
 ## Quick Start

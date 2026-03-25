@@ -1,84 +1,151 @@
 ---
 name: bridgic-amphibious
-description: >-
-  Build cognitive agents with bridgic-amphibious — OTA (Observe-Think-Act) loops, deterministic
-  workflows, or both combined (amphibious mode). Use when working with AmphibiousAutoma,
-  CognitiveWorker, CognitiveContext, think_unit, FunctionToolSpec, RunMode, ErrorStrategy,
-  Exposure, snapshot, AgentFallback, or scaffolding new bridgic agent projects.
+description: "Build agents with the Bridgic Amphibious dual-mode framework — combining LLM-driven (agent) and deterministic (workflow) execution with automatic fallback. Use when: (1) writing code that imports from bridgic.amphibious, (2) creating AmphibiousAutoma subclasses, (3) defining CognitiveWorker think units, (4) implementing on_agent/on_workflow methods, (5) working with CognitiveContext, Exposure system, or cognitive policies, (6) scaffolding a new amphibious project via CLI, (7) any task involving the bridgic-amphibious framework."
 ---
 
 # Bridgic Amphibious
 
-## Architecture
+Dual-mode agent framework: agents operate in LLM-driven (`on_agent`) and deterministic (`on_workflow`) modes with automatic fallback between them.
 
+## LLM Setup
+
+Amphibious agents require a `BaseLlm` instance from a bridgic LLM provider package:
+
+```python
+from bridgic.llms.openai import OpenAILlm, OpenAIConfiguration
+
+llm = OpenAILlm(
+    api_key="your-api-key",
+    api_base="https://api.openai.com/v1",  # or custom endpoint
+    configuration=OpenAIConfiguration(model="gpt-4o", temperature=0.0),
+)
 ```
-Orchestrator   AmphibiousAutoma   ← on_agent / on_workflow, think_unit
-     ↑
-Worker         CognitiveWorker    ← thinking prompts, hooks, output_schema
-     ↑
-Context        CognitiveContext   ← Exposure, goal, tools, skills, history
-```
 
-Worker decides **what to think**; orchestrator decides **when** and executes tool calls.
+Other providers: `bridgic.llms.openai_like.OpenAILikeLlm` (OpenAI-compatible APIs), `bridgic.llms.vllm.VllmServerLlm` (self-hosted vLLM).
 
-Two execution modes: **Agent** (LLM-driven OTA loops) and **Workflow** (deterministic `yield step(...)`). Implement both for **amphibious** behavior — deterministic path by default, agent fallback where complexity spikes.
-
-## Minimal agent
+## Quick Start
 
 ```python
 from bridgic.amphibious import (
-    AmphibiousAutoma, CognitiveContext, CognitiveWorker, think_unit, ErrorStrategy,
+    AmphibiousAutoma, CognitiveContext, CognitiveWorker, think_unit,
 )
 from bridgic.core.agentic.tool_specs import FunctionToolSpec
 
-class MyAgent(AmphibiousAutoma[CognitiveContext]):
-    main = think_unit(
-        CognitiveWorker.inline("Plan ONE immediate next step."),
-        max_attempts=30,
-        on_error=ErrorStrategy.RAISE,
+async def get_weather(city: str) -> str:
+    """Get weather for a city."""
+    return f"Sunny, 22°C in {city}"
+
+class WeatherAgent(AmphibiousAutoma[CognitiveContext]):
+    planner = think_unit(
+        CognitiveWorker.inline("Look up weather and provide a summary."),
+        max_attempts=5,
     )
     async def on_agent(self, ctx: CognitiveContext):
-        await self.main
+        await self.planner
 
-# Run:
-from bridgic.core.model import OpenAI
-agent = MyAgent(llm=OpenAI(model="gpt-4o"))
+agent = WeatherAgent(llm=llm, verbose=True)
 result = await agent.arun(
-    goal="Research AI trends",
-    tools=[FunctionToolSpec.from_raw(search_fn)],
+    goal="Check the weather in Tokyo and London.",
+    tools=[FunctionToolSpec.from_raw(get_weather)],
 )
-# result = str (context summary). Use agent.final_answer for LLM's finishing statement.
 ```
 
-## Hard rules
+## Project Scaffolding
 
-1. **Always use generic type**: `class X(AmphibiousAutoma[MyContext])`, never bare `AmphibiousAutoma`. Omitting the type parameter raises `TypeError` at class definition time.
-2. **Workers never call tools** — only the orchestrator executes the action phase.
-3. **Tools must be**: `async def`, type-hinted, docstring (becomes LLM prompt), return `str`. Register via `FunctionToolSpec.from_raw`.
-4. **`thinking()` prompt** — context (goal, tools, history) is auto-injected. Do NOT repeat it. Focus on: role, strategy, when to set `finish=True`, constraints.
-5. **`_DELEGATE`** — a sentinel `object()`. Default return from worker hooks (`observation`, `before_action`, `after_action`); means "fall through to agent-level hook." Checked via `is` identity.
-6. **Policies** (acquiring, rehearsal, reflection) — each fires at most once per `arun()` round.
-7. **Observation lifecycle** — `ctx.observation` is refreshed before **every** OTA cycle (each `_run_once`). In workflow mode, each `yield step(...)` triggers a fresh observation. It is never updated during or after tool execution within the same cycle. Safe to read between yields.
+Use the CLI to bootstrap a new project:
 
-## Scaffolding a new project
+```bash
+bridgic-amphibious create -n my_project
+bridgic-amphibious create -n my_project --task "Navigate to example.com and extract data"
+bridgic-amphibious create -n my_project --base-dir /path/to/projects
+```
 
-Use [assets/template.md](assets/template.md) for project file structure (tools.py, context.py, workers.py, agent.py, main.py).
+Creates: `task.md`, `config.py`, `tools/`, `workers.py`, `agents.py`, `skills/`, `result/`, `log/`.
 
-## Reference files
+## Core Concepts
 
-Load only what the current task requires:
+**Agent = Think Units + Context Orchestration.** Agents are defined by declaring `CognitiveWorker` think units and orchestrating them in `on_agent()` or `on_workflow()`.
 
-| File | Open when |
-|------|-----------|
-| [references/orchestration.md](references/orchestration.md) | `think_unit` params, `max_attempts` tuning, `until` stop condition, `on_agent` / `on_workflow`, `step()` + `AgentFallback`, `RunMode`, `snapshot()`, agent hooks (`observation`/`before_action`/`after_action`/`action_tool_call`), `arun()` calling conventions, agent properties (`final_answer`, `spend_tokens`) |
-| [references/context-and-exposure.md](references/context-and-exposure.md) | Custom context fields, `Field(display=False)`, `Field(use_llm=True)`, `LayeredExposure` / `EntireExposure` subclassing, `summary()` / `get_details()`, `CognitiveHistory` 3-tier memory (`working_memory_size`, `short_term_size`, `compress_threshold`), runtime `Skill` loading |
-| [references/cognitive-worker.md](references/cognitive-worker.md) | `CognitiveWorker.inline()` vs subclass, `thinking()` prompt, hooks (`observation`/`before_action`/`after_action`), `_DELEGATE` sentinel, `build_messages()`, policies (`enable_rehearsal`/`enable_reflection`/acquiring), `output_schema` for structured output |
-| [references/tools.md](references/tools.md) | `FunctionToolSpec.from_raw()`, tool requirements (async/hints/docstring/return str), docstring format, overriding `tool_name`/`tool_description` |
-| [references/error-handling.md](references/error-handling.md) | `ErrorStrategy.RAISE` / `IGNORE` / `RETRY`, `max_retries`, what gets discarded on failure, retry count semantics |
-| [references/tracing.md](references/tracing.md) | `trace_running=True`, `AgentTrace`, `TraceStep`, `RecordedToolCall`, `StepOutputType`, saving/loading traces |
-| [references/imports.md](references/imports.md) | Consolidated import map — where to import each class |
-| [references/amphibious_dynamic_workflow.md](references/amphibious_dynamic_workflow.md) | **Full worked example**: custom `CognitiveContext` + `EntireExposure`, amphibious agent with `on_agent` + `on_workflow`, dynamic Python loops over `ctx.observation` data, `before_action` hooks for sanitization/tracking, hidden runtime dependencies |
+**Four-layer architecture:**
+1. `Exposure` — data visibility abstraction (LayeredExposure / EntireExposure)
+2. `CognitiveContext` — state container (goal, tools, skills, history)
+3. `CognitiveWorker` — pure thinking unit (observe-think-act)
+4. `AmphibiousAutoma` — orchestration engine (mode routing, lifecycle)
 
-## Validation
+**OTC Cycle:** Observe -> Think -> Act, with hook points at each phase.
 
-Run `scripts/validate.sh <project_dir>` to check agent definition, tool signatures, and common mistakes.
+**Four RunModes:** `AGENT` (LLM-driven), `WORKFLOW` (deterministic), `AMPHIBIOUS` (workflow + fallback), `AUTO` (auto-detect, default).
+
+## Key Patterns
+
+### Agent Mode — LLM decides
+
+```python
+class MyAgent(AmphibiousAutoma[CognitiveContext]):
+    worker = think_unit(CognitiveWorker.inline("Decide next step."), max_attempts=10)
+    async def on_agent(self, ctx):
+        await self.worker
+```
+
+### Workflow Mode — Developer decides
+
+```python
+from bridgic.amphibious import step
+
+class MyWorkflow(AmphibiousAutoma[CognitiveContext]):
+    async def on_agent(self, ctx): pass
+    async def on_workflow(self, ctx):
+        result = yield step("tool_name", arg1="value")
+        # result is List[ToolResult]
+```
+
+### Amphibious Mode — Workflow with agent fallback
+
+```python
+from bridgic.amphibious import RunMode, AgentFallback
+
+class MyHybrid(AmphibiousAutoma[CognitiveContext]):
+    fixer = think_unit(CognitiveWorker.inline("Fix the problem."), max_attempts=5)
+    async def on_agent(self, ctx): await self.fixer
+    async def on_workflow(self, ctx):
+        yield step("fill_field", name="user", value="john")
+        yield step("click_button", name="submit")
+
+await MyHybrid(llm=llm).arun(
+    goal="...", tools=[...],
+    mode=RunMode.AMPHIBIOUS, will_fallback=True, max_consecutive_fallbacks=2,
+)
+```
+
+### Custom Pydantic Output
+
+```python
+from pydantic import BaseModel
+
+class Plan(BaseModel):
+    phases: list[str]
+
+class Planner(AmphibiousAutoma[CognitiveContext]):
+    plan = think_unit(
+        CognitiveWorker.inline("Create a plan.", output_schema=Plan),
+        max_attempts=1,
+    )
+    async def on_agent(self, ctx):
+        result = await self.plan  # Returns Plan instance
+```
+
+### Phase Annotation (snapshot)
+
+```python
+async def on_agent(self, ctx):
+    async with self.snapshot(goal="Research phase"):
+        await self.researcher
+    async with self.snapshot(goal="Writing phase"):
+        await self.writer
+```
+
+## Reference Files
+
+- **Architecture details** (execution modes, exposure system, memory tiers, cognitive policies): See [references/architecture.md](references/architecture.md)
+- **Complete API reference** (all classes, methods, parameters, types): See [references/api-reference.md](references/api-reference.md)
+- **Full code patterns and examples** (all hook types, skills, tracing, filtering, etc.): See [references/patterns.md](references/patterns.md)
