@@ -190,19 +190,6 @@ class WorkflowStep:
     worker: Optional[Any] = None  # CognitiveWorker; None → use agent-level hooks
 
 
-@dataclass
-class AgentFallback:
-    """Yielded by on_workflow() to fall back to agent mode.
-
-    Used by: _amphibious_automa.py (_run_workflow)
-    """
-    goal: str = ""
-    tools: List[str] = field(default_factory=list)
-    skills: List[str] = field(default_factory=list)
-    max_attempts: int = 1
-    worker: Optional[Any] = None  # CognitiveWorker; None → use framework default fallback worker
-
-
 ################################################################################################################
 # Action result models  (used by: _amphibious_automa.py)
 ################################################################################################################

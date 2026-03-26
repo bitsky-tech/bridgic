@@ -67,6 +67,7 @@ from ._amphibious_automa import (
     # Orchestration
     AmphibiousAutoma,
     AgentTrace,
+    AgentCall,
     # Think unit descriptor
     think_unit,
     ThinkUnitDescriptor,
@@ -82,7 +83,6 @@ from ._type import (
     # Workflow mode
     WorkflowDecision,
     WorkflowStep,
-    AgentFallback,
     # Action result data structures
     ErrorStrategy,
     ActionResult,
@@ -122,6 +122,7 @@ __all__ = [
     "AmphibiousAutoma",
     "AgentAutoma",  # deprecated alias
     "AgentTrace",
+    "AgentCall",
     "think_unit",
     "ThinkUnitDescriptor",
 
@@ -133,7 +134,6 @@ __all__ = [
     # Workflow mode
     "WorkflowDecision",
     "WorkflowStep",
-    "AgentFallback",
     # Action result data structures
     "ErrorStrategy",
     "ActionResult",

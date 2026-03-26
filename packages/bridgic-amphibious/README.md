@@ -61,7 +61,7 @@ class ResilientAgent(AmphibiousAutoma[MyContext]):
         result = yield step("extract_data", selector=".metrics")
 
         # Fall back to agent for complex situations
-        yield AgentFallback(goal="Analyze the extracted data", max_attempts=5)
+        yield AgentCall(goal="Analyze the extracted data", max_attempts=5)
 ```
 
 **Runtime mode switching** happens automatically:
@@ -321,7 +321,7 @@ agent._agent_trace.save("trace.json")
 | **Cognitive Policies** | Acquiring, rehearsal, reflection — enhance thinking |
 | **AgentTrace** | Structured execution trace for inspection |
 | **ErrorStrategy** | RAISE, IGNORE, or RETRY on failures |
-| **AgentFallback** | Yield in on_workflow() to delegate to agent mode |
+| **AgentCall** | Yield in on_workflow() to delegate to agent mode |
 | **RunMode** | AGENT, WORKFLOW, AMPHIBIOUS, or AUTO |
 
 ## License

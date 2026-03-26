@@ -3,6 +3,7 @@ import inspect
 import json
 import time
 from abc import abstractmethod
+from dataclasses import dataclass, field
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from typing import (
@@ -20,14 +21,13 @@ from bridgic.core.model.types import ToolCall
 from bridgic.core.agentic import ConcurrentAutoma
 from bridgic.core.agentic.tool_specs import ToolSpec
 from bridgic.core.utils._console import printer
-from bridgic.amphibious._context import CognitiveContext, CognitiveTools, CognitiveSkills, Exposure, LayeredExposure
+from bridgic.amphibious._context import CognitiveContext, CognitiveTools, CognitiveSkills, CognitiveHistory, Exposure, LayeredExposure
 from bridgic.amphibious._cognitive_worker import CognitiveWorker, _DELEGATE
 from bridgic.amphibious._type import (
     RunMode,
     Step,
     StepToolCall,
     WorkflowStep,
-    AgentFallback,
     ErrorStrategy,
     ActionStepResult,
     ActionResult,
@@ -44,6 +44,20 @@ from bridgic.amphibious._type import (
 ################################################################################################################
 
 CognitiveContextT = TypeVar("CognitiveContextT", bound=CognitiveContext)
+
+
+@dataclass
+class AgentCall:
+    """Yielded by on_workflow() to fall back to agent mode.
+
+    Used by: _amphibious_automa.py (_run_workflow)
+    """
+    goal: str = ""
+    tools: CognitiveTools = field(default_factory=CognitiveTools)
+    skills: CognitiveSkills = field(default_factory=CognitiveSkills)
+    history: CognitiveHistory = field(default_factory=CognitiveHistory)
+    max_attempts: int = 1
+    worker: Optional[Any] = None  # CognitiveWorker; None → use framework default fallback worker
 
 
 ################################################################################################################
@@ -536,14 +550,14 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         """
         ...
 
-    async def on_workflow(self, ctx: CognitiveContextT) -> AsyncGenerator[Union[WorkflowStep, AgentFallback], None]:
+    async def on_workflow(self, ctx: CognitiveContextT) -> AsyncGenerator[Union[WorkflowStep, AgentCall], None]:
         """Workflow mode: deterministic execution as an async generator.
 
         Override this method to define a deterministic workflow. When overridden,
         ``arun()`` automatically routes to workflow mode instead of ``on_agent()``.
 
         Yield ``WorkflowStep`` for deterministic tool execution, or
-        ``AgentFallback`` to delegate a sub-task to agent mode.
+        ``AgentCall`` to delegate a sub-task to agent mode.
 
         The generator exhausting signals workflow completion — no finish signal needed.
         Use ``result = yield step(...)`` to receive tool execution results via asend().
@@ -553,7 +567,7 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         >>> async def on_workflow(self, ctx):
         ...     yield step("navigate_to", url="http://example.com")
         ...     result = yield step("click_element_by_ref", ref="42")
-        ...     yield AgentFallback(goal="Handle complex case", max_attempts=10)
+        ...     yield AgentCall(goal="Handle complex case", max_attempts=10)
         """
         ...
 
@@ -947,7 +961,7 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         For each yielded item:
         - ``WorkflowStep``: run observe → log → act deterministically.
           If execution fails, fall back to agent mode for the current step.
-        - ``AgentFallback``: delegate to ``_run()`` for LLM-driven execution.
+        - ``AgentCall``: delegate to ``_run()`` for LLM-driven execution.
 
         If consecutive failures exceed ``max_consecutive_fallbacks``, abandon
         the workflow and delegate the remaining task to ``on_agent()``
@@ -973,15 +987,14 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
                     send_value = None  # Reset for next iteration
                 except StopAsyncIteration:
                     break
-
-                if isinstance(item, AgentFallback):
-                    fallback_worker = item.worker if item.worker is not None else self._create_fallback_worker()
-                    await self._run(
-                        fallback_worker,
-                        max_attempts=item.max_attempts,
-                        tools=item.tools or None,
-                        skills=item.skills or None,
-                    )
+                
+                # When returning an AgentCall proactively in on_work, it is by default assumed that a brand new and clean 
+                # context is initiated for a new goal target to execute the agent mode. Otherwise, you can customize the 
+                # context information: tools, skills, history.
+                if isinstance(item, AgentCall):
+                    call_worker = item.worker if item.worker is not None else CognitiveWorker.inline("Complete the goal")
+                    async with self.snapshot(goal=item.goal, history=item.history, tools=item.tools, skills=item.skills):
+                        await self._run(call_worker, max_attempts=item.max_attempts)
                     consecutive_failures = 0
                     send_value = None
                     continue
@@ -1092,32 +1105,12 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
                     )
                     async with self.snapshot(goal=fallback_goal):
                         await self._run(
-                            worker if worker is not None else self._create_fallback_worker(),
-                            max_attempts=5,
+                            worker if worker is not None else CognitiveWorker.inline("Complete the goal."),
+                            max_attempts=5,  # TODO: Make this configurable
                         )
                     send_value = None  # No result to send back after fallback
         finally:
             await gen.aclose()
-
-    # TODO: This locally downgraded CognitiveWorker needs to have a good way to be opened up 
-    # in the future to allow for customization.
-    def _create_fallback_worker(self) -> CognitiveWorker:
-        """Create a default fallback worker for workflow mode.
-
-        Used when a WorkflowStep or AgentFallback has no explicit worker.
-        The worker's observation() and before_action() both return _DELEGATE,
-        delegating to the agent-level hooks. Inherits the full tool/skill set
-        configured via arun().
-
-        Override this method to provide a custom fallback worker.
-        """
-        return CognitiveWorker.inline(
-            "Fix the current error you observe, then complete the step that failed. "
-            "Work in ReAct style: observe the situation, reason about the next action, "
-            "act once, then observe again. Take one step at a time—do not plan ahead; "
-            "react to what you see after each action.\n"
-            "Respond in JSON format."
-        )
 
     @staticmethod
     def _build_tool_results(action_result: Optional[Step]) -> List[ToolResult]:
