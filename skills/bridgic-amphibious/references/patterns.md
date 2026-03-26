@@ -79,7 +79,7 @@ result = await workflow.arun(
 ## Amphibious Mode
 
 ```python
-from bridgic.amphibious import RunMode, AgentFallback
+from bridgic.amphibious import RunMode, AgentCall
 
 class FormFiller(AmphibiousAutoma[CognitiveContext]):
     fixer = think_unit(
@@ -106,15 +106,15 @@ result = await agent.arun(
 )
 ```
 
-### AgentFallback in Workflow
+### AgentCall in Workflow
 
 ```python
 async def on_workflow(self, ctx: CognitiveContext):
     yield step("search_price", platform="Amazon", product="laptop")
     yield step("search_price", platform="eBay", product="laptop")
 
-    # Delegate complex analysis to LLM
-    yield AgentFallback(
+    # Delegate complex analysis to LLM (clean context snapshot)
+    yield AgentCall(
         goal="Analyze prices and decide if we need more platforms.",
         max_attempts=3,
     )

@@ -102,7 +102,7 @@ class MyWorkflow(AmphibiousAutoma[CognitiveContext]):
 ### Amphibious Mode — Workflow with agent fallback
 
 ```python
-from bridgic.amphibious import RunMode, AgentFallback
+from bridgic.amphibious import RunMode, AgentCall
 
 class MyHybrid(AmphibiousAutoma[CognitiveContext]):
     fixer = think_unit(CognitiveWorker.inline("Fix the problem."), max_attempts=5)

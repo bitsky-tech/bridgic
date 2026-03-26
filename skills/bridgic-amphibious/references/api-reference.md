@@ -68,7 +68,7 @@ from bridgic.amphibious import (
     CognitiveContext, CognitiveHistory, CognitiveTools, CognitiveSkills,
     Context, Exposure, LayeredExposure, EntireExposure,
     # Data models
-    Step, Skill, RunMode, ErrorStrategy, AgentFallback,
+    Step, Skill, RunMode, ErrorStrategy, AgentCall,
     ActionResult, ActionStepResult, ToolResult,
     # Trace
     TraceStep, RunConfig, RecordedToolCall, StepOutputType,
@@ -406,16 +406,17 @@ class RunMode(str, Enum):
     AUTO = "auto"
 ```
 
-### AgentFallback
+### AgentCall
 
-Yield in `on_workflow()` to delegate to agent mode:
+Yield in `on_workflow()` to delegate to agent mode. Initiates a clean context snapshot for the sub-task:
 
 ```python
 @dataclass
-class AgentFallback:
+class AgentCall:
     goal: str = ""
-    tools: List[str] = field(default_factory=list)
-    skills: List[str] = field(default_factory=list)
+    tools: CognitiveTools = field(default_factory=CognitiveTools)
+    skills: CognitiveSkills = field(default_factory=CognitiveSkills)
+    history: CognitiveHistory = field(default_factory=CognitiveHistory)
     max_attempts: int = 1
     worker: Optional[CognitiveWorker] = None
 ```

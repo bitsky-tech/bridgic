@@ -186,4 +186,4 @@ In AMPHIBIOUS mode:
 1. Deterministic step fails → check `consecutive_failures < max_consecutive_fallbacks`
 2. If within limit: agent fixes the specific step (scoped goal via `snapshot`)
 3. If exceeded: abandon workflow → call `on_agent()` for full agent mode
-4. `AgentFallback` yield explicitly delegates a sub-task to agent mode
+4. `AgentCall` yield explicitly delegates a sub-task to agent mode (with a clean context snapshot)
