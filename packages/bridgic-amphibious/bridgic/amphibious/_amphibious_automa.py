@@ -992,9 +992,9 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
                 # context is initiated for a new goal target to execute the agent mode. Otherwise, you can customize the 
                 # context information: tools, skills, history.
                 if isinstance(item, AgentCall):
-                    call_worker = item.worker if item.worker is not None else CognitiveWorker.inline("Complete the goal")
-                    async with self.snapshot(goal=item.goal, history=item.history, tools=item.tools, skills=item.skills):
-                        await self._run(call_worker, max_attempts=item.max_attempts)
+                    call_worker = item.worker if item.worker is not None else CognitiveWorker.inline("Complete the goal and respond in JSON format.")
+                    async with self.snapshot(goal=item.goal, cognitive_history=item.history):
+                        await self._run(call_worker, tools=item.tools, skills=item.skills, max_attempts=item.max_attempts)
                     consecutive_failures = 0
                     send_value = None
                     continue
@@ -1105,7 +1105,7 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
                     )
                     async with self.snapshot(goal=fallback_goal):
                         await self._run(
-                            worker if worker is not None else CognitiveWorker.inline("Complete the goal."),
+                            worker if worker is not None else CognitiveWorker.inline("Complete the goal and respond in JSON format."),
                             max_attempts=5,  # TODO: Make this configurable
                         )
                     send_value = None  # No result to send back after fallback
