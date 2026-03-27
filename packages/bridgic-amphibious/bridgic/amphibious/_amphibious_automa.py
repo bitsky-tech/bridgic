@@ -1551,28 +1551,30 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
                     f"Context must be an instance of {self._context_class.__name__}, "
                     f"got {type(context).__name__}"
                 )
-        else:
-            # Separate Exposure fields (tools, skills, etc.) from regular constructor args
-            exposure_fields = self._context_class._exposure_fields
-            if exposure_fields is None:
-                exposure_fields = self._context_class._detect_exposure_fields()
-                self._context_class._exposure_fields = exposure_fields
 
-            # Create the context
-            constructor_kwargs = {}
-            exposure_items = {}  # {field_name: list_of_items}
-            for key, value in kwargs.items():  # Add fields to the context that can directly be added to the context
-                if key in exposure_fields and isinstance(value, (list, tuple)):
-                    exposure_items[key] = value
-                elif key in exposure_fields and isinstance(value, Exposure):
-                    constructor_kwargs[key] = value
-                else:
-                    constructor_kwargs[key] = value
+        # Separate Exposure fields (tools, skills, etc.) from regular constructor args
+        exposure_fields = self._context_class._exposure_fields
+        if exposure_fields is None:
+            exposure_fields = self._context_class._detect_exposure_fields()
+            self._context_class._exposure_fields = exposure_fields
+
+        # Create the context
+        constructor_kwargs = {}
+        exposure_items = {}  # {field_name: list_of_items}
+        for key, value in kwargs.items():  # Add fields to the context that can directly be added to the context
+            if key in exposure_fields and isinstance(value, (list, tuple)):
+                exposure_items[key] = value
+            elif key in exposure_fields and isinstance(value, Exposure):
+                constructor_kwargs[key] = value
+            else:
+                constructor_kwargs[key] = value
+        
+        if context is None:
             context = self._context_class(**constructor_kwargs)  # Create the context
-            for field_name, items in exposure_items.items():  # Add items to Exposure fields
-                attr = getattr(context, field_name)
-                for item in items:
-                    attr.add(item)
+        for field_name, items in exposure_items.items():  # Add items to Exposure fields
+            attr = getattr(context, field_name)
+            for item in items:
+                attr.add(item)
 
         # Set the LLM to the context
         if self._llm is not None:
