@@ -3,6 +3,7 @@
 ## Table of Contents
 - [Minimal Agent (Agent Mode)](#minimal-agent-agent-mode)
 - [Workflow Mode](#workflow-mode)
+- [Human-in-the-Loop](#human-in-the-loop)
 - [Amphibious Mode](#amphibious-mode)
 - [Custom Worker](#custom-worker)
 - [Structured Output (output_schema)](#structured-output-output_schema)
@@ -55,15 +56,15 @@ print(agent.final_answer)
 ## Workflow Mode
 
 ```python
-from bridgic.amphibious import step
+from bridgic.amphibious import ActionCall
 
 class WeatherWorkflow(AmphibiousAutoma[CognitiveContext]):
     async def on_agent(self, ctx: CognitiveContext):
         pass  # Required but not used in pure workflow
 
     async def on_workflow(self, ctx: CognitiveContext):
-        tokyo = yield step("get_weather", city="Tokyo")
-        london = yield step("get_weather", city="London")
+        tokyo = yield ActionCall("get_weather", city="Tokyo")
+        london = yield ActionCall("get_weather", city="London")
 
         tokyo_val = tokyo[0].result if tokyo else "N/A"
         london_val = london[0].result if london else "N/A"
@@ -76,10 +77,74 @@ result = await workflow.arun(
 )
 ```
 
+## Human-in-the-Loop
+
+Three entry points for requesting human input:
+
+### Entry 1: Code-level in on_agent()
+
+```python
+class InteractiveAgent(AmphibiousAutoma[CognitiveContext]):
+    worker = think_unit(CognitiveWorker.inline("Execute step."), max_attempts=10)
+
+    async def on_agent(self, ctx: CognitiveContext):
+        await self.worker
+        feedback = await self.request_human("Task complete. Any follow-up?")
+        if feedback != "no":
+            async with self.snapshot(goal=feedback):
+                await self.worker
+```
+
+### Entry 2: HumanCall in on_workflow()
+
+```python
+from bridgic.amphibious import ActionCall, HumanCall
+
+class ConfirmableWorkflow(AmphibiousAutoma[CognitiveContext]):
+    async def on_agent(self, ctx): pass
+
+    async def on_workflow(self, ctx: CognitiveContext):
+        result = yield ActionCall("search_flights", origin="Beijing", destination="Tokyo", date="2024-06-01")
+        feedback = yield HumanCall(prompt="Found flights. Book CA123?")
+        if feedback == "yes":
+            yield ActionCall("book_flight", flight_number="CA123")
+        else:
+            self.set_final_answer("Booking cancelled by user.")
+```
+
+### Entry 3: LLM tool (autonomous)
+
+```python
+from bridgic.amphibious.buildin_tools import human_request_tool
+
+class AutonomousAgent(AmphibiousAutoma[CognitiveContext]):
+    worker = think_unit(
+        CognitiveWorker.inline("Execute the task. Use ask_human when you need user input."),
+        max_attempts=10,
+    )
+    async def on_agent(self, ctx): await self.worker
+
+# human_request_tool is a plain FunctionToolSpec — use like any other tool
+agent = AutonomousAgent(llm=llm)
+await agent.arun(goal="Plan a trip", tools=[search_tool, human_request_tool])
+```
+
+### Custom UI Integration
+
+```python
+class WebAgent(AmphibiousAutoma[CognitiveContext]):
+    async def human_input(self, data):
+        """Override to use WebSocket instead of stdin."""
+        prompt = data["prompt"]
+        return await websocket.send_and_receive(prompt)
+
+    async def on_agent(self, ctx): ...
+```
+
 ## Amphibious Mode
 
 ```python
-from bridgic.amphibious import RunMode, AgentCall
+from bridgic.amphibious import RunMode, AgentCall, ActionCall
 
 class FormFiller(AmphibiousAutoma[CognitiveContext]):
     fixer = think_unit(
@@ -91,9 +156,9 @@ class FormFiller(AmphibiousAutoma[CognitiveContext]):
         await self.fixer
 
     async def on_workflow(self, ctx: CognitiveContext):
-        yield step("fill_field", field_name="username", value="john")
-        yield step("fill_field", field_name="email", value="john@example.com")
-        yield step("click_button", button_name="submit")
+        yield ActionCall("fill_field", field_name="username", value="john")
+        yield ActionCall("fill_field", field_name="email", value="john@example.com")
+        yield ActionCall("click_button", button_name="submit")
 
 # Workflow runs; on failure, agent takes over automatically
 agent = FormFiller(llm=llm, verbose=True)
@@ -110,8 +175,8 @@ result = await agent.arun(
 
 ```python
 async def on_workflow(self, ctx: CognitiveContext):
-    yield step("search_price", platform="Amazon", product="laptop")
-    yield step("search_price", platform="eBay", product="laptop")
+    yield ActionCall("search_price", platform="Amazon", product="laptop")
+    yield ActionCall("search_price", platform="eBay", product="laptop")
 
     # Delegate complex analysis to LLM (clean context snapshot)
     yield AgentCall(

@@ -7,7 +7,8 @@
 - [AmphibiousAutoma](#amphibiousautoma)
 - [CognitiveWorker](#cognitiveworker)
 - [think_unit](#think_unit)
-- [step](#step)
+- [ActionCall, HumanCall, AgentCall](#actioncall-humancall-agentcall)
+- [Human-in-the-Loop](#human-in-the-loop)
 - [CognitiveContext](#cognitivecontext)
 - [Context and Exposure](#context-and-exposure)
 - [Data Models](#data-models)
@@ -63,16 +64,19 @@ from bridgic.amphibious import (
     # Orchestration
     AmphibiousAutoma, think_unit, AgentTrace, ThinkUnitDescriptor,
     # Worker
-    CognitiveWorker, step, _DELEGATE,
+    CognitiveWorker, _DELEGATE,
     # Context
     CognitiveContext, CognitiveHistory, CognitiveTools, CognitiveSkills,
     Context, Exposure, LayeredExposure, EntireExposure,
+    # Workflow yield types
+    ActionCall, HumanCall, AgentCall, HUMAN_INPUT_EVENT_TYPE,
     # Data models
-    Step, Skill, RunMode, ErrorStrategy, AgentCall,
+    Step, Skill, RunMode, ErrorStrategy,
     ActionResult, ActionStepResult, ToolResult,
     # Trace
     TraceStep, RunConfig, RecordedToolCall, StepOutputType,
 )
+from bridgic.amphibious.buildin_tools import human_request_tool
 from bridgic.core.agentic.tool_specs import FunctionToolSpec
 from bridgic.core.model.types import Message
 ```
@@ -168,6 +172,25 @@ async def before_action(self, decision_result, ctx) -> Any: ...
 async def after_action(self, step_result, ctx) -> None: ...
 async def action_tool_call(self, tool_list, ctx) -> ActionResult: ...
 async def action_custom_output(self, decision_result, ctx) -> Any: ...
+
+# Human-in-the-loop (override to integrate with your UI)
+async def human_input(self, data: Dict[str, Any]) -> str: ...
+```
+
+### Human-in-the-Loop Methods
+
+```python
+# Request human input (use in on_agent or from tools)
+await self.request_human(
+    prompt: str,            # Question to present to the human
+    timeout: float = None,  # Seconds before TimeoutError; None = wait forever
+) -> str
+
+# Template method — override to replace default stdin with your UI
+async def human_input(self, data: Dict[str, Any]) -> str:
+    # data contains: {"prompt": "...", "timeout": ...}
+    # Default: reads from stdin via run_in_executor
+    ...
 ```
 
 ### Utility Methods
@@ -283,29 +306,96 @@ await self.think_unit.until(
 )
 ```
 
-## step
+## ActionCall, HumanCall, AgentCall
 
-Helper for workflow mode — creates a `WorkflowStep`:
+Three yield types for `on_workflow()`:
+
+### ActionCall — Deterministic tool execution
 
 ```python
-from bridgic.amphibious import step
+from bridgic.amphibious import ActionCall
 
 # In on_workflow():
-result = yield step("tool_name", arg1="value", arg2=123)
+result = yield ActionCall("tool_name", arg1="value", arg2=123)
 # result: List[ToolResult]
 ```
 
-Signature:
+```python
+@dataclass(init=False)
+class ActionCall:
+    tool_name: str
+    description: str
+    worker: Optional[Any]        # Custom worker for fallback
+    tool_args: Dict[str, Any]
+
+    def __init__(self, tool_name: str, *, description: str = "", worker=None, **tool_args): ...
+```
+
+### HumanCall — Pause for human input
 
 ```python
-step(
-    tool_name: str,
-    *,
-    description: str = "",
-    worker: CognitiveWorker = None,  # Custom worker for fallback
-    **tool_args: Any,
-) -> WorkflowStep
+from bridgic.amphibious import HumanCall
+
+# In on_workflow():
+feedback = yield HumanCall(prompt="Confirm this action?")
+# feedback: str (the human's response)
 ```
+
+```python
+@dataclass
+class HumanCall:
+    prompt: str = ""
+    timeout: Optional[float] = None  # Seconds; None = wait forever
+```
+
+### AgentCall — Delegate to LLM agent mode
+
+```python
+from bridgic.amphibious import AgentCall
+
+yield AgentCall(goal="Handle complex case", max_attempts=5)
+```
+
+```python
+@dataclass
+class AgentCall:
+    goal: str = ""
+    tools: Optional[Any] = None      # None → use context's tools
+    skills: Optional[Any] = None     # None → use context's skills
+    history: Optional[Any] = None    # None → fresh CognitiveHistory()
+    max_attempts: int = 1
+    worker: Optional[Any] = None     # None → framework default
+```
+
+## Human-in-the-Loop
+
+Three entry points for requesting human input:
+
+| Entry Point | Where | Usage |
+|-------------|-------|-------|
+| `request_human()` | `on_agent()` | `await self.request_human("Proceed?")` |
+| `HumanCall` | `on_workflow()` | `feedback = yield HumanCall(prompt="Confirm?")` |
+| `human_request_tool` | `arun(tools=[...])` | LLM autonomously calls `ask_human` tool |
+
+### human_request_tool — Built-in FunctionToolSpec
+
+```python
+from bridgic.amphibious.buildin_tools import human_request_tool
+
+# Use like any other tool — no factory call needed
+await agent.arun(goal="...", tools=[search_tool, human_request_tool])
+```
+
+Uses `contextvars.ContextVar` for late-binding to the running agent. Each concurrent `arun()` task gets its own binding — safe for parallel execution.
+
+### HUMAN_INPUT_EVENT_TYPE
+
+```python
+from bridgic.amphibious import HUMAN_INPUT_EVENT_TYPE
+# Value: "REQUEST_FEEDBACK"
+```
+
+Framework-level event type constant used by all three HITL entry points.
 
 ## CognitiveContext
 
@@ -406,21 +496,6 @@ class RunMode(str, Enum):
     AUTO = "auto"
 ```
 
-### AgentCall
-
-Yield in `on_workflow()` to delegate to agent mode. Initiates a clean context snapshot for the sub-task:
-
-```python
-@dataclass
-class AgentCall:
-    goal: str = ""
-    tools: CognitiveTools = field(default_factory=CognitiveTools)
-    skills: CognitiveSkills = field(default_factory=CognitiveSkills)
-    history: CognitiveHistory = field(default_factory=CognitiveHistory)
-    max_attempts: int = 1
-    worker: Optional[CognitiveWorker] = None
-```
-
 ### Skill
 
 ```python
@@ -441,7 +516,7 @@ class Step(BaseModel):
     status: Optional[bool] = None
 ```
 
-### ToolResult (returned by yield step)
+### ToolResult (returned by yield ActionCall)
 
 ```python
 @dataclass

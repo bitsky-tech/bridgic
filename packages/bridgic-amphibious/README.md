@@ -41,7 +41,7 @@ In traditional software, *what to do* and *when to do it* are intertwined in cod
 
 | Mode | Decision Maker | Defined In | Best For |
 |------|---------------|-----------|----------|
-| **Workflow** (`on_workflow`) | Developer's code | `yield step(...)` | Known, repeatable processes |
+| **Workflow** (`on_workflow`) | Developer's code | `yield ActionCall(...)` | Known, repeatable processes |
 | **Agent** (`on_agent`) | LLM reasoning | `await self.think_unit` | Open-ended, adaptive tasks |
 
 The same agent can implement **both** modes and switch between them at runtime:
@@ -56,9 +56,12 @@ class ResilientAgent(AmphibiousAutoma[MyContext]):
 
     async def on_workflow(self, ctx):
         """Deterministic mode: developer defines the exact steps."""
-        yield step("login", username="admin", password="secret")
-        yield step("navigate_to", url="/dashboard")
-        result = yield step("extract_data", selector=".metrics")
+        yield ActionCall("login", username="admin", password="secret")
+        yield ActionCall("navigate_to", url="/dashboard")
+        result = yield ActionCall("extract_data", selector=".metrics")
+
+        # Pause and ask the human for confirmation
+        feedback = yield HumanCall(prompt="Data extracted. Proceed with analysis?")
 
         # Fall back to agent for complex situations
         yield AgentCall(goal="Analyze the extracted data", max_attempts=5)
@@ -236,15 +239,17 @@ await agent.arun(goal="Book a flight from Beijing to Tokyo", tools=[...])
 ### Minimal Agent (Workflow Mode)
 
 ```python
-from bridgic.amphibious import AmphibiousAutoma, CognitiveContext, step
+from bridgic.amphibious import AmphibiousAutoma, CognitiveContext, ActionCall, HumanCall
 
 class WorkflowAgent(AmphibiousAutoma[CognitiveContext]):
     async def on_agent(self, ctx):
         pass  # Required but not used in pure workflow mode
 
     async def on_workflow(self, ctx):
-        result = yield step("search_flights", origin="Beijing", destination="Tokyo", date="2024-06-01")
-        yield step("book_flight", flight_number="CA123")
+        result = yield ActionCall("search_flights", origin="Beijing", destination="Tokyo", date="2024-06-01")
+        feedback = yield HumanCall(prompt="Found flights. Book CA123?")
+        if feedback == "yes":
+            yield ActionCall("book_flight", flight_number="CA123")
 
 # Runs in amphibious mode (workflow + agent fallback)
 agent = WorkflowAgent(llm=my_llm)
@@ -264,8 +269,8 @@ class AmphibiousAgent(AmphibiousAutoma[CognitiveContext]):
         await self.fixer
 
     async def on_workflow(self, ctx):
-        yield step("login", username="admin", password="secret")
-        yield step("navigate_to", url="/dashboard")
+        yield ActionCall("login", username="admin", password="secret")
+        yield ActionCall("navigate_to", url="/dashboard")
         # If any step fails, the framework falls back to on_agent() to resolve it
 
 agent = AmphibiousAgent(llm=my_llm)
@@ -276,6 +281,49 @@ await agent.arun(
     will_fallback=True,            # enable agent fallback on failure
     max_consecutive_fallbacks=2,   # switch to full agent mode after 2 consecutive failures
 )
+```
+
+### Human-in-the-Loop
+
+Three entry points for requesting human input during agent execution:
+
+```python
+from bridgic.amphibious import AmphibiousAutoma, CognitiveContext, ActionCall, HumanCall
+from bridgic.amphibious.buildin_tools import human_request_tool
+
+class InteractiveAgent(AmphibiousAutoma[CognitiveContext]):
+    planner = think_unit(
+        CognitiveWorker.inline("Plan and execute. Use ask_human when you need confirmation."),
+        max_attempts=10,
+    )
+
+    # Entry 1: Code-level — call between think units in on_agent()
+    async def on_agent(self, ctx):
+        await self.planner
+        feedback = await self.request_human("Task complete. Any follow-up?")
+
+    # Entry 2: Workflow yield — pause workflow for human input
+    async def on_workflow(self, ctx):
+        yield ActionCall("search_flights", origin="Beijing", destination="Tokyo", date="2024-06-01")
+        feedback = yield HumanCall(prompt="Book this flight?")
+        if feedback == "yes":
+            yield ActionCall("book_flight", flight_number="CA123")
+
+agent = InteractiveAgent(llm=my_llm)
+
+# Entry 3: LLM tool — LLM autonomously decides when to ask the human
+await agent.arun(
+    goal="Plan a trip with user preferences",
+    tools=[search_tool, human_request_tool],  # human_request_tool is a plain FunctionToolSpec
+)
+```
+
+Override `human_input()` to integrate with your UI (default reads from stdin):
+
+```python
+class WebAgent(AmphibiousAutoma[CognitiveContext]):
+    async def human_input(self, data):
+        return await my_websocket.ask(data["prompt"])
 ```
 
 ### Custom Context
@@ -321,7 +369,11 @@ agent._agent_trace.save("trace.json")
 | **Cognitive Policies** | Acquiring, rehearsal, reflection — enhance thinking |
 | **AgentTrace** | Structured execution trace for inspection |
 | **ErrorStrategy** | RAISE, IGNORE, or RETRY on failures |
+| **ActionCall** | Yield in on_workflow() for deterministic tool execution |
+| **HumanCall** | Yield in on_workflow() to pause and request human input |
 | **AgentCall** | Yield in on_workflow() to delegate to agent mode |
+| **human_request_tool** | Built-in FunctionToolSpec for LLM-driven human requests |
+| **request_human()** | Code-level method to request human input in on_agent() |
 | **RunMode** | AGENT, WORKFLOW, AMPHIBIOUS, or AUTO |
 
 ## License

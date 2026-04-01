@@ -187,3 +187,17 @@ In AMPHIBIOUS mode:
 2. If within limit: agent fixes the specific step (scoped goal via `snapshot`)
 3. If exceeded: abandon workflow → call `on_agent()` for full agent mode
 4. `AgentCall` yield explicitly delegates a sub-task to agent mode (with a clean context snapshot)
+
+## Human-in-the-Loop
+
+Three entry points for requesting human input, all built on `request_feedback_async`:
+
+| Entry Point | Context | Mechanism |
+|-------------|---------|-----------|
+| `await self.request_human(prompt)` | `on_agent()` — between think units | Direct async call |
+| `yield HumanCall(prompt=...)` | `on_workflow()` — pause generator | Framework calls `request_human`, sends response via `asend()` |
+| `human_request_tool` in `tools=[...]` | LLM-driven — agent mode | LLM calls `ask_human` tool, resolved via `ContextVar` |
+
+**Customization**: Override `human_input(data)` template method to replace default stdin with your UI (WebSocket, HTTP callback, Slack bot, etc.).
+
+**Concurrency**: `human_request_tool` uses `contextvars.ContextVar` for late-binding. Each `asyncio.Task` (each `arun()`) gets its own isolated binding — concurrent agents sharing the same tool object never interfere.
