@@ -16,12 +16,14 @@ from pydantic import BaseModel
 from bridgic.core.automa import GraphAutoma, worker
 from bridgic.core.automa._automa import RunningOptions
 from bridgic.core.automa.args import ArgsMappingRule, InOrder
+from bridgic.core.automa.interaction import Event, Feedback
 from bridgic.core.model.types import ToolCall
 from bridgic.core.agentic import ConcurrentAutoma
 from bridgic.core.agentic.tool_specs import ToolSpec
 from bridgic.core.utils._console import printer
 from bridgic.amphibious._context import CognitiveContext, CognitiveTools, CognitiveSkills, CognitiveHistory, Exposure, LayeredExposure
 from bridgic.amphibious._cognitive_worker import CognitiveWorker, _DELEGATE
+from bridgic.amphibious.buildin_tools.human.request_human import current_agent
 from bridgic.amphibious._type import (
     RunMode,
     Step,
@@ -29,6 +31,7 @@ from bridgic.amphibious._type import (
     ActionCall,
     HumanCall,
     AgentCall,
+    HUMAN_INPUT_EVENT_TYPE,
     ErrorStrategy,
     ActionStepResult,
     ActionResult,
@@ -460,6 +463,9 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         self.spend_tokens: int = 0
         self.spend_time: float = 0.0
 
+        # Human-in-the-loop event handler registration
+        self._register_human_input_handler()
+
     @property
     def llm(self) -> Optional[Any]:
         """Access the agent's default LLM."""
@@ -492,6 +498,63 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
             The final answer text.
         """
         self._final_answer = answer
+
+    ############################################################################
+    # Human-in-the-loop support
+    ############################################################################
+
+    def _register_human_input_handler(self) -> None:
+        """Register the default event handler for human input requests.
+
+        The handler calls ``human_input()`` via ``asyncio.ensure_future()``
+        so it can be an async template method while being invoked from
+        the synchronous event-handler callback that ``request_feedback_async``
+        uses.
+        """
+
+        def _on_human_input(event: Event, feedback_sender):
+            asyncio.ensure_future(
+                self._handle_human_input(event, feedback_sender)
+            )
+
+        self.register_event_handler(HUMAN_INPUT_EVENT_TYPE, _on_human_input)
+
+    async def _handle_human_input(self, event: Event, feedback_sender) -> None:
+        """Internal dispatcher — calls the overridable ``human_input()`` template."""
+        response = await self.human_input(event.data)
+        feedback_sender.send(Feedback(data=response))
+
+    async def request_human(self, prompt: str, *, timeout: Optional[float] = None) -> str:
+        """Request input from the human operator.
+
+        This is the primary entry point for code-level human-in-the-loop
+        calls inside ``on_agent()`` (between think units) or from the
+        ``human_request_tool`` closure.
+
+        Parameters
+        ----------
+        prompt : str
+            The question or message to present to the human.
+        timeout : Optional[float]
+            Seconds to wait before raising ``TimeoutError``. None means
+            wait indefinitely.
+
+        Returns
+        -------
+        str
+            The human's response text.
+
+        Raises
+        ------
+        TimeoutError
+            If no response is received within ``timeout`` seconds.
+        """
+        event = Event(
+            event_type=HUMAN_INPUT_EVENT_TYPE,
+            data={"prompt": prompt, "timeout": timeout},
+        )
+        feedback = await self.request_feedback_async(event, timeout=timeout)
+        return feedback.data
 
     ############################################################################
     # Template methods (override by user to customize the behavior)
@@ -676,6 +739,29 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
             The current cognitive context.
         """
         pass
+
+    async def human_input(self, data: Dict[str, Any]) -> str:
+        """Template method invoked when the agent requests human input.
+
+        Override this in your subclass to integrate with your UI or
+        messaging layer.  The default implementation reads from stdin.
+
+        Parameters
+        ----------
+        data : Dict[str, Any]
+            Event payload — always contains ``"prompt"``; may contain
+            ``"timeout"`` and other metadata added by the caller.
+
+        Returns
+        -------
+        str
+            The human's response text.
+        """
+        prompt = data.get("prompt", "Human input required:")
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(
+            None, input, f"\n[HumanInput] {prompt}\n> "
+        )
 
     ############################################################################
     # Core methods
@@ -989,7 +1075,15 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
                     send_value = None
                     continue
 
-                # Deterministic execution
+                if isinstance(item, HumanCall):
+                    self._log("Workflow", f"Requesting human input: {item.prompt}", color="yellow")
+                    response = await self.request_human(item.prompt, timeout=item.timeout)
+                    self._log("Workflow", f"Human responded: {response[:100]}{'...' if len(response) > 100 else ''}", color="green")
+                    consecutive_failures = 0
+                    send_value = response
+                    continue
+
+                # Deterministic execution (ActionCall)
                 worker = item.worker
                 decision = item.decision
 
@@ -1577,7 +1671,11 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         ########################
         # Run the amphibious automa
         ########################
-        result = await _run_and_report(context=context)
-        if trace_running and self._agent_trace:
-            _build_trace(self)
-        return result
+        token = current_agent.set(self)
+        try:
+            result = await _run_and_report(context=context)
+            if trace_running and self._agent_trace:
+                _build_trace(self)
+            return result
+        finally:
+            current_agent.reset(token)

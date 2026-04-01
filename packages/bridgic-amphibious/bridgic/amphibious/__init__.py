@@ -70,6 +70,7 @@ from ._amphibious_automa import (
     ThinkUnitDescriptor,
 )
 from .scaffold import create_project
+from .buildin_tools import human_request_tool
 
 from ._type import (
     # Worker data structures
@@ -78,6 +79,7 @@ from ._type import (
     ToolArgument,
     StepToolCall,
     # Workflow mode yield types
+    HUMAN_INPUT_EVENT_TYPE,
     WorkflowDecision,
     ActionCall,
     HumanCall,
@@ -129,6 +131,7 @@ __all__ = [
     "ToolArgument",
     "StepToolCall",
     # Workflow mode yield types
+    "HUMAN_INPUT_EVENT_TYPE",
     "WorkflowDecision",
     "ActionCall",
     "HumanCall",
@@ -143,6 +146,8 @@ __all__ = [
     "RunConfig",
     "RecordedToolCall",
     "StepOutputType",
+    # Built-in tools
+    "human_request_tool",
     # Scaffolding
     "create_project",
 ]
