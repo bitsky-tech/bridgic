@@ -6,8 +6,7 @@ Creates the standard directory structure for an amphibious automa project:
     <project_name>/
     ├── task.md                # Task description (input)
     ├── config.py              # LLM configuration
-    ├── tools/                 # Tool definitions
-    │   └── __init__.py
+    ├── tools.py               # Tool definitions
     ├── workers.py             # Context, data models, custom workers
     ├── agents.py              # Amphibious agent code
     ├── skills/                # Amphibious skills (SKILL.md files)
@@ -49,13 +48,16 @@ _CONFIG_PY = '''\
 """LLM configuration for this project."""
 
 import os
+from dotenv import load_dotenv
 
-LLM_API_BASE = os.environ.get("LLM_API_BASE", "")
-LLM_API_KEY = os.environ.get("LLM_API_KEY", "")
-LLM_MODEL = os.environ.get("LLM_MODEL", "")
+load_dotenv()  # Load environment variables from .env file if present
+
+LLM_API_BASE = os.getenv("LLM_API_BASE", "")
+LLM_API_KEY = os.getenv("LLM_API_KEY", "")
+LLM_MODEL = os.getenv("LLM_MODEL", "")
 '''
 
-_TOOLS_INIT_PY = '''\
+_TOOLS_PY = '''\
 """Tool definitions for this project.
 
 Define your tools here and export them for use in agent_only.py and agents.py.
@@ -63,7 +65,7 @@ Define your tools here and export them for use in agent_only.py and agents.py.
 
 import os
 
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 '''
 
 _WORKERS_PY = '''\
@@ -132,7 +134,6 @@ def create_project(
 
     # Create directory structure
     project_dir.mkdir(parents=True)
-    (project_dir / "tools").mkdir()
     (project_dir / "skills").mkdir()
     (project_dir / "result").mkdir()
     (project_dir / "log").mkdir()
@@ -141,7 +142,7 @@ def create_project(
     task_text = task or "Describe your task here."
     _write(project_dir / "task.md", _TASK_MD.format(task=task_text))
     _write(project_dir / "config.py", _CONFIG_PY)
-    _write(project_dir / "tools" / "__init__.py", _TOOLS_INIT_PY)
+    _write(project_dir / "tools.py", _TOOLS_PY)
     _write(project_dir / "workers.py", _WORKERS_PY)
     _write(project_dir / "agents.py", _AGENTS_PY)
 
@@ -200,7 +201,7 @@ def cli() -> None:
     create_parser = subparsers.add_parser(
         "create",
         help="Create a new Amphibious Automa project",
-        description="Scaffold a project with standard directory structure (task.md, config.py, tools/, workers.py, agents.py, etc.).",
+        description="Scaffold a project with standard directory structure (task.md, config.py, tools.py, workers.py, agents.py, etc.).",
     )
     create_parser.add_argument(
         "-n", "--name", required=True,
