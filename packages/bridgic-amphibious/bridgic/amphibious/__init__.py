@@ -29,7 +29,7 @@ Architecture Layers
 **Orchestration Layer:**
 - AmphibiousAutoma: Dual-mode agent engine (agent mode + workflow mode)
   - think_unit: Descriptor for declaring think units (used in on_agent)
-  - step: Helper for declaring workflow steps (used in on_workflow)
+  - ActionCall, HumanCall, AgentCall: Workflow yield types (used in on_workflow)
 - ErrorStrategy: Error handling strategies (RAISE, IGNORE, RETRY)
 
 Example
@@ -60,14 +60,11 @@ from ._cognitive_worker import (
     CognitiveWorker,
     # Sentinel
     _DELEGATE,
-    # Workflow helpers
-    step
 )
 from ._amphibious_automa import (
     # Orchestration
     AmphibiousAutoma,
     AgentTrace,
-    AgentCall,
     # Think unit descriptor
     think_unit,
     ThinkUnitDescriptor,
@@ -80,9 +77,11 @@ from ._type import (
     DetailRequest,
     ToolArgument,
     StepToolCall,
-    # Workflow mode
+    # Workflow mode yield types
     WorkflowDecision,
-    WorkflowStep,
+    ActionCall,
+    HumanCall,
+    AgentCall,
     # Action result data structures
     ErrorStrategy,
     ActionResult,
@@ -116,13 +115,11 @@ __all__ = [
     # Implementation layer - Worker
     "CognitiveWorker",
     "_DELEGATE",
-    "step",
 
     # Orchestration layer
     "AmphibiousAutoma",
     "AgentAutoma",  # deprecated alias
     "AgentTrace",
-    "AgentCall",
     "think_unit",
     "ThinkUnitDescriptor",
 
@@ -131,9 +128,11 @@ __all__ = [
     "DetailRequest",
     "ToolArgument",
     "StepToolCall",
-    # Workflow mode
+    # Workflow mode yield types
     "WorkflowDecision",
-    "WorkflowStep",
+    "ActionCall",
+    "HumanCall",
+    "AgentCall",
     # Action result data structures
     "ErrorStrategy",
     "ActionResult",

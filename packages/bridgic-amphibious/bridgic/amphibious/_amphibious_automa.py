@@ -3,7 +3,6 @@ import inspect
 import json
 import time
 from abc import abstractmethod
-from dataclasses import dataclass, field
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from typing import (
@@ -27,7 +26,9 @@ from bridgic.amphibious._type import (
     RunMode,
     Step,
     StepToolCall,
-    WorkflowStep,
+    ActionCall,
+    HumanCall,
+    AgentCall,
     ErrorStrategy,
     ActionStepResult,
     ActionResult,
@@ -44,20 +45,6 @@ from bridgic.amphibious._type import (
 ################################################################################################################
 
 CognitiveContextT = TypeVar("CognitiveContextT", bound=CognitiveContext)
-
-
-@dataclass
-class AgentCall:
-    """Yielded by on_workflow() to fall back to agent mode.
-
-    Used by: _amphibious_automa.py (_run_workflow)
-    """
-    goal: str = ""
-    tools: CognitiveTools = field(default_factory=CognitiveTools)
-    skills: CognitiveSkills = field(default_factory=CognitiveSkills)
-    history: CognitiveHistory = field(default_factory=CognitiveHistory)
-    max_attempts: int = 1
-    worker: Optional[Any] = None  # CognitiveWorker; None → use framework default fallback worker
 
 
 ################################################################################################################
@@ -550,23 +537,25 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         """
         ...
 
-    async def on_workflow(self, ctx: CognitiveContextT) -> AsyncGenerator[Union[WorkflowStep, AgentCall], None]:
+    async def on_workflow(self, ctx: CognitiveContextT) -> AsyncGenerator[Union[ActionCall, HumanCall, AgentCall], None]:
         """Workflow mode: deterministic execution as an async generator.
 
         Override this method to define a deterministic workflow. When overridden,
         ``arun()`` automatically routes to workflow mode instead of ``on_agent()``.
 
-        Yield ``WorkflowStep`` for deterministic tool execution, or
-        ``AgentCall`` to delegate a sub-task to agent mode.
+        Three yield types are supported:
+        - ``ActionCall``  — deterministic single-tool execution
+        - ``HumanCall``   — pause and request human input (returned as str via asend)
+        - ``AgentCall``   — delegate a sub-task to LLM agent mode
 
         The generator exhausting signals workflow completion — no finish signal needed.
-        Use ``result = yield step(...)`` to receive tool execution results via asend().
+        Use ``result = yield ActionCall(...)`` to receive tool execution results via asend().
 
         Examples
         --------
         >>> async def on_workflow(self, ctx):
-        ...     yield step("navigate_to", url="http://example.com")
-        ...     result = yield step("click_element_by_ref", ref="42")
+        ...     yield ActionCall("navigate_to", url="http://example.com")
+        ...     result = yield ActionCall("click_element_by_ref", ref="42")
         ...     yield AgentCall(goal="Handle complex case", max_attempts=10)
         """
         ...
@@ -956,11 +945,11 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         """Consume on_workflow() generator, executing each step.
 
         Uses asend() to return tool execution results (List[ToolResult]) back
-        to the generator, enabling ``result = yield step(...)`` syntax.
+        to the generator, enabling ``result = yield ActionCall(...)`` syntax.
 
         For each yielded item:
-        - ``WorkflowStep``: run observe → log → act deterministically.
-          If execution fails, fall back to agent mode for the current step.
+        - ``ActionCall``: run observe → log → act deterministically. If execution fails, fall back to agent mode for the current step.
+        - ``HumanCall``: pause and await human input via request_feedback_async.
         - ``AgentCall``: delegate to ``_run()`` for LLM-driven execution.
 
         If consecutive failures exceed ``max_consecutive_fallbacks``, abandon
@@ -993,7 +982,8 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
                 # context information: tools, skills, history.
                 if isinstance(item, AgentCall):
                     call_worker = item.worker if item.worker is not None else CognitiveWorker.inline("Complete the goal and respond in JSON format.")
-                    async with self.snapshot(goal=item.goal, cognitive_history=item.history):
+                    history = item.history if item.history is not None else CognitiveHistory()
+                    async with self.snapshot(goal=item.goal, cognitive_history=history):
                         await self._run(call_worker, tools=item.tools, skills=item.skills, max_attempts=item.max_attempts)
                     consecutive_failures = 0
                     send_value = None
@@ -1255,6 +1245,8 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
                 decision_result = await self.before_action(original_decision_result, ctx)
         else:
             decision_result = await self.before_action(decision_result, ctx)
+
+        # Execute the action based on the (possibly delegated) decision result
         result = None
         if _is_list_step_tool_call(decision):
             if not calls:

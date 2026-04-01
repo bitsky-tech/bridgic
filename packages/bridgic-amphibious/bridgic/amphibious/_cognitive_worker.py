@@ -37,12 +37,9 @@ from bridgic.core.utils._console import printer
 from bridgic.amphibious._context import CognitiveContext
 from bridgic.amphibious._type import (
     DetailRequest,
-    ToolArgument,
     StepToolCall,
     _ThinkBase,
     _coerce_none_to_list,
-    WorkflowDecision,
-    WorkflowStep
 )
 
 
@@ -918,32 +915,3 @@ class CognitiveWorker(GraphAutoma):
         result = await super().arun(*args, feedback_data=feedback_data, **kwargs)
         self.spend_time += time.time() - start_time
         return result
-
-
-def step(
-    tool_name: str,
-    *,
-    description: str = "",
-    worker: Optional[CognitiveWorker] = None,
-    **tool_args: Any,
-) -> WorkflowStep:
-    """Shorthand for constructing a single-tool WorkflowStep.
-
-    Usage::
-
-        yield step("navigate_to", url="http://example.com")
-        yield step("navigate_to", url="http://example.com", worker=my_worker)
-        yield step("click_element_by_ref", description="Click submit", ref="e42")
-    """
-    return WorkflowStep(
-        worker=worker,
-        decision=WorkflowDecision(
-            step_content=description,
-            output=[StepToolCall(
-                tool=tool_name,
-                tool_arguments=[
-                    ToolArgument(name=k, value=str(v)) for k, v in tool_args.items()
-                ],
-            )],
-        ),
-    )
