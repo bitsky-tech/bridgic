@@ -9,7 +9,7 @@ Dual-mode agent framework: agents operate in LLM-driven (`on_agent`) and determi
 
 ## LLM Setup
 
-Amphibious agents require a `BaseLlm` instance from a bridgic LLM provider package:
+Amphibious agents require a `BaseLlm` instance with `astructure_output` protocol from a bridgic LLM provider package:
 
 ```python
 from bridgic.llms.openai import OpenAILlm, OpenAIConfiguration
@@ -21,7 +21,7 @@ llm = OpenAILlm(
 )
 ```
 
-Other providers: `bridgic.llms.openai_like.OpenAILikeLlm` (OpenAI-compatible APIs), `bridgic.llms.vllm.VllmServerLlm` (self-hosted vLLM).
+Other providers with same protocol: `bridgic.llms.vllm.VllmServerLlm` (self-hosted vLLM).
 
 ## Quick Start
 
@@ -60,7 +60,7 @@ bridgic-amphibious create -n my_project --task "Navigate to example.com and extr
 bridgic-amphibious create -n my_project --base-dir /path/to/projects
 ```
 
-Creates: `task.md`, `config.py`, `tools/`, `workers.py`, `agents.py`, `skills/`, `result/`, `log/`.
+Creates: `task.md`, `config.py`, `tools.py`, `workers.py`, `agents.py`, `skills/`, `result/`, `log/`.
 
 ## Core Concepts
 
