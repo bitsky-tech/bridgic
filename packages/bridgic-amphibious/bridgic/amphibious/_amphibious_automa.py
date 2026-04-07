@@ -1146,7 +1146,7 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
                     failed_steps.append(f"Step {step_index}: {decision.step_content} — {e}")
                     self._log(
                         "Workflow",
-                        f"Step {step_index} failed "
+                        f"[ERROR] Step {step_index} failed "
                         f"({consecutive_failures}/{max_consecutive_fallbacks}): {e}",
                         color="red",
                     )
@@ -1163,7 +1163,7 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
                             )
                         self._log(
                             "Workflow",
-                            f"Consecutive failures reached {max_consecutive_fallbacks}, "
+                            f"[ERROR] Consecutive failures reached {max_consecutive_fallbacks}, "
                             f"falling back to full agent mode (on_agent).",
                             color="red",
                         )
