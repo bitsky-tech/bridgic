@@ -61,10 +61,15 @@ Each think unit execution follows:
 |------|--------|----------|----------|
 | `AGENT` | LLM (`on_agent`) | Open-ended, adaptive tasks | N/A |
 | `WORKFLOW` | Code (`on_workflow`) | Known, repeatable processes | N/A |
-| `AMPHIBIOUS` | Workflow + LLM fallback | Robust hybrid execution | Automatic |
-| `AUTO` (default) | Auto-detect | Detects if `on_workflow` is overridden | Auto |
+| `AMPHIFLOW` | Workflow + LLM fallback | Robust hybrid execution | Automatic |
+| `AUTO` (default) | Auto-detect from overridden methods | Most subclasses | Inherits from resolved mode |
 
-- `AUTO`: if `on_workflow()` is overridden → AMPHIBIOUS; otherwise → AGENT.
+- `AUTO` resolution rules:
+  - only `on_agent` overridden → `AGENT`
+  - only `on_workflow` overridden → `WORKFLOW`
+  - both overridden → `AMPHIFLOW`
+  - neither overridden → `RuntimeError` at run time
+- LLM requirement: `AGENT` and `AMPHIFLOW` require an LLM at `arun()` time; pure `WORKFLOW` does not.
 
 ## Data Exposure System
 
@@ -181,7 +186,7 @@ async with self.snapshot(goal="Sub-task A"):
 
 ## Workflow Fallback Mechanism
 
-In AMPHIBIOUS mode:
+In AMPHIFLOW mode:
 
 1. Deterministic step fails → check `consecutive_failures < max_consecutive_fallbacks`
 2. If within limit: agent fixes the specific step (scoped goal via `snapshot`)

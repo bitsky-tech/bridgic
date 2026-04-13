@@ -4,7 +4,7 @@
 - [Minimal Agent (Agent Mode)](#minimal-agent-agent-mode)
 - [Workflow Mode](#workflow-mode)
 - [Human-in-the-Loop](#human-in-the-loop)
-- [Amphibious Mode](#amphibious-mode)
+- [Amphiflow Mode](#amphiflow-mode)
 - [Custom Worker](#custom-worker)
 - [Structured Output (output_schema)](#structured-output-output_schema)
 - [Custom Context](#custom-context)
@@ -55,13 +55,13 @@ print(agent.final_answer)
 
 ## Workflow Mode
 
+Pure workflow mode runs deterministically and does not need an LLM — only
+override `on_workflow`, leave `on_agent` alone.
+
 ```python
 from bridgic.amphibious import ActionCall
 
 class WeatherWorkflow(AmphibiousAutoma[CognitiveContext]):
-    async def on_agent(self, ctx: CognitiveContext):
-        pass  # Required but not used in pure workflow
-
     async def on_workflow(self, ctx: CognitiveContext):
         tokyo = yield ActionCall("get_weather", city="Tokyo")
         london = yield ActionCall("get_weather", city="London")
@@ -70,7 +70,7 @@ class WeatherWorkflow(AmphibiousAutoma[CognitiveContext]):
         london_val = london[0].result if london else "N/A"
         self.set_final_answer(f"Tokyo: {tokyo_val}, London: {london_val}")
 
-workflow = WeatherWorkflow(llm=llm)
+workflow = WeatherWorkflow()  # No LLM needed for pure workflow mode
 result = await workflow.arun(
     goal="Check weather",
     tools=[get_weather_tool],
@@ -101,8 +101,6 @@ class InteractiveAgent(AmphibiousAutoma[CognitiveContext]):
 from bridgic.amphibious import ActionCall, HumanCall
 
 class ConfirmableWorkflow(AmphibiousAutoma[CognitiveContext]):
-    async def on_agent(self, ctx): pass
-
     async def on_workflow(self, ctx: CognitiveContext):
         result = yield ActionCall("search_flights", origin="Beijing", destination="Tokyo", date="2024-06-01")
         feedback = yield HumanCall(prompt="Found flights. Book CA123?")
@@ -141,7 +139,12 @@ class WebAgent(AmphibiousAutoma[CognitiveContext]):
     async def on_agent(self, ctx): ...
 ```
 
-## Amphibious Mode
+## Amphiflow Mode
+
+When a class overrides both `on_agent` and `on_workflow`, `RunMode.AUTO`
+resolves to `AMPHIFLOW`: the workflow runs deterministically, and on a step
+failure the agent is invoked to recover. You may also pass
+`mode=RunMode.AMPHIFLOW` explicitly.
 
 ```python
 from bridgic.amphibious import RunMode, AgentCall, ActionCall
@@ -165,7 +168,7 @@ agent = FormFiller(llm=llm, verbose=True)
 result = await agent.arun(
     goal="Fill and submit the form",
     tools=[fill_field_tool, click_button_tool, solve_captcha_tool],
-    mode=RunMode.AMPHIBIOUS,
+    mode=RunMode.AMPHIFLOW,
     will_fallback=True,
     max_consecutive_fallbacks=2,
 )

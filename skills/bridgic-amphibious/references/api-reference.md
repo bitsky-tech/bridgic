@@ -19,7 +19,7 @@
 
 ## LLM Setup
 
-Amphibious agents require a `BaseLlm` instance. Install one of the bridgic LLM provider packages:
+Amphibious agents accept a `BaseLlm` instance from one of the bridgic LLM provider packages. The LLM is required for `AGENT` and `AMPHIFLOW` modes; pure `WORKFLOW` mode (where `on_workflow` is the only overridden template method) can run without one. Install one of the provider packages:
 
 ```python
 # OpenAI (GPT-4, GPT-4o, etc.)
@@ -122,9 +122,9 @@ Base class for dual-mode agents. Subclass with a generic `CognitiveContext` type
 
 ```python
 AmphibiousAutoma(
-    llm: BaseLlm,           # Required. LLM for workers and auxiliary tasks
-    name: str = None,        # Optional agent name
-    verbose: bool = False,   # Enable execution logging
+    llm: Optional[BaseLlm] = None,  # Optional. Required for AGENT/AMPHIFLOW modes
+    name: str = None,                # Optional agent name
+    verbose: bool = False,           # Enable execution logging
 )
 ```
 
@@ -153,17 +153,21 @@ await agent.arun(
 |----------|------|-------------|
 | `context` | `CognitiveContextT` | Current context after `arun()` |
 | `final_answer` | `Optional[str]` | Auto-captured from finishing step's `step_content` |
-| `llm` | `BaseLlm` | The agent's LLM |
+| `llm` | `Optional[BaseLlm]` | The agent's LLM (`None` is allowed for pure WORKFLOW mode) |
 | `spent_tokens` | `int` | Token usage for last `arun()` |
 | `spent_time` | `float` | Time in seconds for last `arun()` |
 
 ### Template Methods (Override in Subclasses)
 
+A subclass must override at least one of `on_agent` and `on_workflow`. Under
+`RunMode.AUTO` the runtime picks the mode from which methods are overridden:
+agent-only → `AGENT`, workflow-only → `WORKFLOW`, both → `AMPHIFLOW`.
+
 ```python
-# Required: LLM-driven orchestration
+# LLM-driven orchestration (override for AGENT or AMPHIFLOW modes)
 async def on_agent(self, ctx: CognitiveContextT) -> None: ...
 
-# Optional: Deterministic workflow (async generator)
+# Deterministic workflow (override for WORKFLOW or AMPHIFLOW modes)
 async def on_workflow(self, ctx: CognitiveContextT) -> AsyncGenerator: ...
 
 # Optional hooks
@@ -492,7 +496,7 @@ class ErrorStrategy(Enum):
 class RunMode(str, Enum):
     AGENT = "agent"
     WORKFLOW = "workflow"
-    AMPHIBIOUS = "amphibious"
+    AMPHIFLOW = "amphiflow"
     AUTO = "auto"
 ```
 

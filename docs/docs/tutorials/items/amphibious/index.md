@@ -15,7 +15,7 @@ These tutorials cover the fundamental concepts you need to build amphibious agen
 1. [Quick Start](../amphibious/quick_start.ipynb): Build your first amphibious agent in 5 minutes — run both Agent mode and Workflow mode to see the dual-mode experience firsthand.
 2. [CognitiveWorker & think_unit](../amphibious/cognitive_worker.ipynb): Understand the framework's atomic building block — the pure thinking unit that only decides *what to do*, plus its declarative execution configuration and error strategies.
 3. [Dual-Mode Orchestration](../amphibious/think.ipynb): Master the two orchestration modes — `on_agent` for LLM-driven decision making and `on_workflow` for deterministic step-by-step execution.
-4. [RunMode](../amphibious/automa_mode.ipynb): Explore the four run modes and learn how Amphibious mode automatically switches between Workflow and Agent when things go wrong.
+4. [RunMode](../amphibious/automa_mode.ipynb): Explore the four run modes and learn how Amphiflow mode automatically switches between Workflow and Agent when things go wrong.
 5. [Context & Exposure](../amphibious/context_and_exposure.ipynb): Control what the LLM sees — manage agent state with Context and choose between full disclosure and progressive reveal with Exposure strategies.
 
 ## Advanced
