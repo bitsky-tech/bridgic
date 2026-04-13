@@ -70,7 +70,7 @@ class ResilientAgent(AmphibiousAutoma[MyContext]):
 **Runtime mode switching** happens automatically:
 - **Workflow failure → Agent fallback**: If a workflow step fails, the framework can automatically switch to agent mode to resolve the issue, then resume the workflow
 - **Configurable degradation**: `max_consecutive_fallbacks` controls when to abandon the workflow entirely and hand over to full agent mode
-- **Explicit mode control**: `arun(mode=RunMode.AGENT)` or `arun(mode=RunMode.AMPHIBIOUS)`
+- **Explicit mode control**: `arun(mode=RunMode.AGENT)` or `arun(mode=RunMode.AMPHIFLOW)`
 
 ## Architecture
 
@@ -242,24 +242,21 @@ await agent.arun(goal="Book a flight from Beijing to Tokyo", tools=[...])
 from bridgic.amphibious import AmphibiousAutoma, CognitiveContext, ActionCall, HumanCall
 
 class WorkflowAgent(AmphibiousAutoma[CognitiveContext]):
-    async def on_agent(self, ctx):
-        pass  # Required but not used in pure workflow mode
-
     async def on_workflow(self, ctx):
         result = yield ActionCall("search_flights", origin="Beijing", destination="Tokyo", date="2024-06-01")
         feedback = yield HumanCall(prompt="Found flights. Book CA123?")
         if feedback == "yes":
             yield ActionCall("book_flight", flight_number="CA123")
 
-# Runs in amphibious mode (workflow + agent fallback)
-agent = WorkflowAgent(llm=my_llm)
+# Pure workflow mode does not need an LLM
+agent = WorkflowAgent()
 await agent.arun(goal="Book a flight", tools=[...])
 ```
 
-### Amphibious Mode (Workflow + Agent Fallback)
+### Amphiflow Mode (Workflow + Agent Fallback)
 
 ```python
-class AmphibiousAgent(AmphibiousAutoma[CognitiveContext]):
+class AmphiflowAgent(AmphibiousAutoma[CognitiveContext]):
     fixer = think_unit(
         CognitiveWorker.inline("Fix the current issue and complete the step"),
         max_attempts=5,
@@ -273,11 +270,11 @@ class AmphibiousAgent(AmphibiousAutoma[CognitiveContext]):
         yield ActionCall("navigate_to", url="/dashboard")
         # If any step fails, the framework falls back to on_agent() to resolve it
 
-agent = AmphibiousAgent(llm=my_llm)
+agent = AmphiflowAgent(llm=my_llm)
 await agent.arun(
     goal="Extract dashboard data",
     tools=[...],
-    mode=RunMode.AMPHIBIOUS,      # or RunMode.AUTO (default, auto-detects)
+    mode=RunMode.AMPHIFLOW,       # or RunMode.AUTO (default, auto-detects)
     will_fallback=True,            # enable agent fallback on failure
     max_consecutive_fallbacks=2,   # switch to full agent mode after 2 consecutive failures
 )
@@ -374,7 +371,7 @@ agent._agent_trace.save("trace.json")
 | **AgentCall** | Yield in on_workflow() to delegate to agent mode |
 | **human_request_tool** | Built-in FunctionToolSpec for LLM-driven human requests |
 | **request_human()** | Code-level method to request human input in on_agent() |
-| **RunMode** | AGENT, WORKFLOW, AMPHIBIOUS, or AUTO |
+| **RunMode** | AGENT, WORKFLOW, AMPHIFLOW, or AUTO |
 
 ## License
 

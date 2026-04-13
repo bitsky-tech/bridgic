@@ -60,7 +60,7 @@ class RunMode(str, Enum):
     """
     AGENT = "agent"
     WORKFLOW = "workflow"
-    AMPHIBIOUS = "amphibious"
+    AMPHIFLOW = "amphiflow"
     AUTO = "auto"
 
 class DetailRequest(BaseModel):

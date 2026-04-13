@@ -2,7 +2,6 @@ import asyncio
 import inspect
 import json
 import time
-from abc import abstractmethod
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from typing import (
@@ -383,11 +382,19 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
     """
     Base class for amphibious agents — dual-mode orchestration engine.
 
-    Supports two execution modes:
+    Supports three execution modes:
     - **Agent mode** (``on_agent``): LLM-driven observe-think-act cycles via think_unit
     - **Workflow mode** (``on_workflow``): Deterministic step execution via yield
+    - **Amphiflow mode** (``on_workflow`` + ``on_agent``): workflow-first with
+      automatic agent fallback when a step fails
 
     Subclasses define behavior by implementing ``on_agent()`` and/or ``on_workflow()``.
+    Under ``RunMode.AUTO`` (the default) the runtime picks the mode from which
+    template methods are overridden:
+
+    - only ``on_agent`` overridden → ``RunMode.AGENT``
+    - only ``on_workflow`` overridden → ``RunMode.WORKFLOW``
+    - both overridden → ``RunMode.AMPHIFLOW``
 
     Parameters
     ----------
@@ -579,14 +586,17 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         """
         return None
 
-    @abstractmethod
     async def on_agent(self, ctx: CognitiveContextT) -> None:
         """
         Agent mode: LLM-driven orchestration logic.
 
-        Subclasses implement this method to define how think_units are
-        orchestrated. Use standard Python control flow combined with
-        ``await self.think_unit`` calls.
+        Override this method to define how think_units are orchestrated.
+        Use standard Python control flow combined with ``await self.think_unit``
+        calls.
+
+        A subclass may override this, ``on_workflow``, or both. The default
+        implementation is a no-op so that subclasses which only implement
+        ``on_workflow`` remain instantiable.
 
         Parameters
         ----------
@@ -599,7 +609,7 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         ...     await self.main_think
         ...     await self.exec_think.until(lambda ctx: ctx.done, max_attempts=20)
         """
-        ...
+        return None
 
     async def on_workflow(self, ctx: CognitiveContextT) -> AsyncGenerator[Union[ActionCall, HumanCall, AgentCall], None]:
         """Workflow mode: deterministic execution as an async generator.
@@ -1472,13 +1482,41 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         """Check whether the subclass has overridden on_agent()."""
         return type(self).on_agent is not AmphibiousAutoma.on_agent
 
+    def _resolve_mode(self, mode: RunMode) -> RunMode:
+        """Resolve ``RunMode.AUTO`` to a concrete mode based on overridden template methods.
+
+        Resolution rules:
+        - both ``on_agent`` and ``on_workflow`` overridden → ``RunMode.AMPHIFLOW``
+        - only ``on_workflow`` overridden → ``RunMode.WORKFLOW``
+        - only ``on_agent`` overridden → ``RunMode.AGENT``
+        - neither overridden → ``RuntimeError``
+
+        Non-AUTO modes are returned unchanged.
+        """
+        if mode is not RunMode.AUTO:
+            return mode
+        has_agent = self._has_agent()
+        has_workflow = self._has_workflow()
+        if has_agent and has_workflow:
+            return RunMode.AMPHIFLOW
+        if has_workflow:
+            return RunMode.WORKFLOW
+        if has_agent:
+            return RunMode.AGENT
+        raise RuntimeError(
+            f"{type(self).__name__} must override on_agent() or on_workflow()."
+        )
+
     ############################################################################
     # Entry point
     ############################################################################
     @worker(is_start=True)
     async def router(self, mode: RunMode, will_fallback: bool, max_consecutive_fallbacks: int) -> str:
         """
-        Router worker: determines and dispatches to the correct execution mode.
+        Router worker: dispatches to the correct execution mode.
+
+        ``RunMode.AUTO`` is resolved upstream in ``arun()``, so this worker
+        always receives a concrete mode.
         """
         if mode is RunMode.AGENT:
             self._log("Router", "Ferrying to AGENT mode", color="green")
@@ -1486,18 +1524,11 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         elif mode is RunMode.WORKFLOW:
             self._log("Router", "Ferrying to WORKFLOW mode", color="green")
             self.ferry_to("_workflow")
-        elif mode is RunMode.AMPHIBIOUS:
-            self._log("Router", f"Ferrying to AMPHIBIOUS mode, will_fallback={will_fallback}, max_consecutive_fallbacks={max_consecutive_fallbacks}", color="green")
-            self.ferry_to("_amphibious", will_fallback=will_fallback, max_consecutive_fallbacks=max_consecutive_fallbacks)
-        elif mode is RunMode.AUTO:
-            self._log("Router", "Auto-detecting execution mode", color="green")
-            has_workflow = self._has_workflow()
-            if has_workflow:
-                self._log("Router", f"Detected AMPHIBIOUS mode (on_workflow overridden), will_fallback={will_fallback}, max_consecutive_fallbacks={max_consecutive_fallbacks}", color="green")
-                self.ferry_to("_amphibious", will_fallback=will_fallback, max_consecutive_fallbacks=max_consecutive_fallbacks)
-            else:
-                self._log("Router", "Detected AGENT mode", color="green")
-                self.ferry_to("_cognition")
+        elif mode is RunMode.AMPHIFLOW:
+            self._log("Router", f"Ferrying to AMPHIFLOW mode, will_fallback={will_fallback}, max_consecutive_fallbacks={max_consecutive_fallbacks}", color="green")
+            self.ferry_to("_amphiflow", will_fallback=will_fallback, max_consecutive_fallbacks=max_consecutive_fallbacks)
+        else:
+            raise RuntimeError(f"Unsupported run mode: {mode!r}")
 
     @worker(is_output=True)
     async def _cognition(self) -> str:
@@ -1516,9 +1547,9 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         return self._final_answer or self._current_context.summary()
 
     @worker(is_output=True)
-    async def _amphibious(self, will_fallback: bool, max_consecutive_fallbacks: int) -> str:
+    async def _amphiflow(self, will_fallback: bool, max_consecutive_fallbacks: int) -> str:
         """
-        Entry point: runs on_workflow() with agent fallback support (amphibious mode).
+        Entry point: runs on_workflow() with agent fallback support (amphiflow mode).
         """
         await self._run_workflow(self._current_context, will_fallback=will_fallback, max_consecutive_fallbacks=max_consecutive_fallbacks)
         return self._final_answer or self._current_context.summary()
@@ -1539,9 +1570,10 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         Routes to one of the execution modes:
         1. Agent mode — LLM-driven ``on_agent()`` path.
         2. Workflow mode — deterministic ``on_workflow()`` path (no fallback).
-        3. Amphibious mode — ``on_workflow()`` with automatic agent fallback.
-        4. Auto mode (default) — amphibious if ``on_workflow()`` is overridden,
-           otherwise agent.
+        3. Amphiflow mode — ``on_workflow()`` with automatic agent fallback.
+        4. Auto mode (default) — resolved from which template methods the
+           subclass overrides: both → AMPHIFLOW, only ``on_workflow`` → WORKFLOW,
+           only ``on_agent`` → AGENT.
 
         Context initialization has two paths:
         1. Pre-created: ``arun(context=my_ctx)``
@@ -1556,12 +1588,12 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         mode : Optional[RunMode]
             Execution mode. ``RunMode.AGENT`` forces agent mode,
             ``RunMode.WORKFLOW`` forces workflow mode (no fallback),
-            ``RunMode.AMPHIBIOUS`` forces workflow with agent fallback,
-            ``RunMode.AUTO`` (default) auto-detects based on whether
-            ``on_workflow()`` is overridden.
+            ``RunMode.AMPHIFLOW`` forces workflow with agent fallback,
+            ``RunMode.AUTO`` (default) auto-detects from which template methods
+            are overridden.
         will_fallback : bool
             Whether workflow failures can fall back to agent mode.
-            Only applies to amphibious mode. Default is True.
+            Only applies to amphiflow mode. Default is True.
         max_consecutive_fallbacks : int
             Maximum consecutive workflow step failures before switching
             to full agent mode. Default is 1.
@@ -1593,7 +1625,7 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
             """Run the agent, measure time, and log summary."""
             start_time = time.time()
             result = await GraphAutoma.arun(
-                self, mode,
+                self, resolved_mode,
                 will_fallback=will_fallback,
                 max_consecutive_fallbacks=max_consecutive_fallbacks,
             )
@@ -1620,8 +1652,12 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         self.spent_time = 0.0
         self._final_answer = None
 
-        if self._llm is None:
-            raise RuntimeError("AmphibiousAutoma must be initialized with an LLM.")
+        resolved_mode = self._resolve_mode(mode if mode is not None else RunMode.AUTO)
+        if self._llm is None and resolved_mode in (RunMode.AGENT, RunMode.AMPHIFLOW):
+            raise RuntimeError(
+                f"AmphibiousAutoma must be initialized with an LLM for "
+                f"{resolved_mode.value} mode."
+            )
 
         if trace_running:
             self._agent_trace = AgentTrace()
