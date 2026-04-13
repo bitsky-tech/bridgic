@@ -7,9 +7,14 @@ description: "Build agents with the Bridgic Amphibious dual-mode framework — c
 
 Dual-mode agent framework: agents operate in LLM-driven (`on_agent`) and deterministic (`on_workflow`) modes with automatic fallback between them.
 
-## Dependencies
+## Prerequisite (Important!!)
 
-A bridgic-amphibious project requires the following packages:
+Before using this package, ensure you have a compatible Python environment to complete task. to ensure the execution environment is prepared by following the instructions: 
+
+```bash
+bash "skills/bridgic-amphibious/scripts/install-deps.sh" "$PWD"
+```
+The script checks uv availability, initializes a uv project if needed, and installs only missing packages. A bridgic-amphibious project requires the following packages:
 
 | Package | Description |
 |---------|-------------|
@@ -17,12 +22,6 @@ A bridgic-amphibious project requires the following packages:
 | `bridgic-amphibious` | Dual-mode agent framework (private index: `http://8.130.156.165:3141/btsk/test/+simple`) |
 | `bridgic-llms-openai` | LLM provider (only required for `AGENT` / `AMPHIFLOW` modes) |
 | `python-dotenv` | `.env` file loading |
-
-**Installation**: Run the install script to set up all dependencies:
-```bash
-bash "skills/bridgic-amphibious/scripts/install-deps.sh" "$PWD"
-```
-The script checks uv availability, initializes a uv project if needed, and installs only missing packages.
 
 ## LLM Setup
 
