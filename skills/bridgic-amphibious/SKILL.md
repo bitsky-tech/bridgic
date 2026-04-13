@@ -14,6 +14,7 @@ Before using this package, ensure you have a compatible Python environment to co
 ```bash
 bash "skills/bridgic-amphibious/scripts/install-deps.sh" "$PWD"
 ```
+
 The script checks uv availability, initializes a uv project if needed, and installs only missing packages. A bridgic-amphibious project requires the following packages:
 
 | Package | Description |
