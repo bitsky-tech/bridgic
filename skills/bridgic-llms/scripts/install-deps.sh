@@ -16,9 +16,11 @@
 #
 # Environment:
 #   BRIDGIC_DEV_INDEX   When set to a URL, the selected bridgic LLM package is
-#                       routed through this index via [tool.uv.sources]. When
-#                       unset, the package resolves from public PyPI
-#                       (production default).
+#                       routed through this index via [tool.uv.sources], and
+#                       uv add runs with --prerelease=allow so the latest dev
+#                       release is always picked. When unset, the package
+#                       resolves from public PyPI with default (stable-only)
+#                       prerelease mode (production default).
 #
 # Exit codes:
 #   0  All dependencies installed
@@ -147,7 +149,11 @@ done
 if [ ${#MISSING[@]} -gt 0 ]; then
     echo ""
     echo "Installing: ${MISSING[*]} ..."
-    uv add "${MISSING[@]}" || { echo "Error: uv add failed for: ${MISSING[*]}"; exit 3; }
+    if [ -n "$DEV_INDEX" ]; then
+        uv add --prerelease=allow "${MISSING[@]}" || { echo "Error: uv add failed for: ${MISSING[*]}"; exit 3; }
+    else
+        uv add "${MISSING[@]}" || { echo "Error: uv add failed for: ${MISSING[*]}"; exit 3; }
+    fi
 fi
 
 echo ""

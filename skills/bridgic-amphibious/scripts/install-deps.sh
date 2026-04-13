@@ -10,8 +10,11 @@
 #
 # Environment:
 #   BRIDGIC_DEV_INDEX   When set to a URL, all bridgic-* packages are routed
-#                       through this index via [tool.uv.sources]. When unset,
-#                       packages resolve from public PyPI (production default).
+#                       through this index via [tool.uv.sources], and uv add
+#                       runs with --prerelease=allow so the latest dev release
+#                       is always picked. When unset, packages resolve from
+#                       public PyPI with default (stable-only) prerelease mode
+#                       (production default).
 #
 # Usage:
 #   install-deps.sh [PROJECT_DIR]   (defaults to current directory)
@@ -130,7 +133,11 @@ done
 if [ ${#MISSING[@]} -gt 0 ]; then
     echo ""
     echo "Installing: ${MISSING[*]} ..."
-    uv add "${MISSING[@]}" || { echo "Error: uv add failed for: ${MISSING[*]}"; exit 3; }
+    if [ -n "$DEV_INDEX" ]; then
+        uv add --prerelease=allow "${MISSING[@]}" || { echo "Error: uv add failed for: ${MISSING[*]}"; exit 3; }
+    else
+        uv add "${MISSING[@]}" || { echo "Error: uv add failed for: ${MISSING[*]}"; exit 3; }
+    fi
 fi
 
 echo ""
