@@ -121,7 +121,7 @@ await MyHybrid(llm=llm).arun(
 
 ```python
 from bridgic.amphibious import ActionCall, HumanCall
-from bridgic.amphibious.buildin_tools import human_request_tool
+from bridgic.amphibious.builtin_tools import human_request_tool
 
 class MyAgent(AmphibiousAutoma[CognitiveContext]):
     worker = think_unit(CognitiveWorker.inline("Execute step."), max_attempts=10)

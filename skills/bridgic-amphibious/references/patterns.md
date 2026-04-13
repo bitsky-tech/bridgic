@@ -115,7 +115,7 @@ class ConfirmableWorkflow(AmphibiousAutoma[CognitiveContext]):
 ### Entry 3: LLM tool (autonomous)
 
 ```python
-from bridgic.amphibious.buildin_tools import human_request_tool
+from bridgic.amphibious.builtin_tools import human_request_tool
 
 class AutonomousAgent(AmphibiousAutoma[CognitiveContext]):
     worker = think_unit(

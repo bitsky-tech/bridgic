@@ -289,7 +289,7 @@ Three entry points for requesting human input during agent execution:
 
 ```python
 from bridgic.amphibious import AmphibiousAutoma, CognitiveContext, ActionCall, HumanCall
-from bridgic.amphibious.buildin_tools import human_request_tool
+from bridgic.amphibious.builtin_tools import human_request_tool
 
 class InteractiveAgent(AmphibiousAutoma[CognitiveContext]):
     planner = think_unit(

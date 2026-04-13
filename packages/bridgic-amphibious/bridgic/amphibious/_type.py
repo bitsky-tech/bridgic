@@ -18,9 +18,9 @@ from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
-#################################################################################################################
+################################################################################################################
 # Context layer models  (used by: _context.py)
-#################################################################################################################
+################################################################################################################
 
 class Step(BaseModel):
     """A single execution step with content, result, and metadata.
@@ -49,14 +49,14 @@ class Skill(BaseModel):
     metadata: Dict[str, Any] = Field(default_factory=dict)
 
 
-#################################################################################################################
+################################################################################################################
 # Worker layer models  (used by: _cognitive_worker.py, _amphibious_automa.py)
-#################################################################################################################
+################################################################################################################
 
 class RunMode(str, Enum):
     """The mode of the run.
 
-    Used by: _amphibious_automa.py (RunConfig)
+    Used by: _amphibious_automa.py (arun, router)
     """
     AGENT = "agent"
     WORKFLOW = "workflow"
@@ -176,7 +176,7 @@ def _coerce_none_to_list(v: Any) -> list:
 
 # Framework-level event type constant used by all human-in-the-loop entry points.
 # Consumed by: AmphibiousAutoma._register_human_input_handler, request_human, HumanCall handling.
-HUMAN_INPUT_EVENT_TYPE: str = "REQUEST_FEEDBACK"
+HUMAN_INPUT_EVENT_TYPE: str = "HUMAN_INPUT_REQUEST"
 
 class WorkflowDecision(BaseModel):
     """
@@ -263,11 +263,11 @@ class AgentCall:
         yield AgentCall(goal="Handle the login popup", max_attempts=5)
     """
     goal: str = ""
-    tools: Optional[Any] = None    # Optional[CognitiveTools]; None → use context's tools
-    skills: Optional[Any] = None   # Optional[CognitiveSkills]; None → use context's skills
-    history: Optional[Any] = None  # Optional[CognitiveHistory]; None → fresh CognitiveHistory()
+    tools: Optional[List[str]] = None   # Tool-name filter; None → use context's full tool set
+    skills: Optional[List[str]] = None  # Skill-name filter; None → use context's full skill set
+    history: Optional[Any] = None       # Optional[CognitiveHistory]; None → fresh CognitiveHistory()
     max_attempts: int = 1
-    worker: Optional[Any] = None   # Optional[CognitiveWorker]; None → use framework default
+    worker: Optional[Any] = None        # Optional[CognitiveWorker]; None → use framework default
 
 
 ################################################################################################################
@@ -375,21 +375,6 @@ class TraceStep(BaseModel):
     output_type: StepOutputType = StepOutputType.TOOL_CALLS
     structured_output: Optional[Dict[str, Any]] = None
     structured_output_class: Optional[str] = None
-
-
-class RunConfig(BaseModel):
-    """Parameters captured from self.run(), used for trace metadata.
-
-    Used by: _amphibious_automa.py (AgentTrace)
-    """
-    model_config = ConfigDict(extra="forbid")
-
-    worker_class: str
-    worker_thinking_prompt: Optional[str] = None
-    tools: Optional[List[str]] = None
-    skills: Optional[List[str]] = None
-    max_attempts: int = 1
-    on_error: str = "raise"
 
 
 ################################################################################################################

@@ -70,7 +70,7 @@ from ._amphibious_automa import (
     ThinkUnitDescriptor,
 )
 from .scaffold import create_project
-from .buildin_tools import human_request_tool
+from .builtin_tools import human_request_tool
 
 from ._type import (
     # Worker data structures
@@ -91,13 +91,9 @@ from ._type import (
     ToolResult,
     # Trace data models
     TraceStep,
-    RunConfig,
     RecordedToolCall,
     StepOutputType,
 )
-
-# Deprecated alias
-AgentAutoma = AmphibiousAutoma
 
 __all__ = [
     # Abstraction layer
@@ -120,7 +116,6 @@ __all__ = [
 
     # Orchestration layer
     "AmphibiousAutoma",
-    "AgentAutoma",  # deprecated alias
     "AgentTrace",
     "think_unit",
     "ThinkUnitDescriptor",
@@ -143,7 +138,6 @@ __all__ = [
     "ToolResult",
     # Trace data models
     "TraceStep",
-    "RunConfig",
     "RecordedToolCall",
     "StepOutputType",
     # Built-in tools

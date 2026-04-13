@@ -60,7 +60,7 @@ LLM_MODEL = os.getenv("LLM_MODEL", "")
 _TOOLS_PY = '''\
 """Tool definitions for this project.
 
-Define your tools here and export them for use in agent_only.py and agents.py.
+Define your tools here and export them for use in agents.py.
 """
 
 import os
@@ -69,9 +69,10 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 '''
 
 _WORKERS_PY = '''\
-"""Context and data models for this project.
+"""Context, data models, and custom workers for this project.
 
-Define your custom CognitiveContext subclass and any data models here.
+Define your custom CognitiveContext subclass, data models, and any
+CognitiveWorker subclasses here.
 """
 
 from typing import Optional

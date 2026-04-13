@@ -74,9 +74,9 @@ from bridgic.amphibious import (
     Step, Skill, RunMode, ErrorStrategy,
     ActionResult, ActionStepResult, ToolResult,
     # Trace
-    TraceStep, RunConfig, RecordedToolCall, StepOutputType,
+    TraceStep, RecordedToolCall, StepOutputType,
 )
-from bridgic.amphibious.buildin_tools import human_request_tool
+from bridgic.amphibious.builtin_tools import human_request_tool
 from bridgic.core.agentic.tool_specs import FunctionToolSpec
 from bridgic.core.model.types import Message
 ```
@@ -154,8 +154,8 @@ await agent.arun(
 | `context` | `CognitiveContextT` | Current context after `arun()` |
 | `final_answer` | `Optional[str]` | Auto-captured from finishing step's `step_content` |
 | `llm` | `BaseLlm` | The agent's LLM |
-| `spend_tokens` | `int` | Token usage for last `arun()` |
-| `spend_time` | `float` | Time in seconds for last `arun()` |
+| `spent_tokens` | `int` | Token usage for last `arun()` |
+| `spent_time` | `float` | Time in seconds for last `arun()` |
 
 ### Template Methods (Override in Subclasses)
 
@@ -380,7 +380,7 @@ Three entry points for requesting human input:
 ### human_request_tool — Built-in FunctionToolSpec
 
 ```python
-from bridgic.amphibious.buildin_tools import human_request_tool
+from bridgic.amphibious.builtin_tools import human_request_tool
 
 # Use like any other tool — no factory call needed
 await agent.arun(goal="...", tools=[search_tool, human_request_tool])
@@ -392,7 +392,7 @@ Uses `contextvars.ContextVar` for late-binding to the running agent. Each concur
 
 ```python
 from bridgic.amphibious import HUMAN_INPUT_EVENT_TYPE
-# Value: "REQUEST_FEEDBACK"
+# Value: "HUMAN_INPUT_REQUEST"
 ```
 
 Framework-level event type constant used by all three HITL entry points.

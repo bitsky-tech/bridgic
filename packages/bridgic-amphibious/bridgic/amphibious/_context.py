@@ -317,7 +317,7 @@ class Context(BaseModel):
         """
         Propagate an LLM to all Exposure fields that opt in via ``use_llm=True``.
 
-        Called by ``AgentAutoma`` at run start. Fields opt in by declaring:
+        Called by ``AmphibiousAutoma`` at run start. Fields opt in by declaring:
 
             my_field: MyExposure = Field(
                 ..., json_schema_extra={"use_llm": True}
@@ -1109,7 +1109,11 @@ class CognitiveContext(Context):
     goal: str = Field(default="", description="The goal to achieve")
     tools: CognitiveTools = Field(default_factory=CognitiveTools, description="Available tools")
     skills: CognitiveSkills = Field(default_factory=CognitiveSkills, description="Available skills")
-    cognitive_history: CognitiveHistory = Field(default_factory=CognitiveHistory, json_schema_extra={"use_llm": True})
+    cognitive_history: CognitiveHistory = Field(
+        default_factory=CognitiveHistory,
+        description="History of cognitive steps with layered memory",
+        json_schema_extra={"use_llm": True},
+    )
 
     # observation: saved from _observation worker method (not displayed in summary)
     observation: Optional[str] = Field(

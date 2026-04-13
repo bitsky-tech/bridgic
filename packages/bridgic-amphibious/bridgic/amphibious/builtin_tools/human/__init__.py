@@ -3,7 +3,7 @@ Human built-in tools for human-in-the-loop support.
 
 Usage::
 
-    from bridgic.amphibious.buildin_tools import human_request_tool
+    from bridgic.amphibious.builtin_tools import human_request_tool
 
     await agent.arun(goal="...", tools=[search_tool, human_request_tool])
 """

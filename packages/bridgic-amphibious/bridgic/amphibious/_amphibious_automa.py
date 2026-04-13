@@ -23,7 +23,7 @@ from bridgic.core.agentic.tool_specs import ToolSpec
 from bridgic.core.utils._console import printer
 from bridgic.amphibious._context import CognitiveContext, CognitiveTools, CognitiveSkills, CognitiveHistory, Exposure, LayeredExposure
 from bridgic.amphibious._cognitive_worker import CognitiveWorker, _DELEGATE
-from bridgic.amphibious.buildin_tools.human.request_human import current_agent
+from bridgic.amphibious.builtin_tools.human.request_human import current_agent
 from bridgic.amphibious._type import (
     RunMode,
     Step,
@@ -317,11 +317,7 @@ class ThinkUnitDescriptor:
         self._on_error = on_error
         self._max_retries = max_retries
 
-    def __set_name__(self, owner: type, name: str) -> None:
-        """Record the attribute name (Python 3.6+ descriptor protocol)."""
-        self._attr_name = name
-
-    def __get__(self, obj: Any, objtype: type = None) -> Any:
+    def __get__(self, obj: Any, objtype: Optional[type] = None) -> Any:
         if obj is None:
             return self  # Class-level access returns the descriptor
         return _BoundThinkUnit(obj, self)
@@ -415,6 +411,11 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
 
     _context_class: Optional[Type[CognitiveContext]] = None
 
+    #: Max think-unit attempts when a workflow step falls back to agent mode
+    #: for per-step recovery (see ``_run_workflow``). Subclasses may override
+    #: to give the fallback agent a longer or shorter runway.
+    WORKFLOW_STEP_FALLBACK_MAX_ATTEMPTS: int = 5
+
     def __init_subclass__(cls, **kwargs) -> None:
         """Extract the CognitiveContext type from the generic parameter."""
         super().__init_subclass__(**kwargs)
@@ -460,8 +461,8 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         self._final_answer: Optional[str] = None
 
         # Usage stats (reset per arun call)
-        self.spend_tokens: int = 0
-        self.spend_time: float = 0.0
+        self.spent_tokens: int = 0
+        self.spent_time: float = 0.0
 
         # Human-in-the-loop event handler registration
         self._register_human_input_handler()
@@ -621,7 +622,8 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         ...     result = yield ActionCall("click_element_by_ref", ref="42")
         ...     yield AgentCall(goal="Handle complex case", max_attempts=10)
         """
-        ...
+        if False:  # pragma: no cover — makes this a proper async generator stub
+            yield
 
     async def before_action(
         self,
@@ -904,8 +906,10 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
                     filtered_tools.add(tool)
             context.tools = filtered_tools
 
-        # Init skills
-        original_skills = None
+        # Init skills (all bindings declared up-front so the `finally` block
+        # can read them unconditionally regardless of whether filtering ran).
+        original_skills: Optional[CognitiveSkills] = None
+        filtered_skills: Optional[CognitiveSkills] = None
         filtered_to_orig: Dict[int, int] = {}
         if skills is not None:
             original_skills = context.skills
@@ -922,8 +926,8 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
                     filtered_skills._revealed[orig_to_filtered[orig_idx]] = detail
             context.skills = filtered_skills
 
-        # Init spend status
-        tokens_before = worker.spend_tokens
+        # Init spent status
+        tokens_before = worker.spent_tokens
 
         ########################
         # Run CognitiveWorker
@@ -952,7 +956,7 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
                             ) from e
         finally:
             # Record and restore the execution status of the worker
-            self.spend_tokens += worker.spend_tokens - tokens_before
+            self.spent_tokens += worker.spent_tokens - tokens_before
             if injected_verbose:
                 worker._verbose = None
             if original_tools is not None:
@@ -1063,11 +1067,11 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
                 except StopAsyncIteration:
                     break
                 
-                # When returning an AgentCall proactively in on_work, it is by default assumed that a brand new and clean 
-                # context is initiated for a new goal target to execute the agent mode. Otherwise, you can customize the 
+                # When returning an AgentCall proactively in on_workflow, it is by default assumed that a brand new and clean
+                # context is initiated for a new goal target to execute the agent mode. Otherwise, you can customize the
                 # context information: tools, skills, history.
                 if isinstance(item, AgentCall):
-                    call_worker = item.worker if item.worker is not None else CognitiveWorker.inline("Complete the goal and respond in JSON format.")
+                    call_worker = item.worker if item.worker is not None else CognitiveWorker.inline("Complete the goal.")
                     history = item.history if item.history is not None else CognitiveHistory()
                     async with self.snapshot(goal=item.goal, cognitive_history=history):
                         await self._run(call_worker, tools=item.tools, skills=item.skills, max_attempts=item.max_attempts)
@@ -1108,10 +1112,7 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
 
                     # Check if any tool execution failed
                     inner = getattr(action_result, "result", None)
-                    if (
-                        inner is not None
-                        and hasattr(inner, "results")
-                    ):
+                    if isinstance(inner, ActionResult):
                         failed = [
                             r for r in inner.results
                             if not r.success
@@ -1189,8 +1190,8 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
                     )
                     async with self.snapshot(goal=fallback_goal):
                         await self._run(
-                            worker if worker is not None else CognitiveWorker.inline("Complete the goal and respond in JSON format."),
-                            max_attempts=5,  # TODO: Make this configurable
+                            worker if worker is not None else CognitiveWorker.inline("Complete the goal."),
+                            max_attempts=self.WORKFLOW_STEP_FALLBACK_MAX_ATTEMPTS,
                         )
                     send_value = None  # No result to send back after fallback
         finally:
@@ -1521,7 +1522,6 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         """
         await self._run_workflow(self._current_context, will_fallback=will_fallback, max_consecutive_fallbacks=max_consecutive_fallbacks)
         return self._final_answer or self._current_context.summary()
-        return self._current_context.summary()
 
     async def arun(
         self,
@@ -1584,8 +1584,8 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
                     if automa._context_class else None
                 ),
                 "timestamp": _time.time(),
-                "spend_tokens": automa.spend_tokens,
-                "spend_time": automa.spend_time,
+                "spent_tokens": automa.spent_tokens,
+                "spent_time": automa.spent_time,
             }
             return automa._agent_trace.build(metadata=metadata)
 
@@ -1597,7 +1597,7 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
                 will_fallback=will_fallback,
                 max_consecutive_fallbacks=max_consecutive_fallbacks,
             )
-            self.spend_time = time.time() - start_time
+            self.spent_time = time.time() - start_time
 
             if self._verbose:
                 agent_name = self.name or self.__class__.__name__
@@ -1605,8 +1605,8 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
                 printer.print(separator, color="cyan")
                 printer.print(
                     f"  {agent_name} | Completed\n"
-                    f"Tokens: {self.spend_tokens} | "
-                    f"Time: {self.spend_time:.2f}s",
+                    f"Tokens: {self.spent_tokens} | "
+                    f"Time: {self.spent_time:.2f}s",
                     color="cyan"
                 )
                 printer.print(separator, color="cyan")
@@ -1616,8 +1616,8 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         ########################
         # Pre-initialize status
         ########################
-        self.spend_tokens = 0
-        self.spend_time = 0.0
+        self.spent_tokens = 0
+        self.spent_time = 0.0
         self._final_answer = None
 
         if self._llm is None:

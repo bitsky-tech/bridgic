@@ -24,7 +24,7 @@ from bridgic.amphibious import (
     StepToolCall,
     ToolArgument,
 )
-from bridgic.amphibious.buildin_tools import human_request_tool
+from bridgic.amphibious.builtin_tools import human_request_tool
 
 from .tools import get_travel_planning_tools
 
@@ -112,7 +112,7 @@ def _async_respond_handler(response: str = "approved", delay: float = 0.05):
 class TestHumanInputEventType:
 
     def test_constant_value(self):
-        assert HUMAN_INPUT_EVENT_TYPE == "REQUEST_FEEDBACK"
+        assert HUMAN_INPUT_EVENT_TYPE == "HUMAN_INPUT_REQUEST"
 
     def test_constant_is_string(self):
         assert isinstance(HUMAN_INPUT_EVENT_TYPE, str)
@@ -125,7 +125,7 @@ class TestHumanInputEventType:
 class TestEventHandlerRegistration:
 
     def test_handler_registered_on_init(self):
-        """AmphibiousAutoma.__init__ registers a REQUEST_FEEDBACK handler."""
+        """AmphibiousAutoma.__init__ registers a HUMAN_INPUT_REQUEST handler."""
         llm = MockLLM([_make_finish_step()])
 
         class Agent(AmphibiousAutoma[CognitiveContext]):
@@ -606,7 +606,7 @@ class TestContextVarConcurrency:
     @pytest.mark.asyncio
     async def test_contextvar_cleaned_after_arun(self):
         """ContextVar is reset after arun() completes — no leaking between runs."""
-        from bridgic.amphibious.buildin_tools.human.request_human import current_agent
+        from bridgic.amphibious.builtin_tools.human.request_human import current_agent
 
         llm = MockLLM([_make_finish_step()])
 
@@ -631,7 +631,7 @@ class TestContextVarConcurrency:
                 worker = CognitiveWorker.inline("Plan", llm=self.llm)
                 await self._run(worker)
                 # Use the tool to verify which agent the ContextVar resolves to
-                from bridgic.amphibious.buildin_tools.human.request_human import current_agent
+                from bridgic.amphibious.builtin_tools.human.request_human import current_agent
                 seen_agents.append(current_agent.get(None))
 
         llm = MockLLM([_make_finish_step()])

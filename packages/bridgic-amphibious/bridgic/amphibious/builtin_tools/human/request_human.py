@@ -7,7 +7,7 @@ that can be used exactly like any other tool — no factory call needed.
 
 Usage::
 
-    from bridgic.amphibious.buildin_tools import human_request_tool
+    from bridgic.amphibious.builtin_tools import human_request_tool
 
     await agent.arun(goal="...", tools=[search_tool, human_request_tool])
 """
