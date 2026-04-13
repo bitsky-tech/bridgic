@@ -24,9 +24,11 @@ Model-neutral LLM integration with protocol-driven capability declaration.
 Install only the LLM provider package you need. `python-dotenv` is required for loading `.env` configuration.
 
 **Installation**: Run the install script to set up all dependencies:
+
 ```bash
-bash "skills/bridgic-llms/scripts/install-deps.sh" "$PROJECT_ROOT" [PROVIDER]
+bash "skills/bridgic-llms/scripts/install-deps.sh" "$PWD"
 ```
+
 Supported providers: `openai` (default), `openai-like`, `vllm`. The script checks uv availability, initializes a uv project if needed, and installs only missing packages.
 
 ## Quick Start
