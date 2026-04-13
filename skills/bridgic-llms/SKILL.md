@@ -26,10 +26,10 @@ Install only the LLM provider package you need. `python-dotenv` is required for 
 **Installation**: Run the install script to set up all dependencies:
 
 ```bash
-bash "skills/bridgic-llms/scripts/install-deps.sh" "$PWD"
+bash "skills/bridgic-llms/scripts/install-deps.sh" "$PWD" [PROVIDER]
 ```
 
-Supported providers: `openai` (default), `openai-like`, `vllm`. The script checks uv availability, initializes a uv project if needed, and installs only missing packages.
+Supported providers: `openai` (default), `openai-like`, `vllm`. The script checks uv availability, initializes a uv project if needed, installs any missing packages via `uv add`, and runs `uv sync` to finalize the environment. When it exits successfully the project is fully initialized and ready to use — no manual `uv add` / `uv sync` follow-up is required.
 
 ## Quick Start
 

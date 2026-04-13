@@ -7,6 +7,8 @@
 #    is set in the environment (transparent to the caller and to any agent
 #    invoking this script — the agent itself never needs to know).
 # 4. Installs missing packages via uv add.
+# 5. Runs uv sync to finalize the project environment so the caller's venv
+#    matches pyproject.toml on exit (no manual sync step required).
 #
 # By default installs bridgic-llms-openai (the most common provider).
 # Pass a provider name to install a different one:
@@ -23,10 +25,11 @@
 #                       prerelease mode (production default).
 #
 # Exit codes:
-#   0  All dependencies installed
+#   0  All dependencies installed and synced
 #   1  uv not installed
 #   2  uv init failed
 #   3  uv add failed
+#   4  uv sync failed
 
 set -euo pipefail
 
@@ -35,18 +38,24 @@ PROVIDER="${2:-openai}"
 cd "$PROJECT_DIR"
 
 DEV_INDEX="${BRIDGIC_DEV_INDEX:-}"
-DEV_INDEX_NAME="bridgic-dev"
+DEV_INDEX_NAME="bridgic-repo"
 
-# Map provider name to package
+# Map provider name to its main package and its transitive bridgic-* deps.
+# Transitive deps must also be routed through BRIDGIC_DEV_INDEX (when set),
+# otherwise uv will resolve them from public PyPI and cause version drift
+# between dev releases of a package and stable releases of its sub-deps.
 case "$PROVIDER" in
     openai)
         LLM_PACKAGE="bridgic-llms-openai"
+        BRIDGIC_TRANSITIVE=("bridgic-core" "bridgic-llms-openai-like")
         ;;
     openai-like)
         LLM_PACKAGE="bridgic-llms-openai-like"
+        BRIDGIC_TRANSITIVE=("bridgic-core")
         ;;
     vllm)
         LLM_PACKAGE="bridgic-llms-vllm"
+        BRIDGIC_TRANSITIVE=("bridgic-core" "bridgic-llms-openai-like")
         ;;
     *)
         echo "ERROR: Unknown provider '$PROVIDER'. Supported: openai, openai-like, vllm"
@@ -54,15 +63,18 @@ case "$PROVIDER" in
         ;;
 esac
 
-# Required packages
+# Required packages (only the main LLM package is added explicitly;
+# bridgic transitive deps are resolved automatically by uv)
 PACKAGES=(
     "$LLM_PACKAGE"
     "python-dotenv"
 )
 
-# Bridgic packages routed through BRIDGIC_DEV_INDEX (when set)
+# Bridgic packages routed through BRIDGIC_DEV_INDEX (when set) — includes
+# the main LLM package and all its bridgic-* transitive deps.
 BRIDGIC_PACKAGES=(
     "$LLM_PACKAGE"
+    "${BRIDGIC_TRANSITIVE[@]}"
 )
 
 # ──────────────────────────────────────────────
@@ -129,10 +141,13 @@ fi
 # 4. Check and install missing packages
 # ──────────────────────────────────────────────
 
-# Helper: check if a package is already in pyproject.toml dependencies
+# Helper: check if a package is already in [project.dependencies].
+# Must match only quoted dependency strings like "pkg>=1.0" — NOT
+# [tool.uv.sources] entries like `pkg = { index = "..." }`, which would
+# otherwise cause false positives and silently skip package installation.
 is_installed() {
     local pkg="$1"
-    grep -qiE "^[[:space:]]*\"?${pkg}\"?[[:space:]]*[>=<~!,\"]" pyproject.toml 2>/dev/null
+    grep -qiE "^[[:space:]]*\"${pkg}[[:space:]]*[>=<~!\"]" pyproject.toml 2>/dev/null
 }
 
 MISSING=()
@@ -154,6 +169,17 @@ if [ ${#MISSING[@]} -gt 0 ]; then
     else
         uv add "${MISSING[@]}" || { echo "Error: uv add failed for: ${MISSING[*]}"; exit 3; }
     fi
+fi
+
+# ──────────────────────────────────────────────
+# 5. Sync project environment
+# ──────────────────────────────────────────────
+echo ""
+echo "Syncing project environment ..."
+if [ -n "$DEV_INDEX" ]; then
+    uv sync --prerelease=allow || { echo "Error: uv sync failed."; exit 4; }
+else
+    uv sync || { echo "Error: uv sync failed."; exit 4; }
 fi
 
 echo ""

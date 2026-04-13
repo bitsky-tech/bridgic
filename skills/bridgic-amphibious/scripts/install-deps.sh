@@ -7,6 +7,8 @@
 #    is set in the environment (transparent to the caller and to any agent
 #    invoking this script — the agent itself never needs to know).
 # 4. Installs missing packages via uv add.
+# 5. Runs uv sync to finalize the project environment so the caller's venv
+#    matches pyproject.toml on exit (no manual sync step required).
 #
 # Environment:
 #   BRIDGIC_DEV_INDEX   When set to a URL, all bridgic-* packages are routed
@@ -20,10 +22,11 @@
 #   install-deps.sh [PROJECT_DIR]   (defaults to current directory)
 #
 # Exit codes:
-#   0  All dependencies installed
+#   0  All dependencies installed and synced
 #   1  uv not installed
 #   2  uv init failed
 #   3  uv add failed
+#   4  uv sync failed
 
 set -euo pipefail
 
@@ -31,7 +34,7 @@ PROJECT_DIR="${1:-.}"
 cd "$PROJECT_DIR"
 
 DEV_INDEX="${BRIDGIC_DEV_INDEX:-}"
-DEV_INDEX_NAME="bridgic-dev"
+DEV_INDEX_NAME="bridgic-repo"
 
 # Required packages for bridgic-amphibious skill
 PACKAGES=(
@@ -41,11 +44,16 @@ PACKAGES=(
     "python-dotenv"
 )
 
-# Bridgic packages routed through BRIDGIC_DEV_INDEX (when set)
+# Bridgic packages routed through BRIDGIC_DEV_INDEX (when set).
+# Must include direct AND transitive bridgic-* deps — e.g., bridgic-llms-openai
+# transitively pulls in bridgic-llms-openai-like, which must also be routed
+# through the dev index to avoid version drift between dev and stable
+# releases of the openai / openai-like pair.
 BRIDGIC_PACKAGES=(
     "bridgic-core"
     "bridgic-amphibious"
     "bridgic-llms-openai"
+    "bridgic-llms-openai-like"
 )
 
 # ──────────────────────────────────────────────
@@ -112,11 +120,13 @@ fi
 # 4. Check and install missing packages
 # ──────────────────────────────────────────────
 
-# Helper: check if a package is already in pyproject.toml dependencies
+# Helper: check if a package is already in [project.dependencies].
+# Must match only quoted dependency strings like "pkg>=1.0" — NOT
+# [tool.uv.sources] entries like `pkg = { index = "..." }`, which would
+# otherwise cause false positives and silently skip package installation.
 is_installed() {
     local pkg="$1"
-    # Match the package name in dependencies (handles both quoted and unquoted forms)
-    grep -qiE "^[[:space:]]*\"?${pkg}\"?[[:space:]]*[>=<~!,\"]" pyproject.toml 2>/dev/null
+    grep -qiE "^[[:space:]]*\"${pkg}[[:space:]]*[>=<~!\"]" pyproject.toml 2>/dev/null
 }
 
 MISSING=()
@@ -138,6 +148,17 @@ if [ ${#MISSING[@]} -gt 0 ]; then
     else
         uv add "${MISSING[@]}" || { echo "Error: uv add failed for: ${MISSING[*]}"; exit 3; }
     fi
+fi
+
+# ──────────────────────────────────────────────
+# 5. Sync project environment
+# ──────────────────────────────────────────────
+echo ""
+echo "Syncing project environment ..."
+if [ -n "$DEV_INDEX" ]; then
+    uv sync --prerelease=allow || { echo "Error: uv sync failed."; exit 4; }
+else
+    uv sync || { echo "Error: uv sync failed."; exit 4; }
 fi
 
 echo ""

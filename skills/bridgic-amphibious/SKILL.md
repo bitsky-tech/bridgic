@@ -14,7 +14,7 @@ A bridgic-amphibious project requires the following packages:
 | Package | Description |
 |---------|-------------|
 | `bridgic-core` | Core framework (Worker, Automa, GraphAutoma, ASL) |
-| `bridgic-amphibious` | Dual-mode agent framework (private index: `http://8.130.156.165:3141/btsk/test/+simple`) |
+| `bridgic-amphibious` | Dual-mode agent framework |
 | `bridgic-llms-openai` | LLM provider (only required for `AGENT` / `AMPHIFLOW` modes) |
 | `python-dotenv` | `.env` file loading |
 
@@ -24,7 +24,7 @@ Before using this package, you need to install the dependencies by using the pro
 bash "skills/bridgic-amphibious/scripts/install-deps.sh" "$PWD"
 ```
 
-The script checks uv availability, initializes a uv project if needed, and installs only missing packages. A bridgic-amphibious project requires the following packages:
+The script checks uv availability, initializes a uv project if needed, installs any missing packages via `uv add`, and runs `uv sync` to finalize the environment. When it exits successfully the project is fully initialized and ready to use — no manual `uv add` / `uv sync` follow-up is required.
 
 ## LLM Setup
 
