@@ -7,6 +7,23 @@ description: "Build agents with the Bridgic Amphibious dual-mode framework — c
 
 Dual-mode agent framework: agents operate in LLM-driven (`on_agent`) and deterministic (`on_workflow`) modes with automatic fallback between them.
 
+## Dependencies
+
+A bridgic-amphibious project requires the following packages:
+
+| Package | Description |
+|---------|-------------|
+| `bridgic-core` | Core framework (Worker, Automa, GraphAutoma, ASL) |
+| `bridgic-amphibious` | Dual-mode agent framework (private index: `http://8.130.156.165:3141/btsk/test/+simple`) |
+| `bridgic-llms-openai` | LLM provider (only required for `AGENT` / `AMPHIFLOW` modes) |
+| `python-dotenv` | `.env` file loading |
+
+**Installation**: Run the install script to set up all dependencies:
+```bash
+bash "skills/bridgic-amphibious/scripts/install-deps.sh" "$PROJECT_ROOT"
+```
+The script checks uv availability, initializes a uv project if needed, and installs only missing packages.
+
 ## LLM Setup
 
 Amphibious agents accept a `BaseLlm` instance with `astructure_output` protocol from a bridgic LLM provider package. The LLM is required for `AGENT` and `AMPHIFLOW` modes; pure `WORKFLOW` mode can run without one.
