@@ -3,7 +3,15 @@
 #
 # 1. Checks uv availability.
 # 2. Ensures a uv project is initialized (pyproject.toml exists).
-# 3. Checks each required package and installs missing ones via uv add.
+# 3. Optionally injects a dev index into pyproject.toml when BRIDGIC_DEV_INDEX
+#    is set in the environment (transparent to the caller and to any agent
+#    invoking this script — the agent itself never needs to know).
+# 4. Installs missing packages via uv add.
+#
+# Environment:
+#   BRIDGIC_DEV_INDEX   When set to a URL, all bridgic-* packages are routed
+#                       through this index via [tool.uv.sources]. When unset,
+#                       packages resolve from public PyPI (production default).
 #
 # Usage:
 #   install-deps.sh [PROJECT_DIR]   (defaults to current directory)
@@ -19,7 +27,8 @@ set -euo pipefail
 PROJECT_DIR="${1:-.}"
 cd "$PROJECT_DIR"
 
-PRIVATE_INDEX="http://8.130.156.165:3141/btsk/test/+simple"
+DEV_INDEX="${BRIDGIC_DEV_INDEX:-}"
+DEV_INDEX_NAME="bridgic-dev"
 
 # Required packages for bridgic-amphibious skill
 PACKAGES=(
@@ -29,9 +38,11 @@ PACKAGES=(
     "python-dotenv"
 )
 
-# Packages that need the private index
-PRIVATE_PACKAGES=(
+# Bridgic packages routed through BRIDGIC_DEV_INDEX (when set)
+BRIDGIC_PACKAGES=(
+    "bridgic-core"
     "bridgic-amphibious"
+    "bridgic-llms-openai"
 )
 
 # ──────────────────────────────────────────────
@@ -71,7 +82,31 @@ else
 fi
 
 # ──────────────────────────────────────────────
-# 3. Check and install missing packages
+# 3. Inject dev index if BRIDGIC_DEV_INDEX is set
+# ──────────────────────────────────────────────
+if [ -n "$DEV_INDEX" ]; then
+    if grep -q "name = \"${DEV_INDEX_NAME}\"" pyproject.toml 2>/dev/null; then
+        echo "Dev index '${DEV_INDEX_NAME}' already configured in pyproject.toml — skipping injection"
+    else
+        echo "BRIDGIC_DEV_INDEX detected — injecting dev index into pyproject.toml"
+        {
+            echo ""
+            echo "[[tool.uv.index]]"
+            echo "name = \"${DEV_INDEX_NAME}\""
+            echo "url = \"${DEV_INDEX}\""
+            echo "explicit = true"
+            echo ""
+            echo "[tool.uv.sources]"
+            for pkg in "${BRIDGIC_PACKAGES[@]}"; do
+                echo "${pkg} = { index = \"${DEV_INDEX_NAME}\" }"
+            done
+        } >> pyproject.toml
+        echo "Dev index injected: ${DEV_INDEX}"
+    fi
+fi
+
+# ──────────────────────────────────────────────
+# 4. Check and install missing packages
 # ──────────────────────────────────────────────
 
 # Helper: check if a package is already in pyproject.toml dependencies
@@ -81,49 +116,26 @@ is_installed() {
     grep -qiE "^[[:space:]]*\"?${pkg}\"?[[:space:]]*[>=<~!,\"]" pyproject.toml 2>/dev/null
 }
 
-# Helper: check if a package needs the private index
-needs_private_index() {
-    local pkg="$1"
-    for pp in "${PRIVATE_PACKAGES[@]}"; do
-        if [ "$pkg" = "$pp" ]; then
-            return 0
-        fi
-    done
-    return 1
-}
-
 MISSING=()
-MISSING_PRIVATE=()
 
 for pkg in "${PACKAGES[@]}"; do
     if is_installed "$pkg"; then
         echo "✓ $pkg already installed"
     else
-        if needs_private_index "$pkg"; then
-            MISSING_PRIVATE+=("$pkg")
-        else
-            MISSING+=("$pkg")
-        fi
+        MISSING+=("$pkg")
         echo "✗ $pkg not found — will install"
     fi
 done
 
-# Install standard packages
 if [ ${#MISSING[@]} -gt 0 ]; then
     echo ""
     echo "Installing: ${MISSING[*]} ..."
     uv add "${MISSING[@]}" || { echo "Error: uv add failed for: ${MISSING[*]}"; exit 3; }
 fi
 
-# Install private-index packages
-if [ ${#MISSING_PRIVATE[@]} -gt 0 ]; then
-    echo ""
-    echo "Installing (private index): ${MISSING_PRIVATE[*]} ..."
-    uv add "${MISSING_PRIVATE[@]}" --extra-index-url "$PRIVATE_INDEX" || {
-        echo "Error: uv add failed for: ${MISSING_PRIVATE[*]}"
-        exit 3
-    }
-fi
-
 echo ""
-echo "=== DEPS_READY (bridgic-amphibious) ==="
+if [ -n "$DEV_INDEX" ]; then
+    echo "=== DEPS_READY (bridgic-amphibious, dev index: ${DEV_INDEX}) ==="
+else
+    echo "=== DEPS_READY (bridgic-amphibious) ==="
+fi

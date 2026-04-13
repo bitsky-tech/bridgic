@@ -20,7 +20,7 @@ A bridgic-amphibious project requires the following packages:
 
 **Installation**: Run the install script to set up all dependencies:
 ```bash
-bash "skills/bridgic-amphibious/scripts/install-deps.sh" "$PROJECT_ROOT"
+bash "skills/bridgic-amphibious/scripts/install-deps.sh" "$PWD"
 ```
 The script checks uv availability, initializes a uv project if needed, and installs only missing packages.
 

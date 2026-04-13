@@ -3,13 +3,22 @@
 #
 # 1. Checks uv availability.
 # 2. Ensures a uv project is initialized (pyproject.toml exists).
-# 3. Checks each required package and installs missing ones via uv add.
+# 3. Optionally injects a dev index into pyproject.toml when BRIDGIC_DEV_INDEX
+#    is set in the environment (transparent to the caller and to any agent
+#    invoking this script — the agent itself never needs to know).
+# 4. Installs missing packages via uv add.
 #
 # By default installs bridgic-llms-openai (the most common provider).
 # Pass a provider name to install a different one:
 #   install-deps.sh [PROJECT_DIR] [PROVIDER]
 #
 # Supported providers: openai (default), openai-like, vllm
+#
+# Environment:
+#   BRIDGIC_DEV_INDEX   When set to a URL, the selected bridgic LLM package is
+#                       routed through this index via [tool.uv.sources]. When
+#                       unset, the package resolves from public PyPI
+#                       (production default).
 #
 # Exit codes:
 #   0  All dependencies installed
@@ -22,6 +31,9 @@ set -euo pipefail
 PROJECT_DIR="${1:-.}"
 PROVIDER="${2:-openai}"
 cd "$PROJECT_DIR"
+
+DEV_INDEX="${BRIDGIC_DEV_INDEX:-}"
+DEV_INDEX_NAME="bridgic-dev"
 
 # Map provider name to package
 case "$PROVIDER" in
@@ -44,6 +56,11 @@ esac
 PACKAGES=(
     "$LLM_PACKAGE"
     "python-dotenv"
+)
+
+# Bridgic packages routed through BRIDGIC_DEV_INDEX (when set)
+BRIDGIC_PACKAGES=(
+    "$LLM_PACKAGE"
 )
 
 # ──────────────────────────────────────────────
@@ -83,7 +100,31 @@ else
 fi
 
 # ──────────────────────────────────────────────
-# 3. Check and install missing packages
+# 3. Inject dev index if BRIDGIC_DEV_INDEX is set
+# ──────────────────────────────────────────────
+if [ -n "$DEV_INDEX" ]; then
+    if grep -q "name = \"${DEV_INDEX_NAME}\"" pyproject.toml 2>/dev/null; then
+        echo "Dev index '${DEV_INDEX_NAME}' already configured in pyproject.toml — skipping injection"
+    else
+        echo "BRIDGIC_DEV_INDEX detected — injecting dev index into pyproject.toml"
+        {
+            echo ""
+            echo "[[tool.uv.index]]"
+            echo "name = \"${DEV_INDEX_NAME}\""
+            echo "url = \"${DEV_INDEX}\""
+            echo "explicit = true"
+            echo ""
+            echo "[tool.uv.sources]"
+            for pkg in "${BRIDGIC_PACKAGES[@]}"; do
+                echo "${pkg} = { index = \"${DEV_INDEX_NAME}\" }"
+            done
+        } >> pyproject.toml
+        echo "Dev index injected: ${DEV_INDEX}"
+    fi
+fi
+
+# ──────────────────────────────────────────────
+# 4. Check and install missing packages
 # ──────────────────────────────────────────────
 
 # Helper: check if a package is already in pyproject.toml dependencies
@@ -110,4 +151,8 @@ if [ ${#MISSING[@]} -gt 0 ]; then
 fi
 
 echo ""
-echo "=== DEPS_READY (bridgic-llms, provider: $PROVIDER) ==="
+if [ -n "$DEV_INDEX" ]; then
+    echo "=== DEPS_READY (bridgic-llms, provider: $PROVIDER, dev index: ${DEV_INDEX}) ==="
+else
+    echo "=== DEPS_READY (bridgic-llms, provider: $PROVIDER) ==="
+fi
