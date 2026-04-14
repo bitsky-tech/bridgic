@@ -1,51 +1,30 @@
 #!/bin/bash
 # install-deps.sh — Install bridgic-amphibious skill dependencies.
 #
-# 1. Checks uv availability.
-# 2. Ensures a uv project is initialized (pyproject.toml exists).
-# 3. Optionally reads a developer-local deps manifest (BRIDGIC_DEPS_MANIFEST)
-#    to route specific packages through a private dev index. When unset, all
-#    dependencies resolve from public PyPI (production default).
-# 4. Installs missing packages via uv add.
-# 5. Runs uv sync to finalize the project environment so the caller's venv
-#    matches pyproject.toml on exit (no manual sync step required).
+# Reads the per-skill INI config (deps.ini, sibling of this script) which
+# declares every required package, its source ("default" for public PyPI,
+# or the literal name of a private index — e.g. "btsk-repo"), and an
+# optional pinned version constraint. When BRIDGIC_DEV_INDEX is set,
+# packages with a non-default source are routed through that URL via
+# [[tool.uv.index]] + [tool.uv.sources] in pyproject.toml, using the source
+# field as the index name. Only one private index per config is supported.
+#
+# Steps:
+#   1. Parse deps.ini (pure-bash + awk, no Python/jq/yq dependency).
+#   2. Check uv availability (auto-install if missing).
+#   3. Run `uv init --bare` if no pyproject.toml yet.
+#   4. Inject dev index block into pyproject.toml (re-entrant via markers).
+#   5. `uv add` any missing packages and re-pin packages whose config
+#      declares an explicit version.
+#   6. `uv sync` to finalize the project environment.
+#
+# Config file: ./deps.ini (sibling of this script)
 #
 # Environment:
-#   BRIDGIC_DEPS_MANIFEST   Optional. Path to a developer-local manifest file
-#                           describing per-package source routing. Lives
-#                           outside this repo so internal index URLs are never
-#                           committed. Relative paths are resolved against the
-#                           caller's working directory.
-#
-#                           Manifest format (one directive per line):
-#
-#                             # comments allowed (lines starting with #)
-#                             index https://your-dev-index.example.com/simple/
-#                             bridgic-core             dev
-#                             bridgic-amphibious       dev
-#                             bridgic-llms-openai      default
-#                             python-dotenv            default
-#
-#                           Directives:
-#                             - `index <url>`     declares the dev index URL
-#                                                 (required if any package is
-#                                                 marked `dev`)
-#                             - `<pkg> dev`       inject pkg into
-#                                                 [tool.uv.sources] and route
-#                                                 via the dev index
-#                             - `<pkg> default`   resolve from public PyPI
-#                                                 (also the implicit default
-#                                                 for any package not listed)
-#
-#                           Note: transitive bridgic-* deps must also be
-#                           declared in the manifest if you want them routed
-#                           through the dev index — otherwise they resolve
-#                           from public PyPI and may drift from the dev
-#                           release of their parent package.
-#
-#                           When BRIDGIC_DEPS_MANIFEST is unset, the manifest
-#                           step is skipped entirely and every package
-#                           resolves from public PyPI.
+#   BRIDGIC_DEV_INDEX   URL of the private package index. Required when
+#                       deps.ini declares any package whose source is not
+#                       "default". When unset, presence of such packages
+#                       is a fatal error.
 #
 # Usage:
 #   install-deps.sh [PROJECT_DIR]   (defaults to current directory)
@@ -56,7 +35,8 @@
 #   2  uv init failed
 #   3  uv add failed
 #   4  uv sync failed
-#   5  manifest file not found or malformed
+#   5  deps.ini missing or malformed
+#   6  deps.ini declares private-index packages but BRIDGIC_DEV_INDEX is unset
 #
 # Output markers:
 #   On success: "=== DEPS_READY (...) ==="
@@ -64,28 +44,22 @@
 
 set -euo pipefail
 
-PROJECT_DIR="${1:-.}"
-MANIFEST_FILE="${BRIDGIC_DEPS_MANIFEST:-}"
+# Resolve script directory before cd'ing into the project so deps.ini is
+# found regardless of the caller's PWD.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CONFIG_FILE="$SCRIPT_DIR/deps.ini"
 
-# Resolve manifest path against caller's PWD before we cd into PROJECT_DIR,
-# so users can pass a relative path naturally.
-if [ -n "$MANIFEST_FILE" ] && [ "${MANIFEST_FILE:0:1}" != "/" ]; then
-    MANIFEST_FILE="$PWD/$MANIFEST_FILE"
-fi
+PROJECT_DIR="${1:-.}"
+DEV_INDEX="${BRIDGIC_DEV_INDEX:-}"
 
 cd "$PROJECT_DIR"
 
-DEV_INDEX_NAME="bridgic-repo"
 INJECTION_BEGIN_MARKER="# BEGIN bridgic-deps-injection"
 INJECTION_END_MARKER="# END bridgic-deps-injection"
-
-# Required packages for bridgic-amphibious skill
-PACKAGES=(
-    "bridgic-core"
-    "bridgic-amphibious"
-    "bridgic-llms-openai"
-    "python-dotenv"
-)
+# Populated from deps.ini during parsing — the literal name of the private
+# index that non-default packages route through. Empty means all packages
+# resolve from public PyPI.
+DEV_INDEX_NAME=""
 
 # Shared log file capturing stdout+stderr of each uv invocation. The trap
 # guarantees cleanup even on early exit.
@@ -94,9 +68,6 @@ trap 'rm -f "$LOG_FILE"' EXIT
 
 # ──────────────────────────────────────────────
 # Failure helper — emits structured marker and exits.
-# The captured uv output is already on stdout (printed by run_uv) before
-# this is called, so the agent reading the script's output sees both the
-# raw error context AND the structured marker.
 # ──────────────────────────────────────────────
 fail() {
     local reason="$1"
@@ -123,62 +94,107 @@ run_uv() {
 }
 
 # ──────────────────────────────────────────────
-# 0. Parse manifest (if BRIDGIC_DEPS_MANIFEST is set)
+# 0. Parse deps.ini
 # ──────────────────────────────────────────────
-DEV_INDEX_URL=""
+if [ ! -f "$CONFIG_FILE" ]; then
+    echo "Error: config file not found: $CONFIG_FILE" >&2
+    fail "config_not_found" 5
+fi
+
+echo "Reading deps config: $CONFIG_FILE"
+
+# Parse INI via awk → emit one TSV line per package: name<TAB>source<TAB>version
+# Awk does the heavy lifting (sections, key=value, comments, quotes); bash
+# just consumes the TSV stream into parallel arrays. Awk exits 2 on any
+# malformed line (unknown key, key outside any section, garbage line).
+PARSED_TSV="$(awk '
+function trim(s) { gsub(/^[[:space:]]+|[[:space:]]+$/, "", s); return s }
+function emit() {
+    if (cur_section != "") {
+        if (cur_source == "") cur_source = "default"
+        print cur_section "\t" cur_source "\t" cur_version
+    }
+}
+BEGIN { cur_section = ""; cur_source = ""; cur_version = "" }
+/^[[:space:]]*[#;]/ { next }                          # full-line comments
+/^[[:space:]]*$/    { next }                          # blank lines
+/^[[:space:]]*\[.*\][[:space:]]*$/ {                  # [section] header
+    emit()
+    line = $0
+    sub(/^[[:space:]]*\[/, "", line)
+    sub(/\][[:space:]]*$/, "", line)
+    cur_section = trim(line)
+    cur_source = ""
+    cur_version = ""
+    next
+}
+/=/ {                                                 # key = value
+    if (cur_section == "") {
+        print "ini_error: key/value outside any section: " $0 > "/dev/stderr"
+        exit 2
+    }
+    eq_idx = index($0, "=")
+    key = trim(substr($0, 1, eq_idx - 1))
+    val = trim(substr($0, eq_idx + 1))
+    sub(/^"/, "", val); sub(/"$/, "", val)
+    if (key == "source")       cur_source  = val
+    else if (key == "version") cur_version = val
+    else {
+        print "ini_error: unknown key \"" key "\" in section [" cur_section "]" > "/dev/stderr"
+        exit 2
+    }
+    next
+}
+{
+    print "ini_error: malformed line: " $0 > "/dev/stderr"
+    exit 2
+}
+END { emit() }
+' "$CONFIG_FILE")" || fail "config_malformed" 5
+
+# Read parallel arrays from TSV (bash 3.2 compatible — no associative arrays).
+PKG_NAMES=()
+PKG_SOURCES=()
+PKG_VERSIONS=()
 DEV_PACKAGES=()
 
-if [ -n "$MANIFEST_FILE" ]; then
-    if [ ! -f "$MANIFEST_FILE" ]; then
-        echo "Error: BRIDGIC_DEPS_MANIFEST is set but file not found: $MANIFEST_FILE" >&2
-        fail "manifest_not_found" 5
-    fi
-    echo "Reading deps manifest: $MANIFEST_FILE"
-
-    manifest_lineno=0
-    while IFS= read -r raw_line || [ -n "${raw_line:-}" ]; do
-        manifest_lineno=$((manifest_lineno + 1))
-        # Strip inline comments (# and anything after).
-        line="${raw_line%%#*}"
-        # Tokenize: read trims whitespace and handles tabs/spaces uniformly.
-        f1=""
-        f2=""
-        read -r f1 f2 _ <<< "$line" || true
-        # Skip blank or comment-only lines.
-        [ -z "$f1" ] && continue
-
-        if [ "$f1" = "index" ]; then
-            if [ -z "$f2" ]; then
-                echo "Error: manifest line $manifest_lineno: 'index' directive missing URL" >&2
-                fail "manifest_malformed" 5
-            fi
-            DEV_INDEX_URL="$f2"
-        else
-            case "$f2" in
-                dev)
-                    DEV_PACKAGES+=("$f1")
-                    ;;
-                default|"")
-                    : # no-op; default routing (public PyPI)
-                    ;;
-                *)
-                    echo "Error: manifest line $manifest_lineno: unknown source '$f2' for package '$f1' (expected: dev or default)" >&2
-                    fail "manifest_malformed" 5
-                    ;;
-            esac
+while IFS=$'\t' read -r pkg_name pkg_source pkg_version; do
+    [ -z "${pkg_name:-}" ] && continue
+    if [ "$pkg_source" != "default" ]; then
+        # Any non-default value is the literal name of a private index
+        # (e.g. "btsk-repo"). The URL still comes from BRIDGIC_DEV_INDEX.
+        # Only one private index per config — reject mixed names.
+        if [ -n "$DEV_INDEX_NAME" ] && [ "$DEV_INDEX_NAME" != "$pkg_source" ]; then
+            echo "Error: package '$pkg_name' declares index '$pkg_source', but" >&2
+            echo "       '$DEV_INDEX_NAME' was already declared by another package." >&2
+            echo "       Only one private index per config is supported." >&2
+            fail "config_malformed" 5
         fi
-    done < "$MANIFEST_FILE"
-
-    if [ ${#DEV_PACKAGES[@]} -gt 0 ] && [ -z "$DEV_INDEX_URL" ]; then
-        echo "Error: manifest declares 'dev' packages but no 'index <url>' line" >&2
-        fail "manifest_missing_index" 5
+        DEV_INDEX_NAME="$pkg_source"
+        DEV_PACKAGES+=("$pkg_name")
     fi
+    PKG_NAMES+=("$pkg_name")
+    PKG_SOURCES+=("$pkg_source")
+    PKG_VERSIONS+=("$pkg_version")
+done <<< "$PARSED_TSV"
 
-    if [ ${#DEV_PACKAGES[@]} -gt 0 ]; then
-        echo "Manifest dev packages (${#DEV_PACKAGES[@]}): ${DEV_PACKAGES[*]}"
-    else
-        echo "Manifest declares no dev packages — all dependencies will resolve from public PyPI"
+if [ ${#PKG_NAMES[@]} -eq 0 ]; then
+    echo "Error: deps.ini declares no packages" >&2
+    fail "config_empty" 5
+fi
+
+echo "Config declares ${#PKG_NAMES[@]} package(s)"
+
+if [ ${#DEV_PACKAGES[@]} -gt 0 ]; then
+    if [ -z "$DEV_INDEX" ]; then
+        echo "Error: deps.ini declares packages on private index '$DEV_INDEX_NAME'" >&2
+        echo "       but BRIDGIC_DEV_INDEX is not set." >&2
+        echo "       affected packages: ${DEV_PACKAGES[*]}" >&2
+        fail "dev_index_missing" 6
     fi
+    echo "Private index '$DEV_INDEX_NAME' (URL from BRIDGIC_DEV_INDEX) routes: ${DEV_PACKAGES[*]}"
+else
+    echo "All packages resolve from public PyPI"
 fi
 
 # ──────────────────────────────────────────────
@@ -218,10 +234,10 @@ else
 fi
 
 # ──────────────────────────────────────────────
-# 3. Inject dev index sources from manifest (re-entrant via markers)
+# 3. Inject dev index sources from config (re-entrant via markers)
 # ──────────────────────────────────────────────
 if [ ${#DEV_PACKAGES[@]} -gt 0 ]; then
-    # Remove any previous bridgic-deps injection block so manifest changes
+    # Remove any previous bridgic-deps injection block so config changes
     # take effect on re-run without manual cleanup.
     if grep -qF "$INJECTION_BEGIN_MARKER" pyproject.toml 2>/dev/null; then
         echo "Replacing previous bridgic-deps injection block in pyproject.toml"
@@ -239,7 +255,7 @@ if [ ${#DEV_PACKAGES[@]} -gt 0 ]; then
         echo "$INJECTION_BEGIN_MARKER (auto-generated by install-deps.sh, do not edit by hand)"
         echo "[[tool.uv.index]]"
         echo "name = \"${DEV_INDEX_NAME}\""
-        echo "url = \"${DEV_INDEX_URL}\""
+        echo "url = \"${DEV_INDEX}\""
         echo "explicit = true"
         echo ""
         echo "[tool.uv.sources]"
@@ -252,7 +268,7 @@ if [ ${#DEV_PACKAGES[@]} -gt 0 ]; then
 fi
 
 # ──────────────────────────────────────────────
-# 4. Check and install missing packages
+# 4. Install / re-pin packages from config
 # ──────────────────────────────────────────────
 
 # Helper: check if a package is already in [project.dependencies].
@@ -264,26 +280,30 @@ is_installed() {
     grep -qiE "^[[:space:]]*\"${pkg}[[:space:]]*[>=<~!\"]" pyproject.toml 2>/dev/null
 }
 
-MISSING=()
-
-for pkg in "${PACKAGES[@]}"; do
-    if is_installed "$pkg"; then
-        echo "✓ $pkg already installed"
+# Build the install spec list:
+#   - packages with a `version =` in the config are always re-added (so the
+#     constraint in pyproject.toml is forced to match the config on re-run)
+#   - packages without a version are added only if they aren't already in
+#     pyproject.toml (existing constraints are left untouched)
+TO_INSTALL=()
+for i in "${!PKG_NAMES[@]}"; do
+    name="${PKG_NAMES[$i]}"
+    version="${PKG_VERSIONS[$i]}"
+    if [ -n "$version" ]; then
+        TO_INSTALL+=("${name}${version}")
+        echo "→ ${name}${version} (re-pinning from config)"
+    elif is_installed "$name"; then
+        echo "✓ ${name} already present (no version pinned in config)"
     else
-        MISSING+=("$pkg")
-        echo "✗ $pkg not found — will install"
+        TO_INSTALL+=("$name")
+        echo "→ ${name} (missing, will install latest)"
     fi
 done
 
-if [ ${#MISSING[@]} -gt 0 ]; then
+if [ ${#TO_INSTALL[@]} -gt 0 ]; then
     echo ""
-    echo "Installing: ${MISSING[*]} ..."
-    # uv's default prerelease mode (if-necessary-or-explicit) handles mixed
-    # routing correctly: dev-only packages (e.g. bridgic-amphibious on the
-    # private index) resolve to their dev release because no stable match
-    # exists, while packages routed to public PyPI keep picking stable
-    # versions. No --prerelease flag is needed.
-    run_uv "uv_add_failed" 3 uv add "${MISSING[@]}"
+    echo "Running: uv add ${TO_INSTALL[*]}"
+    run_uv "uv_add_failed" 3 uv add "${TO_INSTALL[@]}"
 fi
 
 # ──────────────────────────────────────────────
