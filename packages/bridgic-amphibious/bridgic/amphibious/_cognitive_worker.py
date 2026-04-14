@@ -805,6 +805,36 @@ class CognitiveWorker(GraphAutoma):
         """
         return _DELEGATE
 
+    async def after_action(self, step_result: Any, ctx: "CognitiveContext") -> Any:
+        """
+        Post-process the action result after execution.
+
+        Returns ``_DELEGATE`` by default, which delegates to the agent-level
+        ``after_action()`` method. Override to update custom context fields
+        or perform side effects based on tool results at the worker level.
+
+        Parameters
+        ----------
+        step_result : Any
+            The result of the action step.
+        ctx : CognitiveContext
+            Current cognitive context.
+
+        Returns
+        -------
+        Any
+            The step result (optionally modified), or ``_DELEGATE`` to delegate
+            to the agent-level hook.
+
+        Examples
+        --------
+        >>> async def after_action(self, step_result, ctx):
+        ...     # Update custom context fields based on tool results
+        ...     ctx.current_document = extract_document(step_result)
+        ...     return step_result
+        """
+        return _DELEGATE
+
     ############################################################################
     # Entry point
     ############################################################################

@@ -525,6 +525,9 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         # Trace capture
         self._agent_trace: Optional[AgentTrace] = None
 
+        # Final answer (set automatically or via set_final_answer())
+        self._final_answer: Optional[str] = None
+
         # Usage stats (reset per arun call)
         self.spend_tokens: int = 0
         self.spend_time: float = 0.0
@@ -533,6 +536,34 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
     def llm(self) -> Optional[Any]:
         """Access the agent's default LLM."""
         return self._llm
+
+    @property
+    def context(self) -> Optional[CognitiveContextT]:
+        """Access the current context."""
+        return self._current_context
+
+    @property
+    def final_answer(self) -> Optional[str]:
+        """The final answer produced by the last ``arun()`` call.
+
+        Automatically captured from the ``step_content`` of the finishing step
+        (agent mode) or the last executed step (workflow mode).
+        Can be overridden explicitly via ``set_final_answer()``.
+        """
+        return self._final_answer
+
+    def set_final_answer(self, answer: str) -> None:
+        """Explicitly set the final answer.
+
+        Call this inside ``on_agent()`` or ``on_workflow()`` to override
+        the auto-captured value.
+
+        Parameters
+        ----------
+        answer : str
+            The final answer text.
+        """
+        self._final_answer = answer
 
     ############################################################################
     # Template methods (override by user to customize the behavior)
@@ -700,6 +731,22 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         """
         return decision_result
 
+    async def after_action(self, step_result: Any, ctx: CognitiveContextT) -> None:
+        """
+        Agent-level after_action hook.
+
+        Called after action execution and before the result is returned.
+        Override to update custom context fields based on tool results.
+
+        Parameters
+        ----------
+        step_result : Any
+            The result of the action step.
+        ctx : CognitiveContextT
+            The current cognitive context.
+        """
+        pass
+
     ############################################################################
     # Core methods
     ############################################################################
@@ -827,6 +874,11 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
 
             # Record trace step
             self._record_trace_step(worker, obs, decision, action_result, context)
+
+            # Auto-capture final answer when the worker signals finish
+            if decision.finish and decision.step_content:
+                self._final_answer = decision.step_content
+
             return decision.finish
 
 
@@ -1223,7 +1275,8 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
             "Fix the current error you observe, then complete the step that failed. "
             "Work in ReAct style: observe the situation, reason about the next action, "
             "act once, then observe again. Take one step at a time—do not plan ahead; "
-            "react to what you see after each action.",
+            "react to what you see after each action.\n"
+            "Respond in JSON format."
         )
 
     @staticmethod
@@ -1391,6 +1444,14 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
             result = Step(content=decision.step_content, result=action_result, metadata={})
             ctx.add_info(result)
 
+        # after_action delegation: worker → agent (if _DELEGATE)
+        if _worker is not None:
+            delegate = await _worker.after_action(result, ctx)
+            if delegate is _DELEGATE:
+                await self.after_action(result, ctx)
+        else:
+            await self.after_action(result, ctx)
+
         return result
 
     ############################################################################
@@ -1524,7 +1585,7 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         Agent mode entry point: delegates to the user-defined on_agent() method.
         """
         await self.on_agent(self._current_context)
-        return self._current_context.summary()
+        return self._final_answer or self._current_context.summary()
 
     @worker(is_output=True)
     async def _workflow(self) -> str:
@@ -1532,7 +1593,7 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         Workflow mode entry point: runs on_workflow() without agent fallback.
         """
         await self._run_workflow(self._current_context, will_fallback=False)
-        return self._current_context.summary()
+        return self._final_answer or self._current_context.summary()
 
     @worker(is_output=True)
     async def _amphibious(self, will_fallback: bool, max_consecutive_fallbacks: int) -> str:
@@ -1540,6 +1601,7 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         Entry point: runs on_workflow() with agent fallback support (amphibious mode).
         """
         await self._run_workflow(self._current_context, will_fallback=will_fallback, max_consecutive_fallbacks=max_consecutive_fallbacks)
+        return self._final_answer or self._current_context.summary()
         return self._current_context.summary()
 
     async def arun(
@@ -1612,7 +1674,7 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
             """Run the agent, measure time, and log summary."""
             start_time = time.time()
             result = await GraphAutoma.arun(
-                self, mode, context,
+                self, mode,
                 will_fallback=will_fallback,
                 max_consecutive_fallbacks=max_consecutive_fallbacks,
             )
@@ -1637,6 +1699,7 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         ########################
         self.spend_tokens = 0
         self.spend_time = 0.0
+        self._final_answer = None
 
         if self._llm is None:
             raise RuntimeError("AmphibiousAutoma must be initialized with an LLM.")
@@ -1687,6 +1750,7 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         ########################
         # Run the amphibious automa
         ########################
-        await _run_and_report(context=context)
+        result = await _run_and_report(context=context)
         if trace_running and self._agent_trace:
             _build_trace(self)
+        return result

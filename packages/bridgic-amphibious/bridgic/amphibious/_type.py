@@ -150,8 +150,19 @@ class _ThinkBase(BaseModel):
 
 
 def _coerce_none_to_list(v: Any) -> list:
-    """Coerce None to empty list for field validation."""
-    return [] if v is None else v
+    """Coerce non-list values to empty list for field validation.
+
+    Some LLMs may place summary text or a dict in the ``output`` field
+    instead of a proper ``List[StepToolCall]``.  Rather than letting
+    Pydantic raise a ``ValidationError``, silently discard the invalid
+    value so the cycle can still finish gracefully (the content lives
+    in ``step_content`` anyway).
+    """
+    if v is None:
+        return []
+    if isinstance(v, list):
+        return v
+    return []
 
 
 ################################################################################################################

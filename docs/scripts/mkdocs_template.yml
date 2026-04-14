@@ -24,6 +24,18 @@ nav:
       - SequentialAutoma: tutorials/items/agentic_module/about_sequential_automa.ipynb
       - ConcurrentAutoma: tutorials/items/agentic_module/about_concurrent_automa.ipynb
       - ReCentAutoma: tutorials/items/agentic_module/about_recent_automa.ipynb
+    - Amphibious Module:
+      - Amphibious: tutorials/items/amphibious/index.md
+      - Quick Start: tutorials/items/amphibious/quick_start.ipynb
+      - CognitiveWorker & think_unit: tutorials/items/amphibious/cognitive_worker.ipynb
+      - Dual-Mode Orchestration: tutorials/items/amphibious/think.ipynb
+      - RunMode: tutorials/items/amphibious/automa_mode.ipynb
+      - Context & Exposure: tutorials/items/amphibious/context_and_exposure.ipynb
+      - Customizing the OTC Cycle: tutorials/items/amphibious/custom_otc.ipynb
+      - Cognitive Policies: tutorials/items/amphibious/cognitive_policies.ipynb
+      - Phase Annotation: tutorials/items/amphibious/phase_annotation.ipynb
+      - Cognitive History: tutorials/items/amphibious/cognitive_history.ipynb
+      - Execution Tracing: tutorials/items/amphibious/execution_tracing.ipynb
     - Agent Structure Language: tutorials/items/asl/quick_start.ipynb
     - Model Integration:
       - Model: tutorials/items/model_integration/index.md
@@ -165,6 +177,7 @@ plugins:
             show_symbol_type_toc: true
           paths: 
             - ../packages/bridgic-core
+            - ../packages/bridgic-amphibious
             - ../packages/bridgic-asl
             - ../packages/bridgic-integration/llms/bridgic-llms-openai
             - ../packages/bridgic-integration/llms/bridgic-llms-openai-like
