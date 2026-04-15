@@ -70,7 +70,7 @@ from ._amphibious_automa import (
     ThinkUnitDescriptor,
 )
 from .scaffold import create_project
-from .builtin_tools import human_request_tool
+from .builtin_tools import request_human_tool
 
 from ._type import (
     # Worker data structures
@@ -141,7 +141,7 @@ __all__ = [
     "RecordedToolCall",
     "StepOutputType",
     # Built-in tools
-    "human_request_tool",
+    "request_human_tool",
     # Scaffolding
     "create_project",
 ]

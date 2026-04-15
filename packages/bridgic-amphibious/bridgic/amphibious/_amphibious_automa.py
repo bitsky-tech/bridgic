@@ -22,6 +22,7 @@ from bridgic.core.agentic.tool_specs import ToolSpec
 from bridgic.core.utils._console import printer
 from bridgic.amphibious._context import CognitiveContext, CognitiveTools, CognitiveSkills, CognitiveHistory, Exposure, LayeredExposure
 from bridgic.amphibious._cognitive_worker import CognitiveWorker, _DELEGATE
+from bridgic.amphibious.builtin_tools import request_human_tool
 from bridgic.amphibious.builtin_tools.human.request_human import current_agent
 from bridgic.amphibious._type import (
     RunMode,
@@ -46,7 +47,11 @@ from bridgic.amphibious._type import (
 # Type Aliases
 ################################################################################################################
 
+# Generic type for the agent's cognitive context, allowing users to define their own context classes.
 CognitiveContextT = TypeVar("CognitiveContextT", bound=CognitiveContext)
+
+# Built-in tools auto-injected into every AmphibiousAutoma agent's tool set.
+_BUILTIN_TOOLS: Tuple[ToolSpec, ...] = (request_human_tool,)
 
 
 ################################################################################################################
@@ -537,7 +542,7 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
 
         This is the primary entry point for code-level human-in-the-loop
         calls inside ``on_agent()`` (between think units) or from the
-        ``human_request_tool`` closure.
+        ``request_human_tool`` closure.
 
         Parameters
         ----------
@@ -1511,7 +1516,7 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
     # Entry point
     ############################################################################
     @worker(is_start=True)
-    async def router(self, mode: RunMode, will_fallback: bool, max_consecutive_fallbacks: int) -> str:
+    async def router(self, mode: RunMode, max_consecutive_fallbacks: int) -> str:
         """
         Router worker: dispatches to the correct execution mode.
 
@@ -1525,8 +1530,8 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
             self._log("Router", "Ferrying to WORKFLOW mode", color="green")
             self.ferry_to("_workflow")
         elif mode is RunMode.AMPHIFLOW:
-            self._log("Router", f"Ferrying to AMPHIFLOW mode, will_fallback={will_fallback}, max_consecutive_fallbacks={max_consecutive_fallbacks}", color="green")
-            self.ferry_to("_amphiflow", will_fallback=will_fallback, max_consecutive_fallbacks=max_consecutive_fallbacks)
+            self._log("Router", f"Ferrying to AMPHIFLOW mode, max_consecutive_fallbacks={max_consecutive_fallbacks}", color="green")
+            self.ferry_to("_amphiflow", max_consecutive_fallbacks=max_consecutive_fallbacks)
         else:
             raise RuntimeError(f"Unsupported run mode: {mode!r}")
 
@@ -1547,11 +1552,11 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         return self._final_answer or self._current_context.summary()
 
     @worker(is_output=True)
-    async def _amphiflow(self, will_fallback: bool, max_consecutive_fallbacks: int) -> str:
+    async def _amphiflow(self, max_consecutive_fallbacks: int) -> str:
         """
         Entry point: runs on_workflow() with agent fallback support (amphiflow mode).
         """
-        await self._run_workflow(self._current_context, will_fallback=will_fallback, max_consecutive_fallbacks=max_consecutive_fallbacks)
+        await self._run_workflow(self._current_context, will_fallback=True, max_consecutive_fallbacks=max_consecutive_fallbacks)
         return self._final_answer or self._current_context.summary()
 
     async def arun(
@@ -1560,7 +1565,6 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         context: Optional[CognitiveContextT] = None,
         trace_running: bool = False,
         mode: Optional[RunMode] = RunMode.AUTO,
-        will_fallback: bool = True,
         max_consecutive_fallbacks: int = 1,
         **kwargs
     ) -> str:
@@ -1591,12 +1595,9 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
             ``RunMode.AMPHIFLOW`` forces workflow with agent fallback,
             ``RunMode.AUTO`` (default) auto-detects from which template methods
             are overridden.
-        will_fallback : bool
-            Whether workflow failures can fall back to agent mode.
-            Only applies to amphiflow mode. Default is True.
         max_consecutive_fallbacks : int
             Maximum consecutive workflow step failures before switching
-            to full agent mode. Default is 1.
+            to full agent mode. Only applies to amphiflow mode. Default is 1.
         **kwargs
             Arguments passed to CognitiveContext constructor when ``context``
             is not provided (e.g., ``goal``, ``tools``, ``skills``).
@@ -1626,7 +1627,6 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
             start_time = time.time()
             result = await GraphAutoma.arun(
                 self, resolved_mode,
-                will_fallback=will_fallback,
                 max_consecutive_fallbacks=max_consecutive_fallbacks,
             )
             self.spent_time = time.time() - start_time
@@ -1697,6 +1697,13 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
             attr = getattr(context, field_name)
             for item in items:
                 attr.add(item)
+
+        # Inject built-in tools (e.g. request_human) so on_agent execution can
+        # trigger framework-level capabilities autonomously.
+        existing_tool_names = {t.tool_name for t in context.tools.get_all()}
+        for builtin in _BUILTIN_TOOLS:
+            if builtin.tool_name not in existing_tool_names:
+                context.tools.add(builtin)
 
         # Set the LLM to the context
         if self._llm is not None:

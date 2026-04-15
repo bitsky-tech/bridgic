@@ -1,6 +1,6 @@
 ---
 name: bridgic-amphibious
-description: "Build agents with the Bridgic Amphibious dual-mode framework — combining LLM-driven (agent) and deterministic (workflow) execution with automatic fallback and human-in-the-loop support. Use when: (1) writing code that imports from bridgic.amphibious, (2) creating AmphibiousAutoma subclasses, (3) defining CognitiveWorker think units, (4) implementing on_agent/on_workflow methods, (5) working with CognitiveContext, Exposure system, or cognitive policies, (6) adding human-in-the-loop interactions (HumanCall, request_human, human_request_tool), (7) scaffolding a new amphibious project via CLI, (8) any task involving the bridgic-amphibious framework."
+description: "Build agents with the Bridgic Amphibious dual-mode framework — combining LLM-driven (agent) and deterministic (workflow) execution with automatic fallback and human-in-the-loop support. Use when: (1) writing code that imports from bridgic.amphibious, (2) creating AmphibiousAutoma subclasses, (3) defining CognitiveWorker think units, (4) implementing on_agent/on_workflow methods, (5) working with CognitiveContext, Exposure system, or cognitive policies, (6) adding human-in-the-loop interactions (HumanCall, request_human, request_human_tool), (7) scaffolding a new amphibious project via CLI, (8) any task involving the bridgic-amphibious framework."
 ---
 
 # Bridgic Amphibious
@@ -136,7 +136,7 @@ class MyHybrid(AmphibiousAutoma[CognitiveContext]):
 
 await MyHybrid(llm=llm).arun(
     goal="...", tools=[...],
-    mode=RunMode.AMPHIFLOW, will_fallback=True, max_consecutive_fallbacks=2,
+    mode=RunMode.AMPHIFLOW, max_consecutive_fallbacks=2,
 )
 ```
 
@@ -144,7 +144,6 @@ await MyHybrid(llm=llm).arun(
 
 ```python
 from bridgic.amphibious import ActionCall, HumanCall
-from bridgic.amphibious.builtin_tools import human_request_tool
 
 class MyAgent(AmphibiousAutoma[CognitiveContext]):
     worker = think_unit(CognitiveWorker.inline("Execute step."), max_attempts=10)
@@ -157,8 +156,14 @@ class MyAgent(AmphibiousAutoma[CognitiveContext]):
         yield ActionCall("do_something", arg="value")
         feedback = yield HumanCall(prompt="Confirm?")     # Entry 2: workflow yield
 
-# Entry 3: LLM tool — human_request_tool is a plain FunctionToolSpec
-await MyAgent(llm=llm).arun(goal="...", tools=[my_tool, human_request_tool])
+# Entry 3: LLM tool — `request_human` is auto-injected into every agent's
+# tools, so the LLM can call it without you listing it in tools=[...].
+# (Passing `request_human_tool` explicitly is harmless — it is deduped.)
+await MyAgent(llm=llm).arun(goal="...", tools=[my_tool])
+
+# If you want to be explicit, importing and passing `request_human_tool` still OK.
+from bridgic.amphibious.builtin_tools import request_human_tool
+await agent.arun(goal="...", tools=[request_human_tool, ...])  # also fine
 ```
 
 ### Custom Pydantic Output

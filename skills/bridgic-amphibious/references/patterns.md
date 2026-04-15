@@ -112,19 +112,25 @@ class ConfirmableWorkflow(AmphibiousAutoma[CognitiveContext]):
 
 ### Entry 3: LLM tool (autonomous)
 
-```python
-from bridgic.amphibious.builtin_tools import human_request_tool
+Every `AmphibiousAutoma` agent automatically receives the built-in `request_human` tool
+in its `context.tools` during `arun()`. The LLM can call it in any mode
+(AGENT, WORKFLOW fallback, AMPHIFLOW) with no extra wiring:
 
+```python
 class AutonomousAgent(AmphibiousAutoma[CognitiveContext]):
     worker = think_unit(
-        CognitiveWorker.inline("Execute the task. Use ask_human when you need user input."),
+        CognitiveWorker.inline("Execute the task. Use request_human when you need user input."),
         max_attempts=10,
     )
     async def on_agent(self, ctx): await self.worker
 
-# human_request_tool is a plain FunctionToolSpec — use like any other tool
+# No need to pass request_human_tool — it is already available as `request_human`.
 agent = AutonomousAgent(llm=llm)
-await agent.arun(goal="Plan a trip", tools=[search_tool, human_request_tool])
+await agent.arun(goal="Plan a trip", tools=[search_tool])
+
+# If you want to be explicit, importing and passing `request_human_tool` still OK.
+from bridgic.amphibious.builtin_tools import request_human_tool
+await agent.arun(goal="Plan a trip", tools=[search_tool, request_human_tool])  # also fine
 ```
 
 ### Custom UI Integration
@@ -169,7 +175,6 @@ result = await agent.arun(
     goal="Fill and submit the form",
     tools=[fill_field_tool, click_button_tool, solve_captcha_tool],
     mode=RunMode.AMPHIFLOW,
-    will_fallback=True,
     max_consecutive_fallbacks=2,
 )
 ```

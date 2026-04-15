@@ -3,7 +3,7 @@
 Covers all three HITL entry points:
 1. Code-level: await self.request_human(prompt) in on_agent()
 2. Workflow yield: feedback = yield HumanCall(prompt=...) in on_workflow()
-3. LLM tool: human_request_tool(agent) as a FunctionToolSpec
+3. LLM tool: request_human_tool(agent) as a FunctionToolSpec
 """
 
 import asyncio
@@ -24,7 +24,7 @@ from bridgic.amphibious import (
     StepToolCall,
     ToolArgument,
 )
-from bridgic.amphibious.builtin_tools import human_request_tool
+from bridgic.amphibious.builtin_tools import request_human_tool
 
 from .tools import get_travel_planning_tools
 
@@ -383,36 +383,36 @@ class TestHumanCallWorkflow:
 
 
 # ---------------------------------------------------------------------------
-# Tests — Entry 3: human_request_tool (LLM tool)
+# Tests — Entry 3: request_human_tool (LLM tool)
 # ---------------------------------------------------------------------------
 
 class TestHumanRequestTool:
 
     def test_is_function_tool_spec(self):
-        """human_request_tool is a FunctionToolSpec instance (not a factory)."""
-        assert isinstance(human_request_tool, FunctionToolSpec)
+        """request_human_tool is a FunctionToolSpec instance (not a factory)."""
+        assert isinstance(request_human_tool, FunctionToolSpec)
 
-    def test_tool_name_is_ask_human(self):
-        """The tool uses 'ask_human' as its name."""
-        assert human_request_tool.tool_name == "ask_human"
+    def test_tool_name_is_request_human(self):
+        """The tool uses 'request_human' as its name."""
+        assert request_human_tool.tool_name == "request_human"
 
     def test_tool_has_prompt_parameter(self):
         """The tool schema includes a 'prompt' parameter."""
-        params = human_request_tool.tool_parameters
+        params = request_human_tool.tool_parameters
 
         assert "properties" in params
         assert "prompt" in params["properties"]
 
     @pytest.mark.asyncio
     async def test_tool_calls_request_human(self):
-        """End-to-end: LLM autonomously calls ask_human tool via arun(tools=[human_request_tool])."""
+        """End-to-end: LLM autonomously calls request_human tool via arun(tools=[request_human_tool])."""
 
-        # Step 1: LLM decides to call ask_human tool
-        ask_human_step = ThinkDecision(
+        # Step 1: LLM decides to call request_human tool
+        request_human_step = ThinkDecision(
             step_content="I need to ask the user for confirmation",
             output=[
                 StepToolCall(
-                    tool="ask_human",
+                    tool="request_human",
                     tool_arguments=[
                         ToolArgument(name="prompt", value="Should I proceed?"),
                     ],
@@ -437,7 +437,7 @@ class TestHumanRequestTool:
             finish=True,
         )
 
-        llm = MockLLM([ask_human_step, finish_step])
+        llm = MockLLM([request_human_step, finish_step])
 
         class Agent(AmphibiousAutoma[CognitiveContext]):
             async def on_agent(self, ctx):
@@ -451,23 +451,23 @@ class TestHumanRequestTool:
         )
         await agent.arun(
             goal="Complete a task that requires human confirmation",
-            tools=[human_request_tool, *get_travel_planning_tools()],
+            tools=[request_human_tool, *get_travel_planning_tools()],
         )
 
-        # Verify the agent ran both steps (ask_human + search_flights)
+        # Verify the agent ran both steps (request_human + search_flights)
         steps = agent._current_context.cognitive_history.get_all()
         assert len(steps) == 2
-        # First step called ask_human
-        assert steps[0].result.results[0].tool_name == "ask_human"
+        # First step called request_human
+        assert steps[0].result.results[0].tool_name == "request_human"
         assert steps[0].result.results[0].tool_result == "yes, go ahead"
         # Second step proceeded after human confirmation
         assert steps[1].result.results[0].tool_name == "search_flights"
 
     @pytest.mark.asyncio
     async def test_tool_outside_arun_raises(self):
-        """Calling ask_human outside of arun() raises RuntimeError."""
+        """Calling request_human outside of arun() raises RuntimeError."""
         with pytest.raises(RuntimeError, match="only be called during agent execution"):
-            await human_request_tool._func(prompt="hello")
+            await request_human_tool._func(prompt="hello")
 
 
 # ---------------------------------------------------------------------------
@@ -570,14 +570,14 @@ class TestContextVarConcurrency:
 
     @pytest.mark.asyncio
     async def test_concurrent_agents_tool_isolated(self):
-        """The shared human_request_tool resolves to the correct agent in concurrent runs."""
+        """The shared request_human_tool resolves to the correct agent in concurrent runs."""
         tool_results = {}
 
         class AgentWithTool(AmphibiousAutoma[CognitiveContext]):
             async def on_agent(self, ctx):
                 worker = CognitiveWorker.inline("Plan", llm=self.llm)
                 await self._run(worker)
-                result = await human_request_tool._func(prompt="who am i?")
+                result = await request_human_tool._func(prompt="who am i?")
                 tool_results[self.name] = result
 
         # Each agent has its own human_input override via event handler
@@ -644,3 +644,201 @@ class TestContextVarConcurrency:
         # Each run sees its own agent, not the previous one
         assert seen_agents[0].name == "first"
         assert seen_agents[1].name == "second"
+
+
+# ---------------------------------------------------------------------------
+# Tests — Built-in tool auto-injection
+# ---------------------------------------------------------------------------
+
+class TestBuiltinToolInjection:
+    """Verify that framework-level built-in tools (e.g. request_human) are
+    auto-injected into every agent's context.tools, including the
+    on_workflow → on_agent fallback paths."""
+
+    @pytest.mark.asyncio
+    async def test_builtin_injected_when_no_tools_passed(self):
+        """arun() without a `tools=` kwarg still exposes request_human to the agent."""
+        llm = MockLLM([_make_finish_step()])
+
+        class Agent(AmphibiousAutoma[CognitiveContext]):
+            async def on_agent(self, ctx):
+                worker = CognitiveWorker.inline("Plan", llm=self.llm)
+                await self._run(worker)
+
+        agent = Agent(llm=llm)
+        await agent.arun(goal="Test builtin injection")
+
+        tool_names = [t.tool_name for t in agent._current_context.tools.get_all()]
+        assert "request_human" in tool_names
+
+    @pytest.mark.asyncio
+    async def test_builtin_injected_dedupe_on_explicit(self):
+        """Explicitly passing request_human_tool does not produce a duplicate entry."""
+        llm = MockLLM([_make_finish_step()])
+
+        class Agent(AmphibiousAutoma[CognitiveContext]):
+            async def on_agent(self, ctx):
+                worker = CognitiveWorker.inline("Plan", llm=self.llm)
+                await self._run(worker)
+
+        agent = Agent(llm=llm)
+        await agent.arun(goal="Test dedupe", tools=[request_human_tool])
+
+        tool_names = [t.tool_name for t in agent._current_context.tools.get_all()]
+        assert tool_names.count("request_human") == 1
+
+    @pytest.mark.asyncio
+    async def test_builtin_injected_in_workflow_mode(self):
+        """Pure WORKFLOW mode (no LLM) still receives the auto-injected builtin."""
+
+        class Agent(AmphibiousAutoma[CognitiveContext]):
+            async def on_workflow(self, ctx) -> AsyncGenerator[
+                Union[ActionCall, HumanCall, AgentCall], None
+            ]:
+                if False:
+                    yield  # make this an async generator without yielding anything
+
+        agent = Agent()  # No LLM required for pure WORKFLOW mode
+        await agent.arun(goal="Test workflow-mode injection")
+
+        tool_names = [t.tool_name for t in agent._current_context.tools.get_all()]
+        assert "request_human" in tool_names
+
+    @pytest.mark.asyncio
+    async def test_builtin_visible_in_workflow_step_fallback(self):
+        """
+        When a workflow step fails, the step-level fallback path
+        (snapshot(goal=fallback_goal) + _run(worker)) must still see the
+        auto-injected request_human tool.
+        """
+
+        async def always_fails() -> str:
+            """Tool that always raises to force a fallback."""
+            raise RuntimeError("simulated step failure")
+
+        always_fails_tool = FunctionToolSpec.from_raw(always_fails)
+
+        # Fallback worker decides to call request_human, then finishes.
+        request_human_step = ThinkDecision(
+            step_content="Ask the human how to recover",
+            output=[
+                StepToolCall(
+                    tool="request_human",
+                    tool_arguments=[
+                        ToolArgument(name="prompt", value="what now?"),
+                    ],
+                )
+            ],
+            finish=False,
+        )
+        finish_step = ThinkDecision(
+            step_content="Recovered",
+            output=[],
+            finish=True,
+        )
+        llm = MockLLM([request_human_step, finish_step])
+
+        class Agent(AmphibiousAutoma[CognitiveContext]):
+            async def on_agent(self, ctx):
+                worker = CognitiveWorker.inline(
+                    "Recover from the failed step.", llm=self.llm,
+                )
+                await self._run(worker, max_attempts=5)
+
+            async def on_workflow(self, ctx) -> AsyncGenerator[
+                Union[ActionCall, HumanCall, AgentCall], None
+            ]:
+                yield ActionCall("always_fails")
+
+        # Step-level fallback runs under a fresh CognitiveHistory snapshot,
+        # so we capture request_human invocations via a recording event handler
+        # instead of inspecting cognitive_history after the run.
+        captured_prompts: List[str] = []
+
+        def recording_handler(event: Event, feedback_sender: FeedbackSender):
+            captured_prompts.append(event.data.get("prompt", ""))
+            feedback_sender.send(Feedback(data="retry later"))
+
+        agent = Agent(llm=llm)
+        agent.register_event_handler(HUMAN_INPUT_EVENT_TYPE, recording_handler)
+        # max_consecutive_fallbacks=5 forces the step-level fallback path
+        # (line ~1201 in _amphibious_automa.py), not the full agent fallback.
+        await agent.arun(
+            goal="Trigger step-level fallback",
+            tools=[always_fails_tool],
+            max_consecutive_fallbacks=5,
+        )
+
+        # The fallback worker must have successfully called request_human,
+        # proving the auto-injected builtin is visible inside the snapshot.
+        assert captured_prompts == ["what now?"]
+
+    @pytest.mark.asyncio
+    async def test_builtin_visible_in_full_agent_fallback(self):
+        """
+        When consecutive workflow failures exceed max_consecutive_fallbacks,
+        execution flows into self.on_agent(ctx) directly. The auto-injected
+        request_human tool must still be visible there.
+        """
+
+        async def always_fails() -> str:
+            raise RuntimeError("simulated failure")
+
+        always_fails_tool = FunctionToolSpec.from_raw(always_fails)
+
+        request_human_step = ThinkDecision(
+            step_content="Ask for rescue",
+            output=[
+                StepToolCall(
+                    tool="request_human",
+                    tool_arguments=[
+                        ToolArgument(name="prompt", value="help?"),
+                    ],
+                )
+            ],
+            finish=False,
+        )
+        finish_step = ThinkDecision(
+            step_content="Got human help, done.",
+            output=[],
+            finish=True,
+        )
+        llm = MockLLM([request_human_step, finish_step])
+
+        class Agent(AmphibiousAutoma[CognitiveContext]):
+            async def on_agent(self, ctx):
+                worker = CognitiveWorker.inline(
+                    "Full-mode recovery.", llm=self.llm,
+                )
+                await self._run(worker, max_attempts=5)
+
+            async def on_workflow(self, ctx) -> AsyncGenerator[
+                Union[ActionCall, HumanCall, AgentCall], None
+            ]:
+                yield ActionCall("always_fails")
+
+        agent = Agent(llm=llm)
+        agent.register_event_handler(
+            HUMAN_INPUT_EVENT_TYPE,
+            _auto_respond_handler("here is help"),
+        )
+        # max_consecutive_fallbacks=1 means the first failure immediately
+        # routes to self.on_agent(ctx) (the full agent fallback path at
+        # line ~1181 in _amphibious_automa.py).
+        await agent.arun(
+            goal="Trigger full agent fallback",
+            tools=[always_fails_tool],
+            max_consecutive_fallbacks=1,
+        )
+
+        steps = agent._current_context.cognitive_history.get_all()
+        request_human_calls = [
+            r
+            for step in steps
+            if step.result is not None and hasattr(step.result, "results")
+            for r in step.result.results
+            if r.tool_name == "request_human"
+        ]
+        assert len(request_human_calls) == 1
+        assert request_human_calls[0].tool_result == "here is help"
+        assert request_human_calls[0].success is True

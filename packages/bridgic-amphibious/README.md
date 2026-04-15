@@ -275,7 +275,6 @@ await agent.arun(
     goal="Extract dashboard data",
     tools=[...],
     mode=RunMode.AMPHIFLOW,       # or RunMode.AUTO (default, auto-detects)
-    will_fallback=True,            # enable agent fallback on failure
     max_consecutive_fallbacks=2,   # switch to full agent mode after 2 consecutive failures
 )
 ```
@@ -286,11 +285,10 @@ Three entry points for requesting human input during agent execution:
 
 ```python
 from bridgic.amphibious import AmphibiousAutoma, CognitiveContext, ActionCall, HumanCall
-from bridgic.amphibious.builtin_tools import human_request_tool
 
 class InteractiveAgent(AmphibiousAutoma[CognitiveContext]):
     planner = think_unit(
-        CognitiveWorker.inline("Plan and execute. Use ask_human when you need confirmation."),
+        CognitiveWorker.inline("Plan and execute. Use request_human when you need confirmation."),
         max_attempts=10,
     )
 
@@ -308,10 +306,11 @@ class InteractiveAgent(AmphibiousAutoma[CognitiveContext]):
 
 agent = InteractiveAgent(llm=my_llm)
 
-# Entry 3: LLM tool — LLM autonomously decides when to ask the human
+# Entry 3: LLM tool — `request_human` is auto-injected into every agent's tools,
+# so the LLM can call it autonomously without adding it to `tools=[...]`.
 await agent.arun(
     goal="Plan a trip with user preferences",
-    tools=[search_tool, human_request_tool],  # human_request_tool is a plain FunctionToolSpec
+    tools=[search_tool],
 )
 ```
 
@@ -369,7 +368,7 @@ agent._agent_trace.save("trace.json")
 | **ActionCall** | Yield in on_workflow() for deterministic tool execution |
 | **HumanCall** | Yield in on_workflow() to pause and request human input |
 | **AgentCall** | Yield in on_workflow() to delegate to agent mode |
-| **human_request_tool** | Built-in FunctionToolSpec for LLM-driven human requests |
+| **request_human_tool** | Built-in FunctionToolSpec for LLM-driven human requests |
 | **request_human()** | Code-level method to request human input in on_agent() |
 | **RunMode** | AGENT, WORKFLOW, AMPHIFLOW, or AUTO |
 

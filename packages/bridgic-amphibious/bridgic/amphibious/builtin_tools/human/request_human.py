@@ -2,14 +2,22 @@
 Human request built-in tool.
 
 Uses ``contextvars.ContextVar`` for late-binding to the running agent,
-so the exported ``human_request_tool`` is a plain ``FunctionToolSpec``
+so the exported ``request_human_tool`` is a plain ``FunctionToolSpec``
 that can be used exactly like any other tool — no factory call needed.
 
-Usage::
+``AmphibiousAutoma.arun()`` auto-injects this tool into every agent's
+``context.tools``, so the LLM can call ``request_human`` in any mode
+(AGENT, WORKFLOW fallback, AMPHIFLOW) with no extra wiring::
 
-    from bridgic.amphibious.builtin_tools import human_request_tool
+    # No need to pass request_human_tool — it is already available as `request_human`.
+    await agent.arun(goal="...", tools=[search_tool])
 
-    await agent.arun(goal="...", tools=[search_tool, human_request_tool])
+If you want to be explicit, importing and passing ``request_human_tool``
+still works — the injection step deduplicates by tool name::
+
+    from bridgic.amphibious.builtin_tools import request_human_tool
+
+    await agent.arun(goal="...", tools=[search_tool, request_human_tool])  # also fine
 """
 
 from contextvars import ContextVar
@@ -25,7 +33,7 @@ if TYPE_CHECKING:
 current_agent: ContextVar["AmphibiousAutoma"] = ContextVar("current_agent")
 
 
-async def ask_human(prompt: str) -> str:
+async def request_human(prompt: str) -> str:
     """Ask the human operator a question and wait for their response.
 
     Use this tool when you need clarification, confirmation, or any
@@ -39,10 +47,10 @@ async def ask_human(prompt: str) -> str:
     agent = current_agent.get(None)
     if agent is None:
         raise RuntimeError(
-            "ask_human can only be called during agent execution. "
+            "request_human can only be called during agent execution. "
             "Ensure the tool is used within an AmphibiousAutoma.arun() context."
         )
     return await agent.request_human(prompt)
 
 
-human_request_tool: FunctionToolSpec = FunctionToolSpec.from_raw(ask_human)
+request_human_tool: FunctionToolSpec = FunctionToolSpec.from_raw(request_human)

@@ -201,8 +201,10 @@ Three entry points for requesting human input, all built on `request_feedback_as
 |-------------|---------|-----------|
 | `await self.request_human(prompt)` | `on_agent()` — between think units | Direct async call |
 | `yield HumanCall(prompt=...)` | `on_workflow()` — pause generator | Framework calls `request_human`, sends response via `asend()` |
-| `human_request_tool` in `tools=[...]` | LLM-driven — agent mode | LLM calls `ask_human` tool, resolved via `ContextVar` |
+| `request_human` tool (auto-injected) | LLM-driven — any mode | Built-in tool injected into `context.tools` during `arun()`, resolved via `ContextVar` |
 
 **Customization**: Override `human_input(data)` template method to replace default stdin with your UI (WebSocket, HTTP callback, Slack bot, etc.).
 
-**Concurrency**: `human_request_tool` uses `contextvars.ContextVar` for late-binding. Each `asyncio.Task` (each `arun()`) gets its own isolated binding — concurrent agents sharing the same tool object never interfere.
+**Auto-injection**: `arun()` appends the framework's built-in tools (currently just `request_human`) to `context.tools` after user-supplied tools are added, deduplicated by `tool_name`. This gives `on_agent`, workflow step-level fallback, and full agent fallback the same autonomous HITL capability as `HumanCall` provides to `on_workflow`. Users can still pass `request_human_tool` explicitly — it is a no-op thanks to the dedupe.
+
+**Concurrency**: `request_human` uses `contextvars.ContextVar` for late-binding. Each `asyncio.Task` (each `arun()`) gets its own isolated binding — concurrent agents sharing the same tool object never interfere.

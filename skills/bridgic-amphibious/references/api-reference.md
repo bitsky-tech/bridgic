@@ -76,7 +76,7 @@ from bridgic.amphibious import (
     # Trace
     TraceStep, RecordedToolCall, StepOutputType,
 )
-from bridgic.amphibious.builtin_tools import human_request_tool
+from bridgic.amphibious.builtin_tools import request_human_tool
 from bridgic.core.agentic.tool_specs import FunctionToolSpec
 from bridgic.core.model.types import Message
 ```
@@ -142,7 +142,6 @@ await agent.arun(
     # Execution control
     mode: RunMode = RunMode.AUTO,
     trace_running: bool = False,
-    will_fallback: bool = True,
     max_consecutive_fallbacks: int = 1,
 ) -> str
 ```
@@ -379,15 +378,26 @@ Three entry points for requesting human input:
 |-------------|-------|-------|
 | `request_human()` | `on_agent()` | `await self.request_human("Proceed?")` |
 | `HumanCall` | `on_workflow()` | `feedback = yield HumanCall(prompt="Confirm?")` |
-| `human_request_tool` | `arun(tools=[...])` | LLM autonomously calls `ask_human` tool |
+| `request_human` tool | LLM tool-call, any mode | Auto-injected into `context.tools`; no setup needed |
 
-### human_request_tool — Built-in FunctionToolSpec
+### request_human — Auto-injected Built-in Tool
+
+Every `AmphibiousAutoma` agent automatically receives the built-in `request_human` tool
+in its `context.tools` during `arun()`. The LLM can call it in any mode
+(AGENT, WORKFLOW fallback, AMPHIFLOW) with no extra wiring:
 
 ```python
-from bridgic.amphibious.builtin_tools import human_request_tool
+# No need to pass request_human_tool — it is already available as `request_human`.
+await agent.arun(goal="Plan a trip, ask me if you need confirmation.", tools=[search_tool])
+```
 
-# Use like any other tool — no factory call needed
-await agent.arun(goal="...", tools=[search_tool, human_request_tool])
+If you want to be explicit, importing and passing `request_human_tool` still works
+— the injection step deduplicates by tool name:
+
+```python
+from bridgic.amphibious.builtin_tools import request_human_tool
+
+await agent.arun(goal="...", tools=[search_tool, request_human_tool])  # also fine
 ```
 
 Uses `contextvars.ContextVar` for late-binding to the running agent. Each concurrent `arun()` task gets its own binding — safe for parallel execution.

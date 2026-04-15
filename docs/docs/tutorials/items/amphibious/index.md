@@ -6,7 +6,7 @@ The framework is built on two core design principles:
 
 - **Agent = Think Units + Context Orchestration** — An agent is defined by declaring `CognitiveWorker` think units and orchestrating them with scoped context, rather than wiring low-level LLM calls manually.
 - **Functional Execution vs. Decision Making — Decoupled** — Tools and skills are pure capabilities, while *when* and *how* to invoke them is handled by either LLM reasoning (`on_agent`) or developer-defined workflows (`on_workflow`).
-- **Human-in-the-Loop** — Three entry points for human interaction: code-level `request_human()`, workflow `HumanCall` yield, and `human_request_tool` for LLM-autonomous requests.
+- **Human-in-the-Loop** — Three entry points for human interaction: code-level `request_human()`, workflow `HumanCall` yield, and the auto-injected `request_human` tool for LLM-autonomous requests.
 
 ## Essential
 
