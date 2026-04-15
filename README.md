@@ -1385,6 +1385,11 @@ Want to explore more examples? Check out the [bridgic-examples](https://github.c
 
 ## 👥 Community
 
+Join us to share feedback, ask questions, and keep up with what's new:
+
+- 🐦 Twitter / X: [@bridgic](https://x.com/bridgic)
+- 💬 Discord: [Join our server](https://discord.gg/K8yPVXtqwJ)
+
 Join our WeChat group to connect with other developers and get support:
 
 <img src="./docs/images/WeChat-Group-QR.png" alt="WeChat Group QR Code" width="180"/>
