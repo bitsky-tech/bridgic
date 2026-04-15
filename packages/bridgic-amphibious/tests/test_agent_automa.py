@@ -311,16 +311,15 @@ class TestAgentTrace:
 
         class Agent(AmphibiousAutoma[CognitiveContext]):
             async def on_agent(self, ctx):
-                async with self.sequential(goal="search"):
-                    await self._run(worker)
+                await self._run(worker)
 
         agent = Agent(llm=llm)
         ctx = _make_ctx()
         await agent.arun(context=ctx, trace_running=True)
 
         trace = agent._agent_trace.build()
-        assert len(trace["phases"]) == 1
-        step: TraceStep = trace["phases"][0]["steps"][0]
+        assert len(trace["steps"]) == 1
+        step: TraceStep = trace["steps"][0]
         # observation field exists on the model
         assert "observation" in TraceStep.model_fields
         # Default CognitiveContext has no observation() override, so it's None
@@ -337,15 +336,14 @@ class TestAgentTrace:
                 return "Current page: login form with username and password fields"
 
             async def on_agent(self, ctx):
-                async with self.sequential(goal="search"):
-                    await self._run(worker)
+                await self._run(worker)
 
         agent = Agent(llm=llm)
         ctx = _make_ctx()
         await agent.arun(context=ctx, trace_running=True)
 
         trace = agent._agent_trace.build()
-        step: TraceStep = trace["phases"][0]["steps"][0]
+        step: TraceStep = trace["steps"][0]
         assert step.observation is not None
         assert "login form" in step.observation
         assert step.observation_hash is not None
@@ -358,15 +356,14 @@ class TestAgentTrace:
 
         class Agent(AmphibiousAutoma[CognitiveContext]):
             async def on_agent(self, ctx):
-                async with self.sequential(goal="search"):
-                    await self._run(worker)
+                await self._run(worker)
 
         agent = Agent(llm=llm)
         ctx = _make_ctx()
         await agent.arun(context=ctx, trace_running=True)
 
         trace = agent._agent_trace.build()
-        step: TraceStep = trace["phases"][0]["steps"][0]
+        step: TraceStep = trace["steps"][0]
         assert len(step.tool_calls) == 1
         tc: RecordedToolCall = step.tool_calls[0]
         assert tc.success is True
@@ -385,8 +382,7 @@ class TestAgentTrace:
 
         class Agent(AmphibiousAutoma[CognitiveContext]):
             async def on_agent(self, ctx):
-                async with self.sequential(goal="search"):
-                    await self._run(worker)
+                await self._run(worker)
 
         agent = Agent(llm=llm)
         ctx = _make_ctx()
@@ -399,17 +395,11 @@ class TestAgentTrace:
             agent._agent_trace.save(path)
             loaded = AgentTrace.load(path)
 
-            assert "phases" in loaded
-            assert "orphan_steps" in loaded
+            assert "steps" in loaded
             assert "metadata" in loaded
-            assert len(loaded["phases"]) == 1
+            assert len(loaded["steps"]) == 1
 
-            phase = loaded["phases"][0]
-            assert phase["phase_type"] == "sequential"
-            assert phase["goal"] == "search"
-            assert len(phase["steps"]) == 1
-
-            step = phase["steps"][0]
+            step = loaded["steps"][0]
             assert "observation" in step
             assert "finished" not in step
             assert len(step["tool_calls"]) == 1
@@ -420,14 +410,13 @@ class TestAgentTrace:
             os.unlink(path)
 
     @pytest.mark.asyncio
-    async def test_trace_orphan_steps(self):
-        """Steps recorded outside any phase go to orphan_steps."""
+    async def test_trace_records_all_steps(self):
+        """All steps are recorded in the flat trace."""
         llm = MockLLM([_make_search_step()])
         worker = CognitiveWorker.inline("Plan", llm=llm)
 
         class Agent(AmphibiousAutoma[CognitiveContext]):
             async def on_agent(self, ctx):
-                # No sequential/loop wrapper → orphan steps
                 await self._run(worker)
 
         agent = Agent(llm=llm)
@@ -435,8 +424,7 @@ class TestAgentTrace:
         await agent.arun(context=ctx, trace_running=True)
 
         trace = agent._agent_trace.build()
-        assert len(trace["phases"]) == 0
-        assert len(trace["orphan_steps"]) == 1
-        step: TraceStep = trace["orphan_steps"][0]
+        assert len(trace["steps"]) == 1
+        step: TraceStep = trace["steps"][0]
         assert "observation" in TraceStep.model_fields
         assert "finished" not in TraceStep.model_fields

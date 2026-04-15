@@ -2,9 +2,8 @@ import asyncio
 import inspect
 import json
 import time
-from abc import abstractmethod
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import asynccontextmanager, contextmanager
+from contextlib import asynccontextmanager
 from typing import (
     Annotated,
     Any, AsyncGenerator, Awaitable, Callable, Dict, Generic, List, Optional, Tuple, Type, TypeVar, Union,
@@ -16,18 +15,23 @@ from pydantic import BaseModel
 from bridgic.core.automa import GraphAutoma, worker
 from bridgic.core.automa._automa import RunningOptions
 from bridgic.core.automa.args import ArgsMappingRule, InOrder
+from bridgic.core.automa.interaction import Event, Feedback
 from bridgic.core.model.types import ToolCall
 from bridgic.core.agentic import ConcurrentAutoma
 from bridgic.core.agentic.tool_specs import ToolSpec
 from bridgic.core.utils._console import printer
-from bridgic.amphibious._context import CognitiveContext, CognitiveTools, CognitiveSkills, Exposure, LayeredExposure
+from bridgic.amphibious._context import CognitiveContext, CognitiveTools, CognitiveSkills, CognitiveHistory, Exposure, LayeredExposure
 from bridgic.amphibious._cognitive_worker import CognitiveWorker, _DELEGATE
+from bridgic.amphibious.builtin_tools import request_human_tool
+from bridgic.amphibious.builtin_tools.human.request_human import current_agent
 from bridgic.amphibious._type import (
     RunMode,
     Step,
     StepToolCall,
-    WorkflowStep,
-    AgentFallback,
+    ActionCall,
+    HumanCall,
+    AgentCall,
+    HUMAN_INPUT_EVENT_TYPE,
     ErrorStrategy,
     ActionStepResult,
     ActionResult,
@@ -35,7 +39,6 @@ from bridgic.amphibious._type import (
     StepOutputType,
     TraceStep,
     RecordedToolCall,
-    RunConfig,
     observation_fingerprint,
 )
 
@@ -44,121 +47,53 @@ from bridgic.amphibious._type import (
 # Type Aliases
 ################################################################################################################
 
+# Generic type for the agent's cognitive context, allowing users to define their own context classes.
 CognitiveContextT = TypeVar("CognitiveContextT", bound=CognitiveContext)
 
+# Built-in tools auto-injected into every AmphibiousAutoma agent's tool set.
+_BUILTIN_TOOLS: Tuple[ToolSpec, ...] = (request_human_tool,)
+
 
 ################################################################################################################
-# AgentTrace — trace collection (replaces WorkflowBuilder)
+# AgentTrace — flat execution path recorder
 ################################################################################################################
-
-
-class _PhaseAccumulator:
-    """Accumulates trace steps for a single structural phase (sequential or loop)."""
-    __slots__ = ("phase_type", "goal", "steps", "run_config")
-
-    def __init__(self, phase_type: str, goal: Optional[str] = None):
-        self.phase_type: str = phase_type  # "sequential" | "loop"
-        self.goal: Optional[str] = goal
-        self.steps: List[dict] = []
-        self.run_config: Optional[dict] = None
 
 
 class AgentTrace:
-    """Stack-based builder that captures phase-annotated trace steps.
+    """Flat trace recorder that captures each observe-think-act cycle.
 
-    ``begin_phase()`` / ``end_phase()`` bracket a structural phase.
-    ``record_step()`` routes step data to the active phase (or orphan list).
-    ``set_run_config()`` attaches run() parameters to the current phase.
-    ``build()`` returns the collected phases as structured dicts for inspection.
+    ``record_step()`` appends step data to the execution path.
+    ``build()`` returns the collected steps as a structured dict.
+    ``save()`` / ``load()`` provide JSON serialization.
     """
 
     def __init__(self):
-        self._stack: List[_PhaseAccumulator] = []
-        self._completed: List[_PhaseAccumulator] = []
-        self._orphan_steps: List[dict] = []
-
-    def begin_phase(self, phase_type: str, goal: Optional[str] = None) -> None:
-        self._stack.append(_PhaseAccumulator(phase_type, goal=goal))
-
-    def end_phase(self) -> None:
-        if self._stack:
-            self._completed.append(self._stack.pop())
+        self._steps: List[dict] = []
 
     def record_step(self, step_data: dict) -> None:
-        """Route a trace step to the active phase or the orphan list."""
-        if self._stack:
-            self._stack[-1].steps.append(step_data)
-        else:
-            self._orphan_steps.append(step_data)
-
-    def set_run_config(self, config: dict) -> None:
-        """Attach run() parameters to the current (topmost) phase."""
-        if self._stack:
-            self._stack[-1].run_config = config
-
-    def is_loop_pattern_confirmed(self) -> bool:
-        """Check if the current loop phase has detected a repeating pattern (probe mode)."""
-        if not self._stack:
-            return False
-        acc = self._stack[-1]
-        if acc.phase_type != "loop":
-            return False
-        # Minimal implementation: require at least 6 steps to consider pattern detected
-        return len(acc.steps) >= 6
-
-    @contextmanager
-    def phase(self, phase_type: str, goal: Optional[str] = None):
-        """Context manager that brackets a structural phase."""
-        self.begin_phase(phase_type, goal=goal)
-        try:
-            yield
-        finally:
-            self.end_phase()
+        """Append a trace step to the execution path."""
+        self._steps.append(step_data)
 
     def build(self, metadata: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """Return collected trace data as a structured dict."""
-        phases = []
-        for phase in self._completed:
-            trace_steps = [
-                TraceStep(
-                    name=s["name"],
-                    step_content=s.get("step_content", ""),
-                    tool_calls=[
-                        RecordedToolCall(**tc) for tc in s.get("tool_calls", [])
-                    ],
-                    observation=s.get("observation"),
-                    observation_hash=s.get("observation_hash"),
-                    output_type=StepOutputType(s.get("output_type", StepOutputType.TOOL_CALLS)),
-                    structured_output=s.get("structured_output"),
-                    structured_output_class=s.get("structured_output_class"),
-                )
-                for s in phase.steps
-            ]
-            run_config = RunConfig(**(phase.run_config or {"worker_class": "unknown"}))
-            phases.append({
-                "phase_type": phase.phase_type,
-                "goal": phase.goal,
-                "run_config": run_config,
-                "steps": trace_steps,
-            })
-
-        orphan_steps = [
+        steps = [
             TraceStep(
                 name=s["name"],
                 step_content=s.get("step_content", ""),
-                tool_calls=[RecordedToolCall(**tc) for tc in s.get("tool_calls", [])],
+                tool_calls=[
+                    RecordedToolCall(**tc) for tc in s.get("tool_calls", [])
+                ],
                 observation=s.get("observation"),
                 observation_hash=s.get("observation_hash"),
                 output_type=StepOutputType(s.get("output_type", StepOutputType.TOOL_CALLS)),
                 structured_output=s.get("structured_output"),
                 structured_output_class=s.get("structured_output_class"),
             )
-            for s in self._orphan_steps
+            for s in self._steps
         ]
 
         return {
-            "phases": phases,
-            "orphan_steps": orphan_steps,
+            "steps": steps,
             "metadata": metadata or {},
         }
 
@@ -198,7 +133,7 @@ class _AgentSnapshot:
     Async context manager for exception-safe temporary field overrides on a Context,
     with additional management of LayeredExposure._revealed state.
 
-    Used internally by ``sequential()`` and ``loop()`` context managers in AmphibiousAutoma.
+    Used internally by ``snapshot()`` context manager in AmphibiousAutoma.
 
     On enter:
     1. Saves original field values and applies overrides.
@@ -386,11 +321,7 @@ class ThinkUnitDescriptor:
         self._on_error = on_error
         self._max_retries = max_retries
 
-    def __set_name__(self, owner: type, name: str) -> None:
-        """Record the attribute name (Python 3.6+ descriptor protocol)."""
-        self._attr_name = name
-
-    def __get__(self, obj: Any, objtype: type = None) -> Any:
+    def __get__(self, obj: Any, objtype: Optional[type] = None) -> Any:
         if obj is None:
             return self  # Class-level access returns the descriptor
         return _BoundThinkUnit(obj, self)
@@ -456,11 +387,19 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
     """
     Base class for amphibious agents — dual-mode orchestration engine.
 
-    Supports two execution modes:
+    Supports three execution modes:
     - **Agent mode** (``on_agent``): LLM-driven observe-think-act cycles via think_unit
     - **Workflow mode** (``on_workflow``): Deterministic step execution via yield
+    - **Amphiflow mode** (``on_workflow`` + ``on_agent``): workflow-first with
+      automatic agent fallback when a step fails
 
     Subclasses define behavior by implementing ``on_agent()`` and/or ``on_workflow()``.
+    Under ``RunMode.AUTO`` (the default) the runtime picks the mode from which
+    template methods are overridden:
+
+    - only ``on_agent`` overridden → ``RunMode.AGENT``
+    - only ``on_workflow`` overridden → ``RunMode.WORKFLOW``
+    - both overridden → ``RunMode.AMPHIFLOW``
 
     Parameters
     ----------
@@ -483,6 +422,11 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
     """
 
     _context_class: Optional[Type[CognitiveContext]] = None
+
+    #: Max think-unit attempts when a workflow step falls back to agent mode
+    #: for per-step recovery (see ``_run_workflow``). Subclasses may override
+    #: to give the fallback agent a longer or shorter runway.
+    WORKFLOW_STEP_FALLBACK_MAX_ATTEMPTS: int = 5
 
     def __init_subclass__(cls, **kwargs) -> None:
         """Extract the CognitiveContext type from the generic parameter."""
@@ -529,8 +473,11 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         self._final_answer: Optional[str] = None
 
         # Usage stats (reset per arun call)
-        self.spend_tokens: int = 0
-        self.spend_time: float = 0.0
+        self.spent_tokens: int = 0
+        self.spent_time: float = 0.0
+
+        # Human-in-the-loop event handler registration
+        self._register_human_input_handler()
 
     @property
     def llm(self) -> Optional[Any]:
@@ -566,6 +513,63 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         self._final_answer = answer
 
     ############################################################################
+    # Human-in-the-loop support
+    ############################################################################
+
+    def _register_human_input_handler(self) -> None:
+        """Register the default event handler for human input requests.
+
+        The handler calls ``human_input()`` via ``asyncio.ensure_future()``
+        so it can be an async template method while being invoked from
+        the synchronous event-handler callback that ``request_feedback_async``
+        uses.
+        """
+
+        def _on_human_input(event: Event, feedback_sender):
+            asyncio.ensure_future(
+                self._handle_human_input(event, feedback_sender)
+            )
+
+        self.register_event_handler(HUMAN_INPUT_EVENT_TYPE, _on_human_input)
+
+    async def _handle_human_input(self, event: Event, feedback_sender) -> None:
+        """Internal dispatcher — calls the overridable ``human_input()`` template."""
+        response = await self.human_input(event.data)
+        feedback_sender.send(Feedback(data=response))
+
+    async def request_human(self, prompt: str, *, timeout: Optional[float] = None) -> str:
+        """Request input from the human operator.
+
+        This is the primary entry point for code-level human-in-the-loop
+        calls inside ``on_agent()`` (between think units) or from the
+        ``request_human_tool`` closure.
+
+        Parameters
+        ----------
+        prompt : str
+            The question or message to present to the human.
+        timeout : Optional[float]
+            Seconds to wait before raising ``TimeoutError``. None means
+            wait indefinitely.
+
+        Returns
+        -------
+        str
+            The human's response text.
+
+        Raises
+        ------
+        TimeoutError
+            If no response is received within ``timeout`` seconds.
+        """
+        event = Event(
+            event_type=HUMAN_INPUT_EVENT_TYPE,
+            data={"prompt": prompt, "timeout": timeout},
+        )
+        feedback = await self.request_feedback_async(event, timeout=timeout)
+        return feedback.data
+
+    ############################################################################
     # Template methods (override by user to customize the behavior)
     ############################################################################
     async def observation(self, ctx: CognitiveContextT) -> Optional[str]:
@@ -587,14 +591,17 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         """
         return None
 
-    @abstractmethod
     async def on_agent(self, ctx: CognitiveContextT) -> None:
         """
         Agent mode: LLM-driven orchestration logic.
 
-        Subclasses implement this method to define how think_units are
-        orchestrated. Use standard Python control flow combined with
-        ``await self.think_unit`` calls.
+        Override this method to define how think_units are orchestrated.
+        Use standard Python control flow combined with ``await self.think_unit``
+        calls.
+
+        A subclass may override this, ``on_workflow``, or both. The default
+        implementation is a no-op so that subclasses which only implement
+        ``on_workflow`` remain instantiable.
 
         Parameters
         ----------
@@ -607,28 +614,31 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         ...     await self.main_think
         ...     await self.exec_think.until(lambda ctx: ctx.done, max_attempts=20)
         """
-        ...
+        return None
 
-    async def on_workflow(self, ctx: CognitiveContextT) -> AsyncGenerator[Union[WorkflowStep, AgentFallback], None]:
+    async def on_workflow(self, ctx: CognitiveContextT) -> AsyncGenerator[Union[ActionCall, HumanCall, AgentCall], None]:
         """Workflow mode: deterministic execution as an async generator.
 
         Override this method to define a deterministic workflow. When overridden,
         ``arun()`` automatically routes to workflow mode instead of ``on_agent()``.
 
-        Yield ``WorkflowStep`` for deterministic tool execution, or
-        ``AgentFallback`` to delegate a sub-task to agent mode.
+        Three yield types are supported:
+        - ``ActionCall``  — deterministic single-tool execution
+        - ``HumanCall``   — pause and request human input (returned as str via asend)
+        - ``AgentCall``   — delegate a sub-task to LLM agent mode
 
         The generator exhausting signals workflow completion — no finish signal needed.
-        Use ``result = yield step(...)`` to receive tool execution results via asend().
+        Use ``result = yield ActionCall(...)`` to receive tool execution results via asend().
 
         Examples
         --------
         >>> async def on_workflow(self, ctx):
-        ...     yield step("navigate_to", url="http://example.com")
-        ...     result = yield step("click_element_by_ref", ref="42")
-        ...     yield AgentFallback(goal="Handle complex case", max_attempts=10)
+        ...     yield ActionCall("navigate_to", url="http://example.com")
+        ...     result = yield ActionCall("click_element_by_ref", ref="42")
+        ...     yield AgentCall(goal="Handle complex case", max_attempts=10)
         """
-        ...
+        if False:  # pragma: no cover — makes this a proper async generator stub
+            yield
 
     async def before_action(
         self,
@@ -747,6 +757,29 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         """
         pass
 
+    async def human_input(self, data: Dict[str, Any]) -> str:
+        """Template method invoked when the agent requests human input.
+
+        Override this in your subclass to integrate with your UI or
+        messaging layer.  The default implementation reads from stdin.
+
+        Parameters
+        ----------
+        data : Dict[str, Any]
+            Event payload — always contains ``"prompt"``; may contain
+            ``"timeout"`` and other metadata added by the caller.
+
+        Returns
+        -------
+        str
+            The human's response text.
+        """
+        prompt = data.get("prompt", "Human input required:")
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(
+            None, input, f"\n[HumanInput] {prompt}\n> "
+        )
+
     ############################################################################
     # Core methods
     ############################################################################
@@ -794,17 +827,6 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
                     )
                     if finished:
                         return
-                    # Early termination — stop once loop pattern is confirmed
-                    if (self._agent_trace
-                            and self._agent_trace.is_loop_pattern_confirmed()):
-                        self._log(
-                            "Workflow",
-                            "Loop pattern confirmed after "
-                            f"{len(self._agent_trace._stack[-1].steps)} steps "
-                            "— stopping early (probe mode)",
-                            color="green",
-                        )
-                        return
                     if until is not None:
                         cond_result = until(context)
                         if inspect.iscoroutine(cond_result):
@@ -823,16 +845,6 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
                 "Cannot call _run(): no active context. "
                 "_run() must be called within an on_agent() method."
             )
-
-        # Capture run config for trace
-        if self._agent_trace:
-            self._agent_trace.set_run_config({
-                "worker_class": f"{worker.__class__.__module__}.{worker.__class__.__qualname__}",
-                "tools": tools,
-                "skills": skills,
-                "max_attempts": max_attempts,
-                "on_error": on_error.value,
-            })
 
         await _execute()
     
@@ -909,8 +921,10 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
                     filtered_tools.add(tool)
             context.tools = filtered_tools
 
-        # Init skills
-        original_skills = None
+        # Init skills (all bindings declared up-front so the `finally` block
+        # can read them unconditionally regardless of whether filtering ran).
+        original_skills: Optional[CognitiveSkills] = None
+        filtered_skills: Optional[CognitiveSkills] = None
         filtered_to_orig: Dict[int, int] = {}
         if skills is not None:
             original_skills = context.skills
@@ -927,8 +941,8 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
                     filtered_skills._revealed[orig_to_filtered[orig_idx]] = detail
             context.skills = filtered_skills
 
-        # Init spend status
-        tokens_before = worker.spend_tokens
+        # Init spent status
+        tokens_before = worker.spent_tokens
 
         ########################
         # Run CognitiveWorker
@@ -957,7 +971,7 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
                             ) from e
         finally:
             # Record and restore the execution status of the worker
-            self.spend_tokens += worker.spend_tokens - tokens_before
+            self.spent_tokens += worker.spent_tokens - tokens_before
             if injected_verbose:
                 worker._verbose = None
             if original_tools is not None:
@@ -973,123 +987,57 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         return finished
 
     @asynccontextmanager
-    async def sequential(self, *, goal: Optional[str] = None,
-                         keep_revealed: Optional[Dict[str, List[int]]] = None,
-                         **snapshot_fields):
-        """
-        Mark a structural phase as sequential for workflow capture.
-
-        Use as an async context manager around ``_run()`` calls to group them
-        into a ``SequentialBlock`` when ``trace_running=True``.
-
-        Parameters
-        ----------
-        goal : Optional[str]
-            Phase-level goal injected into the context so the LLM knows
-            the purpose of this phase.
-        keep_revealed : Optional[Dict[str, List[int]]]
-            Passed to ``_AgentSnapshot`` for revealed state management.
-        **snapshot_fields
-            Additional context fields to temporarily override during this phase.
-        """
-        async with self._phase_context("sequential",
-                                       keep_revealed=keep_revealed,
-                                       goal=goal, **snapshot_fields):
-            yield
-
-    @asynccontextmanager
-    async def loop(self, *, goal: Optional[str] = None,
-                   keep_revealed: Optional[Dict[str, List[int]]] = None,
-                   **snapshot_fields):
-        """
-        Mark a structural phase as a loop for workflow capture.
-
-        Use as an async context manager around ``_run()`` calls to group them
-        into a ``LoopBlock`` with pattern detection when ``trace_running=True``.
-
-        Parameters
-        ----------
-        goal : Optional[str]
-            Phase-level goal injected into the context so the LLM knows
-            the purpose of this phase.
-        keep_revealed : Optional[Dict[str, List[int]]]
-            Passed to ``_AgentSnapshot`` for revealed state management.
-        **snapshot_fields
-            Additional context fields to temporarily override during this phase.
-        """
-        async with self._phase_context("loop",
-                                       keep_revealed=keep_revealed,
-                                       goal=goal, **snapshot_fields):
-            yield
-
-    @asynccontextmanager
     async def snapshot(self, *, goal: Optional[str] = None,
                    keep_revealed: Optional[Dict[str, List[int]]] = None,
                    **snapshot_fields):
         """
         Temporarily override context fields for the duration of the block.
 
-        A non-structural snapshot that does not create a named phase in the trace.
-        Use ``sequential()`` or ``loop()`` when you need phase annotation.
-
         Parameters
         ----------
         goal : Optional[str]
-            Phase-level goal injected into the context so the LLM knows
+            Temporary goal injected into the context so the LLM knows
             the purpose of this phase.
         keep_revealed : Optional[Dict[str, List[int]]]
             Passed to ``_AgentSnapshot`` for revealed state management.
         **snapshot_fields
             Additional context fields to temporarily override during this phase.
         """
-        async with self._phase_context("snapshot",
-                                       keep_revealed=keep_revealed,
+        async with self._phase_context(keep_revealed=keep_revealed,
                                        goal=goal, **snapshot_fields):
             yield
 
     @asynccontextmanager
-    async def _phase_context(self, phase_type: str, *,
+    async def _phase_context(self, *,
                              keep_revealed: Optional[Dict[str, List[int]]] = None,
                              **snapshot_fields):
-        """Shared implementation for sequential() and loop() context managers.
+        """Shared implementation for snapshot() context manager.
+
+        Subclasses can override this to inject custom behavior around
+        snapshot blocks (e.g., logging, metrics, extended trace capture).
 
         Parameters
         ----------
-        phase_type : str
-            Phase type identifier (``"sequential"`` or ``"loop"`` or ``"snapshot"``).
         keep_revealed : Optional[Dict[str, List[int]]]
             Revealed state management mode for ``_AgentSnapshot``.
         **snapshot_fields
             Context fields to temporarily override during this phase.
         """
-        # Init the variables
         context = self._current_context
-        _phase_goal = snapshot_fields.pop("_phase_goal", None)
         fields = {k: v for k, v in snapshot_fields.items() if v is not None}
-        phase_type = phase_type if phase_type != "snapshot" else "sequential"
 
-        # If goal was passed as a snapshot field (e.g. sequential(goal=...)),
-        # use it as the phase goal for the workflow builder as well.
-        if _phase_goal is None and "goal" in fields:
-            _phase_goal = fields["goal"]
-
-        if not fields and keep_revealed is None and _phase_goal is None:
+        if not fields and keep_revealed is None:
             raise ValueError(
-                f"_phase_context('{phase_type}'): no snapshot fields, keep_revealed, "
-                f"or goal provided. If no context state needs to be scoped for "
-                f"this phase, use _run() directly — the behavior is identical."
+                "snapshot(): no snapshot fields, keep_revealed, "
+                "or goal provided. If no context state needs to be scoped, "
+                "use _run() directly — the behavior is identical."
             )
 
-        # Create the snapshot
         snap = _AgentSnapshot(context, fields, keep_revealed=keep_revealed)
         await snap.__aenter__()
-        if self._agent_trace:
-            self._agent_trace.begin_phase(phase_type, goal=_phase_goal)
         try:
             yield
         finally:
-            if self._agent_trace:
-                self._agent_trace.end_phase()
             await snap.__aexit__(None, None, None)
 
     async def _run_workflow(
@@ -1102,12 +1050,12 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         """Consume on_workflow() generator, executing each step.
 
         Uses asend() to return tool execution results (List[ToolResult]) back
-        to the generator, enabling ``result = yield step(...)`` syntax.
+        to the generator, enabling ``result = yield ActionCall(...)`` syntax.
 
         For each yielded item:
-        - ``WorkflowStep``: run observe → log → act deterministically.
-          If execution fails, fall back to agent mode for the current step.
-        - ``AgentFallback``: delegate to ``_run()`` for LLM-driven execution.
+        - ``ActionCall``: run observe → log → act deterministically. If execution fails, fall back to agent mode for the current step.
+        - ``HumanCall``: pause and await human input via request_feedback_async.
+        - ``AgentCall``: delegate to ``_run()`` for LLM-driven execution.
 
         If consecutive failures exceed ``max_consecutive_fallbacks``, abandon
         the workflow and delegate the remaining task to ``on_agent()``
@@ -1133,20 +1081,28 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
                     send_value = None  # Reset for next iteration
                 except StopAsyncIteration:
                     break
-
-                if isinstance(item, AgentFallback):
-                    fallback_worker = item.worker if item.worker is not None else self._create_fallback_worker()
-                    await self._run(
-                        fallback_worker,
-                        max_attempts=item.max_attempts,
-                        tools=item.tools or None,
-                        skills=item.skills or None,
-                    )
+                
+                # When returning an AgentCall proactively in on_workflow, it is by default assumed that a brand new and clean
+                # context is initiated for a new goal target to execute the agent mode. Otherwise, you can customize the
+                # context information: tools, skills, history.
+                if isinstance(item, AgentCall):
+                    call_worker = item.worker if item.worker is not None else CognitiveWorker.inline("Complete the goal.")
+                    history = item.history if item.history is not None else CognitiveHistory()
+                    async with self.snapshot(goal=item.goal, cognitive_history=history):
+                        await self._run(call_worker, tools=item.tools, skills=item.skills, max_attempts=item.max_attempts)
                     consecutive_failures = 0
                     send_value = None
                     continue
 
-                # Deterministic execution
+                if isinstance(item, HumanCall):
+                    self._log("Workflow", f"Requesting human input: {item.prompt}", color="yellow")
+                    response = await self.request_human(item.prompt, timeout=item.timeout)
+                    self._log("Workflow", f"Human responded: {response[:100]}{'...' if len(response) > 100 else ''}", color="green")
+                    consecutive_failures = 0
+                    send_value = response
+                    continue
+
+                # Deterministic execution (ActionCall)
                 worker = item.worker
                 decision = item.decision
 
@@ -1171,10 +1127,7 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
 
                     # Check if any tool execution failed
                     inner = getattr(action_result, "result", None)
-                    if (
-                        inner is not None
-                        and hasattr(inner, "results")
-                    ):
+                    if isinstance(inner, ActionResult):
                         failed = [
                             r for r in inner.results
                             if not r.success
@@ -1209,7 +1162,7 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
                     failed_steps.append(f"Step {step_index}: {decision.step_content} — {e}")
                     self._log(
                         "Workflow",
-                        f"Step {step_index} failed "
+                        f"[ERROR] Step {step_index} failed "
                         f"({consecutive_failures}/{max_consecutive_fallbacks}): {e}",
                         color="red",
                     )
@@ -1226,7 +1179,7 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
                             )
                         self._log(
                             "Workflow",
-                            f"Consecutive failures reached {max_consecutive_fallbacks}, "
+                            f"[ERROR] Consecutive failures reached {max_consecutive_fallbacks}, "
                             f"falling back to full agent mode (on_agent).",
                             color="red",
                         )
@@ -1252,32 +1205,12 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
                     )
                     async with self.snapshot(goal=fallback_goal):
                         await self._run(
-                            worker if worker is not None else self._create_fallback_worker(),
-                            max_attempts=5,
+                            worker if worker is not None else CognitiveWorker.inline("Complete the goal."),
+                            max_attempts=self.WORKFLOW_STEP_FALLBACK_MAX_ATTEMPTS,
                         )
                     send_value = None  # No result to send back after fallback
         finally:
             await gen.aclose()
-
-    # TODO: This locally downgraded CognitiveWorker needs to have a good way to be opened up 
-    # in the future to allow for customization.
-    def _create_fallback_worker(self) -> CognitiveWorker:
-        """Create a default fallback worker for workflow mode.
-
-        Used when a WorkflowStep or AgentFallback has no explicit worker.
-        The worker's observation() and before_action() both return _DELEGATE,
-        delegating to the agent-level hooks. Inherits the full tool/skill set
-        configured via arun().
-
-        Override this method to provide a custom fallback worker.
-        """
-        return CognitiveWorker.inline(
-            "Fix the current error you observe, then complete the step that failed. "
-            "Work in ReAct style: observe the situation, reason about the next action, "
-            "act once, then observe again. Take one step at a time—do not plan ahead; "
-            "react to what you see after each action.\n"
-            "Respond in JSON format."
-        )
 
     @staticmethod
     def _build_tool_results(action_result: Optional[Step]) -> List[ToolResult]:
@@ -1422,6 +1355,8 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
                 decision_result = await self.before_action(original_decision_result, ctx)
         else:
             decision_result = await self.before_action(decision_result, ctx)
+
+        # Execute the action based on the (possibly delegated) decision result
         result = None
         if _is_list_step_tool_call(decision):
             if not calls:
@@ -1552,13 +1487,41 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         """Check whether the subclass has overridden on_agent()."""
         return type(self).on_agent is not AmphibiousAutoma.on_agent
 
+    def _resolve_mode(self, mode: RunMode) -> RunMode:
+        """Resolve ``RunMode.AUTO`` to a concrete mode based on overridden template methods.
+
+        Resolution rules:
+        - both ``on_agent`` and ``on_workflow`` overridden → ``RunMode.AMPHIFLOW``
+        - only ``on_workflow`` overridden → ``RunMode.WORKFLOW``
+        - only ``on_agent`` overridden → ``RunMode.AGENT``
+        - neither overridden → ``RuntimeError``
+
+        Non-AUTO modes are returned unchanged.
+        """
+        if mode is not RunMode.AUTO:
+            return mode
+        has_agent = self._has_agent()
+        has_workflow = self._has_workflow()
+        if has_agent and has_workflow:
+            return RunMode.AMPHIFLOW
+        if has_workflow:
+            return RunMode.WORKFLOW
+        if has_agent:
+            return RunMode.AGENT
+        raise RuntimeError(
+            f"{type(self).__name__} must override on_agent() or on_workflow()."
+        )
+
     ############################################################################
     # Entry point
     ############################################################################
     @worker(is_start=True)
-    async def router(self, mode: RunMode, will_fallback: bool, max_consecutive_fallbacks: int) -> str:
+    async def router(self, mode: RunMode, max_consecutive_fallbacks: int) -> str:
         """
-        Router worker: determines and dispatches to the correct execution mode.
+        Router worker: dispatches to the correct execution mode.
+
+        ``RunMode.AUTO`` is resolved upstream in ``arun()``, so this worker
+        always receives a concrete mode.
         """
         if mode is RunMode.AGENT:
             self._log("Router", "Ferrying to AGENT mode", color="green")
@@ -1566,18 +1529,11 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         elif mode is RunMode.WORKFLOW:
             self._log("Router", "Ferrying to WORKFLOW mode", color="green")
             self.ferry_to("_workflow")
-        elif mode is RunMode.AMPHIBIOUS:
-            self._log("Router", f"Ferrying to AMPHIBIOUS mode, will_fallback={will_fallback}, max_consecutive_fallbacks={max_consecutive_fallbacks}", color="green")
-            self.ferry_to("_amphibious", will_fallback=will_fallback, max_consecutive_fallbacks=max_consecutive_fallbacks)
-        elif mode is RunMode.AUTO:
-            self._log("Router", "Auto-detecting execution mode", color="green")
-            has_workflow = self._has_workflow()
-            if has_workflow:
-                self._log("Router", f"Detected AMPHIBIOUS mode (on_workflow overridden), will_fallback={will_fallback}, max_consecutive_fallbacks={max_consecutive_fallbacks}", color="green")
-                self.ferry_to("_amphibious", will_fallback=will_fallback, max_consecutive_fallbacks=max_consecutive_fallbacks)
-            else:
-                self._log("Router", "Detected AGENT mode", color="green")
-                self.ferry_to("_cognition")
+        elif mode is RunMode.AMPHIFLOW:
+            self._log("Router", f"Ferrying to AMPHIFLOW mode, max_consecutive_fallbacks={max_consecutive_fallbacks}", color="green")
+            self.ferry_to("_amphiflow", max_consecutive_fallbacks=max_consecutive_fallbacks)
+        else:
+            raise RuntimeError(f"Unsupported run mode: {mode!r}")
 
     @worker(is_output=True)
     async def _cognition(self) -> str:
@@ -1596,13 +1552,12 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         return self._final_answer or self._current_context.summary()
 
     @worker(is_output=True)
-    async def _amphibious(self, will_fallback: bool, max_consecutive_fallbacks: int) -> str:
+    async def _amphiflow(self, max_consecutive_fallbacks: int) -> str:
         """
-        Entry point: runs on_workflow() with agent fallback support (amphibious mode).
+        Entry point: runs on_workflow() with agent fallback support (amphiflow mode).
         """
-        await self._run_workflow(self._current_context, will_fallback=will_fallback, max_consecutive_fallbacks=max_consecutive_fallbacks)
+        await self._run_workflow(self._current_context, will_fallback=True, max_consecutive_fallbacks=max_consecutive_fallbacks)
         return self._final_answer or self._current_context.summary()
-        return self._current_context.summary()
 
     async def arun(
         self,
@@ -1610,7 +1565,6 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         context: Optional[CognitiveContextT] = None,
         trace_running: bool = False,
         mode: Optional[RunMode] = RunMode.AUTO,
-        will_fallback: bool = True,
         max_consecutive_fallbacks: int = 1,
         **kwargs
     ) -> str:
@@ -1620,9 +1574,10 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         Routes to one of the execution modes:
         1. Agent mode — LLM-driven ``on_agent()`` path.
         2. Workflow mode — deterministic ``on_workflow()`` path (no fallback).
-        3. Amphibious mode — ``on_workflow()`` with automatic agent fallback.
-        4. Auto mode (default) — amphibious if ``on_workflow()`` is overridden,
-           otherwise agent.
+        3. Amphiflow mode — ``on_workflow()`` with automatic agent fallback.
+        4. Auto mode (default) — resolved from which template methods the
+           subclass overrides: both → AMPHIFLOW, only ``on_workflow`` → WORKFLOW,
+           only ``on_agent`` → AGENT.
 
         Context initialization has two paths:
         1. Pre-created: ``arun(context=my_ctx)``
@@ -1637,15 +1592,12 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         mode : Optional[RunMode]
             Execution mode. ``RunMode.AGENT`` forces agent mode,
             ``RunMode.WORKFLOW`` forces workflow mode (no fallback),
-            ``RunMode.AMPHIBIOUS`` forces workflow with agent fallback,
-            ``RunMode.AUTO`` (default) auto-detects based on whether
-            ``on_workflow()`` is overridden.
-        will_fallback : bool
-            Whether workflow failures can fall back to agent mode.
-            Only applies to amphibious mode. Default is True.
+            ``RunMode.AMPHIFLOW`` forces workflow with agent fallback,
+            ``RunMode.AUTO`` (default) auto-detects from which template methods
+            are overridden.
         max_consecutive_fallbacks : int
             Maximum consecutive workflow step failures before switching
-            to full agent mode. Default is 1.
+            to full agent mode. Only applies to amphiflow mode. Default is 1.
         **kwargs
             Arguments passed to CognitiveContext constructor when ``context``
             is not provided (e.g., ``goal``, ``tools``, ``skills``).
@@ -1665,8 +1617,8 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
                     if automa._context_class else None
                 ),
                 "timestamp": _time.time(),
-                "spend_tokens": automa.spend_tokens,
-                "spend_time": automa.spend_time,
+                "spent_tokens": automa.spent_tokens,
+                "spent_time": automa.spent_time,
             }
             return automa._agent_trace.build(metadata=metadata)
 
@@ -1674,11 +1626,10 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
             """Run the agent, measure time, and log summary."""
             start_time = time.time()
             result = await GraphAutoma.arun(
-                self, mode,
-                will_fallback=will_fallback,
+                self, resolved_mode,
                 max_consecutive_fallbacks=max_consecutive_fallbacks,
             )
-            self.spend_time = time.time() - start_time
+            self.spent_time = time.time() - start_time
 
             if self._verbose:
                 agent_name = self.name or self.__class__.__name__
@@ -1686,8 +1637,8 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
                 printer.print(separator, color="cyan")
                 printer.print(
                     f"  {agent_name} | Completed\n"
-                    f"Tokens: {self.spend_tokens} | "
-                    f"Time: {self.spend_time:.2f}s",
+                    f"Tokens: {self.spent_tokens} | "
+                    f"Time: {self.spent_time:.2f}s",
                     color="cyan"
                 )
                 printer.print(separator, color="cyan")
@@ -1697,12 +1648,16 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         ########################
         # Pre-initialize status
         ########################
-        self.spend_tokens = 0
-        self.spend_time = 0.0
+        self.spent_tokens = 0
+        self.spent_time = 0.0
         self._final_answer = None
 
-        if self._llm is None:
-            raise RuntimeError("AmphibiousAutoma must be initialized with an LLM.")
+        resolved_mode = self._resolve_mode(mode if mode is not None else RunMode.AUTO)
+        if self._llm is None and resolved_mode in (RunMode.AGENT, RunMode.AMPHIFLOW):
+            raise RuntimeError(
+                f"AmphibiousAutoma must be initialized with an LLM for "
+                f"{resolved_mode.value} mode."
+            )
 
         if trace_running:
             self._agent_trace = AgentTrace()
@@ -1718,28 +1673,37 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
                     f"Context must be an instance of {self._context_class.__name__}, "
                     f"got {type(context).__name__}"
                 )
-        else:
-            # Separate Exposure fields (tools, skills, etc.) from regular constructor args
-            exposure_fields = self._context_class._exposure_fields
-            if exposure_fields is None:
-                exposure_fields = self._context_class._detect_exposure_fields()
-                self._context_class._exposure_fields = exposure_fields
 
-            # Create the context
-            constructor_kwargs = {}
-            exposure_items = {}  # {field_name: list_of_items}
-            for key, value in kwargs.items():  # Add fields to the context that can directly be added to the context
-                if key in exposure_fields and isinstance(value, (list, tuple)):
-                    exposure_items[key] = value
-                elif key in exposure_fields and isinstance(value, Exposure):
-                    constructor_kwargs[key] = value
-                else:
-                    constructor_kwargs[key] = value
+        # Separate Exposure fields (tools, skills, etc.) from regular constructor args
+        exposure_fields = self._context_class._exposure_fields
+        if exposure_fields is None:
+            exposure_fields = self._context_class._detect_exposure_fields()
+            self._context_class._exposure_fields = exposure_fields
+
+        # Create the context
+        constructor_kwargs = {}
+        exposure_items = {}  # {field_name: list_of_items}
+        for key, value in kwargs.items():  # Add fields to the context that can directly be added to the context
+            if key in exposure_fields and isinstance(value, (list, tuple)):
+                exposure_items[key] = value
+            elif key in exposure_fields and isinstance(value, Exposure):
+                constructor_kwargs[key] = value
+            else:
+                constructor_kwargs[key] = value
+        
+        if context is None:
             context = self._context_class(**constructor_kwargs)  # Create the context
-            for field_name, items in exposure_items.items():  # Add items to Exposure fields
-                attr = getattr(context, field_name)
-                for item in items:
-                    attr.add(item)
+        for field_name, items in exposure_items.items():  # Add items to Exposure fields
+            attr = getattr(context, field_name)
+            for item in items:
+                attr.add(item)
+
+        # Inject built-in tools (e.g. request_human) so on_agent execution can
+        # trigger framework-level capabilities autonomously.
+        existing_tool_names = {t.tool_name for t in context.tools.get_all()}
+        for builtin in _BUILTIN_TOOLS:
+            if builtin.tool_name not in existing_tool_names:
+                context.tools.add(builtin)
 
         # Set the LLM to the context
         if self._llm is not None:
@@ -1750,7 +1714,11 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         ########################
         # Run the amphibious automa
         ########################
-        result = await _run_and_report(context=context)
-        if trace_running and self._agent_trace:
-            _build_trace(self)
-        return result
+        token = current_agent.set(self)
+        try:
+            result = await _run_and_report(context=context)
+            if trace_running and self._agent_trace:
+                _build_trace(self)
+            return result
+        finally:
+            current_agent.reset(token)

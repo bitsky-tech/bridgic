@@ -18,9 +18,9 @@ from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
-#################################################################################################################
+################################################################################################################
 # Context layer models  (used by: _context.py)
-#################################################################################################################
+################################################################################################################
 
 class Step(BaseModel):
     """A single execution step with content, result, and metadata.
@@ -49,18 +49,18 @@ class Skill(BaseModel):
     metadata: Dict[str, Any] = Field(default_factory=dict)
 
 
-#################################################################################################################
+################################################################################################################
 # Worker layer models  (used by: _cognitive_worker.py, _amphibious_automa.py)
-#################################################################################################################
+################################################################################################################
 
 class RunMode(str, Enum):
     """The mode of the run.
 
-    Used by: _amphibious_automa.py (RunConfig)
+    Used by: _amphibious_automa.py (arun, router)
     """
     AGENT = "agent"
     WORKFLOW = "workflow"
-    AMPHIBIOUS = "amphibious"
+    AMPHIFLOW = "amphiflow"
     AUTO = "auto"
 
 class DetailRequest(BaseModel):
@@ -82,7 +82,7 @@ class DetailRequest(BaseModel):
 class ToolArgument(BaseModel):
     """A single tool argument as name-value pair.
 
-    Used by: _cognitive_worker.py (StepToolCall, step()), _amphibious_automa.py (action phase)
+    Used by: _cognitive_worker.py (StepToolCall), _amphibious_automa.py (action phase)
     """
     model_config = ConfigDict(
         extra="forbid",
@@ -103,7 +103,7 @@ class ToolArgument(BaseModel):
 class StepToolCall(BaseModel):
     """A single tool call specification.
 
-    Used by: _cognitive_worker.py (ThinkModel output, step()), _amphibious_automa.py (action phase)
+    Used by: _cognitive_worker.py (ThinkModel output), _amphibious_automa.py (action phase)
     """
     model_config = ConfigDict(
         extra="forbid",
@@ -166,13 +166,23 @@ def _coerce_none_to_list(v: Any) -> list:
 
 
 ################################################################################################################
-# Workflow mode models  (used by: _cognitive_worker.py, _amphibious_automa.py)
+# Workflow mode models  (used by: _amphibious_automa.py)
+#
+# Three atomic yield types for on_workflow():
+#   ActionCall  — deterministic single-tool execution  (replaces step() shorthand)
+#   HumanCall   — pause execution and request human input
+#   AgentCall   — delegate a sub-task to LLM agent mode
 ################################################################################################################
 
-class WorkflowDecision(BaseModel):
-    """Single-step deterministic decision for workflow mode.
+# Framework-level event type constant used by all human-in-the-loop entry points.
+# Consumed by: AmphibiousAutoma._register_human_input_handler, request_human, HumanCall handling.
+HUMAN_INPUT_EVENT_TYPE: str = "HUMAN_INPUT_REQUEST"
 
-    Used by: _cognitive_worker.py (step() helper), _amphibious_automa.py (_run_workflow)
+class WorkflowDecision(BaseModel):
+    """
+    Single-step deterministic decision for workflow mode.
+
+    Used by: _amphibious_automa.py (_run_workflow, ActionCall)
     """
     model_config = ConfigDict(extra="forbid")
 
@@ -180,27 +190,84 @@ class WorkflowDecision(BaseModel):
     output: List[StepToolCall] = Field(default_factory=list)
 
 
-@dataclass
-class WorkflowStep:
-    """Yielded by on_workflow() for deterministic execution.
+@dataclass(init=False)
+class ActionCall:
+    """Yielded by on_workflow() for deterministic single-tool execution.
+
+    Replaces the removed ``step()`` shorthand function. Each instance wraps
+    exactly one tool call together with an optional CognitiveWorker override.
 
     Used by: _amphibious_automa.py (_run_workflow)
+
+    Usage::
+        yield ActionCall("navigate_to", url="http://example.com")
+        yield ActionCall("click_element_by_ref", description="Click submit", ref="e42")
+        result = yield ActionCall("fill_field", name="user", value="john", worker=my_worker)
     """
-    decision: WorkflowDecision
-    worker: Optional[Any] = None  # CognitiveWorker; None → use agent-level hooks
+    tool_name: str
+    description: str
+    worker: Optional[Any]
+    tool_args: Dict[str, Any]
+    decision: WorkflowDecision = field(repr=False)
+
+    def __init__(
+        self,
+        tool_name: str,
+        *,
+        description: str = "",
+        worker: Optional[Any] = None,
+        **tool_args: Any,
+    ) -> None:
+        self.tool_name = tool_name
+        self.description = description
+        self.worker = worker
+        self.tool_args = tool_args
+        self.decision = WorkflowDecision(
+            step_content=description,
+            output=[StepToolCall(
+                tool=tool_name,
+                tool_arguments=[
+                    ToolArgument(name=k, value=str(v)) for k, v in tool_args.items()
+                ],
+            )],
+        )
 
 
 @dataclass
-class AgentFallback:
-    """Yielded by on_workflow() to fall back to agent mode.
+class HumanCall:
+    """Yielded by on_workflow() to pause execution and request human input.
+
+    Execution is suspended until the human provides a response, which is
+    returned to the generator via asend() as a plain string.
 
     Used by: _amphibious_automa.py (_run_workflow)
+
+    Usage::
+        feedback = yield HumanCall(prompt="Please verify the result (yes/no):")
+    """
+    prompt: str = ""
+    timeout: Optional[float] = None
+
+
+@dataclass
+class AgentCall:
+    """Yielded by on_workflow() to fall back to agent mode for a sub-task.
+
+    By default a clean context is used (fresh history, full tool set).
+    Provide explicit values to override specific context fields.
+
+    Used by: _amphibious_automa.py (_run_workflow)
+
+    Usage::
+
+        yield AgentCall(goal="Handle the login popup", max_attempts=5)
     """
     goal: str = ""
-    tools: List[str] = field(default_factory=list)
-    skills: List[str] = field(default_factory=list)
+    tools: Optional[List[str]] = None   # Tool-name filter; None → use context's full tool set
+    skills: Optional[List[str]] = None  # Skill-name filter; None → use context's full skill set
+    history: Optional[Any] = None       # Optional[CognitiveHistory]; None → fresh CognitiveHistory()
     max_attempts: int = 1
-    worker: Optional[Any] = None  # CognitiveWorker; None → use framework default fallback worker
+    worker: Optional[Any] = None        # Optional[CognitiveWorker]; None → use framework default
 
 
 ################################################################################################################
@@ -308,21 +375,6 @@ class TraceStep(BaseModel):
     output_type: StepOutputType = StepOutputType.TOOL_CALLS
     structured_output: Optional[Dict[str, Any]] = None
     structured_output_class: Optional[str] = None
-
-
-class RunConfig(BaseModel):
-    """Parameters captured from self.run(), used for trace metadata.
-
-    Used by: _amphibious_automa.py (AgentTrace)
-    """
-    model_config = ConfigDict(extra="forbid")
-
-    worker_class: str
-    worker_thinking_prompt: Optional[str] = None
-    tools: Optional[List[str]] = None
-    skills: Optional[List[str]] = None
-    max_attempts: int = 1
-    on_error: str = "raise"
 
 
 ################################################################################################################

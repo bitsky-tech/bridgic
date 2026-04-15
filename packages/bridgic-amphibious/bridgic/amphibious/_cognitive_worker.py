@@ -37,12 +37,9 @@ from bridgic.core.utils._console import printer
 from bridgic.amphibious._context import CognitiveContext
 from bridgic.amphibious._type import (
     DetailRequest,
-    ToolArgument,
     StepToolCall,
     _ThinkBase,
     _coerce_none_to_list,
-    WorkflowDecision,
-    WorkflowStep
 )
 
 
@@ -144,13 +141,13 @@ class CognitiveWorker(GraphAutoma):
         if output_schema is not None:
             self.output_schema = output_schema
 
-        # Logging runtime (None = inherit from AgentAutoma)
+        # Logging runtime (None = inherit from AmphibiousAutoma)
         self._verbose = verbose
         self._verbose_prompt = verbose_prompt
 
         # Usage stats
-        self.spend_tokens = 0
-        self.spend_time = 0
+        self.spent_tokens = 0
+        self.spent_time = 0
 
     def set_llm(self, llm: BaseLlm) -> None:
         """
@@ -269,8 +266,8 @@ class CognitiveWorker(GraphAutoma):
         """
         Thinking phase: decide what to do next (thinking + tool selection in one call).
 
-        Reads observation from context.observation (set by AgentAutoma.run() before
-        calling arun). Returns the decision directly; AgentAutoma.run() reads the
+        Reads observation from context.observation (set by AmphibiousAutoma.run() before
+        calling arun). Returns the decision directly; AmphibiousAutoma.run() reads the
         arun() return value (no side-channel via _last_decision).
         """
         if not isinstance(context, CognitiveContext):
@@ -398,7 +395,7 @@ class CognitiveWorker(GraphAutoma):
             tokens = self._count_tokens(msg.content)
             printer.print(f"[{ts}] [{stage}] ({filename}:{lineno}) Message {i+1} ({msg.role}, {tokens} tokens):", color="cyan")
             printer.print(msg.content, color="gray")
-        printer.print(f"[{ts}] [{stage}] ({filename}:{lineno}) Total: {total_tokens} tokens (cumulative: {self.spend_tokens})", color="yellow")
+        printer.print(f"[{ts}] [{stage}] ({filename}:{lineno}) Total: {total_tokens} tokens (cumulative: {self.spent_tokens})", color="yellow")
 
     @staticmethod
     def _generate_schema_example(schema: dict, defs: dict = None) -> Any:
@@ -628,6 +625,12 @@ class CognitiveWorker(GraphAutoma):
 
             return "\n".join(lines)
 
+        # Cache the full summary dict once — both the capabilities block
+        # below and the context-info block that follows derive from it.
+        # Without caching, format_summary() would trigger a second summary()
+        # traversal over every Exposure field on the context.
+        summary_dict = context.summary()
+
         # 1. Build tool details and skills summary
         capabilities_parts = []
         _, tool_specs = context.get_field('tools')
@@ -635,13 +638,17 @@ class CognitiveWorker(GraphAutoma):
             tools_details = _format_tools_details(tool_specs)
             capabilities_parts.append(f"# Available Tools (with parameters):\n{tools_details}")
         if len(context.skills) > 0:
-            skills_summary = context.summary().get('skills')
+            skills_summary = summary_dict.get('skills')
             if skills_summary:
                 capabilities_parts.append(f"# {skills_summary}")
         capabilities_description = "\n\n".join(capabilities_parts)
 
-        # 2. Build context info about current status
-        context_info = context.format_summary(exclude=['tools', 'skills'])
+        # 2. Build context info about current status (reuse cached summary_dict)
+        context_info = "\n".join(
+            summary_dict[f]
+            for f in summary_dict
+            if f not in ('tools', 'skills') and summary_dict.get(f)
+        )
         if observation is not None:
             context_info += f"\n\nObservation:\n{observation}"
         user_prompt_context = f"Based on the context below, decide your next action.\n\n{context_info}"
@@ -661,7 +668,7 @@ class CognitiveWorker(GraphAutoma):
             context_info=user_prompt_context
         )
 
-        self.spend_tokens += sum(self._count_tokens(m.content) for m in messages)
+        self.spent_tokens += sum(self._count_tokens(m.content) for m in messages)
         return messages
 
     def _count_tokens(self, text: str) -> int:
@@ -807,31 +814,38 @@ class CognitiveWorker(GraphAutoma):
 
     async def after_action(self, step_result: Any, ctx: "CognitiveContext") -> Any:
         """
-        Post-process the action result after execution.
+        Worker-level post-action hook for side effects on the context.
 
-        Returns ``_DELEGATE`` by default, which delegates to the agent-level
-        ``after_action()`` method. Override to update custom context fields
-        or perform side effects based on tool results at the worker level.
+        Returns ``_DELEGATE`` by default, which chains to the agent-level
+        ``after_action()`` method. Override this hook to mutate custom
+        context fields or perform side effects at the worker level.
+
+        The return value is a *control signal*, not a data channel:
+        - Return ``_DELEGATE`` to also invoke the agent-level ``after_action``.
+        - Return anything else to suppress the agent-level hook.
+        The returned value itself is discarded — the step_result stored in
+        history is never replaced by this hook. Perform any mutation by
+        updating ``ctx`` or ``step_result`` in place.
 
         Parameters
         ----------
         step_result : Any
-            The result of the action step.
+            The result of the action step (typically a ``Step`` instance).
         ctx : CognitiveContext
             Current cognitive context.
 
         Returns
         -------
         Any
-            The step result (optionally modified), or ``_DELEGATE`` to delegate
-            to the agent-level hook.
+            ``_DELEGATE`` to chain to the agent-level hook, or any other
+            value to suppress it.
 
         Examples
         --------
         >>> async def after_action(self, step_result, ctx):
-        ...     # Update custom context fields based on tool results
+        ...     # Update custom context fields (side effect only)
         ...     ctx.current_document = extract_document(step_result)
-        ...     return step_result
+        ...     return _DELEGATE  # still let the agent-level hook run
         """
         return _DELEGATE
 
@@ -909,41 +923,12 @@ class CognitiveWorker(GraphAutoma):
 
     async def arun(
         self,
-        *args: Tuple[Any, ...],
+        *args: Any,
         feedback_data: Optional[Union[InteractionFeedback, List[InteractionFeedback]]] = None,
-        **kwargs
+        **kwargs: Any,
     ) -> Any:
         """Execute the thinking phase. Observation must be pre-set in context.observation."""
         start_time = time.time()
         result = await super().arun(*args, feedback_data=feedback_data, **kwargs)
-        self.spend_time += time.time() - start_time
+        self.spent_time += time.time() - start_time
         return result
-
-
-def step(
-    tool_name: str,
-    *,
-    description: str = "",
-    worker: Optional[CognitiveWorker] = None,
-    **tool_args: Any,
-) -> WorkflowStep:
-    """Shorthand for constructing a single-tool WorkflowStep.
-
-    Usage::
-
-        yield step("navigate_to", url="http://example.com")
-        yield step("navigate_to", url="http://example.com", worker=my_worker)
-        yield step("click_element_by_ref", description="Click submit", ref="e42")
-    """
-    return WorkflowStep(
-        worker=worker,
-        decision=WorkflowDecision(
-            step_content=description,
-            output=[StepToolCall(
-                tool=tool_name,
-                tool_arguments=[
-                    ToolArgument(name=k, value=str(v)) for k, v in tool_args.items()
-                ],
-            )],
-        ),
-    )

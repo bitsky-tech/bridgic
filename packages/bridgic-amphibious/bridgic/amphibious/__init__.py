@@ -29,7 +29,7 @@ Architecture Layers
 **Orchestration Layer:**
 - AmphibiousAutoma: Dual-mode agent engine (agent mode + workflow mode)
   - think_unit: Descriptor for declaring think units (used in on_agent)
-  - step: Helper for declaring workflow steps (used in on_workflow)
+  - ActionCall, HumanCall, AgentCall: Workflow yield types (used in on_workflow)
 - ErrorStrategy: Error handling strategies (RAISE, IGNORE, RETRY)
 
 Example
@@ -60,8 +60,6 @@ from ._cognitive_worker import (
     CognitiveWorker,
     # Sentinel
     _DELEGATE,
-    # Workflow helpers
-    step
 )
 from ._amphibious_automa import (
     # Orchestration
@@ -71,16 +69,21 @@ from ._amphibious_automa import (
     think_unit,
     ThinkUnitDescriptor,
 )
+from .scaffold import create_project
+from .builtin_tools import request_human_tool
+
 from ._type import (
     # Worker data structures
     RunMode,
     DetailRequest,
     ToolArgument,
     StepToolCall,
-    # Workflow mode
+    # Workflow mode yield types
+    HUMAN_INPUT_EVENT_TYPE,
     WorkflowDecision,
-    WorkflowStep,
-    AgentFallback,
+    ActionCall,
+    HumanCall,
+    AgentCall,
     # Action result data structures
     ErrorStrategy,
     ActionResult,
@@ -88,13 +91,9 @@ from ._type import (
     ToolResult,
     # Trace data models
     TraceStep,
-    RunConfig,
     RecordedToolCall,
     StepOutputType,
 )
-
-# Deprecated alias
-AgentAutoma = AmphibiousAutoma
 
 __all__ = [
     # Abstraction layer
@@ -114,11 +113,9 @@ __all__ = [
     # Implementation layer - Worker
     "CognitiveWorker",
     "_DELEGATE",
-    "step",
 
     # Orchestration layer
     "AmphibiousAutoma",
-    "AgentAutoma",  # deprecated alias
     "AgentTrace",
     "think_unit",
     "ThinkUnitDescriptor",
@@ -128,10 +125,12 @@ __all__ = [
     "DetailRequest",
     "ToolArgument",
     "StepToolCall",
-    # Workflow mode
+    # Workflow mode yield types
+    "HUMAN_INPUT_EVENT_TYPE",
     "WorkflowDecision",
-    "WorkflowStep",
-    "AgentFallback",
+    "ActionCall",
+    "HumanCall",
+    "AgentCall",
     # Action result data structures
     "ErrorStrategy",
     "ActionResult",
@@ -139,7 +138,10 @@ __all__ = [
     "ToolResult",
     # Trace data models
     "TraceStep",
-    "RunConfig",
     "RecordedToolCall",
     "StepOutputType",
+    # Built-in tools
+    "request_human_tool",
+    # Scaffolding
+    "create_project",
 ]
