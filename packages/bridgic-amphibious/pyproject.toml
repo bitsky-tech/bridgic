@@ -1,7 +1,6 @@
 [project]
-name = "bridgic-core"
-version = "0.3.0"
-license = {text = "MIT"}
+name = "bridgic-amphibious"
+version = "0.1.0"
 classifiers = [
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.9",
@@ -10,21 +9,18 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
 ]
-description = "Core classes and abstractions of Bridgic, as well as basic implementations for the orchestration framework."
+description = "Bridgic-cognitive has implemented an amphibious execution model: the same system can operate in both LLM-driven agent mode (on_agent()) and deterministic code-driven workflow mode (on_workflow()), and can switch between the two modes autonomously when necessary."
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 authors = [
     { name = "Tielei Zhang", email = "zhangtl04@gmail.com" },
 ]
 dependencies = [
-    "msgpack>=1.1.1",
-    "pydantic>=2.11.0,<2.12.0",
-    "jinja2>=3.1.0",
-    "httpx>=0.24.0",
-    "docstring-parser>=0.16.0",
-    "cloudpickle>=3.1.2",
-    "pyyaml>=6.0.3",
+    "bridgic-core>=0.3.0",
 ]
+
+[project.scripts]
+bridgic-amphibious = "bridgic.amphibious.scaffold:cli"
 
 [dependency-groups]
 dev = [
@@ -41,3 +37,6 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build]
 include = ["bridgic/"]
+
+[tool.uv.sources]
+bridgic-core = { workspace = true }

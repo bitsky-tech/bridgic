@@ -9,6 +9,7 @@ resolution-markers = [
 [manifest]
 members = [
     "bridgic",
+    "bridgic-amphibious",
     "bridgic-asl",
     "bridgic-core",
     "bridgic-llms-openai",
@@ -284,9 +285,10 @@ wheels = [
 
 [[package]]
 name = "bridgic"
-version = "0.3.0"
+version = "0.4.0"
 source = { editable = "." }
 dependencies = [
+    { name = "bridgic-amphibious" },
     { name = "bridgic-asl" },
     { name = "bridgic-core" },
     { name = "bridgic-llms-openai" },
@@ -306,6 +308,7 @@ publish = [
 
 [package.metadata]
 requires-dist = [
+    { name = "bridgic-amphibious", editable = "packages/bridgic-amphibious" },
     { name = "bridgic-asl", editable = "packages/bridgic-asl" },
     { name = "bridgic-core", editable = "packages/bridgic-core" },
     { name = "bridgic-llms-openai", editable = "packages/bridgic-integration/llms/bridgic-llms-openai" },
@@ -320,6 +323,29 @@ dev = [
     { name = "pytest-cov", specifier = ">=4.0.0" },
 ]
 publish = [{ name = "tomli", specifier = ">=2.0.0" }]
+
+[[package]]
+name = "bridgic-amphibious"
+version = "0.1.0"
+source = { editable = "packages/bridgic-amphibious" }
+dependencies = [
+    { name = "bridgic-core" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "bridgic-core", editable = "packages/bridgic-core" }]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest", specifier = ">=8.4.0" },
+    { name = "pytest-asyncio", specifier = ">=1.0.0" },
+]
 
 [[package]]
 name = "bridgic-asl"
@@ -355,6 +381,7 @@ dependencies = [
     { name = "jinja2" },
     { name = "msgpack" },
     { name = "pydantic" },
+    { name = "pyyaml" },
 ]
 
 [package.dev-dependencies]
@@ -371,6 +398,7 @@ requires-dist = [
     { name = "jinja2", specifier = ">=3.1.0" },
     { name = "msgpack", specifier = ">=1.1.1" },
     { name = "pydantic", specifier = ">=2.11.0,<2.12.0" },
+    { name = "pyyaml", specifier = ">=6.0.3" },
 ]
 
 [package.metadata.requires-dev]
@@ -381,7 +409,7 @@ dev = [
 
 [[package]]
 name = "bridgic-llms-openai"
-version = "0.1.2"
+version = "0.1.3"
 source = { editable = "packages/bridgic-integration/llms/bridgic-llms-openai" }
 dependencies = [
     { name = "bridgic-core" },

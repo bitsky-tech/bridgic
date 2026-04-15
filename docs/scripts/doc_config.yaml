@@ -28,6 +28,11 @@ packages:
   - name: "bridgic-core"
     path: "packages/bridgic-core"
     description: "Bridgic Core"
+    # Amphibious
+  - name: "bridgic-amphibious"
+    path: "packages/bridgic-amphibious"
+    description: "Bridgic Amphibious"
+    # ASL
   - name: "bridgic-asl"
     path: "packages/bridgic-asl"
     description: "Bridgic ASL"
