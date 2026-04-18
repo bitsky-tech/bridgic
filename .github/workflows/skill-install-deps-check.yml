@@ -1,0 +1,223 @@
+name: Skill Install-Deps Check
+
+# Validates that every skill's install-deps.sh can successfully bootstrap a
+# fresh project environment from its deps*.ini config. Gates PRs targeting
+# main so broken skill installers can't land on the release line.
+#
+# Matrix is discovered dynamically by scanning skills/*/scripts/deps*.ini —
+# adding a new skill or provider config requires no workflow change.
+#
+# Filename convention:
+#   deps.ini              → single-config skill (no provider arg)
+#   deps.<provider>.ini   → multi-provider skill, passes <provider> as arg 2
+#
+# Main-branch policy: every [package] in deps.ini MUST declare
+# `source = "default"` (public PyPI). Private-index references are a dev-only
+# convenience and are rejected here — they have no business on main.
+# install-deps.sh itself still supports private indexes via BRIDGIC_DEV_INDEX
+# for local/dev flows; this workflow just refuses to let them ship.
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'skills/**'
+      - '.github/workflows/skill-install-deps-check.yml'
+  workflow_dispatch:
+
+jobs:
+  discover:
+    name: Discover skill configs
+    runs-on: ubuntu-22.04
+    outputs:
+      matrix: ${{ steps.build.outputs.matrix }}
+      count: ${{ steps.build.outputs.count }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Build matrix from skills/*/scripts/deps*.ini
+        id: build
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+
+          entries=()
+          for script in skills/*/scripts/install-deps.sh; do
+            skill_dir="$(dirname "$(dirname "$script")")"
+            skill_name="$(basename "$skill_dir")"
+            script_dir="$(dirname "$script")"
+
+            configs=("$script_dir"/deps*.ini)
+            if [ ${#configs[@]} -eq 0 ]; then
+              echo "::warning::skill '$skill_name' has install-deps.sh but no deps*.ini — skipped"
+              continue
+            fi
+
+            for cfg in "${configs[@]}"; do
+              cfg_name="$(basename "$cfg")"
+              if [ "$cfg_name" = "deps.ini" ]; then
+                provider=""
+              else
+                # strip leading "deps." and trailing ".ini"
+                provider="${cfg_name#deps.}"
+                provider="${provider%.ini}"
+              fi
+              entries+=("{\"skill\":\"$skill_name\",\"provider\":\"$provider\",\"config\":\"$cfg_name\"}")
+            done
+          done
+
+          count=${#entries[@]}
+          if [ "$count" -eq 0 ]; then
+            echo "::warning::no skill deps configs discovered"
+            matrix='{"include":[]}'
+          else
+            joined="$(IFS=,; echo "${entries[*]}")"
+            matrix="{\"include\":[${joined}]}"
+          fi
+
+          echo "Discovered $count config(s):"
+          printf '  %s\n' "${entries[@]}"
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+          echo "count=$count"   >> "$GITHUB_OUTPUT"
+
+  validate:
+    name: Validate ${{ matrix.skill }} / ${{ matrix.config }}
+    needs: discover
+    if: ${{ needs.discover.outputs.count != '0' }}
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.discover.outputs.matrix) }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: "latest"
+          enable-cache: true
+
+      - name: Enforce main-branch policy — deps.ini must be public-PyPI only
+        env:
+          SKILL: ${{ matrix.skill }}
+          CONFIG: ${{ matrix.config }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cfg="$GITHUB_WORKSPACE/skills/${SKILL}/scripts/${CONFIG}"
+          # Emit one line per non-default source declaration: <section> -> <value>
+          violations="$(awk '
+            function trim(s) { gsub(/^[[:space:]]+|[[:space:]]+$/, "", s); return s }
+            /^[[:space:]]*[#;]/ { next }
+            /^[[:space:]]*$/    { next }
+            /^[[:space:]]*\[.*\][[:space:]]*$/ {
+              line = $0
+              sub(/^[[:space:]]*\[/, "", line); sub(/\][[:space:]]*$/, "", line)
+              section = trim(line); next
+            }
+            /^[[:space:]]*source[[:space:]]*=/ {
+              eq = index($0, "=")
+              val = trim(substr($0, eq + 1))
+              sub(/^"/, "", val); sub(/"$/, "", val)
+              if (val != "default") print section " -> " val
+            }
+          ' "$cfg")"
+          if [ -n "$violations" ]; then
+            echo "::error::$CONFIG declares non-default (private-index) sources — not allowed on main:"
+            echo "$violations" | sed 's/^/  /'
+            echo ""
+            echo "Switch every package to source = \"default\" (public PyPI) before merging to main."
+            exit 1
+          fi
+          echo "OK: $CONFIG references public PyPI only"
+
+      - name: Run install-deps.sh in scratch project dir
+        env:
+          SKILL: ${{ matrix.skill }}
+          PROVIDER: ${{ matrix.provider }}
+          CONFIG: ${{ matrix.config }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          script="$GITHUB_WORKSPACE/skills/${SKILL}/scripts/install-deps.sh"
+          if [ ! -x "$script" ] && [ ! -f "$script" ]; then
+            echo "::error::install-deps.sh not found at $script"
+            exit 1
+          fi
+
+          scratch="$(mktemp -d -t bridgic-skill-check.XXXXXX)"
+          echo "Skill:       $SKILL"
+          echo "Config:      $CONFIG"
+          echo "Provider:    ${PROVIDER:-<none>}"
+          echo "Scratch dir: $scratch"
+          echo "Script:      $script"
+          echo ""
+
+          log="$(mktemp)"
+          set +e
+          if [ -n "$PROVIDER" ]; then
+            bash "$script" "$scratch" "$PROVIDER" 2>&1 | tee "$log"
+          else
+            bash "$script" "$scratch" 2>&1 | tee "$log"
+          fi
+          status=${PIPESTATUS[0]}
+          set -e
+
+          if [ "$status" -ne 0 ]; then
+            echo "::error::install-deps.sh exited with status $status for $SKILL / $CONFIG"
+            exit "$status"
+          fi
+
+          # Belt-and-suspenders: script uses `set -e` + structured fail marker,
+          # but also assert the success marker made it to stdout so a future
+          # silent-success regression can't sneak past.
+          if ! grep -qE '^=== DEPS_READY' "$log"; then
+            echo "::error::DEPS_READY marker missing from install-deps.sh output"
+            exit 1
+          fi
+
+          echo ""
+          echo "OK: $SKILL / $CONFIG bootstrapped cleanly"
+
+  summary:
+    name: Check Summary
+    needs: [discover, validate]
+    runs-on: ubuntu-22.04
+    if: always()
+    steps:
+      - name: Aggregate results
+        run: |
+          discover_result="${{ needs.discover.result }}"
+          validate_result="${{ needs.validate.result }}"
+          count="${{ needs.discover.outputs.count }}"
+
+          echo "discover: $discover_result"
+          echo "validate: $validate_result"
+          echo "configs discovered: $count"
+
+          if [ "$discover_result" != "success" ]; then
+            echo "::error::discover job did not succeed"
+            exit 1
+          fi
+
+          if [ "$count" = "0" ]; then
+            echo "No skill configs to validate — treating as pass"
+            exit 0
+          fi
+
+          if [ "$validate_result" != "success" ]; then
+            echo "::error::one or more skill install-deps checks failed"
+            exit 1
+          fi
+
+          echo "All skill install-deps checks passed"
