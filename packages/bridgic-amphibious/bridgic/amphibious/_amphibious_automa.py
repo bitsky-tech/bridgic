@@ -1154,7 +1154,7 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
                     send_value = self._build_tool_results(action_result)
 
                 except Exception as e:
-                    if not will_fallback: 
+                    if not will_fallback:
                         raise e
 
                     consecutive_failures += 1
