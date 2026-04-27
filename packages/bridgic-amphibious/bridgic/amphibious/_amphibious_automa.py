@@ -1081,6 +1081,25 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
                     send_value = None  # Reset for next iteration
                 except StopAsyncIteration:
                     break
+                except Exception as e:
+                    # Generator-internal code (helper / inline logic between yields) raised.
+                    # The generator object is now dead and cannot be resumed via asend(),
+                    # so step-level fallback is impossible — only full fallback or re-raise.
+                    if not will_fallback:
+                        raise
+                    if not self._has_agent():
+                        raise RuntimeError(
+                            f"Workflow generator raised at step {step_index}: {e}\n"
+                            f"on_agent() is not overridden, cannot fall back."
+                        ) from e
+                    self._log(
+                        "Workflow",
+                        f"[ERROR] Generator code raised at step {step_index}: {e} — "
+                        f"falling back to on_agent().",
+                        color="red",
+                    )
+                    await self.on_agent(ctx)
+                    return
                 
                 # When returning an AgentCall proactively in on_workflow, it is by default assumed that a brand new and clean
                 # context is initiated for a new goal target to execute the agent mode. Otherwise, you can customize the
