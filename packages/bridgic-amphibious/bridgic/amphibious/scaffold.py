@@ -1,29 +1,22 @@
 """
 Project scaffolding for Amphibious Automa projects.
 
-Creates the standard directory structure for an amphibious automa project:
-
-    <project_name>/
-    ├── task.md                # Task description (input)
-    ├── config.py              # LLM configuration
-    ├── tools.py               # Tool definitions
-    ├── workers.py             # Context, data models, custom workers
-    ├── agents.py              # Amphibious agent code
-    ├── skills/                # Amphibious skills (SKILL.md files)
-    ├── result/                # Trace and analysis results
-    └── log/                   # Runtime logs
+Generates a single ``amphi.py`` file in the target directory (default: cwd)
+containing a stub :class:`AmphibiousAutoma` subclass. Runtime concerns
+(LLM credentials, entry-point script, etc.) are intentionally left to the
+caller — the scaffold only seeds the agent definition.
 
 Usage
 -----
 CLI::
 
-    bridgic-amphibious create -n my_project
-    bridgic-amphibious create -n my_project --task "Navigate to example.com and extract data"
+    bridgic-amphibious create
+    bridgic-amphibious create --task "Navigate to example.com and extract data"
 
 Python API::
 
     from bridgic.amphibious.scaffold import create_project
-    create_project("my_project", task="Navigate to example.com and extract data")
+    create_project(task="Navigate to example.com and extract data")
 """
 
 from __future__ import annotations
@@ -34,149 +27,93 @@ from pathlib import Path
 from typing import Optional
 
 
-# ──────────────────────────────────────────────────────────────────────
-# Templates
-# ──────────────────────────────────────────────────────────────────────
+_AMPHI_FILENAME = "amphi.py"
 
-_TASK_MD = """\
-# Task Description
-
-{task}
-"""
-
-_CONFIG_PY = '''\
-"""LLM configuration for this project."""
-
-import os
-from dotenv import load_dotenv
-
-load_dotenv()  # Load environment variables from .env file if present
-
-LLM_API_BASE = os.getenv("LLM_API_BASE", "")
-LLM_API_KEY = os.getenv("LLM_API_KEY", "")
-LLM_MODEL = os.getenv("LLM_MODEL", "")
-'''
-
-_TOOLS_PY = '''\
-"""Tool definitions for this project.
-
-Define your tools here and export them for use in agents.py.
-"""
-
-import os
-
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-'''
-
-_WORKERS_PY = '''\
-"""Context, data models, and custom workers for this project.
-
-Define your custom CognitiveContext subclass, data models, and any
-CognitiveWorker subclasses here.
-"""
-
-from typing import Optional
-
-from pydantic import Field
-
-from bridgic.amphibious import CognitiveContext
+_AMPHI_PY = '''\
+{task_comment}from bridgic.amphibious import (
+    AmphibiousAutoma,
+    CognitiveContext,
+    CognitiveWorker,
+    think_unit,
+    ActionCall,
+    AgentCall,
+    HumanCall,
+)
 
 
-class ProjectContext(CognitiveContext):
-    """Execution context for this project.
-
-    Add custom fields as needed:
-    - Runtime fields (hidden from LLM): use json_schema_extra={"display": False}
-    - LLM-visible state: use EntireExposure or LayeredExposure subclasses
-    """
+# Custom context: extend with your own fields (Pydantic BaseModel under the hood).
+class AmphiContext(CognitiveContext):
     pass
+
+
+class Amphi(AmphibiousAutoma[AmphiContext]):
+    # Think unit — one observe-think-act cycle driven by an LLM.
+    main_think = think_unit(
+        CognitiveWorker.inline("Decide and execute the next step."),
+        max_attempts=10,
+    )
+
+    # Agent mode: LLM decides what to do.
+    async def on_agent(self, ctx: AmphiContext):
+        await self.main_think
+        # TODO
+
+    # Workflow mode: developer-defined deterministic steps. Implementing both
+    # on_agent and on_workflow enables AMPHIFLOW (workflow with agent fallback).
+    # Yield ActionCall / HumanCall / AgentCall to drive each step.
+    async def on_workflow(self, ctx: AmphiContext):
+        # yield ActionCall("tool_name", arg="value")
+        # feedback = yield HumanCall(prompt="Confirm?")
+        # yield AgentCall(goal="Delegate sub-task to LLM")
+        if False:
+            yield  # makes this a proper async generator
+        # TODO
 '''
 
-_AGENTS_PY = '''\
-"""Amphibious agent code.
-
-Define your AmphibiousAutoma subclass with on_agent() and on_workflow() methods here.
-"""
-
-# TODO: Implement your agent class here
-'''
-
-
-# ──────────────────────────────────────────────────────────────────────
-# Scaffolding API
-# ──────────────────────────────────────────────────────────────────────
 
 def create_project(
-    name: str,
     base_dir: Optional[str] = None,
     task: Optional[str] = None,
 ) -> Path:
-    """Create a new amphibious automa project with standard directory structure.
+    """Generate ``amphi.py`` in the target directory.
 
     Parameters
     ----------
-    name : str
-        Project directory name.
     base_dir : str, optional
-        Parent directory. Defaults to current working directory.
+        Target directory for the generated file. Defaults to the current
+        working directory.
     task : str, optional
-        Initial task description for task.md.
+        Task description, injected as a top-of-file ``# Task: ...`` comment.
+        Omitted when not provided.
 
     Returns
     -------
     Path
-        Path to the created project directory.
+        Path to the generated ``amphi.py``.
+
+    Raises
+    ------
+    FileExistsError
+        If ``amphi.py`` already exists in the target directory.
     """
     base = Path(base_dir) if base_dir else Path.cwd()
-    project_dir = base / name
+    target = base / _AMPHI_FILENAME
 
-    if project_dir.exists():
-        raise FileExistsError(f"Directory already exists: {project_dir}")
+    if target.exists():
+        raise FileExistsError(f"File already exists: {target}")
 
-    # Create directory structure
-    project_dir.mkdir(parents=True)
-    (project_dir / "skills").mkdir()
-    (project_dir / "result").mkdir()
-    (project_dir / "log").mkdir()
+    base.mkdir(parents=True, exist_ok=True)
 
-    # Write template files
-    task_text = task or "Describe your task here."
-    _write(project_dir / "task.md", _TASK_MD.format(task=task_text))
-    _write(project_dir / "config.py", _CONFIG_PY)
-    _write(project_dir / "tools.py", _TOOLS_PY)
-    _write(project_dir / "workers.py", _WORKERS_PY)
-    _write(project_dir / "agents.py", _AGENTS_PY)
+    task_comment = f"# Task: {task}\n\n" if task else ""
+    target.write_text(_AMPHI_PY.format(task_comment=task_comment), encoding="utf-8")
 
-    return project_dir
-
-
-def _write(path: Path, content: str) -> None:
-    path.write_text(textwrap.dedent(content), encoding="utf-8")
-
-
-# ──────────────────────────────────────────────────────────────────────
-# CLI entry point: bridgic-amphibious <command> [options]
-# ──────────────────────────────────────────────────────────────────────
-
-def _print_tree(project_dir: Path) -> None:
-    """Print the project directory tree."""
-    print(f"\nProject structure:")
-    for root, dirs, files in os.walk(project_dir):
-        # Skip __pycache__
-        dirs[:] = [d for d in dirs if d != "__pycache__"]
-        level = len(Path(root).relative_to(project_dir).parts)
-        indent = "  " * level
-        print(f"{indent}{Path(root).name}/")
-        for f in sorted(files):
-            print(f"{indent}  {f}")
+    return target
 
 
 def _cmd_create(args) -> None:
-    """Handle the 'create' subcommand."""
     try:
-        project_dir = create_project(args.name, args.base_dir, args.task)
-        print(f"Created project: {project_dir}")
-        _print_tree(project_dir)
+        path = create_project(args.base_dir, args.task)
+        print(f"Created: {path}")
     except FileExistsError as e:
         print(f"Error: {e}")
         raise SystemExit(1)
@@ -192,29 +129,24 @@ def cli() -> None:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=textwrap.dedent("""\
             examples:
-              bridgic-amphibious create -n my_project
-              bridgic-amphibious create -n my_project --task "Navigate to example.com"
+              bridgic-amphibious create
+              bridgic-amphibious create --task "Navigate to example.com"
         """),
     )
     subparsers = parser.add_subparsers(dest="command", help="available commands")
 
-    # ── create ──
     create_parser = subparsers.add_parser(
         "create",
-        help="Create a new Amphibious Automa project",
-        description="Scaffold a project with standard directory structure (task.md, config.py, tools.py, workers.py, agents.py, etc.).",
-    )
-    create_parser.add_argument(
-        "-n", "--name", required=True,
-        help="Project directory name",
+        help="Generate amphi.py in the current directory",
+        description="Generate a single amphi.py stub in the target directory.",
     )
     create_parser.add_argument(
         "--base-dir", default=None,
-        help="Parent directory (default: current directory)",
+        help="Target directory (default: current directory)",
     )
     create_parser.add_argument(
         "--task", default=None,
-        help="Initial task description for task.md",
+        help="Task description, injected as a top-of-file comment",
     )
 
     args = parser.parse_args()
