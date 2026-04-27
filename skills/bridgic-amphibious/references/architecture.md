@@ -186,12 +186,22 @@ async with self.snapshot(goal="Sub-task A"):
 
 ## Workflow Fallback Mechanism
 
-In AMPHIFLOW mode:
+Two distinct failure sources are handled in AMPHIFLOW mode:
 
-1. Deterministic step fails → check `consecutive_failures < max_consecutive_fallbacks`
-2. If within limit: agent fixes the specific step (scoped goal via `snapshot`)
-3. If exceeded: abandon workflow → call `on_agent()` for full agent mode
-4. `AgentCall` yield explicitly delegates a sub-task to agent mode (with a clean context snapshot)
+**ActionCall tool failure** (a yielded tool raises during execution):
+
+1. Step fails → check `consecutive_failures < max_consecutive_fallbacks`
+2. Within limit: agent fixes the specific step (scoped goal via `snapshot`); generator resumes
+3. Limit exceeded: abandon workflow → call `on_agent()` for full agent mode
+
+**Generator-internal exception** (helper / inline logic between yields raises):
+
+- The generator is unrecoverable after a raise — `asend()` cannot resume it — so step-level fallback is impossible. The framework jumps directly to full fallback: `on_agent(ctx)` takes over the remaining task.
+- Pure WORKFLOW mode (`will_fallback=False`): the original exception is re-raised — no fallback.
+- AMPHIFLOW with `on_agent` overridden: hand off to `on_agent(ctx)`.
+- AMPHIFLOW forced via `mode=` without an `on_agent` override: a `RuntimeError` is raised, tagged with the failing step index.
+
+`AgentCall` yield is orthogonal to fallback — it explicitly delegates a sub-task to agent mode (with a clean context snapshot) regardless of failure state.
 
 ## Human-in-the-Loop
 

@@ -86,29 +86,23 @@ from bridgic.core.model.types import Message
 Bootstrap a new amphibious project:
 
 ```bash
-bridgic-amphibious create -n <project-name> [--base-dir <path>] [--task <description>]
+bridgic-amphibious create [--base-dir <path>] [--task <description>]
 ```
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `-n, --name` | (required) | Project directory name |
-| `--base-dir` | Current directory | Parent directory for the project |
-| `--task` | "Describe your task here." | Initial task description for `task.md` |
+| `--base-dir` | Current directory | Target directory for the generated file |
+| `--task` | (omitted) | Injected as a top-level `# Task: ...` comment in `amphi.py` |
 
-Generated structure:
+Generated file:
 
 ```
-<project-name>/
-├── task.md          # Task description (input)
-├── config.py        # LLM configuration (API base, key, model)
-├── tools/           # Tool definitions
-│   └── __init__.py
-├── workers.py       # Context and data models (ProjectContext)
-├── agents.py        # AmphibiousAutoma subclass (TODO template)
-├── skills/          # Amphibious skills
-├── result/          # Trace and analysis results
-└── log/             # Runtime logs
+amphi.py    # AmphibiousAutoma stub: AmphiContext + Amphi class with think_unit, on_agent, on_workflow
 ```
+
+The scaffold writes only this single file in the target directory. It does not create subdirectories and does not emit runtime configuration (e.g. `.env`) — those concerns belong to the caller's environment, not the scaffold.
+
+Python API: `create_project(base_dir: Optional[str] = None, task: Optional[str] = None) -> Path`. Raises `FileExistsError` if `amphi.py` already exists in the target directory.
 
 ## AmphibiousAutoma
 
