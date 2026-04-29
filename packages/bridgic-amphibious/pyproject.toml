@@ -1,6 +1,6 @@
 [project]
 name = "bridgic-amphibious"
-version = "0.1.0"
+version = "0.1.1"
 classifiers = [
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.9",
@@ -17,6 +17,7 @@ authors = [
 ]
 dependencies = [
     "bridgic-core>=0.3.0",
+    "pyyaml>=6.0.3",
 ]
 
 [project.scripts]

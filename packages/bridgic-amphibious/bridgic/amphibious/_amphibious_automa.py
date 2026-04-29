@@ -648,8 +648,13 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         """
         Agent-level before_action hook, shared across all workers.
 
-        Called when a worker's ``before_action()`` returns ``_DELEGATE``.
-        Override to intercept and modify tool calls at the agent level.
+        Called when a worker's ``before_action()`` returns ``_DELEGATE``
+        (or ``None``, which is treated identically). Override to intercept
+        and modify tool calls at the agent level.
+
+        Returning ``None`` from this hook is treated as a passthrough — the
+        original ``decision_result`` is preserved — so that stub overrides
+        do not silently drop the decision.
 
         Parameters
         ----------
@@ -738,6 +743,10 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         -------
         Any
             The (optionally processed) result to store in execution history.
+
+            Returning ``None`` (e.g. an empty ``pass`` override) is treated
+            as passthrough — the original ``decision_result`` is preserved
+            so that stub overrides do not silently drop the typed output.
         """
         return decision_result
 
@@ -862,8 +871,11 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
             worker_name = worker.__class__.__name__
 
             # 1. Observe
+            # Worker-level ``None`` (e.g. an AI-generated ``pass`` stub) is
+            # treated identically to ``_DELEGATE`` so the agent-level
+            # observation fallback still runs.
             obs = await worker.observation(context)
-            if obs is _DELEGATE:
+            if obs is _DELEGATE or obs is None:
                 obs = await self.observation(context)
             context.observation = obs
 
@@ -1081,6 +1093,25 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
                     send_value = None  # Reset for next iteration
                 except StopAsyncIteration:
                     break
+                except Exception as e:
+                    # Generator-internal code (helper / inline logic between yields) raised.
+                    # The generator object is now dead and cannot be resumed via asend(),
+                    # so step-level fallback is impossible — only full fallback or re-raise.
+                    if not will_fallback:
+                        raise
+                    if not self._has_agent():
+                        raise RuntimeError(
+                            f"Workflow generator raised at step {step_index}: {e}\n"
+                            f"on_agent() is not overridden, cannot fall back."
+                        ) from e
+                    self._log(
+                        "Workflow",
+                        f"[ERROR] Generator code raised at step {step_index}: {e} — "
+                        f"falling back to on_agent().",
+                        color="red",
+                    )
+                    await self.on_agent(ctx)
+                    return
                 
                 # When returning an AgentCall proactively in on_workflow, it is by default assumed that a brand new and clean
                 # context is initiated for a new goal target to execute the agent mode. Otherwise, you can customize the
@@ -1107,9 +1138,11 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
                 decision = item.decision
 
                 # 1. Observe
+                # Worker-level ``None`` ≡ ``_DELEGATE`` so AI-generated stubs
+                # still fall through to the agent-level observation hook.
                 if worker is not None:
                     obs = await worker.observation(ctx)
-                    if obs is _DELEGATE:
+                    if obs is _DELEGATE or obs is None:
                         obs = await self.observation(ctx)
                 else:
                     obs = await self.observation(ctx)
@@ -1347,14 +1380,23 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         ########################
         # Execution of the action based on the decision result
         ########################
-        # before_action delegation: worker → agent (if _DELEGATE)
+        # before_action delegation: worker → agent.
+        # ``None`` is treated as "no-op override" so that AI-generated stubs
+        # (``async def before_action(...): pass``) behave identically to not
+        # overriding the hook at all:
+        #   - worker-level None ≡ _DELEGATE → fall through to agent-level
+        #   - agent-level None  ≡ passthrough → keep original decision_result
         original_decision_result = decision_result
         if _worker is not None:
-            decision_result = await _worker.before_action(decision_result, ctx)
-            if decision_result is _DELEGATE:
-                decision_result = await self.before_action(original_decision_result, ctx)
+            worker_ret = await _worker.before_action(decision_result, ctx)
+            if worker_ret is _DELEGATE or worker_ret is None:
+                agent_ret = await self.before_action(original_decision_result, ctx)
+                decision_result = original_decision_result if agent_ret is None else agent_ret
+            else:
+                decision_result = worker_ret
         else:
-            decision_result = await self.before_action(decision_result, ctx)
+            agent_ret = await self.before_action(decision_result, ctx)
+            decision_result = original_decision_result if agent_ret is None else agent_ret
 
         # Execute the action based on the (possibly delegated) decision result
         result = None
@@ -1375,14 +1417,20 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
                 )
                 ctx.add_info(result)
         else:
-            action_result = await self.action_custom_output(decision_result, ctx)
+            # ``None`` (e.g. from an AI-generated ``pass`` stub) is treated as
+            # passthrough so the typed output is preserved instead of being
+            # silently dropped.
+            custom_ret = await self.action_custom_output(decision_result, ctx)
+            action_result = decision_result if custom_ret is None else custom_ret
             result = Step(content=decision.step_content, result=action_result, metadata={})
             ctx.add_info(result)
 
-        # after_action delegation: worker → agent (if _DELEGATE)
+        # after_action delegation: worker → agent.
+        # Worker-level ``None`` ≡ ``_DELEGATE`` so AI-generated ``pass`` stubs
+        # still chain to the agent-level hook.
         if _worker is not None:
             delegate = await _worker.after_action(result, ctx)
-            if delegate is _DELEGATE:
+            if delegate is _DELEGATE or delegate is None:
                 await self.after_action(result, ctx)
         else:
             await self.after_action(result, ctx)
@@ -1480,8 +1528,17 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         })
 
     def _has_workflow(self) -> bool:
-        """Check whether the subclass has overridden on_workflow()."""
-        return type(self).on_workflow is not AmphibiousAutoma.on_workflow
+        """Check whether the subclass has overridden on_workflow() with a real async generator.
+
+        A subclass that writes ``async def on_workflow(...): pass`` (e.g. an
+        AI-generated stub) produces a coroutine, not an async generator —
+        treat that as "not overridden" so RunMode resolution falls back to
+        the agent path instead of crashing on generator-protocol calls.
+        """
+        impl = type(self).on_workflow
+        if impl is AmphibiousAutoma.on_workflow:
+            return False
+        return inspect.isasyncgenfunction(impl)
 
     def _has_agent(self) -> bool:
         """Check whether the subclass has overridden on_agent()."""

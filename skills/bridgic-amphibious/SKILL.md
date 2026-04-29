@@ -13,7 +13,7 @@ A bridgic-amphibious project requires the following packages:
 
 | Package | Description |
 |---------|-------------|
-| `bridgic-core` | Core framework (Worker, Automa, GraphAutoma, ASL) |
+| `bridgic-core` | Core framework (Worker, Automa, GraphAutoma) |
 | `bridgic-amphibious` | Dual-mode agent framework |
 | `bridgic-llms-openai` | LLM provider (only required for `AGENT` / `AMPHIFLOW` modes) |
 | `python-dotenv` | `.env` file loading |
@@ -74,12 +74,12 @@ result = await agent.arun(
 Use the CLI to bootstrap a new project:
 
 ```bash
-bridgic-amphibious create -n my_project
-bridgic-amphibious create -n my_project --task "Navigate to example.com and extract data"
-bridgic-amphibious create -n my_project --base-dir /path/to/projects
+bridgic-amphibious create
+bridgic-amphibious create --task "Navigate to example.com and extract data"
+bridgic-amphibious create --base-dir /path/to/project
 ```
 
-Creates: `task.md`, `config.py`, `tools.py`, `workers.py`, `agents.py`, `skills/`, `result/`, `log/`.
+Creates a single `amphi.py` in the target directory (default: cwd). The template includes a custom `CognitiveContext` subclass, an `AmphibiousAutoma` subclass with a `think_unit` declaration, and stubs for both `on_agent` and `on_workflow`. Runtime concerns (LLM credentials, entry script) are intentionally left to the caller.
 
 ## Core Concepts
 
