@@ -694,6 +694,10 @@ class CognitiveWorker(GraphAutoma):
             _DELEGATE to delegate observation to AmphibiousAutoma.observation().
             A string to use as the observation directly.
 
+            Returning ``None`` (e.g. an empty ``pass`` override) is treated
+            identically to ``_DELEGATE`` so that stub overrides do not
+            bypass the agent-level fallback.
+
         Examples
         --------
         >>> async def observation(self, context):
@@ -791,6 +795,10 @@ class CognitiveWorker(GraphAutoma):
         ``before_action()`` method. Override to intercept and modify tool calls
         at the worker level.
 
+        Returning ``None`` (e.g. an empty ``pass`` override) is treated
+        identically to ``_DELEGATE`` so that stub overrides do not break the
+        delegation chain.
+
         Parameters
         ----------
         decision_result : Any
@@ -821,7 +829,9 @@ class CognitiveWorker(GraphAutoma):
         context fields or perform side effects at the worker level.
 
         The return value is a *control signal*, not a data channel:
-        - Return ``_DELEGATE`` to also invoke the agent-level ``after_action``.
+        - Return ``_DELEGATE`` (or ``None``) to also invoke the agent-level
+          ``after_action``. Treating ``None`` as ``_DELEGATE`` keeps stub
+          overrides (``async def after_action(...): pass``) safe.
         - Return anything else to suppress the agent-level hook.
         The returned value itself is discarded — the step_result stored in
         history is never replaced by this hook. Perform any mutation by
