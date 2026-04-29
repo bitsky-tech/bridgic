@@ -743,6 +743,10 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         -------
         Any
             The (optionally processed) result to store in execution history.
+
+            Returning ``None`` (e.g. an empty ``pass`` override) is treated
+            as passthrough — the original ``decision_result`` is preserved
+            so that stub overrides do not silently drop the typed output.
         """
         return decision_result
 
@@ -867,8 +871,11 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
             worker_name = worker.__class__.__name__
 
             # 1. Observe
+            # Worker-level ``None`` (e.g. an AI-generated ``pass`` stub) is
+            # treated identically to ``_DELEGATE`` so the agent-level
+            # observation fallback still runs.
             obs = await worker.observation(context)
-            if obs is _DELEGATE:
+            if obs is _DELEGATE or obs is None:
                 obs = await self.observation(context)
             context.observation = obs
 
@@ -1131,9 +1138,11 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
                 decision = item.decision
 
                 # 1. Observe
+                # Worker-level ``None`` ≡ ``_DELEGATE`` so AI-generated stubs
+                # still fall through to the agent-level observation hook.
                 if worker is not None:
                     obs = await worker.observation(ctx)
-                    if obs is _DELEGATE:
+                    if obs is _DELEGATE or obs is None:
                         obs = await self.observation(ctx)
                 else:
                     obs = await self.observation(ctx)
@@ -1408,7 +1417,11 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
                 )
                 ctx.add_info(result)
         else:
-            action_result = await self.action_custom_output(decision_result, ctx)
+            # ``None`` (e.g. from an AI-generated ``pass`` stub) is treated as
+            # passthrough so the typed output is preserved instead of being
+            # silently dropped.
+            custom_ret = await self.action_custom_output(decision_result, ctx)
+            action_result = decision_result if custom_ret is None else custom_ret
             result = Step(content=decision.step_content, result=action_result, metadata={})
             ctx.add_info(result)
 

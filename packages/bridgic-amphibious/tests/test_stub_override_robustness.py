@@ -5,13 +5,16 @@ When AI coding tools generate skeleton subclasses, they often emit::
     async def before_action(self, decision_result, ctx): pass
     async def after_action(self, step_result, ctx): pass
     async def on_workflow(self, ctx): pass
+    async def observation(self, context): pass
+    async def action_custom_output(self, decision_result, ctx): pass
 
 These should NOT crash the framework. The contracts are:
 
-- Worker-level ``before_action`` / ``after_action`` returning ``None`` is treated
-  identically to ``_DELEGATE`` (delegate to the agent-level hook).
-- Agent-level ``before_action`` returning ``None`` is treated as a passthrough
-  (the original ``decision_result`` is preserved).
+- Worker-level ``before_action`` / ``after_action`` / ``observation`` returning
+  ``None`` is treated identically to ``_DELEGATE`` (delegate to the agent-level
+  hook).
+- Agent-level ``before_action`` and ``action_custom_output`` returning ``None``
+  are treated as passthrough (the original input is preserved).
 - ``on_workflow`` written as a plain ``async def ... : pass`` (a coroutine, not
   an async generator) is treated as "not overridden" — ``_has_workflow()``
   returns False and ``RunMode.AUTO`` falls back to the agent path.
@@ -271,3 +274,92 @@ class TestAgentBeforeActionStub:
         last_step = agent._current_context.cognitive_history[-1]
         tool_names = [r.tool_name for r in last_step.result.results]
         assert tool_names == ["search_flights"]
+
+
+# ---------------------------------------------------------------------------
+# Worker-level observation stub returning None
+# ---------------------------------------------------------------------------
+
+class TestWorkerObservationStub:
+
+    @pytest.mark.asyncio
+    async def test_worker_observation_pass_falls_back_to_agent(self):
+        """Worker-level `observation` returning None must delegate to agent-level."""
+
+        llm = _SeqLLM([_search_decision(finish=True)])
+
+        class StubWorker(CognitiveWorker):
+            async def thinking(self):
+                return "Plan ONE step"
+
+            async def observation(self, context):  # noqa: D401 — stub
+                pass
+
+        worker = StubWorker(llm=llm)
+
+        class StubAgent(AmphibiousAutoma[_TravelCtx]):
+            async def observation(self, ctx):
+                return "agent-level observation"
+
+            async def on_agent(self, ctx):
+                await self._run(worker, max_attempts=1)
+
+        agent = StubAgent(llm=llm)
+        await agent.arun(goal="Trigger observation delegation")
+
+        # Agent-level observation wins instead of the worker silently writing
+        # ``None`` into ctx.observation.
+        assert agent._current_context.observation == "agent-level observation"
+
+
+# ---------------------------------------------------------------------------
+# Agent-level action_custom_output stub returning None
+# ---------------------------------------------------------------------------
+
+from pydantic import BaseModel
+
+
+class _PlanOutput(BaseModel):
+    note: str
+
+
+class TestActionCustomOutputStub:
+
+    @pytest.mark.asyncio
+    async def test_action_custom_output_pass_passes_through(self):
+        """Agent-level `action_custom_output` returning None preserves the typed output."""
+
+        expected = _PlanOutput(note="should be preserved")
+
+        class _PlanWorker(CognitiveWorker):
+            output_schema = _PlanOutput
+
+            async def thinking(self):
+                return "Produce a plan."
+
+        worker = _PlanWorker(llm=_SeqLLM([]))
+        decision_model = worker._ThinkDecisionModel
+        decision = decision_model(
+            step_content="Planning complete",
+            output=expected,
+            finish=True,
+        )
+
+        llm = _SeqLLM([decision])
+        worker.set_llm(llm)
+
+        class StubAgent(AmphibiousAutoma[CognitiveContext]):
+            async def action_custom_output(self, decision_result, ctx):  # noqa: D401 — stub
+                pass
+
+            async def on_agent(self, ctx):
+                await self._run(worker, max_attempts=1)
+
+        agent = StubAgent(llm=llm)
+        await agent.arun(goal="Trigger action_custom_output passthrough")
+
+        # The typed output survives a None-returning override.
+        last_step = agent._current_context.cognitive_history[-1]
+        assert last_step.result is expected
+        assert isinstance(last_step.result, _PlanOutput)
+        assert last_step.result.note == "should be preserved"

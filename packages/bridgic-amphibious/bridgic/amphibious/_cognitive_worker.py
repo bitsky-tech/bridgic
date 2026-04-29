@@ -694,6 +694,10 @@ class CognitiveWorker(GraphAutoma):
             _DELEGATE to delegate observation to AmphibiousAutoma.observation().
             A string to use as the observation directly.
 
+            Returning ``None`` (e.g. an empty ``pass`` override) is treated
+            identically to ``_DELEGATE`` so that stub overrides do not
+            bypass the agent-level fallback.
+
         Examples
         --------
         >>> async def observation(self, context):
