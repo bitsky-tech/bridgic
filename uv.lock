@@ -330,6 +330,7 @@ version = "0.1.1"
 source = { editable = "packages/bridgic-amphibious" }
 dependencies = [
     { name = "bridgic-core" },
+    { name = "pyyaml" },
 ]
 
 [package.dev-dependencies]
@@ -339,7 +340,10 @@ dev = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "bridgic-core", editable = "packages/bridgic-core" }]
+requires-dist = [
+    { name = "bridgic-core", editable = "packages/bridgic-core" },
+    { name = "pyyaml", specifier = ">=6.0.3" },
+]
 
 [package.metadata.requires-dev]
 dev = [
@@ -381,7 +385,6 @@ dependencies = [
     { name = "jinja2" },
     { name = "msgpack" },
     { name = "pydantic" },
-    { name = "pyyaml" },
 ]
 
 [package.dev-dependencies]
@@ -398,7 +401,6 @@ requires-dist = [
     { name = "jinja2", specifier = ">=3.1.0" },
     { name = "msgpack", specifier = ">=1.1.1" },
     { name = "pydantic", specifier = ">=2.11.0,<2.12.0" },
-    { name = "pyyaml", specifier = ">=6.0.3" },
 ]
 
 [package.metadata.requires-dev]
