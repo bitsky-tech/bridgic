@@ -606,7 +606,7 @@ class TestContextVarConcurrency:
     @pytest.mark.asyncio
     async def test_contextvar_cleaned_after_arun(self):
         """ContextVar is reset after arun() completes — no leaking between runs."""
-        from bridgic.amphibious.builtin_tools.human.request_human import current_agent
+        from bridgic.amphibious.builtin_tools import current_agent
 
         llm = MockLLM([_make_finish_step()])
 
@@ -631,7 +631,7 @@ class TestContextVarConcurrency:
                 worker = CognitiveWorker.inline("Plan", llm=self.llm)
                 await self._run(worker)
                 # Use the tool to verify which agent the ContextVar resolves to
-                from bridgic.amphibious.builtin_tools.human.request_human import current_agent
+                from bridgic.amphibious.builtin_tools import current_agent
                 seen_agents.append(current_agent.get(None))
 
         llm = MockLLM([_make_finish_step()])

@@ -6,7 +6,7 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from typing import (
     Annotated,
-    Any, AsyncGenerator, Awaitable, Callable, Dict, Generic, List, Optional, Tuple, Type, TypeVar, Union,
+    Any, AsyncGenerator, Awaitable, Callable, ClassVar, Dict, FrozenSet, Generic, Iterable, List, Optional, Tuple, Type, TypeVar, Union,
     get_args, get_origin
 )
 
@@ -22,8 +22,7 @@ from bridgic.core.agentic.tool_specs import ToolSpec
 from bridgic.core.utils._console import printer
 from bridgic.amphibious._context import CognitiveContext, CognitiveTools, CognitiveSkills, CognitiveHistory, Exposure, LayeredExposure
 from bridgic.amphibious._cognitive_worker import CognitiveWorker, _DELEGATE
-from bridgic.amphibious.builtin_tools import request_human_tool
-from bridgic.amphibious.builtin_tools.human.request_human import current_agent
+from bridgic.amphibious.builtin_tools import ALL_BUILTIN_TOOLS, current_agent
 from bridgic.amphibious._type import (
     RunMode,
     Step,
@@ -51,7 +50,9 @@ from bridgic.amphibious._type import (
 CognitiveContextT = TypeVar("CognitiveContextT", bound=CognitiveContext)
 
 # Built-in tools auto-injected into every AmphibiousAutoma agent's tool set.
-_BUILTIN_TOOLS: Tuple[ToolSpec, ...] = (request_human_tool,)
+# Sourced from ``builtin_tools.ALL_BUILTIN_TOOLS`` so that adding a new
+# built-in tool only requires touching the ``builtin_tools`` package.
+_BUILTIN_TOOLS: Tuple[ToolSpec, ...] = ALL_BUILTIN_TOOLS
 
 
 ################################################################################################################
@@ -428,6 +429,12 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
     #: to give the fallback agent a longer or shorter runway.
     WORKFLOW_STEP_FALLBACK_MAX_ATTEMPTS: int = 5
 
+    #: Filter applied to ``_BUILTIN_TOOLS`` during ``arun()`` injection.
+    #: ``None`` (default) injects every built-in tool. A ``frozenset`` of
+    #: tool names restricts injection to that subset; an empty frozenset
+    #: opts out entirely. ``arun(builtin_tools=...)`` overrides at runtime.
+    builtin_tools: ClassVar[Optional[FrozenSet[str]]] = None
+
     def __init_subclass__(cls, **kwargs) -> None:
         """Extract the CognitiveContext type from the generic parameter."""
         super().__init_subclass__(**kwargs)
@@ -475,6 +482,11 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         # Usage stats (reset per arun call)
         self.spent_tokens: int = 0
         self.spent_time: float = 0.0
+
+        # Per-agent read-before-modify tracker shared with the filesystem
+        # built-in tools (read_file/write_file/edit_file). Maps absolute
+        # file path → mtime at the time of the last read. Reset per arun call.
+        self._read_tracker: Dict[str, float] = {}
 
         # Human-in-the-loop event handler registration
         self._register_human_input_handler()
@@ -1544,6 +1556,25 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         """Check whether the subclass has overridden on_agent()."""
         return type(self).on_agent is not AmphibiousAutoma.on_agent
 
+    def _resolve_builtin_filter(
+        self, override: Optional[Iterable[str]]
+    ) -> Optional[FrozenSet[str]]:
+        """Resolve which built-in tool names should be auto-injected.
+
+        Resolution order: ``arun(builtin_tools=...)`` argument →
+        class-level ``builtin_tools`` attribute → ``None`` (inject all).
+
+        Returns
+        -------
+        Optional[FrozenSet[str]]
+            ``None`` means inject every entry of ``_BUILTIN_TOOLS``;
+            a frozenset (possibly empty) restricts injection to the
+            listed tool names.
+        """
+        if override is not None:
+            return frozenset(override)
+        return type(self).builtin_tools
+
     def _resolve_mode(self, mode: RunMode) -> RunMode:
         """Resolve ``RunMode.AUTO`` to a concrete mode based on overridden template methods.
 
@@ -1623,6 +1654,7 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         trace_running: bool = False,
         mode: Optional[RunMode] = RunMode.AUTO,
         max_consecutive_fallbacks: int = 1,
+        builtin_tools: Optional[Iterable[str]] = None,
         **kwargs
     ) -> str:
         """
@@ -1655,6 +1687,14 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         max_consecutive_fallbacks : int
             Maximum consecutive workflow step failures before switching
             to full agent mode. Only applies to amphiflow mode. Default is 1.
+        builtin_tools : Optional[Iterable[str]]
+            Runtime filter for which built-in tools to inject. ``None``
+            (the default) defers to the class-level ``builtin_tools``
+            attribute, which itself defaults to ``None`` meaning "all".
+            Pass an explicit iterable (e.g. ``["request_human"]``) to
+            inject only those tools, or an empty iterable to opt out
+            entirely. Tools the user has already passed via ``tools=[...]``
+            are never overwritten.
         **kwargs
             Arguments passed to CognitiveContext constructor when ``context``
             is not provided (e.g., ``goal``, ``tools``, ``skills``).
@@ -1708,6 +1748,7 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         self.spent_tokens = 0
         self.spent_time = 0.0
         self._final_answer = None
+        self._read_tracker = {}
 
         resolved_mode = self._resolve_mode(mode if mode is not None else RunMode.AUTO)
         if self._llm is None and resolved_mode in (RunMode.AGENT, RunMode.AMPHIFLOW):
@@ -1755,10 +1796,24 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
             for item in items:
                 attr.add(item)
 
-        # Inject built-in tools (e.g. request_human) so on_agent execution can
-        # trigger framework-level capabilities autonomously.
+        # Inject built-in tools (e.g. request_human, bash, read_file, ...)
+        # so on_agent execution can trigger framework-level capabilities
+        # autonomously. The ``builtin_tools`` arun kwarg takes priority over
+        # the class-level ``builtin_tools`` attribute, which itself defaults
+        # to ``None`` meaning "inject all".
+        allowed_builtins = self._resolve_builtin_filter(builtin_tools)
+        valid_builtin_names = {t.tool_name for t in _BUILTIN_TOOLS}
+        if allowed_builtins is not None:
+            unknown = allowed_builtins - valid_builtin_names
+            if unknown:
+                raise ValueError(
+                    f"Unknown built-in tool name(s) in builtin_tools filter: "
+                    f"{sorted(unknown)}. Valid names: {sorted(valid_builtin_names)}."
+                )
         existing_tool_names = {t.tool_name for t in context.tools.get_all()}
         for builtin in _BUILTIN_TOOLS:
+            if allowed_builtins is not None and builtin.tool_name not in allowed_builtins:
+                continue
             if builtin.tool_name not in existing_tool_names:
                 context.tools.add(builtin)
 

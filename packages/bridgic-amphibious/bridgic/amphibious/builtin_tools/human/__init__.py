@@ -1,22 +1,20 @@
-"""
-Human built-in tools for human-in-the-loop support.
+"""Human-in-the-loop built-in tools.
 
-Every ``AmphibiousAutoma`` agent automatically receives the built-in
-``request_human`` tool in its ``context.tools`` during ``arun()``. The
-LLM can call it in any mode (AGENT, WORKFLOW fallback, AMPHIFLOW) with
-no extra wiring::
+Every ``AmphibiousAutoma`` agent automatically receives ``request_human``
+in its ``context.tools`` during ``arun()`` (subject to the
+``builtin_tools`` filter). The LLM can call it in any mode (AGENT,
+WORKFLOW fallback, AMPHIFLOW) with no extra wiring::
 
-    # No need to pass request_human_tool — it is already available as `request_human`.
     await agent.arun(goal="...", tools=[search_tool])
 
-If you want to be explicit, importing and passing ``request_human_tool``
-still works — the injection step deduplicates by tool name::
+Importing and passing ``request_human_tool`` explicitly still works —
+the injection step deduplicates by tool name::
 
     from bridgic.amphibious.builtin_tools import request_human_tool
 
-    await agent.arun(goal="...", tools=[search_tool, request_human_tool])  # also fine
+    await agent.arun(goal="...", tools=[search_tool, request_human_tool])
 """
 
-from .request_human import request_human_tool, current_agent
+from .request_human import request_human_tool
 
-__all__ = ["request_human_tool", "current_agent"]
+__all__ = ["request_human_tool"]

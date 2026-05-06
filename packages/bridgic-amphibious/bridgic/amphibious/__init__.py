@@ -70,7 +70,15 @@ from ._amphibious_automa import (
     ThinkUnitDescriptor,
 )
 from .scaffold import create_project
-from .builtin_tools import request_human_tool
+from .builtin_tools import (
+    request_human_tool,
+    bash_tool,
+    read_file_tool,
+    write_file_tool,
+    edit_file_tool,
+    glob_tool,
+    grep_tool,
+)
 
 from ._type import (
     # Worker data structures
@@ -142,6 +150,12 @@ __all__ = [
     "StepOutputType",
     # Built-in tools
     "request_human_tool",
+    "bash_tool",
+    "read_file_tool",
+    "write_file_tool",
+    "edit_file_tool",
+    "glob_tool",
+    "grep_tool",
     # Scaffolding
     "create_project",
 ]

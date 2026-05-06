@@ -20,17 +20,9 @@ still works — the injection step deduplicates by tool name::
     await agent.arun(goal="...", tools=[search_tool, request_human_tool])  # also fine
 """
 
-from contextvars import ContextVar
-from typing import TYPE_CHECKING
-
 from bridgic.core.agentic.tool_specs import FunctionToolSpec
 
-if TYPE_CHECKING:
-    from bridgic.amphibious._amphibious_automa import AmphibiousAutoma
-
-# Task-scoped variable — each asyncio Task gets its own value,
-# so concurrent agents never interfere with each other.
-current_agent: ContextVar["AmphibiousAutoma"] = ContextVar("current_agent")
+from bridgic.amphibious.builtin_tools._agent_state import current_agent
 
 
 async def request_human(prompt: str) -> str:
