@@ -3,6 +3,7 @@
 ## Table of Contents
 - [Minimal Agent (Agent Mode)](#minimal-agent-agent-mode)
 - [Workflow Mode](#workflow-mode)
+- [Built-in Tools](#built-in-tools)
 - [Human-in-the-Loop](#human-in-the-loop)
 - [Amphiflow Mode](#amphiflow-mode)
 - [Custom Worker](#custom-worker)
@@ -77,6 +78,111 @@ result = await workflow.arun(
 )
 ```
 
+## Built-in Tools
+
+Every `AmphibiousAutoma` agent receives seven built-in tools in `context.tools` automatically — no manual wiring. Names are snake_case and work in every mode.
+
+| Tool | Purpose |
+|------|---------|
+| `request_human` | Ask the human operator a question (HITL) |
+| `bash` | Execute a shell command |
+| `read_file` | Read a file with line numbers (required before `write_file` / `edit_file`) |
+| `write_file` | Create or overwrite a file |
+| `edit_file` | Exact-string replacement with uniqueness check |
+| `glob` | Find files by pattern |
+| `grep` | Regex search across files |
+
+### Default — relying on auto-injection
+
+```python
+class CodeAgent(AmphibiousAutoma[CognitiveContext]):
+    worker = think_unit(
+        CognitiveWorker.inline("Investigate the codebase and report findings."),
+        max_attempts=20,
+    )
+    async def on_agent(self, ctx): await self.worker
+
+# All seven built-ins are present. Anything you pass in tools=[...] is added
+# on top, deduped by name.
+await CodeAgent(llm=llm).arun(goal="What does this repo do?")
+```
+
+### Calling built-ins from on_workflow
+
+```python
+from bridgic.amphibious import ActionCall
+
+class ConfigPatcher(AmphibiousAutoma[CognitiveContext]):
+    async def on_workflow(self, ctx):
+        files = yield ActionCall("glob", pattern="**/conf.yaml", path="/abs/repo")
+        # Read-before-edit invariant: each path must be read first.
+        yield ActionCall("read_file", file_path="/abs/repo/conf.yaml")
+        yield ActionCall(
+            "edit_file",
+            file_path="/abs/repo/conf.yaml",
+            old_string="threshold: 5",
+            new_string="threshold: 10",
+        )
+```
+
+### Restricting which built-ins are injected
+
+```python
+class ReadOnlyAgent(AmphibiousAutoma[CognitiveContext]):
+    # Class-level filter — these and only these are injected by arun().
+    builtin_tools = frozenset({"request_human", "read_file", "glob", "grep"})
+
+    worker = think_unit(CognitiveWorker.inline("Audit the code."), max_attempts=10)
+    async def on_agent(self, ctx): await self.worker
+```
+
+```python
+# Runtime override — wins over the class attribute.
+await agent.arun(goal="quick read-only sweep", builtin_tools=["read_file", "grep"])
+
+# Empty iterable opts out entirely.
+await agent.arun(goal="...", builtin_tools=[])
+```
+
+Unknown names fail loudly at `arun()` entry — `frozenset({"read_files"})` (typo) raises `ValueError` rather than silently producing a tool-less agent.
+
+### Combining with think_unit tool filters
+
+`think_unit(tools=[...])` filters by tool name. Built-in names work the same as any user tool, which lets you gate phases by capability:
+
+```python
+class PhaseGated(AmphibiousAutoma[CognitiveContext]):
+    investigate = think_unit(
+        CognitiveWorker.inline("Investigate."),
+        tools=["read_file", "glob", "grep"],   # exploration only
+        max_attempts=10,
+    )
+    apply = think_unit(
+        CognitiveWorker.inline("Apply the planned change."),
+        tools=["read_file", "edit_file"],       # no bash, no overwrite
+        max_attempts=5,
+    )
+    async def on_agent(self, ctx):
+        await self.investigate
+        await self.apply
+```
+
+### Read-before-modify safety in practice
+
+`write_file` (for existing files) and `edit_file` refuse to act on a path that hasn't been read in the current `arun()` call, AND refuse if the file's mtime advanced between read and modify. The tracker is reset at every `arun()` entry, so the invariant is per-run.
+
+```python
+async def on_workflow(self, ctx):
+    # Without this read, the next ActionCall raises RuntimeError.
+    yield ActionCall("read_file", file_path="/abs/conf.yaml")
+    yield ActionCall(
+        "edit_file",
+        file_path="/abs/conf.yaml",
+        old_string="threshold: 5",
+        new_string="threshold: 10",
+    )
+```
+
 ## Human-in-the-Loop
 
 Three entry points for requesting human input:
@@ -112,25 +218,18 @@ class ConfirmableWorkflow(AmphibiousAutoma[CognitiveContext]):
 
 ### Entry 3: LLM tool (autonomous)
 
-Every `AmphibiousAutoma` agent automatically receives the built-in `request_human` tool
-in its `context.tools` during `arun()`. The LLM can call it in any mode
-(AGENT, WORKFLOW fallback, AMPHIFLOW) with no extra wiring:
+`request_human` is auto-injected as one of the [built-in tools](#built-in-tools), so the LLM can call it in any mode — agent, workflow fallback, or amphiflow — without manual wiring:
 
 ```python
 class AutonomousAgent(AmphibiousAutoma[CognitiveContext]):
     worker = think_unit(
-        CognitiveWorker.inline("Execute the task. Use request_human when you need user input."),
+        CognitiveWorker.inline("Execute the task. Ask request_human when you need user input."),
         max_attempts=10,
     )
     async def on_agent(self, ctx): await self.worker
 
-# No need to pass request_human_tool — it is already available as `request_human`.
 agent = AutonomousAgent(llm=llm)
 await agent.arun(goal="Plan a trip", tools=[search_tool])
-
-# If you want to be explicit, importing and passing `request_human_tool` still OK.
-from bridgic.amphibious.builtin_tools import request_human_tool
-await agent.arun(goal="Plan a trip", tools=[search_tool, request_human_tool])  # also fine
 ```
 
 ### Custom UI Integration

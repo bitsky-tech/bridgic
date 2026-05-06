@@ -9,6 +9,7 @@
 - [think_unit](#think_unit)
 - [ActionCall, HumanCall, AgentCall](#actioncall-humancall-agentcall)
 - [Human-in-the-Loop](#human-in-the-loop)
+- [Built-in Tools](#built-in-tools)
 - [CognitiveContext](#cognitivecontext)
 - [Context and Exposure](#context-and-exposure)
 - [Data Models](#data-models)
@@ -75,8 +76,12 @@ from bridgic.amphibious import (
     ActionResult, ActionStepResult, ToolResult,
     # Trace
     TraceStep, RecordedToolCall, StepOutputType,
+    # Built-in tool specs (auto-injected; importable for explicit reuse)
+    request_human_tool, bash_tool,
+    read_file_tool, write_file_tool, edit_file_tool,
+    glob_tool, grep_tool,
 )
-from bridgic.amphibious.builtin_tools import request_human_tool
+from bridgic.amphibious.builtin_tools import ALL_BUILTIN_TOOLS, current_agent
 from bridgic.core.agentic.tool_specs import FunctionToolSpec
 from bridgic.core.model.types import Message
 ```
@@ -122,6 +127,13 @@ AmphibiousAutoma(
 )
 ```
 
+### Class Attributes (Override in Subclasses)
+
+| Attribute | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `builtin_tools` | `Optional[FrozenSet[str]]` | `None` | Filter for which entries of [`ALL_BUILTIN_TOOLS`](#built-in-tools) to auto-inject during `arun()`. `None` injects all; a frozenset of names restricts to that subset; `frozenset()` opts out entirely. The runtime `arun(builtin_tools=...)` kwarg wins over this attribute. Unknown names raise `ValueError` at `arun()` entry. |
+| `WORKFLOW_STEP_FALLBACK_MAX_ATTEMPTS` | `int` | `5` | Max think-unit attempts when a workflow step falls back to agent mode for per-step recovery. |
+
 ### arun() — Main Entry Point
 
 ```python
@@ -137,6 +149,7 @@ await agent.arun(
     mode: RunMode = RunMode.AUTO,
     trace_running: bool = False,
     max_consecutive_fallbacks: int = 1,
+    builtin_tools: Optional[Iterable[str]] = None,  # Override class-level builtin_tools filter
 ) -> str
 ```
 
@@ -374,27 +387,15 @@ Three entry points for requesting human input:
 | `HumanCall` | `on_workflow()` | `feedback = yield HumanCall(prompt="Confirm?")` |
 | `request_human` tool | LLM tool-call, any mode | Auto-injected into `context.tools`; no setup needed |
 
-### request_human — Auto-injected Built-in Tool
+### request_human as a built-in tool
 
-Every `AmphibiousAutoma` agent automatically receives the built-in `request_human` tool
-in its `context.tools` during `arun()`. The LLM can call it in any mode
-(AGENT, WORKFLOW fallback, AMPHIFLOW) with no extra wiring:
+`request_human` is one of the seven [built-in tools](#built-in-tools) auto-injected into `context.tools` during `arun()`, so the LLM can call it in any mode (AGENT, WORKFLOW fallback, AMPHIFLOW) without you wiring it through `tools=[...]`:
 
 ```python
-# No need to pass request_human_tool — it is already available as `request_human`.
 await agent.arun(goal="Plan a trip, ask me if you need confirmation.", tools=[search_tool])
 ```
 
-If you want to be explicit, importing and passing `request_human_tool` still works
-— the injection step deduplicates by tool name:
-
-```python
-from bridgic.amphibious.builtin_tools import request_human_tool
-
-await agent.arun(goal="...", tools=[search_tool, request_human_tool])  # also fine
-```
-
-Uses `contextvars.ContextVar` for late-binding to the running agent. Each concurrent `arun()` task gets its own binding — safe for parallel execution.
+Passing `request_human_tool` explicitly is harmless — the injection step deduplicates by tool name. The tool resolves to the running agent through `current_agent` (a `contextvars.ContextVar`), so each concurrent `arun()` task gets its own binding and parallel agents do not interfere.
 
 ### HUMAN_INPUT_EVENT_TYPE
 
@@ -404,6 +405,179 @@ from bridgic.amphibious import HUMAN_INPUT_EVENT_TYPE
 ```
 
 Framework-level event type constant used by all three HITL entry points.
+
+## Built-in Tools
+
+Seven `FunctionToolSpec` instances are auto-injected into every `AmphibiousAutoma` agent's `context.tools` during `arun()`, subject to the [`builtin_tools` filter](#class-attributes-override-in-subclasses). They are exported from both `bridgic.amphibious` and `bridgic.amphibious.builtin_tools` as `*_tool` constants.
+
+```python
+from bridgic.amphibious.builtin_tools import ALL_BUILTIN_TOOLS, current_agent
+# ALL_BUILTIN_TOOLS: tuple of all seven specs in display order.
+# current_agent:    ContextVar bound to the running AmphibiousAutoma during arun().
+```
+
+**Error contract.** Tools raise on validation failures. The framework's per-tool exception handler (`_action_tool_call._run_one`) catches every exception and produces:
+
+```python
+ActionStepResult(success=False, error=str(exc), tool_result=None)
+```
+
+— so the LLM sees the error in the next observation, and `on_workflow` (without fallback) propagates it as `RuntimeError("Tool execution failed for: ...")`. Tools never wrap errors as `<error>...</error>` strings at their own layer.
+
+### request_human
+
+```python
+async def request_human(prompt: str) -> str
+```
+
+Pause and ask the human operator a question. Internally delegates to `agent.request_human(prompt)` — the same code path used by `await self.request_human(...)` in `on_agent` and `yield HumanCall(prompt=...)` in `on_workflow`. See [Human-in-the-Loop](#human-in-the-loop) for the full HITL story.
+
+### bash
+
+```python
+async def bash(command: str, timeout: int = 120000, cwd: str = "") -> str
+```
+
+Execute a shell command via the user's default shell. Returns a tagged envelope:
+
+```
+<stdout>
+...captured stdout...
+</stdout>
+<stderr>
+...captured stderr...
+</stderr>
+<exit_code>0</exit_code>
+```
+
+| Param | Description |
+|-------|-------------|
+| `command` | Shell command. Multiple commands may be chained with `&&` / `\|\|` / `;`. |
+| `timeout` | Milliseconds before the process is killed. Default 120000 (2 min); maximum 600000 (10 min). |
+| `cwd` | Working directory. Empty string inherits the parent process's cwd. |
+
+Stateless — does not depend on the running agent. Non-zero exit codes are NOT exceptions; they are reported via the envelope so the LLM can interpret them. Output past 30 KB is truncated with a marker.
+
+Raises:
+- `ValueError` if `command` is empty.
+- `TimeoutError` if the command exceeds `timeout` (process killed and awaited before the raise).
+
+### read_file
+
+```python
+async def read_file(file_path: str, offset: int = 0, limit: int = 0) -> str
+```
+
+Read a file's contents in `cat -n` format (line number + tab + content). The line-numbered output is the format that `edit_file` expects you to base its `old_string` on (line numbers excluded — only the actual content matches).
+
+Calling `read_file` records the file's mtime on the agent's per-run `_read_tracker` dict; `write_file` and `edit_file` consult it to enforce the read-before-modify invariant.
+
+| Param | Description |
+|-------|-------------|
+| `file_path` | Absolute path. Relative paths are rejected. |
+| `offset` | 1-based line number to start from. `0` means the first line. |
+| `limit` | Max lines to return. `0` means the default cap of 2000 lines. |
+
+Maximum file size is 5 MB. Lines longer than 2000 chars are truncated with a marker. Empty files and offsets past the end return informational text rather than empty strings or exceptions.
+
+Raises:
+- `ValueError` if `file_path` is empty / not absolute / not a regular file / file too large.
+- `FileNotFoundError` if the file does not exist.
+
+### write_file
+
+```python
+async def write_file(file_path: str, content: str) -> str
+```
+
+Create a new file or overwrite an existing one. Creating new files has no preconditions; overwriting an existing file requires that `read_file` was called on the path AND the file has not changed externally since that read.
+
+Raises:
+- `ValueError` if `file_path` is empty / not absolute / target exists but is not a regular file.
+- `FileNotFoundError` if the parent directory does not exist.
+- `RuntimeError` if the file exists and was not read first, or has been modified externally since the read.
+
+### edit_file
+
+```python
+async def edit_file(
+    file_path: str,
+    old_string: str,
+    new_string: str,
+    replace_all: bool = False,
+) -> str
+```
+
+Replace `old_string` with `new_string`. By default `old_string` must occur exactly once — supply more surrounding context if it doesn't, or pass `replace_all=True` for rename refactors. Enforces the read-before-modify invariant.
+
+Raises:
+- `ValueError` if `file_path` is invalid / `old_string` is empty / equals `new_string` / not found / occurs multiple times without `replace_all`.
+- `FileNotFoundError` if the file does not exist.
+- `RuntimeError` if the file has not been read first or was modified externally since the read.
+
+### glob
+
+```python
+async def glob(pattern: str, path: str = "") -> str
+```
+
+Find files matching a glob pattern (e.g. `**/*.py`, `src/**/*.ts`). Returns matching paths sorted by mtime descending, so recently-touched files surface first.
+
+| Param | Description |
+|-------|-------------|
+| `pattern` | Glob pattern relative to `path`. |
+| `path` | Absolute search root. Empty string means the process's cwd. |
+
+Capped at 100 results; "no match" returns informational text.
+
+Raises:
+- `ValueError` for empty `pattern` or non-absolute `path`.
+- `NotADirectoryError` if `path` is not a directory.
+
+### grep
+
+```python
+async def grep(
+    pattern: str,
+    path: str = "",
+    glob: str = "",
+    output_mode: str = "files_with_matches",
+    case_insensitive: bool = False,
+    head_limit: int = 0,
+) -> str
+```
+
+Regex content search across files. Pure-Python via the standard `re` module — not a ripgrep replacement.
+
+| Param | Description |
+|-------|-------------|
+| `pattern` | Python regex. |
+| `path` | Absolute search root; empty = cwd. |
+| `glob` | Optional glob filter on file paths (e.g. `*.py`). Empty = scan all files recursively. |
+| `output_mode` | `"files_with_matches"` (default), `"count"` (`path:N`), or `"content"` (`path:lineno:line`). |
+| `case_insensitive` | If True, match case-insensitively. |
+| `head_limit` | Max result lines. `0` = default cap of 200. |
+
+Hidden directories (path components starting with `.`) are skipped — keeps `.git`, `.venv` and similar metadata trees out of results. Capped at 5000 files scanned.
+
+Raises:
+- `ValueError` for empty `pattern`, non-absolute `path`, or unknown `output_mode`.
+- `NotADirectoryError` if `path` is not a directory.
+- `re.error` on invalid regex.
+
+### Filter resolution
+
+`AmphibiousAutoma.arun()` resolves which built-ins to inject in this order:
+
+1. `arun(builtin_tools=...)` runtime kwarg, if provided.
+2. Otherwise the class-level `builtin_tools` attribute.
+3. Otherwise `None`, which means "inject every entry of `ALL_BUILTIN_TOOLS`".
+
+A non-`None` resolution must reference only valid tool names; unknown entries (typos, stale references) raise `ValueError` at `arun()` entry. The selected set is intersected with already-present `context.tools` by `tool_name` — user-supplied tools win, the colliding built-in is silently skipped.
+
+### Read-before-modify tracker
+
+`AmphibiousAutoma._read_tracker: Dict[str, float]` maps absolute path → mtime at last successful `read_file`. It is reset at every `arun()` entry (so the invariant is scoped to a single run) and accessed by the filesystem tools through `current_agent`. `track_read` is a best-effort hook — a failed `os.stat` after a successful read is silently swallowed; the tracker simply has no entry, which causes a subsequent `edit_file` / `write_file` to correctly demand a re-read.
 
 ## CognitiveContext
 

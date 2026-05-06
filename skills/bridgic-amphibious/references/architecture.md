@@ -10,6 +10,8 @@
 - [Think Unit Descriptor Pattern](#think-unit-descriptor-pattern)
 - [Phase Annotation (snapshot)](#phase-annotation-snapshot)
 - [Workflow Fallback Mechanism](#workflow-fallback-mechanism)
+- [Built-in Tools Subsystem](#built-in-tools-subsystem)
+- [Human-in-the-Loop](#human-in-the-loop)
 
 ---
 
@@ -203,6 +205,40 @@ Two distinct failure sources are handled in AMPHIFLOW mode:
 
 `AgentCall` yield is orthogonal to fallback — it explicitly delegates a sub-task to agent mode (with a clean context snapshot) regardless of failure state.
 
+## Built-in Tools Subsystem
+
+`AmphibiousAutoma.arun()` injects a fixed roster of built-in tools into `context.tools` so every agent has a baseline capability surface — shell, filesystem, search, human input — without any per-project wiring. The roster lives in `bridgic.amphibious.builtin_tools.ALL_BUILTIN_TOOLS`; adding a new built-in only requires appending its `FunctionToolSpec` to that tuple.
+
+### Injection resolution
+
+```
+arun(builtin_tools=...)        ← runtime kwarg (highest priority)
+    └─ if None → class.builtin_tools (frozenset or None)
+        └─ if None → inject every entry of ALL_BUILTIN_TOOLS
+```
+
+A non-`None` resolution must reference only valid tool names; unknown entries raise `ValueError` at `arun()` entry, surfacing typos before the LLM ever sees a missing tool. The resulting set is intersected with already-present `context.tools` by `tool_name` — user-supplied tools win, so a built-in whose name collides is silently skipped (dedup behaviour).
+
+### Read-before-modify invariant
+
+The filesystem-mutating built-ins (`write_file`, `edit_file`) require a prior `read_file` on the same path AND that the file has not changed externally since that read. Mechanism:
+
+- `AmphibiousAutoma._read_tracker: Dict[str, float]` — a per-agent dict mapping absolute path → mtime at last read. Reset at every `arun()` entry, scoping the invariant to a single run.
+- `read_file` records the file's mtime after a successful read (best-effort: a failed `os.stat` here is silently swallowed so it cannot mask the successful read).
+- `write_file` (for existing files) and `edit_file` consult the tracker and raise `RuntimeError` if (a) the path was never read, or (b) the current mtime is newer than the recorded one.
+
+The tools resolve the agent through the same `current_agent` ContextVar used by `request_human`, so the tracker is implicitly per-`asyncio.Task`: concurrent `arun()` calls from separate agents never share state.
+
+### Tool exception path
+
+Built-in tools raise on validation failures (`ValueError`, `FileNotFoundError`, `RuntimeError`, `TimeoutError`, …). They do not catch and wrap errors as `<error>...</error>` strings. The framework's per-tool exception handling — in `_action_tool_call._run_one` — captures every exception and produces:
+
+```python
+ActionStepResult(success=False, error=str(exc), tool_result=None)
+```
+
+In agent mode this becomes part of the next observation, letting the LLM see what went wrong and adapt. In workflow mode, `_run_workflow` aggregates failed `ActionStepResult`s into a `RuntimeError("Tool execution failed for: ... — ...")` and either falls back to `on_agent` (AMPHIFLOW within `max_consecutive_fallbacks`) or re-raises (pure WORKFLOW).
+
 ## Human-in-the-Loop
 
 Three entry points for requesting human input, all built on `request_feedback_async`:
@@ -215,6 +251,6 @@ Three entry points for requesting human input, all built on `request_feedback_as
 
 **Customization**: Override `human_input(data)` template method to replace default stdin with your UI (WebSocket, HTTP callback, Slack bot, etc.).
 
-**Auto-injection**: `arun()` appends the framework's built-in tools (currently just `request_human`) to `context.tools` after user-supplied tools are added, deduplicated by `tool_name`. This gives `on_agent`, workflow step-level fallback, and full agent fallback the same autonomous HITL capability as `HumanCall` provides to `on_workflow`. Users can still pass `request_human_tool` explicitly — it is a no-op thanks to the dedupe.
+**Auto-injection**: `request_human` is one of the seven tools injected by `arun()` (see [Built-in Tools Subsystem](#built-in-tools-subsystem) above). Auto-injection is what gives `on_agent`, workflow step-level fallback, and full agent fallback the same autonomous HITL capability as `HumanCall` provides to `on_workflow`. Users can still pass `request_human_tool` explicitly — it is a no-op thanks to the dedupe.
 
 **Concurrency**: `request_human` uses `contextvars.ContextVar` for late-binding. Each `asyncio.Task` (each `arun()`) gets its own isolated binding — concurrent agents sharing the same tool object never interfere.

@@ -1,6 +1,6 @@
 ---
 name: bridgic-amphibious
-description: "Build agents with the Bridgic Amphibious dual-mode framework — combining LLM-driven (agent) and deterministic (workflow) execution with automatic fallback and human-in-the-loop support. Use when: (1) writing code that imports from bridgic.amphibious, (2) creating AmphibiousAutoma subclasses, (3) defining CognitiveWorker think units, (4) implementing on_agent/on_workflow methods, (5) working with CognitiveContext, Exposure system, or cognitive policies, (6) adding human-in-the-loop interactions (HumanCall, request_human, request_human_tool), (7) scaffolding a new amphibious project via CLI, (8) any task involving the bridgic-amphibious framework."
+description: "Build agents with the Bridgic Amphibious dual-mode framework — combining LLM-driven (agent) and deterministic (workflow) execution with automatic fallback, human-in-the-loop, and a built-in tool surface (shell, filesystem, search, HITL) auto-injected into every agent. Use when: (1) writing code that imports from bridgic.amphibious, (2) creating AmphibiousAutoma subclasses, (3) defining CognitiveWorker think units, (4) implementing on_agent/on_workflow methods, (5) working with CognitiveContext, Exposure system, or cognitive policies, (6) adding human-in-the-loop interactions (HumanCall, request_human, request_human_tool), (7) using or filtering the auto-injected built-in tools (bash, read_file/write_file/edit_file, glob, grep, request_human) via the builtin_tools class attribute or arun kwarg, (8) scaffolding a new amphibious project via CLI, (9) any task involving the bridgic-amphibious framework."
 ---
 
 # Bridgic Amphibious
@@ -97,6 +97,37 @@ Creates a single `amphi.py` in the target directory (default: cwd). The template
 
 **`AUTO` resolution:** only `on_agent` overridden → `AGENT`; only `on_workflow` overridden → `WORKFLOW`; both overridden → `AMPHIFLOW`.
 
+## Built-in Tools
+
+Every `AmphibiousAutoma` agent receives seven built-in tools in `context.tools` automatically during `arun()` — no manual wiring. Tool names are snake_case and work in every mode (LLM-called in agent mode, `yield ActionCall("name", ...)` in workflow mode).
+
+| Tool | What it does |
+|------|--------------|
+| `request_human` | Pause and ask the human operator a question (HITL) |
+| `bash` | Execute a shell command (stdout / stderr / exit_code captured) |
+| `read_file` | Read a file with line numbers; required before `write_file` / `edit_file` modify it |
+| `write_file` | Create a new file, or overwrite an existing one (read-before-overwrite enforced) |
+| `edit_file` | Exact-string replacement with uniqueness check; `replace_all` for refactors |
+| `glob` | Find files by pattern, sorted by mtime |
+| `grep` | Regex content search across files |
+
+Subclasses can opt out of specific built-ins via a class-level frozenset, and runs can override per-call:
+
+```python
+class ReadOnlyAgent(AmphibiousAutoma[CognitiveContext]):
+    # Only these three are injected; bash / write / edit are unavailable.
+    builtin_tools = frozenset({"request_human", "read_file", "grep"})
+
+# Runtime override (wins over class attr); empty iterable opts out entirely.
+await agent.arun(goal="...", builtin_tools=["request_human"])
+```
+
+Unknown names raise `ValueError` at `arun()` entry — typos surface immediately rather than silently producing a missing-tool agent. User-supplied tools whose name collides with a built-in win (deduplicated by `tool_name`).
+
+`write_file` and `edit_file` enforce a read-before-modify invariant: the path must have been read with `read_file` first, AND the file must not have been changed externally since. The tracker is reset at every `arun()` entry, so the invariant is scoped to a single run.
+
+For the full per-tool parameter list, error contracts, and filter resolution rules see [references/api-reference.md](references/api-reference.md#built-in-tools).
+
 ## Key Patterns
 
 ### Agent Mode — LLM decides
@@ -142,6 +173,8 @@ await MyHybrid(llm=llm).arun(
 
 ### Human-in-the-Loop
 
+Three entry points share one event channel: the code-level `request_human()` method, the `HumanCall` workflow yield, and the auto-injected `request_human` tool listed in [Built-in Tools](#built-in-tools).
+
 ```python
 from bridgic.amphibious import ActionCall, HumanCall
 
@@ -156,14 +189,11 @@ class MyAgent(AmphibiousAutoma[CognitiveContext]):
         yield ActionCall("do_something", arg="value")
         feedback = yield HumanCall(prompt="Confirm?")     # Entry 2: workflow yield
 
-# Entry 3: LLM tool — `request_human` is auto-injected into every agent's
-# tools, so the LLM can call it without you listing it in tools=[...].
-# (Passing `request_human_tool` explicitly is harmless — it is deduped.)
+# Entry 3 is automatic — the built-in `request_human` tool is already in
+# context.tools, so the LLM can call it without listing it in tools=[...].
+# Override `human_input(data)` to swap the default stdin read for your own
+# UI integration (WebSocket, HTTP callback, Slack bot, etc.).
 await MyAgent(llm=llm).arun(goal="...", tools=[my_tool])
-
-# If you want to be explicit, importing and passing `request_human_tool` still OK.
-from bridgic.amphibious.builtin_tools import request_human_tool
-await agent.arun(goal="...", tools=[request_human_tool, ...])  # also fine
 ```
 
 ### Custom Pydantic Output
