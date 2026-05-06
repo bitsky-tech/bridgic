@@ -28,6 +28,7 @@ nav:
       - Amphibious: tutorials/items/amphibious/index.md
       - Quick Start: tutorials/items/amphibious/quick_start.ipynb
       - Dual-Mode Orchestration: tutorials/items/amphibious/think.ipynb
+      - Built-in Tools: tutorials/items/amphibious/built_in_tools.ipynb
       - RunMode: tutorials/items/amphibious/automa_mode.ipynb
       - Customizing the OTC Cycle: tutorials/items/amphibious/custom_otc.ipynb
       - Execution Tracing: tutorials/items/amphibious/execution_tracing.ipynb
