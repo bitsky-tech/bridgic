@@ -13,9 +13,13 @@ import hashlib
 import json
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any, Awaitable, Callable, Dict, List, Literal, Optional, Union, TYPE_CHECKING
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+if TYPE_CHECKING:
+    from bridgic.core.model.types import Message, Tool
+    from bridgic.core.model.protocols import Constraint
 
 
 ################################################################################################################
@@ -166,23 +170,32 @@ def _coerce_none_to_list(v: Any) -> list:
 
 
 ################################################################################################################
-# Workflow mode models  (used by: _amphibious_automa.py)
+# Yield primitives
 #
-# Three atomic yield types for on_workflow():
-#   ActionCall  — deterministic single-tool execution  (replaces step() shorthand)
-#   HumanCall   — pause execution and request human input
-#   AgentCall   — delegate a sub-task to LLM agent mode
+# Used by every user-facing template method (on_workflow / on_agent /
+# observation / before_action / after_action) as an async generator
+# yielding these. Six atomic types:
+#
+#   ActionCall  — deterministic single-tool execution           (any scope)
+#   HumanCall   — pause and request human input via             (any scope)
+#                 ``@human_channel`` registry
+#   LLMCall     — direct LLM invocation via a bridgic-core      (any scope)
+#                 protocol (chat / structure_output / tool_selector)
+#   AgentCall   — delegate a sub-task by recursively driving    (on_workflow only)
+#                 ``on_agent`` in a snapshotted context
+#   ThinkCall   — invoke a class-level ``think_unit`` by name   (on_agent only)
+#   RETURN      — communicate a "return value" out of an async  (any scope)
+#                 generator (PEP 525 forbids native ``return value``)
+#
+# Scope validation lives in ``_dispatch_call``; mismatches raise
+# ``RuntimeError`` at dispatch time.
 ################################################################################################################
-
-# Framework-level event type constant used by all human-in-the-loop entry points.
-# Consumed by: AmphibiousAutoma._register_human_input_handler, request_human, HumanCall handling.
-HUMAN_INPUT_EVENT_TYPE: str = "HUMAN_INPUT_REQUEST"
 
 class WorkflowDecision(BaseModel):
     """
     Single-step deterministic decision for workflow mode.
 
-    Used by: _amphibious_automa.py (_run_workflow, ActionCall)
+    Used by: _amphibious_automa.py (_dispatch_flow, ActionCall)
     """
     model_config = ConfigDict(extra="forbid")
 
@@ -197,7 +210,7 @@ class ActionCall:
     Replaces the removed ``step()`` shorthand function. Each instance wraps
     exactly one tool call together with an optional CognitiveWorker override.
 
-    Used by: _amphibious_automa.py (_run_workflow)
+    Used by: _amphibious_automa.py (_dispatch_flow)
 
     Usage::
         yield ActionCall("navigate_to", url="http://example.com")
@@ -235,39 +248,211 @@ class ActionCall:
 
 @dataclass
 class HumanCall:
-    """Yielded by on_workflow() to pause execution and request human input.
+    """Yielded to pause execution and request human input.
 
-    Execution is suspended until the human provides a response, which is
-    returned to the generator via asend() as a plain string.
+    Execution is suspended until the registered ``@human_channel`` handler
+    provides a response, which is returned to the generator via ``asend()``
+    as a plain string.
 
-    Used by: _amphibious_automa.py (_run_workflow)
+    Channel resolution (at dispatch time):
+
+    * ``channel=None`` → if exactly one ``@human_channel`` handler is
+      registered, use it; if zero handlers are registered, the framework
+      falls back to a built-in stdin handler; if 2+ handlers are
+      registered, raises ``RuntimeError`` requiring explicit channel.
+    * ``channel="name"`` → invoke the handler registered under that name.
+
+    Per-call timeouts are not exposed; if needed, the channel handler
+    should enforce its own timeout.
+
+    Used by: _amphibious_automa.py (_dispatch_call)
 
     Usage::
-        feedback = yield HumanCall(prompt="Please verify the result (yes/no):")
+        feedback = yield HumanCall(prompt="Please verify (yes/no):")
+        feedback = yield HumanCall(channel="feishu", prompt="Confirm?")
     """
     prompt: str = ""
-    timeout: Optional[float] = None
+    channel: Optional[str] = None
 
 
 @dataclass
 class AgentCall:
-    """Yielded by on_workflow() to fall back to agent mode for a sub-task.
+    """Yielded to delegate a sub-task to the agent's own ``on_agent`` strategy.
 
-    By default a clean context is used (fresh history, full tool set).
-    Provide explicit values to override specific context fields.
+    Only valid inside ``on_workflow``. AgentCall snapshots the context
+    (fresh ``goal``, optional ``history`` / ``tools`` / ``skills``
+    filters) and recursively re-enters ``on_agent`` to handle the
+    sub-task. Whatever the user has declared on the class —
+    ``think_unit`` declarations, ``@human_channel`` handlers,
+    ``observation`` hooks — is reused for the sub-goal.
 
-    Used by: _amphibious_automa.py (_run_workflow)
+    AgentCall scopes the sub-agent's *context* (what it sees); it does
+    not control *how it thinks*. For a single named cognitive step,
+    declare a ``think_unit`` and ``yield ThinkCall("name")`` from
+    inside ``on_agent`` instead.
+
+    Requires the agent class to override ``on_agent``; raises
+    ``RuntimeError`` at dispatch time otherwise.
+
+    Used by: _amphibious_automa.py (_dispatch_call)
 
     Usage::
 
-        yield AgentCall(goal="Handle the login popup", max_attempts=5)
+        yield AgentCall(goal="Handle the login popup")
+        yield AgentCall(goal="Pick a flight", tools=["search_flights", "book"])
+        yield AgentCall(goal="Summarize", history=prior_messages, skills=["summary"])
     """
     goal: str = ""
-    tools: Optional[List[str]] = None   # Tool-name filter; None → use context's full tool set
-    skills: Optional[List[str]] = None  # Skill-name filter; None → use context's full skill set
     history: Optional[Any] = None       # Optional[CognitiveHistory]; None → fresh CognitiveHistory()
-    max_attempts: int = 1
-    worker: Optional[Any] = None        # Optional[CognitiveWorker]; None → use framework default
+    tools: Optional[List[str]] = None   # Tool-name filter applied to ctx.tools for the sub-agent
+    skills: Optional[List[str]] = None  # Skill-name filter applied to ctx.skills for the sub-agent
+
+
+LLMCallProtocol = Literal["chat", "structure_output", "tool_selector"]
+
+
+@dataclass(frozen=True)
+class LLMCall:
+    """Yielded by on_workflow() to invoke ``self._llm`` via a bridgic-core protocol.
+
+    Used by: _amphibious_automa.py (_dispatch_call, _run_llm_call)
+
+    The result returned via ``asend()`` depends on ``protocol``:
+
+    * ``"chat"``             — returns ``str`` (extracted from ``Response.message.content``)
+    * ``"structure_output"`` — returns the value produced by
+      ``StructuredOutput.astructured_output()`` (typically a Pydantic
+      ``BaseModel`` instance, or a plain value matching the constraint)
+    * ``"tool_selector"``    — returns ``Tuple[List[ToolCall], Optional[str]]``
+
+    The ``prompt`` is appended as the final ``Role.USER`` message; if
+    ``history`` is supplied it is prepended verbatim before the prompt.
+
+    Per-call ``temperature`` / ``**kwargs`` overrides are deliberately
+    not exposed — those are baked at LLM construction time.
+
+    Usage::
+
+        text = yield LLMCall.chat("What is 2+2?")
+        parsed = yield LLMCall.structure_output("Extract...", constraint=PydanticModel(model=Schema))
+        calls, reply = yield LLMCall.tool_selector("...", tools=[...])
+
+    Equivalent direct construction::
+
+        yield LLMCall(protocol="chat", prompt="What is 2+2?")
+    """
+    protocol: LLMCallProtocol
+    prompt: str = ""
+    history: Optional[List["Message"]] = None
+    constraint: Optional["Constraint"] = None     # required iff protocol == "structure_output"
+    tools: Optional[List["Tool"]] = None          # required iff protocol == "tool_selector"
+
+    def __post_init__(self) -> None:
+        if self.protocol == "structure_output" and self.constraint is None:
+            raise ValueError(
+                "LLMCall(protocol='structure_output') requires a `constraint=` argument."
+            )
+        if self.protocol == "tool_selector" and not self.tools:
+            raise ValueError(
+                "LLMCall(protocol='tool_selector') requires a non-empty `tools=` argument."
+            )
+        if self.protocol == "chat" and (self.constraint is not None or self.tools is not None):
+            raise ValueError(
+                "LLMCall(protocol='chat') does not accept `constraint` or `tools`."
+            )
+
+    @classmethod
+    def chat(
+        cls,
+        prompt: str,
+        *,
+        history: Optional[List["Message"]] = None,
+    ) -> "LLMCall":
+        """Construct a ``protocol='chat'`` LLMCall."""
+        return cls(protocol="chat", prompt=prompt, history=history)
+
+    @classmethod
+    def structure_output(
+        cls,
+        prompt: str,
+        *,
+        constraint: "Constraint",
+        history: Optional[List["Message"]] = None,
+    ) -> "LLMCall":
+        """Construct a ``protocol='structure_output'`` LLMCall."""
+        return cls(
+            protocol="structure_output",
+            prompt=prompt,
+            history=history,
+            constraint=constraint,
+        )
+
+    @classmethod
+    def tool_selector(
+        cls,
+        prompt: str,
+        *,
+        tools: List["Tool"],
+        history: Optional[List["Message"]] = None,
+    ) -> "LLMCall":
+        """Construct a ``protocol='tool_selector'`` LLMCall."""
+        return cls(
+            protocol="tool_selector",
+            prompt=prompt,
+            history=history,
+            tools=tools,
+        )
+
+
+@dataclass(frozen=True)
+class ThinkCall:
+    """Yielded to invoke a class-level ``think_unit`` declaration by name.
+
+    Only valid inside ``on_agent``. The dispatcher resolves ``name`` via
+    ``getattr(type(self), name)`` and expects a ``ThinkUnitDescriptor``.
+
+    All fields beyond ``name`` overlay the descriptor's defaults. ``None``
+    means "use the descriptor's value for this field".
+
+    The result returned via ``asend()`` is the worker's typed output (or
+    ``None`` if the worker has no ``output_schema``).
+
+    Used by: _amphibious_automa.py (_dispatch_call)
+
+    Usage::
+        result = yield ThinkCall("main_think")
+        result = yield ThinkCall("exec_think", until=lambda c: c.done, max_attempts=20)
+    """
+    name: str
+    until: Optional[Callable[..., Union[bool, Awaitable[bool]]]] = None
+    max_attempts: Optional[int] = None
+    tools: Optional[List[str]] = None
+    skills: Optional[List[str]] = None
+
+
+@dataclass(frozen=True)
+class RETURN:
+    """Yielded to communicate a return value out of an async generator.
+
+    PEP 525 forbids ``return value`` inside async generators (only bare
+    ``return`` is allowed). ``RETURN(value)`` is the framework-level
+    workaround: when the dispatcher receives it, it captures
+    ``RETURN.value``, immediately closes the generator, and returns the
+    value to its caller. Anything yielded after a ``RETURN`` is
+    unreachable.
+
+    For top-level template-method generators (``on_agent`` /
+    ``on_workflow``), the captured value is written to
+    ``self._final_answer`` (overriding the auto-capture from history).
+
+    Used by: _amphibious_automa.py (_dispatch_call)
+
+    Usage::
+        async def on_agent(self, ctx):
+            yield ThinkCall("main_think", max_attempts=20)
+            yield RETURN(ctx.cognitive_history.get_all()[-1].content)
+    """
+    value: Any = None
 
 
 ################################################################################################################
@@ -323,7 +508,7 @@ class ActionResult(BaseModel):
 class ToolResult:
     """Single tool execution result returned to workflow generator via asend().
 
-    Used by: _amphibious_automa.py (_run_workflow), on_workflow user code
+    Used by: _amphibious_automa.py (_dispatch_flow), on_workflow user code
     """
     tool_name: str
     tool_arguments: Dict[str, Any]
@@ -339,11 +524,13 @@ class ToolResult:
 class StepOutputType(str, Enum):
     """Discriminator for the kind of output a trace step produced.
 
-    Used by: _amphibious_automa.py (AgentTrace, _record_trace_step)
+    Used by: _amphibious_automa.py (AgentTrace, _record_trace_step,
+    _record_llm_call_trace)
     """
     TOOL_CALLS = "tool_calls"
     STRUCTURED = "structured"
     CONTENT_ONLY = "content_only"
+    LLM_CALL = "llm_call"
 
 
 class RecordedToolCall(BaseModel):
@@ -375,6 +562,7 @@ class TraceStep(BaseModel):
     output_type: StepOutputType = StepOutputType.TOOL_CALLS
     structured_output: Optional[Dict[str, Any]] = None
     structured_output_class: Optional[str] = None
+    llm_call_protocol: Optional[str] = None  # set when output_type == LLM_CALL
 
 
 ################################################################################################################

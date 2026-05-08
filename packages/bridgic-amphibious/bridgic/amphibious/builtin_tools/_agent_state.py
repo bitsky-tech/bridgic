@@ -3,8 +3,8 @@
 The ``current_agent`` ContextVar is set by ``AmphibiousAutoma.arun()`` at
 task entry, allowing built-in tools (which run as plain async functions)
 to access the running agent for shared state — e.g. the read-before-edit
-tracker used by the filesystem tools, or the human-input event channel
-used by ``request_human``.
+tracker used by the filesystem tools, or the ``@human_channel`` registry
+that ``request_human`` routes through via ``agent._dispatch_human_channel``.
 
 Because each ``asyncio.Task`` gets its own ContextVar value, concurrent
 agents never interfere with each other.

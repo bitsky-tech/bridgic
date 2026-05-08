@@ -28,8 +28,11 @@ Architecture Layers
 
 **Orchestration Layer:**
 - AmphibiousAutoma: Dual-mode agent engine (agent mode + workflow mode)
-  - think_unit: Descriptor for declaring think units (used in on_agent)
-  - ActionCall, HumanCall, AgentCall: Workflow yield types (used in on_workflow)
+  - think_unit: Descriptor for declaring named think units (used in on_agent)
+  - ThinkCall: yield primitive — only valid in on_agent
+  - AgentCall: yield primitive — only valid in on_workflow
+  - ActionCall, HumanCall, LLMCall: yield primitives — valid anywhere
+  - RETURN: yield primitive — set the final answer / hook return value
 - ErrorStrategy: Error handling strategies (RAISE, IGNORE, RETRY)
 
 Example
@@ -37,9 +40,9 @@ Example
 >>> class MyAgent(AmphibiousAutoma[CognitiveContext]):
 ...     main_think = think_unit(CognitiveWorker.inline("Execute step"), max_attempts=20)
 ...     async def on_agent(self, ctx):
-...         await self.main_think
+...         yield ThinkCall("main_think")
 ...
->>> ctx = await MyAgent(llm=llm).arun(goal="Complete the task")
+>>> answer = await MyAgent(llm=llm).arun(goal="Complete the task")
 """
 from ._context import (
     # Abstraction layer
@@ -61,6 +64,7 @@ from ._cognitive_worker import (
     # Sentinel
     _DELEGATE,
 )
+from ._worker_runner import WorkerRunner
 from ._amphibious_automa import (
     # Orchestration
     AmphibiousAutoma,
@@ -68,6 +72,8 @@ from ._amphibious_automa import (
     # Think unit descriptor
     think_unit,
     ThinkUnitDescriptor,
+    # Human channel decorator
+    human_channel,
 )
 from .scaffold import create_project
 from .builtin_tools import (
@@ -86,12 +92,14 @@ from ._type import (
     DetailRequest,
     ToolArgument,
     StepToolCall,
-    # Workflow mode yield types
-    HUMAN_INPUT_EVENT_TYPE,
+    # Yield primitives (scope rules — see AmphibiousAutoma docstring)
     WorkflowDecision,
     ActionCall,
     HumanCall,
     AgentCall,
+    LLMCall,
+    ThinkCall,
+    RETURN,
     # Action result data structures
     ErrorStrategy,
     ActionResult,
@@ -121,6 +129,7 @@ __all__ = [
     # Implementation layer - Worker
     "CognitiveWorker",
     "_DELEGATE",
+    "WorkerRunner",
 
     # Orchestration layer
     "AmphibiousAutoma",
@@ -133,12 +142,16 @@ __all__ = [
     "DetailRequest",
     "ToolArgument",
     "StepToolCall",
-    # Workflow mode yield types
-    "HUMAN_INPUT_EVENT_TYPE",
+    # Yield primitives
     "WorkflowDecision",
     "ActionCall",
     "HumanCall",
     "AgentCall",
+    "LLMCall",
+    "ThinkCall",
+    "RETURN",
+    # Human channel decorator
+    "human_channel",
     # Action result data structures
     "ErrorStrategy",
     "ActionResult",

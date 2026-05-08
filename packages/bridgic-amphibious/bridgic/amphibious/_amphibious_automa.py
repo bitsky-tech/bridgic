@@ -4,6 +4,7 @@ import json
 import time
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
+from dataclasses import dataclass, field
 from typing import (
     Annotated,
     Any, AsyncGenerator, Awaitable, Callable, ClassVar, Dict, FrozenSet, Generic, Iterable, List, Optional, Tuple, Type, TypeVar, Union,
@@ -15,13 +16,14 @@ from pydantic import BaseModel
 from bridgic.core.automa import GraphAutoma, worker
 from bridgic.core.automa._automa import RunningOptions
 from bridgic.core.automa.args import ArgsMappingRule, InOrder
-from bridgic.core.automa.interaction import Event, Feedback
-from bridgic.core.model.types import ToolCall
+from bridgic.core.model.types import Message, Role, ToolCall
+from bridgic.core.model.protocols import StructuredOutput, ToolSelection
 from bridgic.core.agentic import ConcurrentAutoma
 from bridgic.core.agentic.tool_specs import ToolSpec
 from bridgic.core.utils._console import printer
 from bridgic.amphibious._context import CognitiveContext, CognitiveTools, CognitiveSkills, CognitiveHistory, Exposure, LayeredExposure
 from bridgic.amphibious._cognitive_worker import CognitiveWorker, _DELEGATE
+from bridgic.amphibious._worker_runner import WorkerRunner
 from bridgic.amphibious.builtin_tools import ALL_BUILTIN_TOOLS, current_agent
 from bridgic.amphibious._type import (
     RunMode,
@@ -30,7 +32,9 @@ from bridgic.amphibious._type import (
     ActionCall,
     HumanCall,
     AgentCall,
-    HUMAN_INPUT_EVENT_TYPE,
+    LLMCall,
+    ThinkCall,
+    RETURN,
     ErrorStrategy,
     ActionStepResult,
     ActionResult,
@@ -44,6 +48,12 @@ from bridgic.amphibious._type import (
 
 ################################################################################################################
 # Type Aliases
+#
+# Module-level type names and constants used throughout the framework.
+# ``CognitiveContextT`` is the generic parameter that lets subclasses
+# declare their own context type via ``AmphibiousAutoma[MyContext]``.
+# ``_BUILTIN_TOOLS`` is the immutable tuple of built-in tools auto-injected
+# into every agent's tool set during ``arun()``.
 ################################################################################################################
 
 # Generic type for the agent's cognitive context, allowing users to define their own context classes.
@@ -57,6 +67,12 @@ _BUILTIN_TOOLS: Tuple[ToolSpec, ...] = ALL_BUILTIN_TOOLS
 
 ################################################################################################################
 # AgentTrace — flat execution path recorder
+#
+# Captures one ``TraceStep`` per observe-think-act cycle (CognitiveWorker
+# runs) or per dispatched APICall (workflow yields). Optional capture —
+# only active when ``arun(trace_running=True)`` is set. ``record_step``
+# appends; ``build`` materialises the structured dict; ``save`` / ``load``
+# persist to JSON.
 ################################################################################################################
 
 
@@ -89,6 +105,7 @@ class AgentTrace:
                 output_type=StepOutputType(s.get("output_type", StepOutputType.TOOL_CALLS)),
                 structured_output=s.get("structured_output"),
                 structured_output_class=s.get("structured_output_class"),
+                llm_call_protocol=s.get("llm_call_protocol"),
             )
             for s in self._steps
         ]
@@ -126,7 +143,13 @@ class AgentTrace:
 
 
 ################################################################################################################
-# _AgentSnapshot — async context manager for safe field mutation + revealed state management
+# _AgentSnapshot — async context manager for scoped context mutation
+#
+# Internal helper used by ``snapshot()`` to save/restore field values and
+# every ``LayeredExposure._revealed`` dict around a sub-task. Two modes:
+# clear-all (default — sub-agent sees a fresh revealed view) or custom
+# keep-list. AgentCall dispatch always goes through this so the parent
+# agent's revealed state is restored when the sub-task returns.
 ################################################################################################################
 
 class _AgentSnapshot:
@@ -202,110 +225,33 @@ class _AgentSnapshot:
 
 
 ################################################################################################################
-# ThinkUnit — Descriptor-based think step declaration
+# ThinkUnit — descriptor-based think-step declaration
+#
+# Class-level marker placed via the ``think_unit(...)`` factory and
+# invoked by ``yield ThinkCall("name")`` from inside ``on_agent``. Stores
+# the worker template plus per-unit overlays (until / max_attempts /
+# tools / skills / on_error / max_retries); the dispatcher clones a fresh
+# CognitiveWorker instance per call for state isolation, or uses a
+# WorkerRunner template directly.
+#
+# This section also defines the ``@human_channel`` decorator used to
+# register named HumanCall handlers on agent subclasses.
 ################################################################################################################
 
-class _BoundThinkUnit:
-    """A think unit bound to a specific agent instance. Supports await and .until().
-
-    Created by ThinkUnitDescriptor.__get__() — not instantiated directly by users.
-    """
-
-    def __init__(self, agent: "AmphibiousAutoma", descriptor: "ThinkUnitDescriptor"):
-        self._agent = agent
-        self._desc = descriptor
-
-    def __await__(self):
-        """Support ``await self.main_think`` syntax."""
-        return self._execute().__await__()
-
-    async def _execute(
-        self,
-        until: Optional[Union[Callable[..., bool], Callable[..., Awaitable[bool]]]] = None,
-        max_attempts: Optional[int] = None,
-        tools: Optional[List[str]] = None,
-        skills: Optional[List[str]] = None,
-    ) -> Any:
-        """Execute the think unit. Clones the worker template for state isolation."""
-        desc = self._desc
-        worker = self._clone_worker(desc._worker_template)
-
-        await self._agent._run(
-            worker,
-            until=until if until is not None else desc._until,
-            max_attempts=max_attempts if max_attempts is not None else desc._max_attempts,
-            tools=tools if tools is not None else desc._tools,
-            skills=skills if skills is not None else desc._skills,
-            on_error=desc._on_error,
-            max_retries=desc._max_retries,
-        )
-
-        # Return output_schema result if the worker has one
-        if worker.output_schema is not None:
-            ctx = self._agent._current_context
-            if ctx is not None and len(ctx.cognitive_history) > 0:
-                last_step = ctx.cognitive_history.get_all()[-1]
-                if last_step.result is not None:
-                    return last_step.result
-        return None
-
-    async def until(
-        self,
-        condition: Union[Callable[..., bool], Callable[..., Awaitable[bool]]],
-        *,
-        max_attempts: Optional[int] = None,
-        tools: Optional[List[str]] = None,
-        skills: Optional[List[str]] = None,
-    ) -> Any:
-        """Execute with a dynamic loop condition, optionally overriding parameters.
-
-        Usage::
-
-            await self.exec_think.until(
-                lambda ctx: not ctx.last_step_has_tools,
-                max_attempts=50,
-                tools=["save_information"],
-            )
-        """
-        return await self._execute(
-            until=condition,
-            max_attempts=max_attempts,
-            tools=tools,
-            skills=skills,
-        )
-
-    @staticmethod
-    def _clone_worker(template: CognitiveWorker) -> CognitiveWorker:
-        """Clone a worker from its template for state isolation.
-
-        Copies configuration (policies, output_schema, verbose settings) but
-        creates a fresh instance with clean runtime state (tokens, time,
-        GraphAutoma execution state). LLM is left as None — injected by
-        the agent at runtime via _run().
-        """
-        clone = type(template)(
-            llm=None,
-            enable_rehearsal=template.enable_rehearsal,
-            enable_reflection=template.enable_reflection,
-            verbose=template._verbose,
-            verbose_prompt=template._verbose_prompt,
-            output_schema=template.output_schema,
-        )
-        return clone
-
-
 class ThinkUnitDescriptor:
-    """Python descriptor enabling class-level think unit declaration.
+    """Class-level marker for a declared think unit.
 
-    When accessed on an instance (``self.main_think``), returns a
-    ``_BoundThinkUnit`` that is awaitable and supports ``.until()``.
-
-    When accessed on the class, returns the descriptor itself.
+    Both class-level (``MyAgent.main_think``) and instance-level
+    (``self.main_think``) access return the descriptor itself. Invocation
+    happens via ``yield ThinkCall("main_think", ...)`` inside an
+    async-generator template method; the dispatcher resolves the name
+    against the class, picks up the descriptor, clones its worker
+    template, and runs it through ``_run``.
     """
 
     def __init__(
         self,
-        worker: CognitiveWorker,
+        worker: Any,
         *,
         until: Optional[Union[Callable[..., bool], Callable[..., Awaitable[bool]]]] = None,
         max_attempts: int = 1,
@@ -322,14 +268,35 @@ class ThinkUnitDescriptor:
         self._on_error = on_error
         self._max_retries = max_retries
 
-    def __get__(self, obj: Any, objtype: Optional[type] = None) -> Any:
-        if obj is None:
-            return self  # Class-level access returns the descriptor
-        return _BoundThinkUnit(obj, self)
+    def __get__(self, obj: Any, objtype: Optional[type] = None) -> "ThinkUnitDescriptor":
+        # Both class- and instance-level access return the descriptor
+        # itself. Invocation goes through ``yield ThinkCall("name")``.
+        return self
 
+    @staticmethod
+    def _clone_worker(template: CognitiveWorker) -> CognitiveWorker:
+        """Clone a worker from its template for state isolation.
+
+        Copies configuration (policies, output_schema, verbose settings) but
+        creates a fresh instance with clean runtime state (tokens, time,
+        GraphAutoma execution state). LLM is left as None — injected by
+        the agent at runtime via ``_run()``.
+
+        Used by ``_dispatch_call`` when handling a ``ThinkCall`` yield.
+        """
+        clone = type(template)(
+            llm=None,
+            enable_rehearsal=template.enable_rehearsal,
+            enable_reflection=template.enable_reflection,
+            verbose=template._verbose,
+            verbose_prompt=template._verbose_prompt,
+            output_schema=template.output_schema,
+        )
+        return clone
+    
 
 def think_unit(
-    worker: CognitiveWorker,
+    worker: Any,
     *,
     until: Optional[Union[Callable[..., bool], Callable[..., Awaitable[bool]]]] = None,
     max_attempts: int = 1,
@@ -338,9 +305,10 @@ def think_unit(
     on_error: ErrorStrategy = ErrorStrategy.RAISE,
     max_retries: int = 0,
 ) -> ThinkUnitDescriptor:
-    """Declare a think unit for use in on_agent().
+    """Declare a think unit, invoked via ``yield ThinkCall(name)``.
 
-    Factory function that returns a ThinkUnitDescriptor. Use as a class variable::
+    Factory function that returns a ``ThinkUnitDescriptor``. Use as a
+    class variable::
 
         class MyAgent(AmphibiousAutoma[MyContext]):
             main_think = think_unit(
@@ -350,20 +318,26 @@ def think_unit(
             )
 
             async def on_agent(self, ctx):
-                await self.main_think
+                yield ThinkCall("main_think")
 
     Parameters
     ----------
-    worker : CognitiveWorker
-        The worker template. A fresh clone is created for each execution.
+    worker : CognitiveWorker | WorkerRunner
+        The worker template. For ``CognitiveWorker`` a fresh clone is
+        created for each ``ThinkCall`` (state isolation). For an
+        external ``WorkerRunner`` implementation the template is used
+        directly (the runner manages its own state). The
+        ``until`` / ``max_attempts`` / ``tools`` / ``skills`` overlays
+        apply to the CognitiveWorker path only.
     until : Optional callable
-        Loop condition: repeats until this returns True or LLM signals finish.
+        Loop condition (CognitiveWorker only): repeats until this
+        returns True or LLM signals finish.
     max_attempts : int
         Maximum execution attempts (default 1 = single shot).
     tools : Optional[List[str]]
-        Tool filter: only these tools are visible to the worker.
+        Tool filter (CognitiveWorker only): only these tools are visible.
     skills : Optional[List[str]]
-        Skill filter: only these skills are visible to the worker.
+        Skill filter (CognitiveWorker only): only these skills are visible.
     on_error : ErrorStrategy
         Error handling strategy (default: RAISE).
     max_retries : int
@@ -380,23 +354,102 @@ def think_unit(
     )
 
 
+_HUMAN_CHANNEL_MARKER: str = "_human_channel_name"
+def human_channel(arg: Any = None) -> Any:
+    """Decorator that registers an async method as a human-input channel.
+
+    Two usage forms::
+
+        @human_channel("feishu")           # explicit channel name
+        async def ask_feishu(self, prompt: str) -> str: ...
+
+        @human_channel                     # bare — channel name = method name
+        async def terminal(self, prompt: str) -> str: ...
+
+    Channel handlers are *plain async methods returning ``str``*, not
+    generators. They are leaf I/O operations and do not dispatch inner
+    yields.
+
+    The framework collects all decorated methods into a class-level
+    ``_human_channels: Dict[str, str]`` registry (channel-name →
+    method-name) inside ``AmphibiousAutoma.__init_subclass__``. At
+    dispatch time, ``HumanCall(channel=...)`` is routed via this
+    registry.
+
+    Used by: AmphibiousAutoma (channel registry), HumanCall dispatch.
+    """
+    # Bare form: @human_channel (no parens) → arg is the method itself.
+    if callable(arg) and not isinstance(arg, str):
+        method = arg
+        setattr(method, _HUMAN_CHANNEL_MARKER, method.__name__)
+        return method
+
+    # Parameterised form: @human_channel("name") or @human_channel()
+    name: Optional[str] = arg
+
+    def _decorator(method):
+        setattr(method, _HUMAN_CHANNEL_MARKER, name or method.__name__)
+        return method
+
+    return _decorator
+
+
+class _FullFallback(Exception):
+    """Internal sentinel signalling body-flow fallback to ``on_agent``.
+
+    Raised by ``_dispatch_call`` when an ActionCall threshold is reached
+    or an LLMCall fails under ``can_fallback=True``. The originating
+    cause is preserved as ``__cause__`` (via ``raise ... from e``).
+    Caught by ``_dispatch_flow``; not part of the public API.
+    """
+
+
+@dataclass
+class _FlowState:
+    """Mutable per-flow state for body-mode fallback bookkeeping.
+
+    Created fresh per ``_dispatch_flow`` invocation and passed down to
+    ``_dispatch_call``. When ``_dispatch_call`` is invoked outside body
+    context (e.g. from ``_invoke_template`` for a hook), the caller
+    passes ``state=None`` and fallback paths are skipped entirely.
+
+    Attributes
+    ----------
+    max_consecutive_fallbacks : int
+        ActionCall step-failure threshold before full fallback to
+        ``on_agent``. Forced to ``0`` when ``can_fallback`` is False.
+    consecutive_failures : int, default 0
+        Running count of consecutive ActionCall failures, reset on success.
+    step_index : int, default 0
+        Running step counter (informational, surfaced in error messages).
+    failed_steps : List[str]
+        Accumulated descriptions of failed steps for diagnostic output.
+    """
+    max_consecutive_fallbacks: int
+    consecutive_failures: int = 0
+    step_index: int = 0
+    failed_steps: List[str] = field(default_factory=list)
+
+
 ################################################################################################################
 # AmphibiousAutoma
 ################################################################################################################
 
 class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
-    """
-    Base class for amphibious agents — dual-mode orchestration engine.
+    """Base class for amphibious agents — dual-mode orchestration engine.
 
     Supports three execution modes:
-    - **Agent mode** (``on_agent``): LLM-driven observe-think-act cycles via think_unit
-    - **Workflow mode** (``on_workflow``): Deterministic step execution via yield
-    - **Amphiflow mode** (``on_workflow`` + ``on_agent``): workflow-first with
-      automatic agent fallback when a step fails
 
-    Subclasses define behavior by implementing ``on_agent()`` and/or ``on_workflow()``.
-    Under ``RunMode.AUTO`` (the default) the runtime picks the mode from which
-    template methods are overridden:
+    - **Agent mode** (``on_agent``): LLM-driven cognitive flow. Yields
+      ``ThinkCall`` to invoke named ``think_unit`` declarations.
+    - **Workflow mode** (``on_workflow``): Deterministic flow. Yields
+      ``ActionCall`` / ``HumanCall`` / ``LLMCall`` / ``AgentCall``.
+    - **Amphiflow mode** (``on_workflow`` + ``on_agent``): workflow-first
+      with automatic agent fallback when a step fails.
+
+    Subclasses define behavior by implementing ``on_agent()`` and/or
+    ``on_workflow()``. Under ``RunMode.AUTO`` (the default) the runtime
+    picks the mode from which template methods are overridden:
 
     - only ``on_agent`` overridden → ``RunMode.AGENT``
     - only ``on_workflow`` overridden → ``RunMode.WORKFLOW``
@@ -405,28 +458,54 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
     Parameters
     ----------
     llm : Optional[BaseLlm]
-        Default LLM for workers and auxiliary tasks (e.g., history compression).
-        Individual workers can specify their own LLM.
+        Default LLM for workers and auxiliary tasks (e.g. history
+        compression). Individual workers can specify their own LLM.
     name : Optional[str]
         Optional name for the agent instance.
-    verbose : bool
-        Enable logging of execution summary (tokens, time). Default is False.
+    verbose : bool, default False
+        Enable logging of execution summary (tokens, time).
+
+    Notes
+    -----
+    Yield-type ↔ scope rules:
+
+    ===========  ============  ========  =====
+    primitive    on_workflow   on_agent  hooks
+    ===========  ============  ========  =====
+    ActionCall   ✓             ✓         ✓
+    HumanCall    ✓             ✓         ✓
+    LLMCall      ✓             ✓         ✓
+    AgentCall    ✓             ✗         ✗
+    ThinkCall    ✗             ✓         ✗
+    ===========  ============  ========  =====
 
     Examples
     --------
     >>> class MyAgent(AmphibiousAutoma[CognitiveContext]):
     ...     main_think = think_unit(CognitiveWorker.inline("Execute step"), max_attempts=20)
     ...     async def on_agent(self, ctx: CognitiveContext):
-    ...         await self.main_think
+    ...         yield ThinkCall("main_think")
     ...
-    >>> ctx = await MyAgent(llm=llm).arun(goal="Complete the task", tools=[...])
+    >>> answer = await MyAgent(llm=llm).arun(goal="Complete the task", tools=[...])
     """
+
+    ############################################################################
+    # Class Attributes and Initialization
+    #
+    # Class-level state populated automatically by ``__init_subclass__``:
+    # ``_context_class`` (resolved from the ``Generic[T]`` parameter) and
+    # ``_human_channels`` (registry walked from the MRO so subclass
+    # overrides win over parent declarations). Subclasses can also
+    # override the ``WORKFLOW_STEP_FALLBACK_MAX_ATTEMPTS`` constant and
+    # the ``builtin_tools`` filter.
+    ############################################################################
 
     _context_class: Optional[Type[CognitiveContext]] = None
 
-    #: Max think-unit attempts when a workflow step falls back to agent mode
-    #: for per-step recovery (see ``_run_workflow``). Subclasses may override
-    #: to give the fallback agent a longer or shorter runway.
+    #: Max think-unit attempts when a workflow step falls back to agent
+    #: mode for per-step recovery (see ``_dispatch_call``'s ActionCall
+    #: branch). Subclasses may override to give the fallback agent a
+    #: longer or shorter runway.
     WORKFLOW_STEP_FALLBACK_MAX_ATTEMPTS: int = 5
 
     #: Filter applied to ``_BUILTIN_TOOLS`` during ``arun()`` injection.
@@ -435,9 +514,29 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
     #: opts out entirely. ``arun(builtin_tools=...)`` overrides at runtime.
     builtin_tools: ClassVar[Optional[FrozenSet[str]]] = None
 
+    #: ``@human_channel``-decorated registry, populated by
+    #: ``__init_subclass__``. Maps channel-name → method-name. Empty on
+    #: the base class; subclasses inherit and may add or override.
+    _human_channels: ClassVar[Dict[str, str]] = {}
+
     def __init_subclass__(cls, **kwargs) -> None:
-        """Extract the CognitiveContext type from the generic parameter."""
+        """Per-subclass initialisation.
+
+        Two responsibilities:
+
+        1. Extract the ``CognitiveContext`` type from the generic
+           parameter so ``cls._context_class`` is set.
+        2. Build the ``cls._human_channels`` registry by walking the MRO
+           and collecting every method tagged via ``@human_channel``.
+           Subclass overrides win over parent declarations.
+        """
         super().__init_subclass__(**kwargs)
+        cls._detect_context_class()
+        cls._build_human_channel_registry()
+
+    @classmethod
+    def _detect_context_class(cls) -> None:
+        """Resolve ``cls._context_class`` from the ``Generic[T]`` parameter."""
         for base in getattr(cls, "__orig_bases__", []):
             origin = get_origin(base)
             if origin is not None:
@@ -451,13 +550,34 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
             if hasattr(base, "_context_class") and base._context_class is not None:
                 cls._context_class = base._context_class
                 break
-        
-        # Check if there are any initialization issues with the context generic class.
+
         if cls._context_class is None or not issubclass(cls._context_class, CognitiveContext):
             raise TypeError(
                 f"{cls.__name__} must specify a CognitiveContext type via generic parameter, "
                 f"e.g., class {cls.__name__}(AmphibiousAutoma[MyContext])"
             )
+
+    @classmethod
+    def _build_human_channel_registry(cls) -> None:
+        """Walk MRO bottom-up so subclass overrides win, populate registry."""
+        registry: Dict[str, str] = {}
+        for klass in reversed(cls.__mro__):
+            for attr_name, attr in vars(klass).items():
+                channel_name = getattr(attr, _HUMAN_CHANNEL_MARKER, None)
+                if channel_name is not None:
+                    registry[channel_name] = attr_name
+        cls._human_channels = registry
+
+    ############################################################################
+    # Instance Attributes and Initialization
+    #
+    # Per-instance runtime state set up in ``__init__``: the LLM, the
+    # current cognitive context, the optional trace recorder, the final
+    # answer, usage stats (tokens / time), and the read-before-modify
+    # tracker shared with the filesystem built-in tools. Three read-only
+    # properties (``llm`` / ``context`` / ``final_answer``) expose the
+    # most common reads.
+    ############################################################################
 
     def __init__(
         self,
@@ -476,7 +596,9 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         # Trace capture
         self._agent_trace: Optional[AgentTrace] = None
 
-        # Final answer (set automatically or via set_final_answer())
+        # Final answer — auto-captured from the finishing step or
+        # explicitly set by yielding ``RETURN(value)`` from a
+        # top-level template method.
         self._final_answer: Optional[str] = None
 
         # Usage stats (reset per arun call)
@@ -487,9 +609,6 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         # built-in tools (read_file/write_file/edit_file). Maps absolute
         # file path → mtime at the time of the last read. Reset per arun call.
         self._read_tracker: Dict[str, float] = {}
-
-        # Human-in-the-loop event handler registration
-        self._register_human_input_handler()
 
     @property
     def llm(self) -> Optional[Any]:
@@ -505,149 +624,113 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
     def final_answer(self) -> Optional[str]:
         """The final answer produced by the last ``arun()`` call.
 
-        Automatically captured from the ``step_content`` of the finishing step
-        (agent mode) or the last executed step (workflow mode).
-        Can be overridden explicitly via ``set_final_answer()``.
+        Automatically captured from the ``step_content`` of the finishing
+        step (agent mode) or the last executed step (workflow mode).
+        Top-level template-method generators may override the auto-captured
+        value by yielding ``RETURN(value)``.
         """
         return self._final_answer
 
-    def set_final_answer(self, answer: str) -> None:
-        """Explicitly set the final answer.
-
-        Call this inside ``on_agent()`` or ``on_workflow()`` to override
-        the auto-captured value.
-
-        Parameters
-        ----------
-        answer : str
-            The final answer text.
-        """
-        self._final_answer = answer
-
-    ############################################################################
-    # Human-in-the-loop support
-    ############################################################################
-
-    def _register_human_input_handler(self) -> None:
-        """Register the default event handler for human input requests.
-
-        The handler calls ``human_input()`` via ``asyncio.ensure_future()``
-        so it can be an async template method while being invoked from
-        the synchronous event-handler callback that ``request_feedback_async``
-        uses.
-        """
-
-        def _on_human_input(event: Event, feedback_sender):
-            asyncio.ensure_future(
-                self._handle_human_input(event, feedback_sender)
-            )
-
-        self.register_event_handler(HUMAN_INPUT_EVENT_TYPE, _on_human_input)
-
-    async def _handle_human_input(self, event: Event, feedback_sender) -> None:
-        """Internal dispatcher — calls the overridable ``human_input()`` template."""
-        response = await self.human_input(event.data)
-        feedback_sender.send(Feedback(data=response))
-
-    async def request_human(self, prompt: str, *, timeout: Optional[float] = None) -> str:
-        """Request input from the human operator.
-
-        This is the primary entry point for code-level human-in-the-loop
-        calls inside ``on_agent()`` (between think units) or from the
-        ``request_human_tool`` closure.
-
-        Parameters
-        ----------
-        prompt : str
-            The question or message to present to the human.
-        timeout : Optional[float]
-            Seconds to wait before raising ``TimeoutError``. None means
-            wait indefinitely.
-
-        Returns
-        -------
-        str
-            The human's response text.
-
-        Raises
-        ------
-        TimeoutError
-            If no response is received within ``timeout`` seconds.
-        """
-        event = Event(
-            event_type=HUMAN_INPUT_EVENT_TYPE,
-            data={"prompt": prompt, "timeout": timeout},
-        )
-        feedback = await self.request_feedback_async(event, timeout=timeout)
-        return feedback.data
-
     ############################################################################
     # Template methods (override by user to customize the behavior)
+    #
+    # All template methods may be written as async generators that yield
+    # framework primitives, OR as plain async coroutines. The dispatcher
+    # supports both forms. New code should prefer the yield form.
+    #
+    # Yield-type ↔ scope rules:
+    #   ActionCall / HumanCall / LLMCall — allowed in any template method
+    #   AgentCall                        — only on_workflow
+    #   ThinkCall                        — only on_agent
     ############################################################################
-    async def observation(self, ctx: CognitiveContextT) -> Optional[str]:
-        """
-        Agent-level default observation, shared across all workers.
+    async def observation(self, ctx: CognitiveContextT) -> AsyncGenerator[Any, Any]:
+        """Agent-level default observation, shared across all workers.
 
-        Called by ``_run()`` before each thinking phase. Workers can
-        enhance this via their own ``observation()`` method.
-
-        Parameters
-        ----------
-        ctx : CognitiveContextT
-            The cognitive context.
-
-        Returns
-        -------
-        Optional[str]
-            Custom observation text, or None.
-        """
-        return None
-
-    async def on_agent(self, ctx: CognitiveContextT) -> None:
-        """
-        Agent mode: LLM-driven orchestration logic.
-
-        Override this method to define how think_units are orchestrated.
-        Use standard Python control flow combined with ``await self.think_unit``
-        calls.
-
-        A subclass may override this, ``on_workflow``, or both. The default
-        implementation is a no-op so that subclasses which only implement
-        ``on_workflow`` remain instantiable.
+        Called before each thinking phase. Workers can enhance this via
+        their own ``observation()`` method, which delegates here when
+        it returns ``_DELEGATE`` or ``None``.
 
         Parameters
         ----------
         ctx : CognitiveContextT
-            The cognitive context, used for accessing state and conditions.
+            The current cognitive context.
+
+        Yields
+        ------
+        ActionCall | HumanCall | LLMCall | RETURN
+            Hook scope — ``AgentCall`` and ``ThinkCall`` are rejected.
+            Yield ``RETURN(text)`` to set the observation; exhausting
+            without RETURN treats the observation as ``None``.
 
         Examples
         --------
-        >>> async def on_agent(self, ctx: MyContext):
-        ...     await self.main_think
-        ...     await self.exec_think.until(lambda ctx: ctx.done, max_attempts=20)
+        >>> async def observation(self, ctx):
+        ...     snapshot = yield ActionCall("bash", command="bridgic-browser snapshot")
+        ...     yield RETURN(snapshot[0].result)
         """
-        return None
+        if False:  # pragma: no cover — async generator stub
+            yield
 
-    async def on_workflow(self, ctx: CognitiveContextT) -> AsyncGenerator[Union[ActionCall, HumanCall, AgentCall], None]:
-        """Workflow mode: deterministic execution as an async generator.
+    async def on_agent(self, ctx: CognitiveContextT) -> AsyncGenerator[Any, Any]:
+        """Agent mode: LLM-driven cognitive flow.
 
-        Override this method to define a deterministic workflow. When overridden,
-        ``arun()`` automatically routes to workflow mode instead of ``on_agent()``.
+        Override this method to declare the agent's strategy. A subclass
+        may override this, ``on_workflow``, or both; the default is a
+        no-op so that subclasses which only implement ``on_workflow``
+        remain instantiable.
 
-        Three yield types are supported:
-        - ``ActionCall``  — deterministic single-tool execution
-        - ``HumanCall``   — pause and request human input (returned as str via asend)
-        - ``AgentCall``   — delegate a sub-task to LLM agent mode
+        Parameters
+        ----------
+        ctx : CognitiveContextT
+            The current cognitive context.
 
-        The generator exhausting signals workflow completion — no finish signal needed.
-        Use ``result = yield ActionCall(...)`` to receive tool execution results via asend().
+        Yields
+        ------
+        ThinkCall | ActionCall | HumanCall | LLMCall | RETURN
+            Agent scope — ``AgentCall`` is rejected (already inside an
+            autonomous flow). Yield ``RETURN(answer)`` to set the final
+            answer explicitly; otherwise the framework auto-captures
+            from the finishing think step's ``step_content``.
+
+        Examples
+        --------
+        >>> async def on_agent(self, ctx):
+        ...     yield ThinkCall("main_think", max_attempts=20)
+        ...     yield ThinkCall("exec_think", until=lambda c: c.done)
+        ...     yield RETURN(ctx.cognitive_history.get_all()[-1].content)
+        """
+        if False:  # pragma: no cover — async generator stub
+            yield
+
+    async def on_workflow(self, ctx: CognitiveContextT) -> AsyncGenerator[Union[ActionCall, HumanCall, AgentCall, LLMCall], None]:
+        """Workflow mode: deterministic flow as an async generator.
+
+        Override this method to declare a deterministic workflow. When
+        overridden, ``arun()`` automatically routes to workflow mode
+        instead of ``on_agent``.
+
+        Parameters
+        ----------
+        ctx : CognitiveContextT
+            The current cognitive context.
+
+        Yields
+        ------
+        ActionCall | HumanCall | LLMCall | AgentCall | RETURN
+            Workflow scope — ``ThinkCall`` is rejected. Use
+            ``AgentCall`` to enter an autonomous sub-flow, or
+            ``LLMCall`` for a one-shot LLM call. Use
+            ``result = yield ActionCall(...)`` to receive tool
+            execution results via ``asend()``. The generator exhausting
+            signals workflow completion — no finish signal needed.
 
         Examples
         --------
         >>> async def on_workflow(self, ctx):
         ...     yield ActionCall("navigate_to", url="http://example.com")
         ...     result = yield ActionCall("click_element_by_ref", ref="42")
-        ...     yield AgentCall(goal="Handle complex case", max_attempts=10)
+        ...     summary = yield LLMCall.chat("Summarize the page in one line.")
+        ...     yield AgentCall(goal="Handle complex case")
         """
         if False:  # pragma: no cover — makes this a proper async generator stub
             yield
@@ -656,31 +739,39 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         self,
         decision_result: Any,
         ctx: CognitiveContextT,
-    ) -> Any:
-        """
-        Agent-level before_action hook, shared across all workers.
+    ) -> AsyncGenerator[Any, Any]:
+        """Agent-level before_action hook, shared across all workers.
 
         Called when a worker's ``before_action()`` returns ``_DELEGATE``
-        (or ``None``, which is treated identically). Override to intercept
-        and modify tool calls at the agent level.
-
-        Returning ``None`` from this hook is treated as a passthrough — the
-        original ``decision_result`` is preserved — so that stub overrides
-        do not silently drop the decision.
+        (or ``None``, which is treated identically). Override to
+        intercept and modify tool calls at the agent level.
 
         Parameters
         ----------
         decision_result : Any
-            The decision result (typically List[Tuple[ToolCall, ToolSpec]]).
+            The pending action decision (``List[Tuple[ToolCall,
+            ToolSpec]]`` for tool-call output, or a typed Pydantic
+            instance for structured output).
         ctx : CognitiveContextT
-            The cognitive context.
+            The current cognitive context.
 
-        Returns
-        -------
-        Any
-            Verified/adjusted decision result.
+        Yields
+        ------
+        ActionCall | HumanCall | LLMCall | RETURN
+            Hook scope — ``AgentCall`` and ``ThinkCall`` are rejected.
+            Yield ``RETURN(modified_decision)`` to override the decision.
+            Exhausting without RETURN (or returning ``None`` from a
+            coroutine override) is treated as passthrough — the
+            original ``decision_result`` is preserved.
+
+        Examples
+        --------
+        >>> async def before_action(self, decision_result, ctx):
+        ...     adjusted = sanitize(decision_result)
+        ...     yield RETURN(adjusted)
         """
-        return decision_result
+        if False:  # pragma: no cover — async generator stub
+            yield
 
     async def action_tool_call(self, tool_list: List[Tuple[ToolCall, ToolSpec]], context: CognitiveContextT) -> ActionResult:
         """
@@ -762,48 +853,712 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         """
         return decision_result
 
-    async def after_action(self, step_result: Any, ctx: CognitiveContextT) -> None:
-        """
-        Agent-level after_action hook.
+    async def after_action(self, step_result: Any, ctx: CognitiveContextT) -> AsyncGenerator[Any, Any]:
+        """Agent-level after_action hook.
 
         Called after action execution and before the result is returned.
-        Override to update custom context fields based on tool results.
+        Override to update custom context fields or trigger follow-up
+        primitives based on tool results.
 
         Parameters
         ----------
         step_result : Any
-            The result of the action step.
+            The just-executed Step (as returned by ``_action``).
         ctx : CognitiveContextT
             The current cognitive context.
+
+        Yields
+        ------
+        ActionCall | HumanCall | LLMCall
+            Hook scope — ``AgentCall`` and ``ThinkCall`` are rejected.
+            ``RETURN`` is unused here; the hook's "return value" is
+            ignored by the framework.
+
+        Examples
+        --------
+        >>> async def after_action(self, step_result, ctx):
+        ...     summary = yield LLMCall.chat(f"Summarize: {step_result}")
+        ...     ctx.last_summary = summary
         """
-        pass
+        if False:  # pragma: no cover — async generator stub
+            yield
 
-    async def human_input(self, data: Dict[str, Any]) -> str:
-        """Template method invoked when the agent requests human input.
+    ############################################################################
+    # Core methods
+    #
+    # The dispatcher and the worker runner — the framework's two engines.
+    #
+    # Dispatcher (``_dispatch_flow`` / ``_dispatch_call`` / ``_invoke_template``):
+    # drives a template-method generator and routes each yielded primitive
+    # to its handler. ``_dispatch_flow`` adds body-level fallback policy
+    # (RETURN capture, ``_FullFallback`` recovery) on top of the simpler
+    # ``_invoke_template`` driver; ``_dispatch_call`` is the per-APICall
+    # branch (validates yield-type ↔ scope, executes the call).
+    #
+    # Helpers used by the dispatcher: ``_dispatch_human_channel`` /
+    # ``_stdin_human_fallback`` (HumanCall routing) and ``_run_llm_call``
+    # (LLMCall protocol dispatch).
+    #
+    # Worker runner (``_run`` / ``_run_once`` / ``_action``): drives a
+    # CognitiveWorker through one or more observe-think-act cycles. Used
+    # by ThinkCall dispatch, the ActionCall step-level fallback, and any
+    # user code that opts into a coroutine-form ``on_agent``.
+    #
+    # ``snapshot`` / ``_phase_context`` provide the scoped-context
+    # mechanism that AgentCall and the workflow step fallback build on.
+    ############################################################################
+    async def _dispatch_flow(
+        self,
+        gen_or_coro: Any,
+        ctx: CognitiveContextT,
+        *,
+        can_fallback: bool = False,
+        max_consecutive_fallbacks: int = 0,
+        scope: str = "workflow",
+    ) -> Any:
+        """Body-flow driver for ``on_agent`` / ``on_workflow``.
 
-        Override this in your subclass to integrate with your UI or
-        messaging layer.  The default implementation reads from stdin.
+        Responsibilities are minimal: drive the generator with
+        ``__anext__`` / ``asend``, recognise ``RETURN`` and capture
+        its value, and hand every other yield to ``_dispatch_call``.
+        All per-Call dispatch logic — including per-Call fallback
+        policy and yield-type validation — lives in ``_dispatch_call``.
 
         Parameters
         ----------
-        data : Dict[str, Any]
-            Event payload — always contains ``"prompt"``; may contain
-            ``"timeout"`` and other metadata added by the caller.
+        gen_or_coro : Any
+            The on_agent / on_workflow body — an async generator or a
+            coroutine. Coroutine form short-circuits to ``await``.
+        ctx : CognitiveContextT
+            The current cognitive context.
+        can_fallback : bool, default False
+            Whether body-level fallback to ``on_agent`` is permitted on
+            generator-internal errors or ``_FullFallback`` escalations.
+        max_consecutive_fallbacks : int, default 0
+            ActionCall step-failure threshold before full fallback.
+            Forced to ``0`` when ``can_fallback`` is False.
+        scope : {"workflow", "agent"}, default "workflow"
+            Identifies which body is being driven, forwarded to
+            ``_dispatch_call`` for AgentCall / ThinkCall validation.
+            ``_workflow`` / ``_amphiflow`` pass ``"workflow"``;
+            ``_agent`` passes ``"agent"``. Fallback paths invoke
+            ``_invoke_template(..., scope="agent")`` directly.
+
+        Returns
+        -------
+        Any
+            The value captured from a ``RETURN(value)`` yield, or
+            ``None`` if the generator exhausts without RETURN.
+
+        Notes
+        -----
+        Generator-internal errors (helper code raising between yields,
+        leaving the generator dead) are the only fallback concern owned
+        here. ``_dispatch_call`` signals "escalate to on_agent" by
+        raising ``_FullFallback`` — caught and handled in this method.
+        """
+        if not inspect.isasyncgen(gen_or_coro):
+            return await gen_or_coro
+
+        state = _FlowState(
+            max_consecutive_fallbacks=max_consecutive_fallbacks if can_fallback else 0,
+        )
+        send_value: Any = None
+        return_value: Any = None
+
+        try:
+            while True:
+                try:
+                    if send_value is None:
+                        item = await gen_or_coro.__anext__()
+                    else:
+                        item = await gen_or_coro.asend(send_value)
+                    send_value = None
+                except StopAsyncIteration:
+                    break
+                except Exception as e:
+                    # Generator-internal error: helper code between
+                    # yields raised. The generator object is dead now;
+                    # only options are full fallback or re-raise.
+                    if not can_fallback:
+                        raise
+                    if not self._has_agent():
+                        raise RuntimeError(
+                            f"Generator raised at step {state.step_index}: {e}\n"
+                            f"on_agent() is not overridden, cannot fall back."
+                        ) from e
+                    self._log(
+                        "Dispatch",
+                        f"[ERROR] Generator code raised at step {state.step_index}: {e} — "
+                        f"falling back to on_agent().",
+                        color="red",
+                    )
+                    await self._invoke_template(
+                        self.on_agent(ctx), ctx, scope="agent",
+                    )
+                    return return_value
+                else:
+                    if isinstance(item, RETURN):
+                        return_value = item.value
+                        preview = str(item.value)
+                        if len(preview) > 120:
+                            preview = preview[:120] + "..."
+                        self._log("Dispatch", f"RETURN: {preview}", color="cyan")
+                        break
+
+                    try:
+                        send_value = await self._dispatch_call(
+                            item, ctx,
+                            can_fallback=can_fallback,
+                            state=state,
+                            scope=scope,
+                        )
+                    except _FullFallback as e:
+                        if not self._has_agent():
+                            raise RuntimeError(str(e)) from e.__cause__
+                        self._log(
+                            "Dispatch",
+                            f"[ERROR] {e} — falling back to on_agent().",
+                            color="red",
+                        )
+                        await self._invoke_template(
+                            self.on_agent(ctx), ctx, scope="agent",
+                        )
+                        return return_value
+        finally:
+            await gen_or_coro.aclose()
+
+        return return_value
+    
+    async def _dispatch_call(
+        self,
+        item: Any,
+        ctx: CognitiveContextT,
+        *,
+        can_fallback: bool = False,
+        state: Optional[_FlowState] = None,
+        scope: str = "hook",
+    ) -> Any:
+        """Per-APICall handler.
+
+        Routes one yielded item by isinstance, validates yield-type ↔
+        scope compatibility, and owns per-Call fallback policy.
+
+        Parameters
+        ----------
+        item : Any
+            The yielded primitive (ActionCall / HumanCall / LLMCall /
+            AgentCall / ThinkCall).
+        ctx : CognitiveContextT
+            The current cognitive context.
+        can_fallback : bool, default False
+            When True, ActionCall step failures and LLMCall errors
+            trigger body-mode fallback (step-level retry or
+            ``_FullFallback`` escalation). Always False when invoked
+            from ``_invoke_template``.
+        state : Optional[_FlowState], default None
+            Mutable per-flow state for fallback bookkeeping; passed by
+            ``_dispatch_flow`` and ``None`` from ``_invoke_template``.
+        scope : {"workflow", "agent", "hook"}, default "hook"
+            Caller's flow scope, used for yield-type validation.
+
+        Returns
+        -------
+        Any
+            The value to send back to the generator via ``asend()``.
+            Type depends on the yield type (e.g. ``str`` for HumanCall,
+            ``List[ToolResult]`` for ActionCall).
+
+        Raises
+        ------
+        RuntimeError
+            ``AgentCall`` yielded outside ``scope='workflow'`` or
+            ``ThinkCall`` yielded outside ``scope='agent'``.
+        TypeError
+            ``item`` is not one of the recognised primitive types.
+        _FullFallback
+            ``LLMCall`` raised or ``ActionCall`` exceeded
+            ``state.max_consecutive_fallbacks`` and ``can_fallback`` is
+            True. Caught by ``_dispatch_flow``.
+
+        Notes
+        -----
+        Yield-type ↔ scope rules:
+
+        * ``ActionCall`` / ``HumanCall`` / ``LLMCall`` — allowed in any
+          scope (``"workflow"``, ``"agent"``, ``"hook"``).
+        * ``AgentCall`` — only ``"workflow"``.
+        * ``ThinkCall`` — only ``"agent"``.
+        """
+        if isinstance(item, AgentCall):
+            if scope != "workflow":
+                raise RuntimeError(
+                    f"AgentCall(goal={item.goal!r}) is only valid inside "
+                    f"on_workflow (scope='workflow'); got scope={scope!r}. "
+                    "AgentCall represents the deterministic→autonomous "
+                    "transition; once you are inside on_agent, keep "
+                    "thinking via ThinkCall instead."
+                )
+            if not self._has_agent():
+                raise RuntimeError(
+                    f"AgentCall(goal={item.goal!r}) requires an on_agent() "
+                    "override on the agent class — AgentCall always "
+                    "delegates the sub-task to on_agent."
+                )
+            history = item.history if item.history is not None else CognitiveHistory()
+            self._log(
+                "Dispatch",
+                f"AgentCall(goal={item.goal!r}) → delegating to on_agent",
+                color="cyan",
+            )
+
+            # Build snapshot overrides — filter ctx.tools / ctx.skills by
+            # the user-supplied name lists so the sub-agent sees only the
+            # scoped subset (and original lists are restored on exit).
+            snapshot_kwargs: Dict[str, Any] = {
+                "goal": item.goal,
+                "cognitive_history": history,
+            }
+            if item.tools is not None:
+                allowed_tools = set(item.tools)
+                filtered_tools = CognitiveTools()
+                for tool in ctx.tools.get_all():
+                    if tool.tool_name in allowed_tools:
+                        filtered_tools.add(tool)
+                snapshot_kwargs["tools"] = filtered_tools
+            if item.skills is not None:
+                allowed_skills = set(item.skills)
+                filtered_skills = CognitiveSkills()
+                for skill in ctx.skills.get_all():
+                    if skill.name in allowed_skills:
+                        filtered_skills.add(skill)
+                snapshot_kwargs["skills"] = filtered_skills
+
+            async with self.snapshot(**snapshot_kwargs):
+                await self._invoke_template(
+                    self.on_agent(ctx), ctx, scope="agent",
+                )
+            return None
+
+        if isinstance(item, HumanCall):
+            channel_label = item.channel or "<default>"
+            self._log(
+                "Dispatch",
+                f"Requesting human input via {channel_label}: {item.prompt}",
+                color="yellow",
+            )
+            response = await self._dispatch_human_channel(item.prompt, channel=item.channel)
+            self._log(
+                "Dispatch",
+                f"Human responded: {response[:100]}{'...' if len(response) > 100 else ''}",
+                color="green",
+            )
+            return response
+
+        if isinstance(item, LLMCall):
+            prompt_preview = item.prompt[:80] + ("..." if len(item.prompt) > 80 else "")
+            self._log(
+                "Dispatch",
+                f"LLMCall protocol={item.protocol} prompt={prompt_preview}",
+                color="cyan",
+            )
+            try:
+                result = await self._run_llm_call(item)
+            except Exception as e:
+                if not can_fallback:
+                    raise
+                raise _FullFallback(
+                    f"LLMCall(protocol={item.protocol!r}) raised: {e}"
+                ) from e
+            result_preview = str(result)
+            if len(result_preview) > 120:
+                result_preview = result_preview[:120] + "..."
+            self._log("Dispatch", f"LLMCall result: {result_preview}", color="green")
+            self._record_llm_call_trace(item, result)
+            return result
+
+        if isinstance(item, ThinkCall):
+            if scope != "agent":
+                raise RuntimeError(
+                    f"ThinkCall(name={item.name!r}) is only valid inside "
+                    f"on_agent (scope='agent'); got scope={scope!r}. "
+                    "ThinkCall references a class-level think_unit and "
+                    "represents a step in the agent's cognitive strategy; "
+                    "use LLMCall for a direct LLM invocation outside the "
+                    "cognitive loop, or AgentCall to enter an on_agent flow."
+                )
+            descriptor = getattr(type(self), item.name, None)
+            if not isinstance(descriptor, ThinkUnitDescriptor):
+                raise AttributeError(
+                    f"ThinkCall(name={item.name!r}) does not match any "
+                    f"think_unit declaration on {type(self).__name__}."
+                )
+            template = descriptor._worker_template
+            if isinstance(template, CognitiveWorker):
+                worker = ThinkUnitDescriptor._clone_worker(template)
+            else:
+                # External WorkerRunner — use the template directly.
+                worker = template
+            until = item.until if item.until is not None else descriptor._until
+            max_attempts = (
+                item.max_attempts if item.max_attempts is not None
+                else descriptor._max_attempts
+            )
+            tools = item.tools if item.tools is not None else descriptor._tools
+            skills = item.skills if item.skills is not None else descriptor._skills
+            self._log(
+                "Dispatch",
+                f"ThinkCall name={item.name} max_attempts={max_attempts}",
+                color="cyan",
+            )
+            await self._run(
+                worker,
+                until=until,
+                max_attempts=max_attempts,
+                tools=tools,
+                skills=skills,
+                on_error=descriptor._on_error,
+                max_retries=descriptor._max_retries,
+            )
+            worker_output: Any = None
+            if (
+                isinstance(worker, CognitiveWorker)
+                and worker.output_schema is not None
+                and ctx is not None
+                and len(ctx.cognitive_history) > 0
+            ):
+                last_step = ctx.cognitive_history.get_all()[-1]
+                if last_step.result is not None:
+                    worker_output = last_step.result
+            return worker_output
+
+        if isinstance(item, ActionCall):
+            worker = item.worker
+            decision = item.decision
+
+            # 1. Observe — worker-level None ≡ _DELEGATE → agent-level hook.
+            if worker is not None:
+                obs = await worker.observation(ctx)
+                if obs is _DELEGATE or obs is None:
+                    obs = await self._invoke_template(self.observation(ctx), ctx)
+            else:
+                obs = await self._invoke_template(self.observation(ctx), ctx)
+            ctx.observation = obs
+
+            obs_str = str(obs) if obs is not None else "None"
+            if len(obs_str) > 200:
+                obs_str = obs_str[:200] + "..."
+            self._log("Observe", f"dispatch: {obs_str}", color="green")
+            self._log("Think", f"dispatch: {decision.step_content}", color="cyan")
+
+            # 2. Act with body-mode fallback wrapping
+            try:
+                action_result = await self._action(decision, ctx, _worker=worker)
+
+                # Surface tool failures as exceptions
+                inner = getattr(action_result, "result", None)
+                if isinstance(inner, ActionResult):
+                    failed = [r for r in inner.results if not r.success]
+                    if failed:
+                        errors = "; ".join(f"{r.tool_name}: {r.error}" for r in failed)
+                        raise RuntimeError(
+                            f"Tool execution failed for: "
+                            f"{decision.step_content} — {errors}"
+                        )
+
+                if action_result is not None:
+                    formatted = action_result.model_dump_json(indent=4)
+                    self._log("Act", f"dispatch:\n{formatted}", color="purple")
+
+                self._record_trace_step(worker, obs, decision, action_result, ctx)
+
+                if state is not None:
+                    state.consecutive_failures = 0
+                    state.step_index += 1
+
+                return self._build_tool_results(action_result)
+
+            except Exception as e:
+                if not can_fallback or state is None:
+                    raise
+
+                state.consecutive_failures += 1
+                state.step_index += 1
+                state.failed_steps.append(
+                    f"Step {state.step_index}: {decision.step_content} — {e}"
+                )
+                self._log(
+                    "Dispatch",
+                    f"[ERROR] Step {state.step_index} failed "
+                    f"({state.consecutive_failures}/{state.max_consecutive_fallbacks}): {e}",
+                    color="red",
+                )
+
+                if state.consecutive_failures >= state.max_consecutive_fallbacks:
+                    failed_summary = "\n".join(state.failed_steps)
+                    raise _FullFallback(
+                        f"Workflow degradation failed: consecutive failures reached "
+                        f"{state.max_consecutive_fallbacks}.\n"
+                        f"Failed steps:\n{failed_summary}"
+                    ) from e
+
+                # Step-level fallback
+                fallback_goal = (
+                    f"[Workflow fallback] Step {state.step_index} failed.\n"
+                    f"Step intent: {decision.step_content}\n"
+                    f"Error: {e}\n\n"
+                    f"You must do TWO things:\n"
+                    f"1. Resolve the error — fix whatever is blocking this step "
+                    f"(e.g. login, navigate, wait for page load).\n"
+                    f"2. Complete the original step intent: {decision.step_content}\n\n"
+                    f"Set finish=True ONLY after both are done. "
+                    f"Do NOT continue with subsequent steps."
+                )
+                self._log(
+                    "Dispatch",
+                    f"Falling back to agent mode for step {state.step_index}: "
+                    f"{decision.step_content}",
+                    color="yellow",
+                )
+                async with self.snapshot(goal=fallback_goal):
+                    fallback_worker = (
+                        item.worker
+                        if item.worker is not None
+                        else CognitiveWorker.inline("Complete the goal.")
+                    )
+                    await self._run(
+                        fallback_worker,
+                        max_attempts=self.WORKFLOW_STEP_FALLBACK_MAX_ATTEMPTS,
+                    )
+                return None
+
+        raise TypeError(
+            f"Unknown yield type: {type(item).__name__}. Expected one of "
+            "RETURN / ActionCall / HumanCall / LLMCall / AgentCall / ThinkCall."
+        )
+
+    async def _dispatch_human_channel(
+        self, prompt: str, channel: Optional[str] = None
+    ) -> str:
+        """Resolve and invoke a registered ``@human_channel`` handler.
+
+        Parameters
+        ----------
+        prompt : str
+            The text shown to the human responder.
+        channel : Optional[str], default None
+            Name of the registered channel to use. ``None`` triggers
+            implicit-default resolution (see Notes).
 
         Returns
         -------
         str
-            The human's response text.
+            The response text from the resolved channel handler.
+
+        Raises
+        ------
+        RuntimeError
+            ``channel=None`` was passed but multiple channels are
+            registered, or an explicitly named ``channel`` is not in
+            the registry.
+
+        Notes
+        -----
+        Channel resolution rules:
+
+        * Zero channels registered → use the framework's stdin fallback.
+        * One channel registered → it becomes the implicit default.
+        * Multiple channels registered → ``channel`` must be specified.
+        * ``channel="name"`` provided → look up in ``cls._human_channels``
+          and call the bound method.
+
+        Used by the ``HumanCall`` dispatch branch and by
+        ``request_human_tool`` (the LLM-facing built-in tool).
         """
-        prompt = data.get("prompt", "Human input required:")
+        registry = type(self)._human_channels
+        if not registry:
+            return await self._stdin_human_fallback(prompt)
+        if channel is None:
+            if len(registry) != 1:
+                raise RuntimeError(
+                    "HumanCall(channel=None) is ambiguous: "
+                    f"{len(registry)} channels registered "
+                    f"({sorted(registry.keys())}). Specify channel='name' "
+                    "explicitly."
+                )
+            channel = next(iter(registry))
+        method_name = registry.get(channel)
+        if method_name is None:
+            raise RuntimeError(
+                f"Unknown human channel: {channel!r}. "
+                f"Registered: {sorted(registry.keys())}"
+            )
+        return await getattr(self, method_name)(prompt)
+
+    async def _stdin_human_fallback(self, prompt: str) -> str:
+        """Default human-input source when no ``@human_channel`` is registered.
+
+        Reads a single line from stdin in a thread executor so the event
+        loop is not blocked. Subclasses normally do not call this
+        directly — register a ``@human_channel`` instead.
+        """
         loop = asyncio.get_event_loop()
         return await loop.run_in_executor(
             None, input, f"\n[HumanInput] {prompt}\n> "
         )
 
-    ############################################################################
-    # Core methods
-    ############################################################################
+    async def _run_llm_call(self, item: LLMCall) -> Any:
+        """Execute an ``LLMCall`` against ``self._llm`` using the requested protocol.
+
+        Builds the message list as ``history + [Message(prompt,
+        role=USER)]``, then dispatches to one of three async LLM
+        methods.
+
+        Parameters
+        ----------
+        item : LLMCall
+            The yielded LLMCall — carries ``protocol`` and any
+            protocol-specific arguments (``constraint`` / ``tools``).
+
+        Returns
+        -------
+        Any
+            * ``protocol='chat'`` — ``str`` (the message content).
+            * ``protocol='structure_output'`` — the typed instance from
+              ``StructuredOutput.astructured_output``.
+            * ``protocol='tool_selector'`` — the tuple from
+              ``ToolSelection.aselect_tool``.
+
+        Raises
+        ------
+        RuntimeError
+            No LLM was passed to the AmphibiousAutoma constructor.
+        TypeError
+            The configured LLM does not implement the requested protocol.
+        ValueError
+            ``item.protocol`` is not one of the recognised values.
+
+        Notes
+        -----
+        Used by ``_dispatch_call`` (LLMCall dispatch branch).
+        """
+        if self._llm is None:
+            raise RuntimeError(
+                f"LLMCall(protocol={item.protocol!r}) requires self._llm, "
+                "but no LLM was passed to the AmphibiousAutoma constructor."
+            )
+
+        messages: List[Message] = []
+        if item.history:
+            messages.extend(item.history)
+        messages.append(Message.from_text(item.prompt, role=Role.USER))
+
+        if item.protocol == "chat":
+            response = await self._llm.achat(messages)
+            text = ""
+            msg = getattr(response, "message", None)
+            if msg is not None:
+                text = msg.content or ""
+            if not text:
+                # Defensive fallback when the provider returns a Response
+                # without a Message — surface the raw repr rather than ""
+                # so user code can detect the degenerate case.
+                text = str(response)
+            return text
+
+        if item.protocol == "structure_output":
+            if not isinstance(self._llm, StructuredOutput):
+                raise TypeError(
+                    f"LLM {type(self._llm).__name__} does not implement the "
+                    "StructuredOutput protocol; cannot satisfy "
+                    "LLMCall(protocol='structure_output')."
+                )
+            return await self._llm.astructured_output(messages, item.constraint)
+
+        if item.protocol == "tool_selector":
+            if not isinstance(self._llm, ToolSelection):
+                raise TypeError(
+                    f"LLM {type(self._llm).__name__} does not implement the "
+                    "ToolSelection protocol; cannot satisfy "
+                    "LLMCall(protocol='tool_selector')."
+                )
+            return await self._llm.aselect_tool(messages, item.tools)
+
+        raise ValueError(
+            f"Unknown LLMCall protocol: {item.protocol!r}. "
+            "Expected 'chat', 'structure_output', or 'tool_selector'."
+        )
+
+    async def _invoke_template(
+        self,
+        gen_or_coro: Any,
+        ctx: CognitiveContextT,
+        *,
+        scope: str = "hook",
+    ) -> Any:
+        """Generic template-method driver. No fallback policy.
+
+        User-facing template methods (``observation``, ``on_agent``,
+        ``before_action``, ``after_action``, ``on_workflow``) may be
+        written as async generators (the idiomatic yield-driven form)
+        OR as plain async coroutines. This helper bridges both forms:
+        coroutines are awaited directly; async generators are driven
+        with ``__anext__`` / ``asend``, dispatching each yielded item
+        through ``_dispatch_call`` and capturing ``RETURN.value`` as
+        the return.
+
+        Parameters
+        ----------
+        gen_or_coro : Any
+            An async generator object or coroutine returned from a
+            template-method invocation.
+        ctx : CognitiveContextT
+            The current cognitive context, forwarded to ``_dispatch_call``.
+        scope : {"workflow", "agent", "hook"}, default "hook"
+            Identifies the kind of generator being driven so
+            ``_dispatch_call`` can enforce yield-type restrictions.
+
+        Returns
+        -------
+        Any
+            The coroutine's return value, or the value captured from a
+            ``RETURN(value)`` yield, or ``None`` if the generator
+            exhausts without RETURN.
+
+        Notes
+        -----
+        Used by hook callsites and by ``_dispatch_call``'s AgentCall
+        delegation. Errors propagate; the body-level fallback policy
+        lives in ``_dispatch_flow``.
+        """
+        if not inspect.isasyncgen(gen_or_coro):
+            return await gen_or_coro
+
+        send_value: Any = None
+        return_value: Any = None
+        try:
+            while True:
+                try:
+                    if send_value is None:
+                        item = await gen_or_coro.__anext__()
+                    else:
+                        item = await gen_or_coro.asend(send_value)
+                    send_value = None
+                except StopAsyncIteration:
+                    break
+
+                if isinstance(item, RETURN):
+                    return_value = item.value
+                    break
+
+                send_value = await self._dispatch_call(
+                    item, ctx, scope=scope,
+                )
+        finally:
+            await gen_or_coro.aclose()
+
+        return return_value
+
     async def _run(
         self,
         worker: CognitiveWorker,
@@ -816,29 +1571,54 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         max_retries: int = 0,
     ) -> None:
         """
-        Execute a CognitiveWorker through observe-think-act cycle(s).
+        Execute a worker against the current context.
 
-        Internal method used by think_unit descriptors and _run_workflow.
-        Not intended for direct use by subclasses — use think_unit instead.
+        Two execution paths exist, distinguished by worker type:
+
+        * ``CognitiveWorker`` — runs through the framework's observe-
+          think-act cycle (one cycle per attempt, with ``until`` /
+          ``max_attempts`` controlling the loop).
+        * ``WorkerRunner`` (external implementation; not a
+          ``CognitiveWorker``) — single ``await worker.run(self, ctx)``
+          call; the worker is responsible for its own loop. The
+          ``until`` / ``max_attempts`` / ``tools`` / ``skills`` /
+          ``on_error`` / ``max_retries`` overlays are ignored on this
+          path because they are CognitiveWorker concepts.
+
+        Internal method used by ``_dispatch_call`` (ThinkCall path and
+        the ActionCall step-level fallback) and by user code written as
+        a coroutine-form ``on_agent`` that drives workers manually.
 
         Parameters
         ----------
-        worker : CognitiveWorker
-            The worker to execute.
-        until : Optional callable
-            Loop condition: if provided, the step repeats until this returns True
-            or LLM signals finish. Supports sync and async callables.
-        max_attempts : int
-            Maximum execution attempts (default 1 = single shot).
-        tools : Optional[List[str]]
-            Tool filter: only these tools are visible to the worker.
-        skills : Optional[List[str]]
-            Skill filter: only these skills are visible to the worker.
-        on_error : ErrorStrategy
-            Error handling strategy.
-        max_retries : int
-            Max retries for RETRY strategy.
+        worker : CognitiveWorker | WorkerRunner
+            The worker to execute. If neither, ``TypeError`` is raised.
+        until, max_attempts, tools, skills, on_error, max_retries
+            See class docstring. Effective only on the CognitiveWorker path.
         """
+        context = self._current_context
+        if context is None:
+            raise RuntimeError(
+                "Cannot call _run(): no active context. "
+                "_run() must be called within an on_agent() method."
+            )
+
+        # External WorkerRunner path — bypass observe-think-act entirely.
+        if not isinstance(worker, CognitiveWorker):
+            if isinstance(worker, WorkerRunner):
+                self._log(
+                    "Run",
+                    f"WorkerRunner {type(worker).__name__} taking control of run loop",
+                    color="cyan",
+                )
+                await worker.run(self, context)
+                return
+            raise TypeError(
+                f"_run() expects a CognitiveWorker or a WorkerRunner; "
+                f"got {type(worker).__name__}."
+            )
+
+        # CognitiveWorker path — framework-managed observe-think-act.
         async def _execute():
             if until is not None or max_attempts > 1:
                 for _ in range(max_attempts):
@@ -860,13 +1640,6 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
                     on_error=on_error, max_retries=max_retries,
                 )
 
-        context = self._current_context
-        if context is None:
-            raise RuntimeError(
-                "Cannot call _run(): no active context. "
-                "_run() must be called within an on_agent() method."
-            )
-
         await _execute()
     
     async def _run_once(
@@ -885,10 +1658,11 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
             # 1. Observe
             # Worker-level ``None`` (e.g. an AI-generated ``pass`` stub) is
             # treated identically to ``_DELEGATE`` so the agent-level
-            # observation fallback still runs.
+            # observation fallback still runs. Agent-level hook may be a
+            # generator; ``_invoke_template`` handles both forms.
             obs = await worker.observation(context)
             if obs is _DELEGATE or obs is None:
-                obs = await self.observation(context)
+                obs = await self._invoke_template(self.observation(context), context)
             context.observation = obs
 
             obs_str = str(obs) if obs is not None else "None"
@@ -1009,272 +1783,6 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
                 context.skills = original_skills
 
         return finished
-
-    @asynccontextmanager
-    async def snapshot(self, *, goal: Optional[str] = None,
-                   keep_revealed: Optional[Dict[str, List[int]]] = None,
-                   **snapshot_fields):
-        """
-        Temporarily override context fields for the duration of the block.
-
-        Parameters
-        ----------
-        goal : Optional[str]
-            Temporary goal injected into the context so the LLM knows
-            the purpose of this phase.
-        keep_revealed : Optional[Dict[str, List[int]]]
-            Passed to ``_AgentSnapshot`` for revealed state management.
-        **snapshot_fields
-            Additional context fields to temporarily override during this phase.
-        """
-        async with self._phase_context(keep_revealed=keep_revealed,
-                                       goal=goal, **snapshot_fields):
-            yield
-
-    @asynccontextmanager
-    async def _phase_context(self, *,
-                             keep_revealed: Optional[Dict[str, List[int]]] = None,
-                             **snapshot_fields):
-        """Shared implementation for snapshot() context manager.
-
-        Subclasses can override this to inject custom behavior around
-        snapshot blocks (e.g., logging, metrics, extended trace capture).
-
-        Parameters
-        ----------
-        keep_revealed : Optional[Dict[str, List[int]]]
-            Revealed state management mode for ``_AgentSnapshot``.
-        **snapshot_fields
-            Context fields to temporarily override during this phase.
-        """
-        context = self._current_context
-        fields = {k: v for k, v in snapshot_fields.items() if v is not None}
-
-        if not fields and keep_revealed is None:
-            raise ValueError(
-                "snapshot(): no snapshot fields, keep_revealed, "
-                "or goal provided. If no context state needs to be scoped, "
-                "use _run() directly — the behavior is identical."
-            )
-
-        snap = _AgentSnapshot(context, fields, keep_revealed=keep_revealed)
-        await snap.__aenter__()
-        try:
-            yield
-        finally:
-            await snap.__aexit__(None, None, None)
-
-    async def _run_workflow(
-        self,
-        ctx: CognitiveContextT,
-        *,
-        will_fallback: bool = True,
-        max_consecutive_fallbacks: int = 1,
-    ) -> None:
-        """Consume on_workflow() generator, executing each step.
-
-        Uses asend() to return tool execution results (List[ToolResult]) back
-        to the generator, enabling ``result = yield ActionCall(...)`` syntax.
-
-        For each yielded item:
-        - ``ActionCall``: run observe → log → act deterministically. If execution fails, fall back to agent mode for the current step.
-        - ``HumanCall``: pause and await human input via request_feedback_async.
-        - ``AgentCall``: delegate to ``_run()`` for LLM-driven execution.
-
-        If consecutive failures exceed ``max_consecutive_fallbacks``, abandon
-        the workflow and delegate the remaining task to ``on_agent()``
-        (full agent mode).
-        """
-        consecutive_failures = 0
-        if not will_fallback:
-            max_consecutive_fallbacks = 0
-        step_index = 0
-        failed_steps = []  # Track failed step info for error reporting
-
-        gen = self.on_workflow(ctx)
-        send_value = None  # First iteration uses None (equivalent to __anext__)
-
-        try:
-            while True:
-                # Get next item from generator (send previous result back)
-                try:
-                    if send_value is None:
-                        item = await gen.__anext__()
-                    else:
-                        item = await gen.asend(send_value)
-                    send_value = None  # Reset for next iteration
-                except StopAsyncIteration:
-                    break
-                except Exception as e:
-                    # Generator-internal code (helper / inline logic between yields) raised.
-                    # The generator object is now dead and cannot be resumed via asend(),
-                    # so step-level fallback is impossible — only full fallback or re-raise.
-                    if not will_fallback:
-                        raise
-                    if not self._has_agent():
-                        raise RuntimeError(
-                            f"Workflow generator raised at step {step_index}: {e}\n"
-                            f"on_agent() is not overridden, cannot fall back."
-                        ) from e
-                    self._log(
-                        "Workflow",
-                        f"[ERROR] Generator code raised at step {step_index}: {e} — "
-                        f"falling back to on_agent().",
-                        color="red",
-                    )
-                    await self.on_agent(ctx)
-                    return
-                
-                # When returning an AgentCall proactively in on_workflow, it is by default assumed that a brand new and clean
-                # context is initiated for a new goal target to execute the agent mode. Otherwise, you can customize the
-                # context information: tools, skills, history.
-                if isinstance(item, AgentCall):
-                    call_worker = item.worker if item.worker is not None else CognitiveWorker.inline("Complete the goal.")
-                    history = item.history if item.history is not None else CognitiveHistory()
-                    async with self.snapshot(goal=item.goal, cognitive_history=history):
-                        await self._run(call_worker, tools=item.tools, skills=item.skills, max_attempts=item.max_attempts)
-                    consecutive_failures = 0
-                    send_value = None
-                    continue
-
-                if isinstance(item, HumanCall):
-                    self._log("Workflow", f"Requesting human input: {item.prompt}", color="yellow")
-                    response = await self.request_human(item.prompt, timeout=item.timeout)
-                    self._log("Workflow", f"Human responded: {response[:100]}{'...' if len(response) > 100 else ''}", color="green")
-                    consecutive_failures = 0
-                    send_value = response
-                    continue
-
-                # Deterministic execution (ActionCall)
-                worker = item.worker
-                decision = item.decision
-
-                # 1. Observe
-                # Worker-level ``None`` ≡ ``_DELEGATE`` so AI-generated stubs
-                # still fall through to the agent-level observation hook.
-                if worker is not None:
-                    obs = await worker.observation(ctx)
-                    if obs is _DELEGATE or obs is None:
-                        obs = await self.observation(ctx)
-                else:
-                    obs = await self.observation(ctx)
-                ctx.observation = obs
-
-                obs_str = str(obs) if obs is not None else "None"
-                if len(obs_str) > 200:
-                    obs_str = obs_str[:200] + "..."
-                self._log("Observe", f"workflow: {obs_str}", color="green")
-                self._log("Think", f"workflow: {decision.step_content}", color="cyan")
-
-                # 2. Act — with fallback on failure
-                try:
-                    action_result = await self._action(decision, ctx, _worker=worker)
-
-                    # Check if any tool execution failed
-                    inner = getattr(action_result, "result", None)
-                    if isinstance(inner, ActionResult):
-                        failed = [
-                            r for r in inner.results
-                            if not r.success
-                        ]
-                        if failed:
-                            errors = "; ".join(
-                                f"{r.tool_name}: {r.error}" for r in failed
-                            )
-                            raise RuntimeError(
-                                f"Tool execution failed for: "
-                                f"{decision.step_content} — {errors}"
-                            )
-
-                    if action_result is not None:
-                        formatted = action_result.model_dump_json(indent=4)
-                        self._log("Act", f"workflow:\n{formatted}", color="purple")
-
-                    # 3. Record trace step (if capturing)
-                    self._record_trace_step(worker, obs, decision, action_result, ctx)
-                    consecutive_failures = 0
-                    step_index += 1
-
-                    # 4. Build ToolResult list to send back via asend()
-                    send_value = self._build_tool_results(action_result)
-
-                except Exception as e:
-                    if not will_fallback:
-                        raise e
-
-                    consecutive_failures += 1
-                    step_index += 1
-                    failed_steps.append(f"Step {step_index}: {decision.step_content} — {e}")
-                    self._log(
-                        "Workflow",
-                        f"[ERROR] Step {step_index} failed "
-                        f"({consecutive_failures}/{max_consecutive_fallbacks}): {e}",
-                        color="red",
-                    )
-
-                    # Check if consecutive failures exceed threshold → full fallback
-                    if consecutive_failures >= max_consecutive_fallbacks:
-                        if not self._has_agent():
-                            failed_summary = "\n".join(failed_steps)
-                            raise RuntimeError(
-                                f"Workflow degradation failed: consecutive failures reached "
-                                f"{max_consecutive_fallbacks}, but on_agent() is not overridden "
-                                f"so fallback cannot proceed.\n"
-                                f"Failed steps:\n{failed_summary}"
-                            )
-                        self._log(
-                            "Workflow",
-                            f"[ERROR] Consecutive failures reached {max_consecutive_fallbacks}, "
-                            f"falling back to full agent mode (on_agent).",
-                            color="red",
-                        )
-                        await self.on_agent(ctx)
-                        return
-
-                    # Step-level fallback: construct a scoped goal and let agent fix it
-                    fallback_goal = (
-                        f"[Workflow fallback] Step {step_index} failed.\n"
-                        f"Step intent: {decision.step_content}\n"
-                        f"Error: {e}\n\n"
-                        f"You must do TWO things:\n"
-                        f"1. Resolve the error — fix whatever is blocking this step (e.g. login, navigate, wait for page load).\n"
-                        f"2. Complete the original step intent: {decision.step_content}\n\n"
-                        f"Set finish=True ONLY after both are done. "
-                        f"Do NOT continue with subsequent steps."
-                    )
-                    self._log(
-                        "Workflow",
-                        f"Falling back to agent mode for step {step_index}: "
-                        f"{decision.step_content}",
-                        color="yellow",
-                    )
-                    async with self.snapshot(goal=fallback_goal):
-                        await self._run(
-                            worker if worker is not None else CognitiveWorker.inline("Complete the goal."),
-                            max_attempts=self.WORKFLOW_STEP_FALLBACK_MAX_ATTEMPTS,
-                        )
-                    send_value = None  # No result to send back after fallback
-        finally:
-            await gen.aclose()
-
-    @staticmethod
-    def _build_tool_results(action_result: Optional[Step]) -> List[ToolResult]:
-        """Convert an action Step into a List[ToolResult] for asend() back to the generator."""
-        if action_result is None:
-            return []
-        inner = getattr(action_result, "result", None)
-        if inner is not None and isinstance(inner, ActionResult):
-            return [
-                ToolResult(
-                    tool_name=r.tool_name,
-                    tool_arguments=r.tool_arguments,
-                    result=r.tool_result,
-                    success=r.success,
-                    error=r.error,
-                )
-                for r in inner.results
-            ]
-        return []
 
     async def _action(
         self,
@@ -1402,12 +1910,16 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         if _worker is not None:
             worker_ret = await _worker.before_action(decision_result, ctx)
             if worker_ret is _DELEGATE or worker_ret is None:
-                agent_ret = await self.before_action(original_decision_result, ctx)
+                agent_ret = await self._invoke_template(
+                    self.before_action(original_decision_result, ctx), ctx,
+                )
                 decision_result = original_decision_result if agent_ret is None else agent_ret
             else:
                 decision_result = worker_ret
         else:
-            agent_ret = await self.before_action(decision_result, ctx)
+            agent_ret = await self._invoke_template(
+                self.before_action(decision_result, ctx), ctx,
+            )
             decision_result = original_decision_result if agent_ret is None else agent_ret
 
         # Execute the action based on the (possibly delegated) decision result
@@ -1439,18 +1951,98 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
 
         # after_action delegation: worker → agent.
         # Worker-level ``None`` ≡ ``_DELEGATE`` so AI-generated ``pass`` stubs
-        # still chain to the agent-level hook.
+        # still chain to the agent-level hook. Agent-level hook may be a
+        # generator; ``_invoke_template`` handles both forms.
         if _worker is not None:
             delegate = await _worker.after_action(result, ctx)
             if delegate is _DELEGATE or delegate is None:
-                await self.after_action(result, ctx)
+                await self._invoke_template(self.after_action(result, ctx), ctx)
         else:
-            await self.after_action(result, ctx)
+            await self._invoke_template(self.after_action(result, ctx), ctx)
 
         return result
 
+    @staticmethod
+    def _build_tool_results(action_result: Optional[Step]) -> List[ToolResult]:
+        """Convert an action Step into a List[ToolResult] for asend() back to the generator."""
+        if action_result is None:
+            return []
+        inner = getattr(action_result, "result", None)
+        if inner is not None and isinstance(inner, ActionResult):
+            return [
+                ToolResult(
+                    tool_name=r.tool_name,
+                    tool_arguments=r.tool_arguments,
+                    result=r.tool_result,
+                    success=r.success,
+                    error=r.error,
+                )
+                for r in inner.results
+            ]
+        return []
+
+    @asynccontextmanager
+    async def snapshot(self, *, goal: Optional[str] = None,
+                   keep_revealed: Optional[Dict[str, List[int]]] = None,
+                   **snapshot_fields):
+        """
+        Temporarily override context fields for the duration of the block.
+
+        Parameters
+        ----------
+        goal : Optional[str]
+            Temporary goal injected into the context so the LLM knows
+            the purpose of this phase.
+        keep_revealed : Optional[Dict[str, List[int]]]
+            Passed to ``_AgentSnapshot`` for revealed state management.
+        **snapshot_fields
+            Additional context fields to temporarily override during this phase.
+        """
+        async with self._phase_context(keep_revealed=keep_revealed,
+                                       goal=goal, **snapshot_fields):
+            yield
+
+    @asynccontextmanager
+    async def _phase_context(self, *,
+                             keep_revealed: Optional[Dict[str, List[int]]] = None,
+                             **snapshot_fields):
+        """Shared implementation for snapshot() context manager.
+
+        Subclasses can override this to inject custom behavior around
+        snapshot blocks (e.g., logging, metrics, extended trace capture).
+
+        Parameters
+        ----------
+        keep_revealed : Optional[Dict[str, List[int]]]
+            Revealed state management mode for ``_AgentSnapshot``.
+        **snapshot_fields
+            Context fields to temporarily override during this phase.
+        """
+        context = self._current_context
+        fields = {k: v for k, v in snapshot_fields.items() if v is not None}
+
+        if not fields and keep_revealed is None:
+            raise ValueError(
+                "snapshot(): no snapshot fields, keep_revealed, "
+                "or goal provided. If no context state needs to be scoped, "
+                "use _run() directly — the behavior is identical."
+            )
+
+        snap = _AgentSnapshot(context, fields, keep_revealed=keep_revealed)
+        await snap.__aenter__()
+        try:
+            yield
+        finally:
+            await snap.__aexit__(None, None, None)
+
     ############################################################################
     # Internal Helper methods
+    #
+    # Verbose logging (``_log``), trace recording (``_record_trace_step``
+    # for OTC cycles / ActionCall dispatch, ``_record_llm_call_trace`` for
+    # LLMCall yields), and template-override detection (``_has_workflow``
+    # / ``_has_agent``) used by ``_resolve_mode``. These are called by the
+    # dispatcher and ``_run_once`` — never by user code.
     ############################################################################
 
     def _log(self, stage: str, message: str, data: Any = None, color: str = "white"):
@@ -1539,6 +2131,44 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
             "structured_output_class": structured_output_class,
         })
 
+    def _record_llm_call_trace(self, item: LLMCall, result: Any) -> None:
+        """Record an ``LLM_CALL`` trace step.
+
+        LLMCall does not produce a tool-call result, observation, or
+        worker, so it cannot be folded into ``_record_trace_step`` without
+        forcing fake objects through that signature. The recorded step
+        carries: the protocol name, the prompt as the "observation"
+        slot (it is the closest analog), and the result serialized into
+        ``structured_output``.
+        """
+        if self._agent_trace is None:
+            return
+
+        try:
+            if isinstance(result, BaseModel):
+                serialized = result.model_dump()
+                cls_name = (
+                    f"{result.__class__.__module__}.{result.__class__.__qualname__}"
+                )
+            else:
+                serialized = {"__value__": result}
+                cls_name = type(result).__qualname__
+        except Exception:
+            serialized = {"__value__": str(result)}
+            cls_name = type(result).__qualname__
+
+        self._agent_trace.record_step({
+            "name": "llm_call",
+            "step_content": f"LLMCall({item.protocol})",
+            "tool_calls": [],
+            "observation": item.prompt or None,
+            "observation_hash": observation_fingerprint(item.prompt),
+            "output_type": StepOutputType.LLM_CALL.value,
+            "structured_output": serialized,
+            "structured_output_class": cls_name,
+            "llm_call_protocol": item.protocol,
+        })
+
     def _has_workflow(self) -> bool:
         """Check whether the subclass has overridden on_workflow() with a real async generator.
 
@@ -1556,6 +2186,19 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         """Check whether the subclass has overridden on_agent()."""
         return type(self).on_agent is not AmphibiousAutoma.on_agent
 
+    ############################################################################
+    # Entry point
+    #
+    # Public ``arun()`` and the GraphAutoma plumbing it dispatches through.
+    # ``_resolve_mode`` collapses ``RunMode.AUTO`` to a concrete mode
+    # based on which template methods are overridden;
+    # ``_resolve_builtin_filter`` decides which built-in tools to inject.
+    # ``router`` is the GraphAutoma start worker that ferries to the
+    # chosen mode entry — ``_agent`` (AGENT), ``_workflow`` (WORKFLOW),
+    # or ``_amphiflow`` (AMPHIFLOW). All three converge on
+    # ``_dispatch_flow`` after each picks its own ``can_fallback`` /
+    # ``scope`` arguments.
+    ############################################################################
     def _resolve_builtin_filter(
         self, override: Optional[Iterable[str]]
     ) -> Optional[FrozenSet[str]]:
@@ -1599,10 +2242,7 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         raise RuntimeError(
             f"{type(self).__name__} must override on_agent() or on_workflow()."
         )
-
-    ############################################################################
-    # Entry point
-    ############################################################################
+    
     @worker(is_start=True)
     async def router(self, mode: RunMode, max_consecutive_fallbacks: int) -> str:
         """
@@ -1613,7 +2253,7 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         """
         if mode is RunMode.AGENT:
             self._log("Router", "Ferrying to AGENT mode", color="green")
-            self.ferry_to("_cognition")
+            self.ferry_to("_agent")
         elif mode is RunMode.WORKFLOW:
             self._log("Router", "Ferrying to WORKFLOW mode", color="green")
             self.ferry_to("_workflow")
@@ -1624,28 +2264,85 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
             raise RuntimeError(f"Unsupported run mode: {mode!r}")
 
     @worker(is_output=True)
-    async def _cognition(self) -> str:
+    async def _agent(self) -> str:
+        """Agent mode entry point.
+
+        Drives ``on_agent`` through ``_dispatch_flow`` with
+        ``scope='agent'`` and no body-level fallback (the agent flow is
+        itself the LLM-driven fallback target — there is no "more
+        autonomous" tier).
+
+        Returns
+        -------
+        str
+            ``self._final_answer`` (if set by a ``RETURN(value)`` yield
+            or by a worker's ``finish=True``) or ``ctx.summary()``.
         """
-        Agent mode entry point: delegates to the user-defined on_agent() method.
-        """
-        await self.on_agent(self._current_context)
-        return self._final_answer or self._current_context.summary()
+        ctx = self._current_context
+        return_value = await self._dispatch_flow(
+            self.on_agent(ctx), ctx,
+            can_fallback=False,
+            scope="agent",
+        )
+        if return_value is not None:
+            self._final_answer = str(return_value)
+        return self._final_answer or ctx.summary()
 
     @worker(is_output=True)
     async def _workflow(self) -> str:
+        """Workflow mode entry point.
+
+        Drives ``on_workflow`` through ``_dispatch_flow`` with
+        ``scope='workflow'`` and ``can_fallback=False`` — failures
+        propagate, no agent fallback.
+
+        Returns
+        -------
+        str
+            ``self._final_answer`` (if set by a ``RETURN(value)`` yield)
+            or ``ctx.summary()``.
         """
-        Workflow mode entry point: runs on_workflow() without agent fallback.
-        """
-        await self._run_workflow(self._current_context, will_fallback=False)
-        return self._final_answer or self._current_context.summary()
+        ctx = self._current_context
+        return_value = await self._dispatch_flow(
+            self.on_workflow(ctx), ctx,
+            can_fallback=False,
+            scope="workflow",
+        )
+        if return_value is not None:
+            self._final_answer = str(return_value)
+        return self._final_answer or ctx.summary()
 
     @worker(is_output=True)
     async def _amphiflow(self, max_consecutive_fallbacks: int) -> str:
+        """Amphiflow mode entry point.
+
+        Drives ``on_workflow`` through ``_dispatch_flow`` with
+        ``scope='workflow'`` and ``can_fallback=True``. Fallback paths
+        inside ``_dispatch_flow`` re-invoke ``on_agent`` with
+        ``scope='agent'``.
+
+        Parameters
+        ----------
+        max_consecutive_fallbacks : int
+            ActionCall step-failure threshold before full fallback.
+
+        Returns
+        -------
+        str
+            ``self._final_answer`` (if set by a ``RETURN(value)`` yield
+            or by a fallback worker's ``finish=True``) or
+            ``ctx.summary()``.
         """
-        Entry point: runs on_workflow() with agent fallback support (amphiflow mode).
-        """
-        await self._run_workflow(self._current_context, will_fallback=True, max_consecutive_fallbacks=max_consecutive_fallbacks)
-        return self._final_answer or self._current_context.summary()
+        ctx = self._current_context
+        return_value = await self._dispatch_flow(
+            self.on_workflow(ctx), ctx,
+            can_fallback=True,
+            max_consecutive_fallbacks=max_consecutive_fallbacks,
+            scope="workflow",
+        )
+        if return_value is not None:
+            self._final_answer = str(return_value)
+        return self._final_answer or ctx.summary()
 
     async def arun(
         self,

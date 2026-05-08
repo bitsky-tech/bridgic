@@ -38,6 +38,9 @@ _AMPHI_PY = '''\
     ActionCall,
     AgentCall,
     HumanCall,
+    LLMCall,
+    ThinkCall,
+    RETURN,
 )
 
 
@@ -47,24 +50,31 @@ class AmphiContext(CognitiveContext):
 
 
 class Amphi(AmphibiousAutoma[AmphiContext]):
-    # Think unit — one observe-think-act cycle driven by an LLM.
+    # Think unit — one observe-think-act cycle driven by an LLM. Invoked
+    # from on_agent via ``yield ThinkCall("main_think")``.
     main_think = think_unit(
         CognitiveWorker.inline("Decide and execute the next step."),
         max_attempts=10,
     )
 
-    # Agent mode: LLM decides what to do.
+    # Agent mode: LLM-driven cognitive flow. Yield ThinkCall (named
+    # think_units), ActionCall / HumanCall / LLMCall as needed. Yield
+    # RETURN(answer) to set the final answer; otherwise the framework
+    # auto-captures from the finishing think step's step_content.
     async def on_agent(self, ctx: AmphiContext):
-        await self.main_think
+        yield ThinkCall("main_think")
         # TODO
 
-    # Workflow mode: developer-defined deterministic steps. Implementing both
-    # on_agent and on_workflow enables AMPHIFLOW (workflow with agent fallback).
-    # Yield ActionCall / HumanCall / AgentCall to drive each step.
+    # Workflow mode: developer-defined deterministic steps. Implementing
+    # both on_agent and on_workflow enables AMPHIFLOW (workflow-first with
+    # automatic agent fallback). Yield ActionCall / HumanCall / LLMCall /
+    # AgentCall (delegates to on_agent for a sub-task).
     async def on_workflow(self, ctx: AmphiContext):
-        # yield ActionCall("tool_name", arg="value")
+        # result = yield ActionCall("tool_name", arg="value")
         # feedback = yield HumanCall(prompt="Confirm?")
-        # yield AgentCall(goal="Delegate sub-task to LLM")
+        # text = yield LLMCall.chat("Summarize the run")
+        # yield AgentCall(goal="Delegate sub-task to on_agent")
+        # yield RETURN("final answer")
         if False:
             yield  # makes this a proper async generator
         # TODO

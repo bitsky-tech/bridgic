@@ -42,7 +42,12 @@ async def request_human(prompt: str) -> str:
             "request_human can only be called during agent execution. "
             "Ensure the tool is used within an AmphibiousAutoma.arun() context."
         )
-    return await agent.request_human(prompt)
+    # Route through the framework's @human_channel registry. With no
+    # channels registered, this falls through to the stdin handler;
+    # with one registered, that channel is the implicit default; with
+    # multiple, the agent must register a default channel for the tool
+    # to route deterministically.
+    return await agent._dispatch_human_channel(prompt, channel=None)
 
 
 request_human_tool: FunctionToolSpec = FunctionToolSpec.from_raw(request_human)
