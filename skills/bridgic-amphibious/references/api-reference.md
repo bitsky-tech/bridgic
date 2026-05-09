@@ -195,21 +195,19 @@ async def action_custom_output(self, decision_result, ctx) -> Any: ...
 async def human_input(self, data: Dict[str, Any]) -> str: ...
 ```
 
-### Human-in-the-Loop Methods
+### Human-in-the-Loop Hooks
+
+`AmphibiousAutoma` exposes no code-level imperative HITL method (no `self.request_human(...)`). Code-driven human asks go through `yield HumanCall(...)` (in `on_workflow` or hooks); LLM-driven asks go through the auto-injected `request_human` tool (any mode). The agent class only exposes a single overridable hook:
 
 ```python
-# Request human input (use in on_agent or from tools)
-await self.request_human(
-    prompt: str,            # Question to present to the human
-    timeout: float = None,  # Seconds before TimeoutError; None = wait forever
-) -> str
-
 # Template method — override to replace default stdin with your UI
 async def human_input(self, data: Dict[str, Any]) -> str:
     # data contains: {"prompt": "...", "timeout": ...}
     # Default: reads from stdin via run_in_executor
     ...
 ```
+
+See [Human-in-the-Loop](#human-in-the-loop) below for the two-entry-point HITL story.
 
 ### Utility Methods
 
@@ -473,13 +471,14 @@ For top-level template-method generators (`on_agent` / `on_workflow`), the captu
 
 ## Human-in-the-Loop
 
-Three entry points for requesting human input:
+Two entry points for requesting human input — both go through the same `@human_channel` registry (or stdin fallback if no handlers are registered):
 
 | Entry Point | Where | Usage |
 |-------------|-------|-------|
-| `request_human()` | `on_agent()` body or hooks | `await self.request_human("Proceed?")` |
-| `HumanCall` | `on_workflow()` | `feedback = yield HumanCall(prompt="Confirm?")` |
-| `request_human` tool | LLM tool-call, any mode | Auto-injected into `context.tools`; no setup needed |
+| `HumanCall` | `on_workflow()`, hooks (rejected in `on_agent`) | `feedback = yield HumanCall(prompt="Confirm?")` |
+| `request_human` tool | LLM tool-call inside any `ThinkUnit`, any mode | Auto-injected into `context.tools`; no setup needed |
+
+There is **no** code-level imperative API on `AmphibiousAutoma` — no `self.request_human(...)` method. If `on_agent` needs to ask a human, the LLM does it autonomously via the auto-injected tool inside a `ThinkUnit`.
 
 ### request_human as a built-in tool
 
@@ -527,7 +526,7 @@ ActionStepResult(success=False, error=str(exc), tool_result=None)
 async def request_human(prompt: str) -> str
 ```
 
-Pause and ask the human operator a question. Internally delegates to `agent.request_human(prompt)` — the same code path used by `await self.request_human(...)` in `on_agent` and `yield HumanCall(prompt=...)` in `on_workflow`. See [Human-in-the-Loop](#human-in-the-loop) for the full HITL story.
+Pause and ask the human operator a question. Internally resolves the running agent via the `current_agent` ContextVar and routes through `agent._dispatch_human_channel(prompt, channel=None)` — the same dispatcher used by `yield HumanCall(prompt=...)` from `on_workflow`. See [Human-in-the-Loop](#human-in-the-loop) for the full HITL story.
 
 ### bash
 

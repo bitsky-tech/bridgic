@@ -341,21 +341,24 @@ In agent mode this becomes part of the next observation, letting the LLM see wha
 
 ## Human-in-the-Loop
 
-Three entry points for requesting human input:
+Two entry points for requesting human input — both share the same `@human_channel` registry:
 
 | Entry Point | Context | Mechanism |
 |-------------|---------|-----------|
-| `await self.request_human(prompt)` | `on_agent()` body, hooks, custom code | Direct async call |
-| `yield HumanCall(prompt=, channel=)` | `on_workflow()` — pause generator | Framework dispatches via `@human_channel` registry, sends response via `asend()` |
-| `request_human` tool (auto-injected) | LLM-driven — any mode | Built-in tool injected into `context.tools` during `arun()`, resolved via `ContextVar` |
+| `yield HumanCall(prompt=, channel=)` | `on_workflow()` body, hooks (rejected in `on_agent`) | State-machine dispatcher routes through the `@human_channel` registry, `asend()`s the response back to the generator |
+| `request_human` tool (auto-injected) | LLM-driven — called from inside any `ThinkUnit`, in any mode | Built-in tool injected into `context.tools` during `arun()`; resolves the running agent via `current_agent` ContextVar and routes through `_dispatch_human_channel` |
 
-**Channel resolution** for `HumanCall`:
+There is **no** code-level imperative API on `AmphibiousAutoma` (no `self.request_human(...)`, no `self.ask_human(...)`). The agent's `on_agent` body is reserved for orchestrating cognitive steps via `ThinkUnit`; HITL inside `on_agent` happens autonomously through the LLM calling the auto-injected tool.
+
+**Channel resolution** (applies to both `HumanCall` dispatch and the auto-injected `request_human` tool, since both go through `_dispatch_human_channel`):
 - `channel=None` + zero `@human_channel` handlers → built-in stdin handler.
 - `channel=None` + one handler → that handler used implicitly.
 - `channel=None` + 2+ handlers → `RuntimeError` requiring explicit channel.
 - `channel="name"` → invoke that named handler.
 
-**Customization**: Override `human_input(data)` template method to replace default stdin with your UI (WebSocket, HTTP callback, Slack bot, etc.).
+The auto-injected `request_human` tool always passes `channel=None`, so it picks the implicit default. To route LLM-driven HITL to a specific channel, register exactly one `@human_channel` handler.
+
+**Customization**: Override the `human_input(data)` template method to replace the default stdin fallback with your own UI integration (WebSocket, HTTP callback, Slack bot, etc.). Alternatively, register named `@human_channel` handlers and yield `HumanCall(channel="name", ...)` from `on_workflow`.
 
 **Auto-injection**: `request_human` is one of the seven tools injected by `arun()` (see [Built-in Tools Subsystem](#built-in-tools-subsystem) above). Auto-injection is what gives `on_agent`, workflow step-level fallback, and full agent fallback the same autonomous HITL capability as `HumanCall` provides to `on_workflow`. Users can still pass `request_human_tool` explicitly — it is a no-op thanks to the dedupe.
 

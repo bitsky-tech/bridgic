@@ -191,23 +191,16 @@ async def on_workflow(self, ctx):
 
 ## Human-in-the-Loop
 
-Three entry points for requesting human input:
+Two entry points for requesting human input — both go through the same `@human_channel` registry:
 
-### Entry 1: Code-level in on_agent()
+| Entry | Where | Driver |
+|-------|-------|--------|
+| `yield HumanCall(prompt=, channel=)` | `on_workflow`, hooks | Deterministic — you decide when to ask |
+| Auto-injected `request_human` tool | LLM-driven, inside a `ThinkUnit` | Autonomous — the LLM decides when to ask |
 
-```python
-class InteractiveAgent(AmphibiousAutoma[CognitiveContext]):
-    worker = think_unit(CognitiveWorker.inline("Execute step."), max_attempts=10)
+There is **no** code-level imperative API like `self.request_human(...)`, and `yield HumanCall` is rejected in `on_agent` scope. If the agent needs to ask a human, that happens through the LLM-driven tool path inside a `ThinkUnit`.
 
-    async def on_agent(self, ctx: CognitiveContext):
-        yield ThinkUnit("worker")
-        feedback = await self.request_human("Task complete. Any follow-up?")
-        if feedback != "no":
-            async with self.snapshot(goal=feedback):
-                yield ThinkUnit("worker")
-```
-
-### Entry 2: HumanCall in on_workflow()
+### Entry 1: HumanCall in on_workflow() (deterministic)
 
 ```python
 from bridgic.amphibious import ActionCall, HumanCall, RETURN
@@ -224,15 +217,15 @@ class ConfirmableWorkflow(AmphibiousAutoma[CognitiveContext]):
             yield RETURN("Booking cancelled by user.")
 ```
 
-### Entry 3: LLM tool (autonomous)
+### Entry 2: LLM tool (autonomous, any mode)
 
-`request_human` is auto-injected as one of the [built-in tools](#built-in-tools), so the LLM can call it in any mode — agent, workflow fallback, or amphiflow — without manual wiring:
+`request_human` is auto-injected as one of the [built-in tools](#built-in-tools), so the LLM can call it from any `ThinkUnit` (in `AGENT`, workflow step-level fallback, full fallback, or `AMPHIFLOW`'s `on_agent`) without manual wiring:
 
 ```python
 class AutonomousAgent(AmphibiousAutoma[CognitiveContext]):
     worker = think_unit(
         CognitiveWorker.inline(
-            "Execute the task. Ask request_human when you need user input."
+            "Execute the task. Call request_human when you need user input."
         ),
         max_attempts=10,
     )

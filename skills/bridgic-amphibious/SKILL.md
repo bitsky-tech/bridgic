@@ -183,24 +183,30 @@ You don't import or wire `resolve_step_fallback` — the framework injects it du
 
 ### Human-in-the-Loop
 
-Three entry points share one event channel: the code-level `request_human()` method, the `HumanCall` workflow yield, and the auto-injected `request_human` tool listed in [Built-in Tools](#built-in-tools).
+Two entry points share the same `@human_channel` registry: the `HumanCall` yield (deterministic, from `on_workflow` or hooks), and the auto-injected `request_human` tool listed in [Built-in Tools](#built-in-tools) (LLM-driven, callable from any `ThinkUnit`).
+
+There is **no** code-level imperative API for asking a human from `on_agent` (no `self.request_human(...)` method, and `yield HumanCall` is rejected in agent scope). The agent body is reserved for orchestrating cognitive steps — if the agent needs to ask a human, that happens inside a `ThinkUnit` where the LLM autonomously calls the `request_human` tool.
 
 ```python
 from bridgic.amphibious import ActionCall, HumanCall, ThinkUnit
 
 class MyAgent(AmphibiousAutoma[CognitiveContext]):
-    worker = think_unit(CognitiveWorker.inline("Execute step."), max_attempts=10)
+    worker = think_unit(
+        CognitiveWorker.inline(
+            "Execute the step. Call request_human if you need confirmation."
+        ),
+        max_attempts=10,
+    )
 
     async def on_agent(self, ctx):
+        # The LLM inside this ThinkUnit can autonomously call the
+        # auto-injected `request_human` tool — no manual wiring.
         yield ThinkUnit("worker")
-        feedback = await self.request_human("Proceed?")  # Entry 1: code-level
 
     async def on_workflow(self, ctx):
         yield ActionCall("do_something", arg="value")
-        feedback = yield HumanCall(prompt="Confirm?")    # Entry 2: workflow yield
+        feedback = yield HumanCall(prompt="Confirm?")  # deterministic HITL
 
-# Entry 3 is automatic — the built-in `request_human` tool is already in
-# context.tools, so the LLM can call it without listing it in tools=[...].
 # Override `human_input(data)` to swap the default stdin read for your own
 # UI integration (WebSocket, HTTP callback, Slack bot, etc.).
 await MyAgent(llm=llm).arun(goal="...", tools=[my_tool])
