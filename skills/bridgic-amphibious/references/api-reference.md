@@ -162,7 +162,7 @@ await agent.arun(
 | Property | Type | Description |
 |----------|------|-------------|
 | `context` | `CognitiveContextT` | Current context after `arun()` |
-| `final_answer` | `Optional[str]` | Auto-captured from a finishing step's `step_content`, or set explicitly via `RETURN(value)` / `self.set_final_answer(...)` |
+| `final_answer` | `Optional[str]` | Auto-captured from a finishing step's `step_content`, or set explicitly by yielding `RETURN(value)` from a top-level template body |
 | `llm` | `Optional[BaseLlm]` | The agent's LLM (`None` is allowed for pure WORKFLOW mode) |
 | `spent_tokens` | `int` | Token usage for last `arun()` |
 | `spent_time` | `float` | Time in seconds for last `arun()` |
@@ -183,37 +183,27 @@ async def on_agent(self, ctx: CognitiveContextT) -> AsyncGenerator: ...
 # Deterministic workflow (override for WORKFLOW or AMPHIFLOW modes)
 async def on_workflow(self, ctx: CognitiveContextT) -> AsyncGenerator: ...
 
-# Optional hooks — accept both async-gen (yield primitives) and plain
-# coroutine (return value) forms
+# Pre-think / post-act hooks — accept BOTH async-gen (yield primitives)
+# and plain coroutine (return value) forms; both go through _invoke_template.
 async def observation(self, ctx) -> Optional[str]: ...
 async def before_action(self, decision_result, ctx) -> Any: ...
 async def after_action(self, step_result, ctx) -> None: ...
+
+# Action-execution hooks — coroutine form ONLY (awaited directly, not
+# routed through the dispatcher; cannot yield framework primitives).
 async def action_tool_call(self, tool_list, ctx) -> ActionResult: ...
 async def action_custom_output(self, decision_result, ctx) -> Any: ...
-
-# Human-in-the-loop (override to integrate with your UI)
-async def human_input(self, data: Dict[str, Any]) -> str: ...
 ```
 
-### Human-in-the-Loop Hooks
+There is NO `human_input(data)` template method on `AmphibiousAutoma`. To replace the default stdin fallback for HITL prompts, register a `@human_channel` handler — see [Human-in-the-Loop](#human-in-the-loop).
 
-`AmphibiousAutoma` exposes no code-level imperative HITL method (no `self.request_human(...)`). Code-driven human asks go through `yield HumanCall(...)` (in `on_workflow` or hooks); LLM-driven asks go through the auto-injected `request_human` tool (any mode). The agent class only exposes a single overridable hook:
+### Setting the final answer
 
-```python
-# Template method — override to replace default stdin with your UI
-async def human_input(self, data: Dict[str, Any]) -> str:
-    # data contains: {"prompt": "...", "timeout": ...}
-    # Default: reads from stdin via run_in_executor
-    ...
-```
-
-See [Human-in-the-Loop](#human-in-the-loop) below for the two-entry-point HITL story.
+There is **no** `self.set_final_answer(...)` instance method. To set the final answer explicitly, yield `RETURN(value)` from a top-level template body (`on_agent` or `on_workflow`); the dispatcher writes `str(value)` to `self._final_answer`. Without an explicit `RETURN`, `final_answer` is auto-captured from the finishing step's `step_content`. If neither happens, `arun()` returns `ctx.summary()`.
 
 ### Utility Methods
 
 ```python
-self.set_final_answer(answer: str)  # Explicitly set final answer
-
 # Phase scoping — saves/restores listed fields, clears LayeredExposure caches
 async with self.snapshot(goal="Sub-goal", **fields):
     yield ThinkUnit("...")
@@ -492,15 +482,24 @@ Passing `request_human_tool` explicitly is harmless — the injection step dedup
 
 ### @human_channel — register handlers for HumanCall
 
-```python
-from bridgic.amphibious import human_channel
+`@human_channel` is a **method decorator** — apply it to an `async` method of your `AmphibiousAutoma` subclass. The framework walks the MRO at class-definition time (`__init_subclass__`) and builds a per-class `_human_channels: Dict[str, str]` registry mapping channel names to method names.
 
-@human_channel("feishu")
-async def feishu_channel(prompt: str) -> str:
-    return await send_to_feishu_and_wait(prompt)
+```python
+from bridgic.amphibious import AmphibiousAutoma, CognitiveContext, human_channel
+
+class MyAgent(AmphibiousAutoma[CognitiveContext]):
+    @human_channel("feishu")                  # explicit channel name
+    async def ask_feishu(self, prompt: str) -> str:
+        return await send_to_feishu_and_wait(prompt)
+
+    @human_channel                            # bare form: channel name = method name
+    async def terminal(self, prompt: str) -> str:
+        return await read_from_terminal(prompt)
 ```
 
-When `HumanCall(channel="feishu", ...)` dispatches, the registered handler is invoked. With one handler registered and `channel=None`, the dispatcher uses that handler implicitly; with zero handlers it falls back to stdin; with two or more, an explicit `channel=` is required.
+When `HumanCall(channel="feishu", ...)` dispatches, the registered handler is invoked. With one handler registered on the class and `channel=None`, the dispatcher uses that handler implicitly; with zero handlers it falls back to stdin; with two or more, an explicit `channel=` is required (or the dispatcher raises `RuntimeError`).
+
+Channel handlers are plain `async def` methods returning `str`. They are leaf I/O operations and do not dispatch yields (don't `yield ActionCall` / `HumanCall` / etc. inside).
 
 ## Built-in Tools
 
@@ -512,7 +511,7 @@ from bridgic.amphibious.builtin_tools import ALL_BUILTIN_TOOLS, current_agent
 # current_agent:    ContextVar bound to the running AmphibiousAutoma during arun().
 ```
 
-**Error contract.** Tools raise on validation failures. The framework's per-tool exception handler (`_action_tool_call._run_one`) catches every exception and produces:
+**Error contract.** Tools raise on validation failures. The framework's per-tool exception handler (the `_run_one` inner function inside `AmphibiousAutoma.action_tool_call`) catches every exception and produces:
 
 ```python
 ActionStepResult(success=False, error=str(exc), tool_result=None)

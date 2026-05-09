@@ -331,13 +331,13 @@ The tools resolve the agent through the same `current_agent` ContextVar used by 
 
 ### Tool exception path
 
-Built-in tools raise on validation failures (`ValueError`, `FileNotFoundError`, `RuntimeError`, `TimeoutError`, …). They do not catch and wrap errors as `<error>...</error>` strings. The framework's per-tool exception handling — in `_action_tool_call._run_one` — captures every exception and produces:
+Built-in tools raise on validation failures (`ValueError`, `FileNotFoundError`, `RuntimeError`, `TimeoutError`, …). They do not catch and wrap errors as `<error>...</error>` strings. The framework's per-tool exception handling — in the `_run_one` inner function inside `AmphibiousAutoma.action_tool_call` — captures every exception and produces:
 
 ```python
 ActionStepResult(success=False, error=str(exc), tool_result=None)
 ```
 
-In agent mode this becomes part of the next observation, letting the LLM see what went wrong and adapt. In workflow mode, `_run_workflow` aggregates failed `ActionStepResult`s into a `RuntimeError("Tool execution failed for: ... — ...")` and either falls back to `on_agent` (AMPHIFLOW within `max_consecutive_fallbacks`) or re-raises (pure WORKFLOW).
+In agent mode this becomes part of the next observation, letting the LLM see what went wrong and adapt. In workflow mode, the dispatcher's `ActionCall` branch in `_dispatch_call` aggregates failed `ActionStepResult`s into a `RuntimeError("Tool execution failed for: ... — ...")`. From there, `_drive_amphiflow` either falls back to `on_agent` (AMPHIFLOW within `max_consecutive_fallbacks`) or `_invoke_template` re-raises (pure WORKFLOW).
 
 ## Human-in-the-Loop
 
@@ -358,7 +358,7 @@ There is **no** code-level imperative API on `AmphibiousAutoma` (no `self.reques
 
 The auto-injected `request_human` tool always passes `channel=None`, so it picks the implicit default. To route LLM-driven HITL to a specific channel, register exactly one `@human_channel` handler.
 
-**Customization**: Override the `human_input(data)` template method to replace the default stdin fallback with your own UI integration (WebSocket, HTTP callback, Slack bot, etc.). Alternatively, register named `@human_channel` handlers and yield `HumanCall(channel="name", ...)` from `on_workflow`.
+**Customization**: Register a `@human_channel` handler (named or unnamed) to replace the default stdin fallback with your own UI integration (WebSocket, HTTP callback, Slack bot, etc.). With exactly one handler registered, both `HumanCall(channel=None)` and the auto-injected `request_human` tool route through it implicitly. With multiple handlers, address them by name via `HumanCall(channel="name", ...)`. There is no `human_input` override on `AmphibiousAutoma` — `@human_channel` is the only customization mechanism.
 
 **Auto-injection**: `request_human` is one of the seven tools injected by `arun()` (see [Built-in Tools Subsystem](#built-in-tools-subsystem) above). Auto-injection is what gives `on_agent`, workflow step-level fallback, and full agent fallback the same autonomous HITL capability as `HumanCall` provides to `on_workflow`. Users can still pass `request_human_tool` explicitly — it is a no-op thanks to the dedupe.
 

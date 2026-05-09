@@ -207,8 +207,18 @@ class MyAgent(AmphibiousAutoma[CognitiveContext]):
         yield ActionCall("do_something", arg="value")
         feedback = yield HumanCall(prompt="Confirm?")  # deterministic HITL
 
-# Override `human_input(data)` to swap the default stdin read for your own
-# UI integration (WebSocket, HTTP callback, Slack bot, etc.).
+# Register a @human_channel handler on the agent class to swap the
+# default stdin fallback for your own UI integration. @human_channel
+# is a method decorator — apply it inside an AmphibiousAutoma subclass:
+#
+#   class MyAgent(AmphibiousAutoma[CognitiveContext]):
+#       @human_channel("my_ui")
+#       async def ask_my_ui(self, prompt: str) -> str:
+#           return await my_websocket.ask(prompt)
+#       ...
+#
+# With one handler registered on the class, both HumanCall(channel=None)
+# and the auto-injected request_human tool route to it implicitly.
 await MyAgent(llm=llm).arun(goal="...", tools=[my_tool])
 ```
 

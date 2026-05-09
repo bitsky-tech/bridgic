@@ -236,32 +236,49 @@ agent = AutonomousAgent(llm=llm)
 await agent.arun(goal="Plan a trip", tools=[search_tool])
 ```
 
-### Custom UI Integration
+### Custom UI Integration via @human_channel
+
+`@human_channel` is the only customization mechanism for HITL UI integration — there is no `human_input` template method on `AmphibiousAutoma`. **It is a method decorator**: apply it to an `async` method of your `AmphibiousAutoma` subclass. The framework collects all decorated methods into a per-class registry at class-definition time (via `__init_subclass__`).
+
+#### Single implicit handler
+
+Register exactly one handler on the agent class, leave `channel=None` everywhere — both `HumanCall(channel=None)` and the auto-injected `request_human` tool use it.
 
 ```python
+from bridgic.amphibious import human_channel, HumanCall, RETURN
+
 class WebAgent(AmphibiousAutoma[CognitiveContext]):
-    async def human_input(self, data):
-        """Override to use WebSocket instead of stdin."""
-        prompt = data["prompt"]
+    @human_channel("web")
+    async def ask_web(self, prompt: str) -> str:
         return await websocket.send_and_receive(prompt)
 
-    async def on_agent(self, ctx):
-        yield ThinkUnit("worker")
+    async def on_workflow(self, ctx):
+        # Implicit channel resolution: only one handler registered on
+        # this class, so HumanCall(channel=None) routes to ask_web.
+        feedback = yield HumanCall(prompt="Confirm deploy?")
+        yield RETURN(feedback)
 ```
 
-### Named channels via @human_channel
+You can also use the bare form `@human_channel` (no parens) — the channel name then defaults to the method name.
+
+#### Multiple named handlers
+
+With 2+ handlers registered on the same class, address each by name. The auto-injected `request_human` tool always uses `channel=None`, so it cannot disambiguate — if you need autonomous LLM-driven HITL alongside multiple named workflows, give one handler an obvious "default" name and route through it from a single-handler subclass, or restrict the LLM-driven path to one channel.
 
 ```python
-from bridgic.amphibious import human_channel, HumanCall
-
-@human_channel("feishu")
-async def feishu_channel(prompt: str) -> str:
-    return await send_to_feishu_and_wait(prompt)
-
 class HybridAgent(AmphibiousAutoma[CognitiveContext]):
+    @human_channel("feishu")
+    async def ask_feishu(self, prompt: str) -> str:
+        return await send_to_feishu_and_wait(prompt)
+
+    @human_channel("slack")
+    async def ask_slack(self, prompt: str) -> str:
+        return await send_to_slack_and_wait(prompt)
+
     async def on_workflow(self, ctx):
-        # Routes to the @human_channel("feishu") handler explicitly.
-        confirm = yield HumanCall(channel="feishu", prompt="Approve deploy?")
+        # Each yield routes to the named handler explicitly.
+        approval = yield HumanCall(channel="feishu", prompt="Approve deploy?")
+        followup = yield HumanCall(channel="slack", prompt="Anything else?")
 ```
 
 ## Amphiflow Mode
@@ -529,11 +546,10 @@ class AnalystAgent(AmphibiousAutoma[CognitiveContext]):
 
 ## OTC Hooks
 
-OTC hooks (`observation`, `before_action`, `after_action`, `action_tool_call`,
-`action_custom_output`) accept BOTH async-coroutine and async-generator forms.
-Use the coroutine form when you just want a return value; use the generator
-form when you want to yield framework primitives (`ActionCall`, `HumanCall`,
-`LLMCall`, `RETURN`) inside the hook.
+OTC hooks split into two groups by how the framework invokes them:
+
+- **Pre-think / post-act hooks** (`observation`, `before_action`, `after_action`) go through `_invoke_template` and accept BOTH async-coroutine and async-generator forms. Use the coroutine form when you just want a return value; use the generator form when you want to yield framework primitives (`ActionCall`, `HumanCall`, `LLMCall`, `RETURN`) inside the hook.
+- **Action-execution hooks** (`action_tool_call`, `action_custom_output`) are awaited directly by the action phase, NOT routed through the dispatcher. They must be plain coroutines — yielding framework primitives from these hooks does nothing.
 
 ### observation — Inject Custom Perception
 
