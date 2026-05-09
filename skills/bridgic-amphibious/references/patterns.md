@@ -6,6 +6,9 @@
 - [Built-in Tools](#built-in-tools)
 - [Human-in-the-Loop](#human-in-the-loop)
 - [Amphiflow Mode](#amphiflow-mode)
+- [EnterAgent in Workflow](#enteragent-in-workflow)
+- [LLMCall in Workflow](#llmcall-in-workflow)
+- [RETURN — explicit return values](#return--explicit-return-values)
 - [Custom Worker](#custom-worker)
 - [Structured Output (output_schema)](#structured-output-output_schema)
 - [Custom Context](#custom-context)
@@ -25,17 +28,18 @@
 ```python
 from bridgic.amphibious import (
     AmphibiousAutoma, CognitiveContext, CognitiveWorker, think_unit,
+    ThinkUnit,
 )
 from bridgic.core.agentic.tool_specs import FunctionToolSpec
 
 # 1. Define tools
 async def get_weather(city: str) -> str:
     """Get current weather for a city."""
-    return f"Sunny, 22°C in {city}"
+    return f"Sunny, 22 C in {city}"
 
 get_weather_tool = FunctionToolSpec.from_raw(get_weather)
 
-# 2. Define agent
+# 2. Define agent — on_agent yields ThinkUnit("name") to invoke the descriptor.
 class WeatherAgent(AmphibiousAutoma[CognitiveContext]):
     planner = think_unit(
         CognitiveWorker.inline("Look up weather and provide a summary."),
@@ -43,15 +47,15 @@ class WeatherAgent(AmphibiousAutoma[CognitiveContext]):
     )
 
     async def on_agent(self, ctx: CognitiveContext):
-        await self.planner
+        yield ThinkUnit("planner")
 
 # 3. Run
 agent = WeatherAgent(llm=llm, verbose=True)
-result = await agent.arun(
+summary = await agent.arun(
     goal="Check the weather in Tokyo and London.",
     tools=[get_weather_tool],
 )
-print(agent.final_answer)
+print(agent.final_answer)  # auto-captured from finishing step's step_content
 ```
 
 ## Workflow Mode
@@ -60,7 +64,7 @@ Pure workflow mode runs deterministically and does not need an LLM — only
 override `on_workflow`, leave `on_agent` alone.
 
 ```python
-from bridgic.amphibious import ActionCall
+from bridgic.amphibious import ActionCall, RETURN
 
 class WeatherWorkflow(AmphibiousAutoma[CognitiveContext]):
     async def on_workflow(self, ctx: CognitiveContext):
@@ -69,7 +73,7 @@ class WeatherWorkflow(AmphibiousAutoma[CognitiveContext]):
 
         tokyo_val = tokyo[0].result if tokyo else "N/A"
         london_val = london[0].result if london else "N/A"
-        self.set_final_answer(f"Tokyo: {tokyo_val}, London: {london_val}")
+        yield RETURN(f"Tokyo: {tokyo_val}, London: {london_val}")
 
 workflow = WeatherWorkflow()  # No LLM needed for pure workflow mode
 result = await workflow.arun(
@@ -100,7 +104,8 @@ class CodeAgent(AmphibiousAutoma[CognitiveContext]):
         CognitiveWorker.inline("Investigate the codebase and report findings."),
         max_attempts=20,
     )
-    async def on_agent(self, ctx): await self.worker
+    async def on_agent(self, ctx):
+        yield ThinkUnit("worker")
 
 # All seven built-ins are present. Anything you pass in tools=[...] is added
 # on top, deduped by name.
@@ -133,7 +138,8 @@ class ReadOnlyAgent(AmphibiousAutoma[CognitiveContext]):
     builtin_tools = frozenset({"request_human", "read_file", "glob", "grep"})
 
     worker = think_unit(CognitiveWorker.inline("Audit the code."), max_attempts=10)
-    async def on_agent(self, ctx): await self.worker
+    async def on_agent(self, ctx):
+        yield ThinkUnit("worker")
 ```
 
 ```python
@@ -163,8 +169,8 @@ class PhaseGated(AmphibiousAutoma[CognitiveContext]):
         max_attempts=5,
     )
     async def on_agent(self, ctx):
-        await self.investigate
-        await self.apply
+        yield ThinkUnit("investigate")
+        yield ThinkUnit("apply")
 ```
 
 ### Read-before-modify safety in practice
@@ -194,26 +200,28 @@ class InteractiveAgent(AmphibiousAutoma[CognitiveContext]):
     worker = think_unit(CognitiveWorker.inline("Execute step."), max_attempts=10)
 
     async def on_agent(self, ctx: CognitiveContext):
-        await self.worker
+        yield ThinkUnit("worker")
         feedback = await self.request_human("Task complete. Any follow-up?")
         if feedback != "no":
             async with self.snapshot(goal=feedback):
-                await self.worker
+                yield ThinkUnit("worker")
 ```
 
 ### Entry 2: HumanCall in on_workflow()
 
 ```python
-from bridgic.amphibious import ActionCall, HumanCall
+from bridgic.amphibious import ActionCall, HumanCall, RETURN
 
 class ConfirmableWorkflow(AmphibiousAutoma[CognitiveContext]):
     async def on_workflow(self, ctx: CognitiveContext):
-        result = yield ActionCall("search_flights", origin="Beijing", destination="Tokyo", date="2024-06-01")
+        result = yield ActionCall(
+            "search_flights", origin="Beijing", destination="Tokyo", date="2024-06-01",
+        )
         feedback = yield HumanCall(prompt="Found flights. Book CA123?")
         if feedback == "yes":
             yield ActionCall("book_flight", flight_number="CA123")
         else:
-            self.set_final_answer("Booking cancelled by user.")
+            yield RETURN("Booking cancelled by user.")
 ```
 
 ### Entry 3: LLM tool (autonomous)
@@ -223,10 +231,13 @@ class ConfirmableWorkflow(AmphibiousAutoma[CognitiveContext]):
 ```python
 class AutonomousAgent(AmphibiousAutoma[CognitiveContext]):
     worker = think_unit(
-        CognitiveWorker.inline("Execute the task. Ask request_human when you need user input."),
+        CognitiveWorker.inline(
+            "Execute the task. Ask request_human when you need user input."
+        ),
         max_attempts=10,
     )
-    async def on_agent(self, ctx): await self.worker
+    async def on_agent(self, ctx):
+        yield ThinkUnit("worker")
 
 agent = AutonomousAgent(llm=llm)
 await agent.arun(goal="Plan a trip", tools=[search_tool])
@@ -241,18 +252,36 @@ class WebAgent(AmphibiousAutoma[CognitiveContext]):
         prompt = data["prompt"]
         return await websocket.send_and_receive(prompt)
 
-    async def on_agent(self, ctx): ...
+    async def on_agent(self, ctx):
+        yield ThinkUnit("worker")
+```
+
+### Named channels via @human_channel
+
+```python
+from bridgic.amphibious import human_channel, HumanCall
+
+@human_channel("feishu")
+async def feishu_channel(prompt: str) -> str:
+    return await send_to_feishu_and_wait(prompt)
+
+class HybridAgent(AmphibiousAutoma[CognitiveContext]):
+    async def on_workflow(self, ctx):
+        # Routes to the @human_channel("feishu") handler explicitly.
+        confirm = yield HumanCall(channel="feishu", prompt="Approve deploy?")
 ```
 
 ## Amphiflow Mode
 
-When a class overrides both `on_agent` and `on_workflow`, `RunMode.AUTO`
-resolves to `AMPHIFLOW`: the workflow runs deterministically, and on a step
-failure the agent is invoked to recover. You may also pass
-`mode=RunMode.AMPHIFLOW` explicitly.
+When a class overrides both `on_agent` and `on_workflow` (with `on_workflow` as
+an async generator), `RunMode.AUTO` resolves to `AMPHIFLOW`: the workflow runs
+deterministically through the peer state-machine dispatcher, and on a step
+failure the framework runs `on_agent` to recover via the slot + injected
+`resolve_step_fallback` tool. You may also pass `mode=RunMode.AMPHIFLOW`
+explicitly.
 
 ```python
-from bridgic.amphibious import RunMode, AgentCall, ActionCall
+from bridgic.amphibious import RunMode, ActionCall, ThinkUnit
 
 class FormFiller(AmphibiousAutoma[CognitiveContext]):
     fixer = think_unit(
@@ -261,14 +290,19 @@ class FormFiller(AmphibiousAutoma[CognitiveContext]):
     )
 
     async def on_agent(self, ctx: CognitiveContext):
-        await self.fixer
+        yield ThinkUnit("fixer")
 
     async def on_workflow(self, ctx: CognitiveContext):
         yield ActionCall("fill_field", field_name="username", value="john")
         yield ActionCall("fill_field", field_name="email", value="john@example.com")
         yield ActionCall("click_button", button_name="submit")
 
-# Workflow runs; on failure, agent takes over automatically
+# Workflow runs; on a failed ActionCall the framework runs on_agent under a
+# snapshot, allocates a _FallbackSlot (default = empty List[ToolResult] for
+# ActionCall), and injects a resolve_step_fallback(result: Any) -> str tool.
+# Whatever the LLM passes to that tool is asend()'d back to the workflow
+# generator.  Each successful ActionCall resets the consecutive-failure
+# counter; reaching max_consecutive_fallbacks triggers full fallback.
 agent = FormFiller(llm=llm, verbose=True)
 result = await agent.arun(
     goal="Fill and submit the form",
@@ -278,19 +312,87 @@ result = await agent.arun(
 )
 ```
 
-### AgentCall in Workflow
+## EnterAgent in Workflow
+
+`EnterAgent` is the *explicit* mode-switch from deterministic workflow to LLM-driven agent. The state-machine dispatcher suspends the workflow, snapshots the context (per the `goal` / `tools` / `skills` / `history` fields), runs `on_agent`, and resumes when the agent generator naturally exhausts.
 
 ```python
-async def on_workflow(self, ctx: CognitiveContext):
-    yield ActionCall("search_price", platform="Amazon", product="laptop")
-    yield ActionCall("search_price", platform="eBay", product="laptop")
+from bridgic.amphibious import EnterAgent, ActionCall, ThinkUnit
 
-    # Delegate complex analysis to LLM (clean context snapshot)
-    yield AgentCall(
-        goal="Analyze prices and decide if we need more platforms.",
-        max_attempts=3,
-    )
+class PriceComparer(AmphibiousAutoma[CognitiveContext]):
+    analyst = think_unit(CognitiveWorker.inline("Analyze prices."), max_attempts=3)
+
+    async def on_agent(self, ctx):
+        yield ThinkUnit("analyst")
+
+    async def on_workflow(self, ctx):
+        yield ActionCall("search_price", platform="Amazon", product="laptop")
+        yield ActionCall("search_price", platform="eBay", product="laptop")
+
+        # Delegate open-ended analysis to LLM, scoped to a sub-goal.
+        # The agent sees only the listed tools/skills while inside this snapshot.
+        yield EnterAgent(
+            goal="Analyze prices and decide if we need more platforms.",
+            tools=["search_price"],
+        )
+
+        # When on_agent exhausts, control returns here.
+        yield ActionCall("publish_decision")
 ```
+
+`EnterAgent` does **not** accept `worker=` or `max_attempts=` — those control *how* the agent thinks, which belongs in the `think_unit` declaration, not at the call site. The agent uses whatever `on_agent` does (typically `yield ThinkUnit("...")`).
+
+## LLMCall in Workflow
+
+`LLMCall` lets `on_workflow` invoke the agent's LLM directly through one of three protocols, without wrapping the call in a `CognitiveWorker`.
+
+```python
+from bridgic.amphibious import LLMCall, RETURN
+from bridgic.core.model.protocols import PydanticModel
+from pydantic import BaseModel
+
+class Outline(BaseModel):
+    sections: list[str]
+
+class OutlineWriter(AmphibiousAutoma[CognitiveContext]):
+    async def on_workflow(self, ctx):
+        # 1. Free-form chat.
+        notes = yield LLMCall.chat("Brainstorm a topic for a 5-minute talk.")
+
+        # 2. Structured output via Constraint.
+        outline = yield LLMCall.structure_output(
+            f"Turn these notes into a 5-section outline:\n{notes}",
+            constraint=PydanticModel(model=Outline),
+        )
+
+        # 3. tool_selector returns (List[ToolCall], Optional[reply_text]).
+        # tool_calls, reply = yield LLMCall.tool_selector("...", tools=[...])
+
+        yield RETURN(outline.model_dump_json())
+```
+
+`LLMCall` is **not** allowed inside `on_agent` — the agent body is reserved for orchestrating cognitive steps via `ThinkUnit`. Direct LLM calls belong in `on_workflow`, hooks, or inside a `CognitiveWorker`'s `thinking()` method.
+
+## RETURN — explicit return values
+
+PEP 525 forbids `return value` inside async generators. `RETURN(value)` is the framework's workaround:
+
+```python
+from bridgic.amphibious import RETURN, ThinkUnit
+
+class Summarizer(AmphibiousAutoma[CognitiveContext]):
+    summarizer = think_unit(CognitiveWorker.inline("Summarize."), max_attempts=3)
+
+    async def on_agent(self, ctx):
+        yield ThinkUnit("summarizer")
+        # Override the auto-captured final answer with something explicit.
+        last = ctx.cognitive_history.get_all()[-1].content
+        yield RETURN(f"FINAL: {last}")
+```
+
+When yielded from a top-level `on_agent` / `on_workflow`, `RETURN(value)` writes `str(value)` to `self._final_answer` and closes the generator. Anything yielded after a `RETURN` is unreachable.
+
+`RETURN` is allowed in any scope (workflow / agent / hook), but its value-handoff semantics are the *only* extension to PEP 525 — the framework does not extend `RETURN` for fallback value handoff (that's the `_FallbackSlot` + `resolve_step_fallback` mechanism, see [architecture.md](architecture.md#workflow-fallback-mechanism)).
 
 ## Custom Worker
 
@@ -313,14 +415,15 @@ class TravelPlanner(AmphibiousAutoma[CognitiveContext]):
     )
 
     async def on_agent(self, ctx: CognitiveContext):
-        await self.analyzer
-        await self.planner
+        yield ThinkUnit("analyzer")
+        yield ThinkUnit("planner")
 ```
 
 ## Structured Output (output_schema)
 
 ```python
 from pydantic import BaseModel, Field
+from bridgic.amphibious import ThinkUnit, RETURN
 
 class PlanResult(BaseModel):
     phases: list[str] = Field(description="Execution phases")
@@ -336,15 +439,17 @@ class PlannerAgent(AmphibiousAutoma[CognitiveContext]):
     )
 
     async def on_agent(self, ctx: CognitiveContext):
-        plan = await self.planner  # Returns PlanResult instance
-        print(plan.phases)
+        plan = yield ThinkUnit("planner")  # Returns a PlanResult instance
+        yield RETURN(plan.model_dump_json())
 ```
 
 ## Custom Context
 
 ```python
 from pydantic import Field, ConfigDict
-from bridgic.amphibious import CognitiveContext, CognitiveHistory, ActionResult
+from bridgic.amphibious import (
+    CognitiveContext, CognitiveHistory, ActionResult, ThinkUnit,
+)
 
 class DocumentContext(CognitiveContext):
     model_config = ConfigDict(arbitrary_types_allowed=True)
@@ -369,7 +474,11 @@ class DocumentAnalyzer(AmphibiousAutoma[DocumentContext]):
     )
 
     async def after_action(self, step_result, ctx: DocumentContext):
-        """Keep custom context in sync with tool results."""
+        """Keep custom context in sync with tool results.
+
+        Hook can be a coroutine OR an async generator — pick whichever you
+        need. Coroutines are fine when there's nothing to yield.
+        """
         action_result = step_result.result
         if not isinstance(action_result, ActionResult):
             return
@@ -380,7 +489,7 @@ class DocumentAnalyzer(AmphibiousAutoma[DocumentContext]):
                 ctx.analysis_results[doc_name] = step.tool_result
 
     async def on_agent(self, ctx: DocumentContext):
-        await self.analyzer
+        yield ThinkUnit("analyzer")
 ```
 
 ## Phase Annotation
@@ -399,17 +508,17 @@ class ContentCreator(AmphibiousAutoma[CognitiveContext]):
     async def on_agent(self, ctx: CognitiveContext):
         # Phase 1: Research
         async with self.snapshot(goal="Gather research material on renewable energy"):
-            await self.researcher
+            yield ThinkUnit("researcher")
 
         # Phase 2: Write
         async with self.snapshot(goal="Write the article using the research"):
-            await self.writer
+            yield ThinkUnit("writer")
 ```
 
 ## Cognitive Policies
 
 ```python
-# Enable all three policies
+# Enable all three policies on a single worker
 class AnalystAgent(AmphibiousAutoma[CognitiveContext]):
     analyst = think_unit(
         CognitiveWorker.inline(
@@ -422,10 +531,16 @@ class AnalystAgent(AmphibiousAutoma[CognitiveContext]):
     )
 
     async def on_agent(self, ctx: CognitiveContext):
-        await self.analyst
+        yield ThinkUnit("analyst")
 ```
 
 ## OTC Hooks
+
+OTC hooks (`observation`, `before_action`, `after_action`, `action_tool_call`,
+`action_custom_output`) accept BOTH async-coroutine and async-generator forms.
+Use the coroutine form when you just want a return value; use the generator
+form when you want to yield framework primitives (`ActionCall`, `HumanCall`,
+`LLMCall`, `RETURN`) inside the hook.
 
 ### observation — Inject Custom Perception
 
@@ -445,7 +560,7 @@ class SecurityAgent(AmphibiousAutoma[CognitiveContext]):
         return f"System: production-server-01, Uptime: 45 days"
 
     async def on_agent(self, ctx):
-        await self.auditor
+        yield ThinkUnit("auditor")
 ```
 
 ### build_messages — Reshape LLM Messages
@@ -481,7 +596,7 @@ class SafeAgent(AmphibiousAutoma[CognitiveContext]):
         return decision_result
 
     async def on_agent(self, ctx):
-        await self.auditor
+        yield ThinkUnit("auditor")
 ```
 
 ### after_action — Update Context After Execution
@@ -498,7 +613,7 @@ class TrackingAgent(AmphibiousAutoma[MyContext]):
                     ctx.processed_count += 1
 
     async def on_agent(self, ctx):
-        await self.worker
+        yield ThinkUnit("worker")
 ```
 
 ### action_custom_output — Post-process Structured Output
@@ -524,7 +639,7 @@ class RedactingAgent(AmphibiousAutoma[CognitiveContext]):
         return decision_result
 
     async def on_agent(self, ctx):
-        await self.auditor
+        yield ThinkUnit("auditor")
 ```
 
 ## Skills Usage
@@ -576,6 +691,8 @@ result = await agent.arun(
 
 ## Conditional Loops
 
+`ThinkUnit("name", until=...)` loops the named think unit until the condition holds, with optional per-call overrides.
+
 ```python
 class IterativeAgent(AmphibiousAutoma[CognitiveContext]):
     researcher = think_unit(
@@ -584,14 +701,16 @@ class IterativeAgent(AmphibiousAutoma[CognitiveContext]):
     )
 
     async def on_agent(self, ctx: CognitiveContext):
-        # Loop until condition met
-        await self.researcher.until(
-            lambda ctx: len(ctx.cognitive_history) >= 3,
+        # Loop until condition met (uses the descriptor's max_attempts).
+        yield ThinkUnit(
+            "researcher",
+            until=lambda ctx: len(ctx.cognitive_history) >= 3,
         )
 
-        # Loop with dynamic override
-        await self.researcher.until(
-            lambda ctx: some_condition(ctx),
+        # Loop with per-call overrides.
+        yield ThinkUnit(
+            "researcher",
+            until=lambda ctx: some_condition(ctx),
             max_attempts=50,
             tools=["search"],
         )
@@ -614,8 +733,8 @@ class MultiPhaseAgent(AmphibiousAutoma[CognitiveContext]):
     )
 
     async def on_agent(self, ctx):
-        await self.searcher
-        await self.writer
+        yield ThinkUnit("searcher")
+        yield ThinkUnit("writer")
 ```
 
 ## Execution Tracing

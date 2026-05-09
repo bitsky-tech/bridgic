@@ -1,11 +1,11 @@
 ---
 name: bridgic-amphibious
-description: "Build agents with the Bridgic Amphibious dual-mode framework — combining LLM-driven (agent) and deterministic (workflow) execution with automatic fallback, human-in-the-loop, and a built-in tool surface (shell, filesystem, search, HITL) auto-injected into every agent. Use when: (1) writing code that imports from bridgic.amphibious, (2) creating AmphibiousAutoma subclasses, (3) defining CognitiveWorker think units, (4) implementing on_agent/on_workflow methods, (5) working with CognitiveContext, Exposure system, or cognitive policies, (6) adding human-in-the-loop interactions (HumanCall, request_human, request_human_tool), (7) using or filtering the auto-injected built-in tools (bash, read_file/write_file/edit_file, glob, grep, request_human) via the builtin_tools class attribute or arun kwarg, (8) scaffolding a new amphibious project via CLI, (9) any task involving the bridgic-amphibious framework."
+description: "Build agents with the Bridgic Amphibious dual-mode framework — combining LLM-driven (agent) and deterministic (workflow) execution with peer state-machine dispatch, slot-based step-level fallback, human-in-the-loop, and a built-in tool surface (shell, filesystem, search, HITL) auto-injected into every agent. Use when: (1) writing code that imports from bridgic.amphibious, (2) creating AmphibiousAutoma subclasses, (3) defining CognitiveWorker think units and yielding ThinkUnit / EnterAgent / ActionCall / HumanCall / LLMCall / RETURN, (4) implementing on_agent/on_workflow methods, (5) working with CognitiveContext, Exposure system, or cognitive policies, (6) adding human-in-the-loop interactions (HumanCall, request_human, request_human_tool), (7) using or filtering the auto-injected built-in tools (bash, read_file/write_file/edit_file, glob, grep, request_human) via the builtin_tools class attribute or arun kwarg, (8) scaffolding a new amphibious project via CLI, (9) any task involving the bridgic-amphibious framework."
 ---
 
 # Bridgic Amphibious
 
-Dual-mode agent framework: agents operate in LLM-driven (`on_agent`) and deterministic (`on_workflow`) modes with automatic fallback between them.
+Dual-mode agent framework: agents operate in LLM-driven (`on_agent`) and deterministic (`on_workflow`) modes. In hybrid `AMPHIFLOW` mode the framework runs a peer state machine over both, with automatic step-level recovery via an injected `resolve_step_fallback` tool.
 
 ## Dependencies
 
@@ -47,26 +47,30 @@ Other providers with same protocol: `bridgic.llms.vllm.VllmServerLlm` (self-host
 ```python
 from bridgic.amphibious import (
     AmphibiousAutoma, CognitiveContext, CognitiveWorker, think_unit,
+    ThinkUnit,
 )
 from bridgic.core.agentic.tool_specs import FunctionToolSpec
 
 async def get_weather(city: str) -> str:
     """Get weather for a city."""
-    return f"Sunny, 22°C in {city}"
+    return f"Sunny, 22 C in {city}"
 
 class WeatherAgent(AmphibiousAutoma[CognitiveContext]):
     planner = think_unit(
         CognitiveWorker.inline("Look up weather and provide a summary."),
         max_attempts=5,
     )
+
     async def on_agent(self, ctx: CognitiveContext):
-        await self.planner
+        yield ThinkUnit("planner")
 
 agent = WeatherAgent(llm=llm, verbose=True)
-result = await agent.arun(
+summary = await agent.arun(
     goal="Check the weather in Tokyo and London.",
     tools=[FunctionToolSpec.from_raw(get_weather)],
 )
+# `summary` is the post-run ctx.summary() unless a RETURN(value) was yielded
+# or a finishing step set self._final_answer.
 ```
 
 ## Project Scaffolding
@@ -83,19 +87,154 @@ Creates a single `amphi.py` in the target directory (default: cwd). The template
 
 ## Core Concepts
 
-**Agent = Think Units + Context Orchestration.** Agents are defined by declaring `CognitiveWorker` think units and orchestrating them in `on_agent()` or `on_workflow()`.
+**Agent = Think Units + Yield Primitives.** Agents are defined by declaring `CognitiveWorker` think units (registered as class-level `think_unit(...)` descriptors) and orchestrating them in `on_agent()` / `on_workflow()` as async generators that yield framework primitives.
 
 **Four-layer architecture:**
 1. `Exposure` — data visibility abstraction (LayeredExposure / EntireExposure)
 2. `CognitiveContext` — state container (goal, tools, skills, history)
 3. `CognitiveWorker` — pure thinking unit (observe-think-act)
-4. `AmphibiousAutoma` — orchestration engine (mode routing, lifecycle)
+4. `AmphibiousAutoma` — orchestration engine (mode routing, dispatcher, lifecycle)
 
-**OTC Cycle:** Observe -> Think -> Act, with hook points at each phase.
+**OTC Cycle (inside one think unit):** Observe -> Think -> Act, with hook points at each phase.
 
-**Four RunModes:** `AGENT` (LLM-driven), `WORKFLOW` (deterministic), `AMPHIFLOW` (workflow + agent fallback), `AUTO` (auto-detect from overridden methods, default).
+**Four RunModes:** `AGENT` (LLM-driven), `WORKFLOW` (deterministic), `AMPHIFLOW` (workflow + agent recovery), `AUTO` (auto-detect from overridden methods, default).
 
-**`AUTO` resolution:** only `on_agent` overridden → `AGENT`; only `on_workflow` overridden → `WORKFLOW`; both overridden → `AMPHIFLOW`.
+**`AUTO` resolution:** only `on_agent` overridden → `AGENT`; only `on_workflow` overridden (as an async generator) → `WORKFLOW`; both overridden → `AMPHIFLOW`. A coroutine-form `on_workflow` (e.g. `async def on_workflow(self, ctx): pass`) is treated as a stub under `AUTO` — pass `mode=RunMode.WORKFLOW` or `RunMode.AMPHIFLOW` explicitly to drive a coroutine workflow.
+
+## Yield Primitives
+
+Template methods are async generators. Each yielded value tells the dispatcher what to do; the dispatcher returns the result via `asend()`. Six primitives, four scopes — mismatches raise `RuntimeError` at dispatch time.
+
+| Primitive | Category | Allowed in | Returns to generator |
+|-----------|----------|------------|----------------------|
+| `ActionCall(name, **args)` | atomic Call (tool) | `on_workflow`, hooks | `List[ToolResult]` |
+| `HumanCall(prompt=, channel=)` | atomic Call (HITL) | `on_workflow`, hooks | `str` |
+| `LLMCall.chat(...)` / `.structure_output(...)` / `.tool_selector(...)` | atomic Call (LLM) | `on_workflow`, hooks | protocol-specific |
+| `EnterAgent(goal=, tools=, skills=, history=)` | mode-switch | `on_workflow` only | `None` |
+| `ThinkUnit("name", until=, max_attempts=, tools=, skills=)` | cognitive composition | `on_agent` only | worker output (or `None`) |
+| `RETURN(value)` | control flow | any scope | (closes generator; value flows to caller) |
+
+`ActionCall` / `HumanCall` / `LLMCall` are forbidden inside `on_agent` — the agent body is reserved for orchestrating cognitive steps via `ThinkUnit`. If the LLM needs to invoke a tool or ask a human, that happens *inside* a `ThinkUnit` (the worker's tool-selection phase), not by yielding from `on_agent` directly.
+
+`RETURN(value)` is the only way to communicate a return value from an async generator (PEP 525 forbids `return value`). From a top-level `on_agent` / `on_workflow` body it sets `self._final_answer`.
+
+## Key Patterns
+
+### Agent Mode — LLM decides
+
+```python
+from bridgic.amphibious import ThinkUnit
+
+class MyAgent(AmphibiousAutoma[CognitiveContext]):
+    worker = think_unit(CognitiveWorker.inline("Decide next step."), max_attempts=10)
+
+    async def on_agent(self, ctx):
+        yield ThinkUnit("worker")
+```
+
+### Workflow Mode — Developer decides
+
+```python
+from bridgic.amphibious import ActionCall
+
+class MyWorkflow(AmphibiousAutoma[CognitiveContext]):
+    async def on_workflow(self, ctx):
+        result = yield ActionCall("tool_name", arg1="value")
+        # result is List[ToolResult]
+
+# Pure workflow mode does not need an LLM.
+await MyWorkflow().arun(goal="...", tools=[...])
+```
+
+### Amphiflow Mode — Workflow with agent recovery
+
+```python
+from bridgic.amphibious import RunMode, ActionCall, EnterAgent, ThinkUnit
+
+class MyHybrid(AmphibiousAutoma[CognitiveContext]):
+    fixer = think_unit(CognitiveWorker.inline("Fix the problem."), max_attempts=5)
+
+    async def on_agent(self, ctx):
+        yield ThinkUnit("fixer")
+
+    async def on_workflow(self, ctx):
+        yield ActionCall("fill_field", name="user", value="john")
+        yield ActionCall("click_button", name="submit")
+        # Explicit handoff for an open-ended sub-task.
+        yield EnterAgent(goal="Solve the captcha", tools=["solve_captcha"])
+
+await MyHybrid(llm=llm).arun(
+    goal="...", tools=[...],
+    mode=RunMode.AMPHIFLOW, max_consecutive_fallbacks=2,
+)
+```
+
+### Step-Level Fallback (slot + injected `resolve_step_fallback`)
+
+In `AMPHIFLOW`, when a yielded atomic Call (`ActionCall` / `HumanCall` / `LLMCall`) raises, the framework runs `on_agent` to recover — but the workflow generator still expects a value back from `asend()`. The framework solves this by:
+
+1. Allocating a `_FallbackSlot` with a type-appropriate default (empty `List[ToolResult]` for ActionCall, empty `str` for HumanCall, etc.).
+2. Injecting an extra `resolve_step_fallback` tool into `ctx.tools` for the fallback `on_agent` run only. The agent's LLM calls it (or doesn't) to write a value into the slot.
+3. After `on_agent` exhausts, the slot value is `asend()`-ed back to the suspended workflow generator, which resumes at the next instruction.
+
+You don't import or wire `resolve_step_fallback` — the framework injects it during fallback and removes it afterwards. If the agent never calls it, the workflow receives the benign default.
+
+`max_consecutive_fallbacks` (default 1) bounds *consecutive* recoveries. Each successful atomic Call resets the counter; once consecutive failures reach the limit, the framework abandons the workflow and runs `on_agent` for the rest of the task (full fallback).
+
+### Human-in-the-Loop
+
+Three entry points share one event channel: the code-level `request_human()` method, the `HumanCall` workflow yield, and the auto-injected `request_human` tool listed in [Built-in Tools](#built-in-tools).
+
+```python
+from bridgic.amphibious import ActionCall, HumanCall, ThinkUnit
+
+class MyAgent(AmphibiousAutoma[CognitiveContext]):
+    worker = think_unit(CognitiveWorker.inline("Execute step."), max_attempts=10)
+
+    async def on_agent(self, ctx):
+        yield ThinkUnit("worker")
+        feedback = await self.request_human("Proceed?")  # Entry 1: code-level
+
+    async def on_workflow(self, ctx):
+        yield ActionCall("do_something", arg="value")
+        feedback = yield HumanCall(prompt="Confirm?")    # Entry 2: workflow yield
+
+# Entry 3 is automatic — the built-in `request_human` tool is already in
+# context.tools, so the LLM can call it without listing it in tools=[...].
+# Override `human_input(data)` to swap the default stdin read for your own
+# UI integration (WebSocket, HTTP callback, Slack bot, etc.).
+await MyAgent(llm=llm).arun(goal="...", tools=[my_tool])
+```
+
+### Custom Pydantic Output
+
+```python
+from pydantic import BaseModel
+from bridgic.amphibious import ThinkUnit, RETURN
+
+class Plan(BaseModel):
+    phases: list[str]
+
+class Planner(AmphibiousAutoma[CognitiveContext]):
+    plan = think_unit(
+        CognitiveWorker.inline("Create a plan.", output_schema=Plan),
+        max_attempts=1,
+    )
+
+    async def on_agent(self, ctx):
+        plan = yield ThinkUnit("plan")  # `plan` is a Plan instance
+        yield RETURN(plan.model_dump_json())
+```
+
+### Phase Annotation (snapshot)
+
+```python
+async def on_agent(self, ctx):
+    async with self.snapshot(goal="Research phase"):
+        yield ThinkUnit("researcher")
+    async with self.snapshot(goal="Writing phase"):
+        yield ThinkUnit("writer")
+```
 
 ## Built-in Tools
 
@@ -128,103 +267,8 @@ Unknown names raise `ValueError` at `arun()` entry — typos surface immediately
 
 For the full per-tool parameter list, error contracts, and filter resolution rules see [references/api-reference.md](references/api-reference.md#built-in-tools).
 
-## Key Patterns
-
-### Agent Mode — LLM decides
-
-```python
-class MyAgent(AmphibiousAutoma[CognitiveContext]):
-    worker = think_unit(CognitiveWorker.inline("Decide next step."), max_attempts=10)
-    async def on_agent(self, ctx):
-        await self.worker
-```
-
-### Workflow Mode — Developer decides
-
-```python
-from bridgic.amphibious import ActionCall
-
-class MyWorkflow(AmphibiousAutoma[CognitiveContext]):
-    async def on_workflow(self, ctx):
-        result = yield ActionCall("tool_name", arg1="value")
-        # result is List[ToolResult]
-
-# Pure workflow mode does not need an LLM.
-await MyWorkflow().arun(goal="...", tools=[...])
-```
-
-### Amphiflow Mode — Workflow with agent fallback
-
-```python
-from bridgic.amphibious import RunMode, AgentCall
-
-class MyHybrid(AmphibiousAutoma[CognitiveContext]):
-    fixer = think_unit(CognitiveWorker.inline("Fix the problem."), max_attempts=5)
-    async def on_agent(self, ctx): await self.fixer
-    async def on_workflow(self, ctx):
-        yield ActionCall("fill_field", name="user", value="john")
-        yield ActionCall("click_button", name="submit")
-
-await MyHybrid(llm=llm).arun(
-    goal="...", tools=[...],
-    mode=RunMode.AMPHIFLOW, max_consecutive_fallbacks=2,
-)
-```
-
-### Human-in-the-Loop
-
-Three entry points share one event channel: the code-level `request_human()` method, the `HumanCall` workflow yield, and the auto-injected `request_human` tool listed in [Built-in Tools](#built-in-tools).
-
-```python
-from bridgic.amphibious import ActionCall, HumanCall
-
-class MyAgent(AmphibiousAutoma[CognitiveContext]):
-    worker = think_unit(CognitiveWorker.inline("Execute step."), max_attempts=10)
-
-    async def on_agent(self, ctx):
-        await self.worker
-        feedback = await self.request_human("Proceed?")  # Entry 1: code-level
-
-    async def on_workflow(self, ctx):
-        yield ActionCall("do_something", arg="value")
-        feedback = yield HumanCall(prompt="Confirm?")     # Entry 2: workflow yield
-
-# Entry 3 is automatic — the built-in `request_human` tool is already in
-# context.tools, so the LLM can call it without listing it in tools=[...].
-# Override `human_input(data)` to swap the default stdin read for your own
-# UI integration (WebSocket, HTTP callback, Slack bot, etc.).
-await MyAgent(llm=llm).arun(goal="...", tools=[my_tool])
-```
-
-### Custom Pydantic Output
-
-```python
-from pydantic import BaseModel
-
-class Plan(BaseModel):
-    phases: list[str]
-
-class Planner(AmphibiousAutoma[CognitiveContext]):
-    plan = think_unit(
-        CognitiveWorker.inline("Create a plan.", output_schema=Plan),
-        max_attempts=1,
-    )
-    async def on_agent(self, ctx):
-        result = await self.plan  # Returns Plan instance
-```
-
-### Phase Annotation (snapshot)
-
-```python
-async def on_agent(self, ctx):
-    async with self.snapshot(goal="Research phase"):
-        await self.researcher
-    async with self.snapshot(goal="Writing phase"):
-        await self.writer
-```
-
 ## Reference Files
 
-- **Architecture details** (execution modes, exposure system, memory tiers, cognitive policies): See [references/architecture.md](references/architecture.md)
-- **Complete API reference** (all classes, methods, parameters, types): See [references/api-reference.md](references/api-reference.md)
+- **Architecture details** (state-machine dispatcher, fallback mechanism, exposure system, memory tiers, cognitive policies): See [references/architecture.md](references/architecture.md)
+- **Complete API reference** (all classes, methods, parameters, types, yield primitives): See [references/api-reference.md](references/api-reference.md)
 - **Full code patterns and examples** (all hook types, skills, tracing, filtering, etc.): See [references/patterns.md](references/patterns.md)

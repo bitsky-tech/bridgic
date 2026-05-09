@@ -7,7 +7,7 @@
 - [AmphibiousAutoma](#amphibiousautoma)
 - [CognitiveWorker](#cognitiveworker)
 - [think_unit](#think_unit)
-- [ActionCall, HumanCall, AgentCall](#actioncall-humancall-agentcall)
+- [Yield Primitives](#yield-primitives)
 - [Human-in-the-Loop](#human-in-the-loop)
 - [Built-in Tools](#built-in-tools)
 - [CognitiveContext](#cognitivecontext)
@@ -69,11 +69,14 @@ from bridgic.amphibious import (
     # Context
     CognitiveContext, CognitiveHistory, CognitiveTools, CognitiveSkills,
     Context, Exposure, LayeredExposure, EntireExposure,
-    # Workflow yield types
-    ActionCall, HumanCall, AgentCall, HUMAN_INPUT_EVENT_TYPE,
+    # Yield primitives
+    ActionCall, HumanCall, LLMCall, EnterAgent, ThinkUnit, RETURN,
+    # Human channel registry
+    human_channel,
     # Data models
     Step, Skill, RunMode, ErrorStrategy,
     ActionResult, ActionStepResult, ToolResult,
+    WorkflowDecision, StepToolCall, ToolArgument, DetailRequest,
     # Trace
     TraceStep, RecordedToolCall, StepOutputType,
     # Built-in tool specs (auto-injected; importable for explicit reuse)
@@ -132,7 +135,6 @@ AmphibiousAutoma(
 | Attribute | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `builtin_tools` | `Optional[FrozenSet[str]]` | `None` | Filter for which entries of [`ALL_BUILTIN_TOOLS`](#built-in-tools) to auto-inject during `arun()`. `None` injects all; a frozenset of names restricts to that subset; `frozenset()` opts out entirely. The runtime `arun(builtin_tools=...)` kwarg wins over this attribute. Unknown names raise `ValueError` at `arun()` entry. |
-| `WORKFLOW_STEP_FALLBACK_MAX_ATTEMPTS` | `int` | `5` | Max think-unit attempts when a workflow step falls back to agent mode for per-step recovery. |
 
 ### arun() — Main Entry Point
 
@@ -153,12 +155,14 @@ await agent.arun(
 ) -> str
 ```
 
+**Return value**: by default returns `ctx.summary()` — a textual recap of the post-run context. If a `RETURN(value)` yield ran from a top-level template body OR a finishing think step set `self._final_answer`, that value is returned instead (`str(value)`).
+
 ### Properties
 
 | Property | Type | Description |
 |----------|------|-------------|
 | `context` | `CognitiveContextT` | Current context after `arun()` |
-| `final_answer` | `Optional[str]` | Auto-captured from finishing step's `step_content` |
+| `final_answer` | `Optional[str]` | Auto-captured from a finishing step's `step_content`, or set explicitly via `RETURN(value)` / `self.set_final_answer(...)` |
 | `llm` | `Optional[BaseLlm]` | The agent's LLM (`None` is allowed for pure WORKFLOW mode) |
 | `spent_tokens` | `int` | Token usage for last `arun()` |
 | `spent_time` | `float` | Time in seconds for last `arun()` |
@@ -167,16 +171,20 @@ await agent.arun(
 
 A subclass must override at least one of `on_agent` and `on_workflow`. Under
 `RunMode.AUTO` the runtime picks the mode from which methods are overridden:
-agent-only → `AGENT`, workflow-only → `WORKFLOW`, both → `AMPHIFLOW`.
+agent-only → `AGENT`, workflow-only (async-gen form) → `WORKFLOW`, both →
+`AMPHIFLOW`. A coroutine-form `on_workflow` (`async def on_workflow(self, ctx): pass`)
+is treated as a stub under `AUTO`; use `mode=RunMode.WORKFLOW` /
+`RunMode.AMPHIFLOW` to drive a coroutine workflow explicitly.
 
 ```python
 # LLM-driven orchestration (override for AGENT or AMPHIFLOW modes)
-async def on_agent(self, ctx: CognitiveContextT) -> None: ...
+async def on_agent(self, ctx: CognitiveContextT) -> AsyncGenerator: ...
 
 # Deterministic workflow (override for WORKFLOW or AMPHIFLOW modes)
 async def on_workflow(self, ctx: CognitiveContextT) -> AsyncGenerator: ...
 
-# Optional hooks
+# Optional hooks — accept both async-gen (yield primitives) and plain
+# coroutine (return value) forms
 async def observation(self, ctx) -> Optional[str]: ...
 async def before_action(self, decision_result, ctx) -> Any: ...
 async def after_action(self, step_result, ctx) -> None: ...
@@ -208,9 +216,9 @@ async def human_input(self, data: Dict[str, Any]) -> str:
 ```python
 self.set_final_answer(answer: str)  # Explicitly set final answer
 
-# Phase scoping
+# Phase scoping — saves/restores listed fields, clears LayeredExposure caches
 async with self.snapshot(goal="Sub-goal", **fields):
-    await self.worker
+    yield ThinkUnit("...")
 ```
 
 ## CognitiveWorker
@@ -272,7 +280,7 @@ async def after_action(self, step_result, ctx) -> Any: ...
 output_schema: Optional[Type[BaseModel]] = None
 # When set, worker produces a typed Pydantic instance.
 # Skips tool-call loop. Acquiring policy disabled.
-# await think_unit returns the typed instance.
+# yield ThinkUnit("name") returns the typed instance.
 ```
 
 ## think_unit
@@ -290,35 +298,37 @@ think_unit(
 ) -> ThinkUnitDescriptor
 ```
 
-Use as class variable:
+Use as class variable; reference by name in `on_agent` via `yield ThinkUnit("name")`:
 
 ```python
+from bridgic.amphibious import ThinkUnit
+
 class MyAgent(AmphibiousAutoma[CognitiveContext]):
     planner = think_unit(CognitiveWorker.inline("Plan step"), max_attempts=5)
 
     async def on_agent(self, ctx):
-        await self.planner                        # Single execution
-        await self.planner.until(condition)        # Loop until condition
-        await self.planner.until(                  # With overrides
-            condition, max_attempts=50, tools=["search"]
+        result = yield ThinkUnit("planner")                     # Single execution
+        result = yield ThinkUnit("planner", until=cond)         # Loop until condition
+        result = yield ThinkUnit(                               # Per-call overrides
+            "planner",
+            until=cond, max_attempts=50, tools=["search"],
         )
 ```
 
-### .until() Parameters
+Each yielded `ThinkUnit("name")` overlays the descriptor's defaults; `None` means "use the descriptor's value for this field".
 
-```python
-await self.think_unit.until(
-    condition: Callable[[ctx], bool],  # Sync or async callable
-    *,
-    max_attempts: int = None,          # Override descriptor max_attempts
-    tools: List[str] = None,           # Override tool filter
-    skills: List[str] = None,          # Override skill filter
-)
-```
+## Yield Primitives
 
-## ActionCall, HumanCall, AgentCall
+Template methods (`on_agent`, `on_workflow`, hooks) are async generators. The dispatcher routes each yielded value by type, validates the scope, executes the call, and sends a result back via `asend()`. Mismatches raise `RuntimeError` at dispatch time.
 
-Three yield types for `on_workflow()`:
+| Primitive | Category | Allowed scopes | Returns to generator |
+|-----------|----------|----------------|----------------------|
+| `ActionCall` | atomic Call | `on_workflow`, hooks | `List[ToolResult]` |
+| `HumanCall` | atomic Call | `on_workflow`, hooks | `str` |
+| `LLMCall` | atomic Call | `on_workflow`, hooks | protocol-specific |
+| `EnterAgent` | mode-switch | `on_workflow` only | `None` |
+| `ThinkUnit` | cognitive composition | `on_agent` only | worker output (or `None`) |
+| `RETURN` | control flow | any | (closes generator; value flows out) |
 
 ### ActionCall — Deterministic tool execution
 
@@ -335,11 +345,13 @@ result = yield ActionCall("tool_name", arg1="value", arg2=123)
 class ActionCall:
     tool_name: str
     description: str
-    worker: Optional[Any]        # Custom worker for fallback
     tool_args: Dict[str, Any]
+    decision: WorkflowDecision  # repr=False; built internally
 
-    def __init__(self, tool_name: str, *, description: str = "", worker=None, **tool_args): ...
+    def __init__(self, tool_name: str, *, description: str = "", **tool_args): ...
 ```
+
+`ActionCall` is purely a deterministic single-tool call — there are no framework-level knobs for retry, fallback worker, or attempt budgets at the call site (every `**tool_args` keyword is forwarded as a tool argument, so something like `ActionCall("foo", worker="x")` would pass `worker="x"` to the tool, not configure the framework). If the call fails in `AMPHIFLOW`, the framework's step-level fallback mechanism (see [Workflow Fallback](architecture.md#workflow-fallback-mechanism)) recovers via `on_agent` with the injected `resolve_step_fallback` tool.
 
 ### HumanCall — Pause for human input
 
@@ -348,6 +360,7 @@ from bridgic.amphibious import HumanCall
 
 # In on_workflow():
 feedback = yield HumanCall(prompt="Confirm this action?")
+feedback = yield HumanCall(prompt="...", channel="feishu")  # named handler
 # feedback: str (the human's response)
 ```
 
@@ -355,27 +368,108 @@ feedback = yield HumanCall(prompt="Confirm this action?")
 @dataclass
 class HumanCall:
     prompt: str = ""
-    timeout: Optional[float] = None  # Seconds; None = wait forever
+    channel: Optional[str] = None  # None = single registered @human_channel, else stdin fallback
 ```
 
-### AgentCall — Delegate to LLM agent mode
+Channel resolution: `channel=None` → if exactly one `@human_channel` handler is registered use it, if zero are registered fall back to built-in stdin, otherwise raise `RuntimeError`. `channel="name"` → invoke that named handler. Per-call timeouts are not exposed; the channel handler should enforce its own.
+
+### LLMCall — Direct LLM invocation
 
 ```python
-from bridgic.amphibious import AgentCall
+from bridgic.amphibious import LLMCall
 
-yield AgentCall(goal="Handle complex case", max_attempts=5)
+# In on_workflow():
+text = yield LLMCall.chat("What is 2+2?")
+parsed = yield LLMCall.structure_output("Extract...", constraint=PydanticModel(model=Schema))
+calls, reply = yield LLMCall.tool_selector("...", tools=[...])
+```
+
+```python
+@dataclass(frozen=True)
+class LLMCall:
+    protocol: Literal["chat", "structure_output", "tool_selector"]
+    prompt: str = ""
+    history: Optional[List[Message]] = None
+    constraint: Optional[Constraint] = None  # required iff protocol == "structure_output"
+    tools: Optional[List[Tool]] = None       # required iff protocol == "tool_selector"
+```
+
+Returns by protocol:
+- `"chat"` → `str` (extracted from `Response.message.content`)
+- `"structure_output"` → typed value from `astructured_output` (typically a Pydantic instance)
+- `"tool_selector"` → `Tuple[List[ToolCall], Optional[str]]`
+
+### EnterAgent — Switch on_workflow → on_agent
+
+```python
+from bridgic.amphibious import EnterAgent
+
+# In on_workflow():
+yield EnterAgent(goal="Handle the login popup")
+yield EnterAgent(goal="Pick a flight", tools=["search_flights", "book"])
+yield EnterAgent(goal="Summarize", history=prior_messages, skills=["summary"])
 ```
 
 ```python
 @dataclass
-class AgentCall:
+class EnterAgent:
     goal: str = ""
-    tools: Optional[Any] = None      # None → use context's tools
-    skills: Optional[Any] = None     # None → use context's skills
-    history: Optional[Any] = None    # None → fresh CognitiveHistory()
-    max_attempts: int = 1
-    worker: Optional[Any] = None     # None → framework default
+    history: Optional[Any] = None       # Optional[CognitiveHistory]; None → fresh CognitiveHistory()
+    tools: Optional[List[str]] = None   # Tool-name filter applied to ctx.tools while in agent mode
+    skills: Optional[List[str]] = None  # Skill-name filter applied to ctx.skills while in agent mode
 ```
+
+`EnterAgent` is a **mode-switch signal**, not a function call. The state-machine dispatcher suspends the workflow generator and creates a fresh `on_agent` generator under a context snapshot built from the listed fields. When the agent generator naturally exhausts (an implicit "switch back to workflow" signal), the suspended workflow resumes at the next instruction. There is no stack, no recursion, no resumable agent state across switches.
+
+`worker=` and `max_attempts=` are **not** accepted — `EnterAgent` controls *what the agent sees*, not *how it thinks*. Declare a `think_unit` and `yield ThinkUnit("name")` from inside `on_agent` for fine-grained cognitive control.
+
+Requires the agent class to override `on_agent`; raises `RuntimeError` at dispatch time otherwise.
+
+### ThinkUnit — Invoke a named cognitive step
+
+```python
+from bridgic.amphibious import ThinkUnit
+
+# In on_agent():
+result = yield ThinkUnit("main_think")
+result = yield ThinkUnit("exec_think", until=lambda c: c.done, max_attempts=20)
+```
+
+```python
+@dataclass(frozen=True)
+class ThinkUnit:
+    name: str
+    until: Optional[Callable[..., Union[bool, Awaitable[bool]]]] = None
+    max_attempts: Optional[int] = None
+    tools: Optional[List[str]] = None
+    skills: Optional[List[str]] = None
+```
+
+Resolves `name` via `getattr(type(self), name)` and expects a `ThinkUnitDescriptor`. Each non-`None` field overrides the descriptor's default for this single yield. The result returned via `asend()` is the worker's typed output (or `None` if the worker has no `output_schema`).
+
+Only valid inside `on_agent` (`scope='agent'`). For a direct LLM invocation outside the cognitive loop, use `LLMCall` from `on_workflow`.
+
+### RETURN — Communicate a return value
+
+```python
+from bridgic.amphibious import RETURN
+
+async def on_agent(self, ctx):
+    yield ThinkUnit("main_think", max_attempts=20)
+    yield RETURN(ctx.cognitive_history.get_all()[-1].content)
+```
+
+```python
+@dataclass(frozen=True)
+class RETURN:
+    value: Any = None
+```
+
+PEP 525 forbids `return value` inside async generators (only bare `return` is allowed). `RETURN(value)` is the framework-level workaround: when the dispatcher receives it, it captures the value, immediately closes the generator, and returns the value to the caller. Anything yielded after a `RETURN` is unreachable.
+
+For top-level template-method generators (`on_agent` / `on_workflow`), the captured value is written to `self._final_answer` (overriding the auto-capture from history).
+
+`RETURN` is allowed in any scope (workflow, agent, hook).
 
 ## Human-in-the-Loop
 
@@ -383,7 +477,7 @@ Three entry points for requesting human input:
 
 | Entry Point | Where | Usage |
 |-------------|-------|-------|
-| `request_human()` | `on_agent()` | `await self.request_human("Proceed?")` |
+| `request_human()` | `on_agent()` body or hooks | `await self.request_human("Proceed?")` |
 | `HumanCall` | `on_workflow()` | `feedback = yield HumanCall(prompt="Confirm?")` |
 | `request_human` tool | LLM tool-call, any mode | Auto-injected into `context.tools`; no setup needed |
 
@@ -397,14 +491,17 @@ await agent.arun(goal="Plan a trip, ask me if you need confirmation.", tools=[se
 
 Passing `request_human_tool` explicitly is harmless — the injection step deduplicates by tool name. The tool resolves to the running agent through `current_agent` (a `contextvars.ContextVar`), so each concurrent `arun()` task gets its own binding and parallel agents do not interfere.
 
-### HUMAN_INPUT_EVENT_TYPE
+### @human_channel — register handlers for HumanCall
 
 ```python
-from bridgic.amphibious import HUMAN_INPUT_EVENT_TYPE
-# Value: "HUMAN_INPUT_REQUEST"
+from bridgic.amphibious import human_channel
+
+@human_channel("feishu")
+async def feishu_channel(prompt: str) -> str:
+    return await send_to_feishu_and_wait(prompt)
 ```
 
-Framework-level event type constant used by all three HITL entry points.
+When `HumanCall(channel="feishu", ...)` dispatches, the registered handler is invoked. With one handler registered and `channel=None`, the dispatcher uses that handler implicitly; with zero handlers it falls back to stdin; with two or more, an explicit `channel=` is required.
 
 ## Built-in Tools
 
@@ -579,6 +676,22 @@ A non-`None` resolution must reference only valid tool names; unknown entries (t
 
 `AmphibiousAutoma._read_tracker: Dict[str, float]` maps absolute path → mtime at last successful `read_file`. It is reset at every `arun()` entry (so the invariant is scoped to a single run) and accessed by the filesystem tools through `current_agent`. `track_read` is a best-effort hook — a failed `os.stat` after a successful read is silently swallowed; the tracker simply has no entry, which causes a subsequent `edit_file` / `write_file` to correctly demand a re-read.
 
+### resolve_step_fallback (injected during step-level fallback)
+
+`resolve_step_fallback` is **not** part of `ALL_BUILTIN_TOOLS`. It is injected by the state-machine dispatcher only while running `on_agent` to recover from a failed atomic Call in `AMPHIFLOW` mode (see [Workflow Fallback Mechanism](architecture.md#workflow-fallback-mechanism)).
+
+The tool's signature is shaped to match the failed yield:
+
+| Failed yield | Tool signature | Slot default |
+|--------------|----------------|--------------|
+| `ActionCall` | `resolve_step_fallback(result: Any) -> str` | `[]` (empty `List[ToolResult]`) |
+| `HumanCall` | `resolve_step_fallback(response: str) -> str` | `""` |
+| `LLMCall.chat` | `resolve_step_fallback(text: str) -> str` | `""` |
+| `LLMCall.structure_output` | `resolve_step_fallback(value_json: str) -> str` | `None` |
+| `LLMCall.tool_selector` | `resolve_step_fallback() -> str` | `([], None)` |
+
+The agent's LLM invokes it (or doesn't) to set the slot value; on agent generator exhaustion, the framework `asend()`s the slot value back to the suspended workflow generator. Users do not import or wire this tool — the framework injects and removes it transparently.
+
 ## CognitiveContext
 
 ```python
@@ -724,6 +837,16 @@ class ActionStepResult(BaseModel):
     success: bool = True
     error: Optional[str] = None
 ```
+
+### WorkflowDecision
+
+```python
+class WorkflowDecision(BaseModel):
+    step_content: str = ""
+    output: List[StepToolCall] = Field(default_factory=list)
+```
+
+Built internally by `ActionCall(...)`; not normally constructed by user code.
 
 ## Tool Definition
 
