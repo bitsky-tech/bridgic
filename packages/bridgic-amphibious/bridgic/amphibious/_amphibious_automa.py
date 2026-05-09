@@ -410,7 +410,7 @@ class _FlowState:
         Step-failure threshold before full fallback to ``on_agent``.
         Forced to ``0`` when ``can_fallback`` is False.
     consecutive_failures : int, default 0
-        Running count of consecutive底层-Call failures, reset on success.
+        Running count of consecutive atomic-Call failures, reset on success.
     step_index : int, default 0
         Running step counter (informational, surfaced in error messages).
     failed_steps : List[str]
@@ -678,8 +678,8 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         ------
         ThinkUnit | RETURN
             Agent scope — only ``ThinkUnit`` (named cognitive step) and
-            ``RETURN`` (explicit final answer) are allowed. The底层
-            ``ActionCall`` / ``HumanCall`` / ``LLMCall`` and the
+            ``RETURN`` (explicit final answer) are allowed. The atomic
+            Calls ``ActionCall`` / ``HumanCall`` / ``LLMCall`` and the
             mode-switch ``EnterAgent`` are all rejected: on_agent body
             is reserved for orchestrating cognitive steps; deterministic
             tool / HITL / direct-LLM operations belong in on_workflow
@@ -896,7 +896,7 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
     #                             and recursively by EnterAgent /
     #                             step-level fallback in the state machine.
     # * ``_dispatch_call``      — per-yield handler. Validates scope, dispatches
-    #                             by isinstance. Failures from底层 Calls
+    #                             by isinstance. Failures from atomic Calls
     #                             propagate; fallback bookkeeping lives in the
     #                             state-machine driver.
     #
@@ -921,7 +921,7 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         """State-machine driver for AMPHIFLOW mode.
 
         Workflow is the entry mode. EnterAgent (user-yielded) and
-        step-level fallback (synthesized on底层-Call failure within
+        step-level fallback (synthesized on atomic-Call failure within
         threshold) suspend the workflow generator and drive a fresh
         on_agent generator in a snapshotted context; on_agent generator
         exhaustion implicitly resumes the workflow generator. Full
@@ -950,7 +950,7 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
           ``__anext__`` / ``asend``. RETURN terminates the run.
           EnterAgent transitions into agent mode (snapshot context,
           drive a fresh on_agent gen, then resume workflow).
-          底层-Call failures are wrapped: if ``consecutive_failures``
+          Atomic-Call failures are wrapped: if ``consecutive_failures``
           is below threshold, transition into agent mode with a
           fallback goal; if breached, full-fallback (close workflow,
           drive on_agent with original ctx, end).
@@ -1030,7 +1030,7 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
 
                 # Other yields (ActionCall / HumanCall / LLMCall / unknown):
                 # dispatch via _dispatch_call, with fallback wrapping for
-                # the底层 three.
+                # the three atomic Calls.
                 is_underlying_call = isinstance(item, (ActionCall, HumanCall, LLMCall))
                 try:
                     send_value = await self._dispatch_call(
@@ -1044,7 +1044,7 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
                         # ThinkUnit / EnterAgent / unknown errors propagate.
                         raise
 
-                    # 底层-Call failure → fallback bookkeeping.
+                    # Atomic-Call failure → fallback bookkeeping.
                     state.consecutive_failures += 1
                     state.step_index += 1
                     item_label = self._describe_call(item)
@@ -1140,7 +1140,7 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
 
     @staticmethod
     def _describe_call(item: Any) -> str:
-        """One-line description of a底层 Call for logs / fallback goals."""
+        """One-line description of an atomic Call for logs / fallback goals."""
         if isinstance(item, ActionCall):
             return f"ActionCall(tool_name={item.tool_name!r})"
         if isinstance(item, HumanCall):
@@ -1191,7 +1191,7 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         """Per-yield handler.
 
         Routes one yielded primitive by isinstance, validates yield-type
-        ↔ scope compatibility, executes the call. Failures from底层
+        ↔ scope compatibility, executes the call. Failures from atomic
         Calls (ActionCall / HumanCall / LLMCall) propagate — fallback
         bookkeeping lives in ``_drive_amphiflow``.
 
@@ -2395,7 +2395,7 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
 
         Drives ``on_workflow`` through ``_drive_amphiflow`` — the
         state-machine driver. ``EnterAgent`` (user-yielded) and
-        step-level fallback (synthesized on底层-Call failure within
+        step-level fallback (synthesized on atomic-Call failure within
         threshold) suspend the workflow generator and run a fresh
         on_agent generator in a snapshotted context; on_agent generator
         exhaustion implicitly resumes the workflow generator. Full
@@ -2406,7 +2406,7 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         Parameters
         ----------
         max_consecutive_fallbacks : int
-            底层-Call step-failure threshold before full fallback.
+            Atomic-Call step-failure threshold before full fallback.
 
         Returns
         -------

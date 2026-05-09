@@ -158,7 +158,7 @@ class TestThinkUnitScope:
 
 
 # ---------------------------------------------------------------------------
-# 底层 Calls (ActionCall / HumanCall / LLMCall) — workflow + hooks, NOT agent
+# Atomic Calls (ActionCall / HumanCall / LLMCall) — workflow + hooks, NOT agent
 # ---------------------------------------------------------------------------
 
 

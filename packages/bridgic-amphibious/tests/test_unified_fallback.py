@@ -1,6 +1,6 @@
-"""Tests for unified fallback across底层 Calls (ActionCall / HumanCall / LLMCall).
+"""Tests for unified fallback across atomic Calls (ActionCall / HumanCall / LLMCall).
 
-In AMPHIFLOW mode, all three底层 Call types share the same two-tier
+In AMPHIFLOW mode, all three atomic Call types share the same two-tier
 fallback semantics:
 
 * **Step-level fallback**: when ``consecutive_failures < threshold``,
@@ -239,7 +239,7 @@ class TestFallbackCounterReset:
 
     @pytest.mark.asyncio
     async def test_successful_call_after_fallback_resets_counter(self):
-        """A successful底层 Call after a fallback resets consecutive_failures.
+        """A successful atomic Call after a fallback resets consecutive_failures.
 
         Workflow yields four LLMCalls: fail, succeed, fail, succeed. With
         threshold=2, the second fail-after-success would breach if the

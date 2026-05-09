@@ -176,22 +176,22 @@ def _coerce_none_to_list(v: Any) -> list:
 # observation / before_action / after_action) as an async generator
 # yielding these. Three categories, six atomic types:
 #
-#   底层 (atomic operations on the world):
+#   Atomic Calls (operations on the world):
 #     ActionCall  — deterministic single-tool execution         (on_workflow / hooks)
 #     HumanCall   — pause and request human input via           (on_workflow / hooks)
 #                   ``@human_channel`` registry
 #     LLMCall     — direct LLM invocation via a bridgic-core    (on_workflow / hooks)
 #                   protocol (chat / structure_output / tool_selector)
 #
-#   模式切换 (mode-switch signals — state-machine transitions):
+#   Mode-switch signals (state-machine transitions):
 #     EnterAgent  — suspend on_workflow, run on_agent in a      (on_workflow only)
 #                   snapshotted context; agent generator
 #                   exhaustion implicitly resumes workflow
 #
-#   认知 (cognitive composition inside on_agent):
+#   Cognitive composition (inside on_agent):
 #     ThinkUnit   — invoke a class-level ``think_unit`` by name (on_agent only)
 #
-#   控制 (control flow):
+#   Control flow:
 #     RETURN      — communicate a "return value" out of an      (any scope)
 #                   async generator (PEP 525 forbids native
 #                   ``return value``); from a top-level body

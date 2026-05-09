@@ -68,7 +68,7 @@ class Amphi(AmphibiousAutoma[AmphiContext]):
 
     # Workflow mode: developer-defined deterministic steps. Implementing
     # both on_agent and on_workflow enables AMPHIFLOW (workflow-led, with
-    # automatic agent fallback on底层-Call failure). EnterAgent is the
+    # automatic agent fallback on atomic-Call failure). EnterAgent is the
     # explicit mode-switch primitive: workflow suspends, on_agent runs,
     # workflow resumes when on_agent's generator exhausts.
     async def on_workflow(self, ctx: AmphiContext):
