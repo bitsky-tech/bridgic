@@ -3,7 +3,7 @@ import inspect
 import json
 import time
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass, field
 from typing import (
     Annotated,
@@ -19,7 +19,7 @@ from bridgic.core.automa.args import ArgsMappingRule, InOrder
 from bridgic.core.model.types import Message, Role, ToolCall
 from bridgic.core.model.protocols import StructuredOutput, ToolSelection
 from bridgic.core.agentic import ConcurrentAutoma
-from bridgic.core.agentic.tool_specs import ToolSpec
+from bridgic.core.agentic.tool_specs import ToolSpec, FunctionToolSpec
 from bridgic.core.utils._console import printer
 from bridgic.amphibious._context import CognitiveContext, CognitiveTools, CognitiveSkills, CognitiveHistory, Exposure, LayeredExposure
 from bridgic.amphibious._cognitive_worker import CognitiveWorker, _DELEGATE
@@ -398,17 +398,15 @@ def human_channel(arg: Any = None) -> Any:
 class _FlowState:
     """Mutable per-flow state for body-mode fallback bookkeeping.
 
-    Created fresh per ``_drive_amphiflow`` invocation and passed down
-    to ``_dispatch_call``. When ``_dispatch_call`` is invoked outside
-    body context (e.g. from ``_invoke_template`` for a hook), the
-    caller passes ``state=None`` and fallback paths are skipped
-    entirely.
+    Created fresh per ``_drive_amphiflow`` invocation. Tracks the
+    consecutive-failure counter that the state-machine driver uses to
+    decide between step-level fallback (snapshot + agent + resume) and
+    full fallback (close workflow + agent + end).
 
     Attributes
     ----------
     max_consecutive_fallbacks : int
         Step-failure threshold before full fallback to ``on_agent``.
-        Forced to ``0`` when ``can_fallback`` is False.
     consecutive_failures : int, default 0
         Running count of consecutive atomic-Call failures, reset on success.
     step_index : int, default 0
@@ -420,6 +418,30 @@ class _FlowState:
     consecutive_failures: int = 0
     step_index: int = 0
     failed_steps: List[str] = field(default_factory=list)
+
+
+class _FallbackSlot:
+    """Mailbox for a single step-level fallback's resolved value.
+
+    Created fresh per step-level fallback by ``_drive_amphiflow``.
+    Initialized with a benign default appropriate for the failed
+    Call's expected return type (e.g. ``[]`` for ActionCall, ``""``
+    for HumanCall). The agent can override the default by calling the
+    auto-injected ``resolve_step_fallback`` tool, which closes over
+    this slot and writes through ``set()``.
+
+    On agent generator exhaustion, ``_drive_amphiflow`` reads
+    ``self.value`` and asends it to the workflow generator's failed
+    yield, resuming the workflow as if the original Call had
+    returned that value.
+    """
+    __slots__ = ("value",)
+
+    def __init__(self, default: Any) -> None:
+        self.value = default
+
+    def set(self, value: Any) -> None:
+        self.value = value
 
 
 ################################################################################################################
@@ -918,64 +940,102 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         ctx: CognitiveContextT,
         max_consecutive_fallbacks: int,
     ) -> Any:
-        """State-machine driver for AMPHIFLOW mode.
+        """Peer state-machine driver for AMPHIFLOW mode.
 
-        Workflow is the entry mode. EnterAgent (user-yielded) and
-        step-level fallback (synthesized on atomic-Call failure within
-        threshold) suspend the workflow generator and drive a fresh
-        on_agent generator in a snapshotted context; on_agent generator
-        exhaustion implicitly resumes the workflow generator. Full
-        fallback (threshold breached or generator-internal exception)
-        closes the workflow generator and drives on_agent with the
-        original context, ending the run.
+        Workflow is the entry mode. The driver holds two generator
+        slots — ``workflow_gen`` (always alive until exhaustion or full
+        fallback) and ``agent_gen`` (lazy-created on EnterAgent or
+        step-level fallback, disposed on exhaustion). A single while
+        loop alternates between them.
+
+        Mode transitions
+        ----------------
+        * **EnterAgent** (yielded from on_workflow): suspend
+          workflow_gen, push a snapshot via ``AsyncExitStack``,
+          create a fresh agent_gen, switch ``current = "agent"``.
+        * **Agent gen exhaustion** (StopAsyncIteration): pop the
+          snapshot, dispose agent_gen. If a fallback slot is active,
+          asend ``slot.value`` to the suspended workflow_gen. Switch
+          back to ``current = "workflow"``.
+        * **Atomic-Call failure in workflow + counter < threshold**:
+          synthesise an EnterAgent — push snapshot with fallback goal
+          AND an injected ``resolve_step_fallback`` tool bound to a
+          fresh slot. Same path as user-yielded EnterAgent from here.
+        * **Atomic-Call failure in workflow + counter >= threshold**,
+          OR **workflow generator-internal exception**: close
+          workflow_gen entirely and drive on_agent linearly via
+          ``_invoke_template`` (full fallback — workflow does not
+          resume).
 
         Parameters
         ----------
         ctx : CognitiveContextT
             The current cognitive context.
         max_consecutive_fallbacks : int
-            Step-failure threshold before full fallback to on_agent.
+            Atomic-Call step-failure threshold before full fallback.
 
         Returns
         -------
         Any
             The value captured from a ``RETURN(value)`` yield, or
             ``None`` if the run ends without RETURN.
-
-        Notes
-        -----
-        The driver alternates between two roles:
-
-        * **Active workflow mode**: drives ``workflow_gen`` with
-          ``__anext__`` / ``asend``. RETURN terminates the run.
-          EnterAgent transitions into agent mode (snapshot context,
-          drive a fresh on_agent gen, then resume workflow).
-          Atomic-Call failures are wrapped: if ``consecutive_failures``
-          is below threshold, transition into agent mode with a
-          fallback goal; if breached, full-fallback (close workflow,
-          drive on_agent with original ctx, end).
-        * **Active agent mode** (driven by ``_invoke_template`` from
-          within the workflow loop): drives the on_agent gen to
-          completion. RETURN inside agent terminates the run; natural
-          exhaustion resumes workflow.
         """
         workflow_gen = self.on_workflow(ctx)
+        agent_gen: Optional[Any] = None
+        agent_mode_stack: Optional[AsyncExitStack] = None
+        fallback_slot: Optional[_FallbackSlot] = None
+
+        workflow_send: Any = None
+        agent_send: Any = None
         state = _FlowState(max_consecutive_fallbacks=max_consecutive_fallbacks)
         return_value: Any = None
 
         try:
-            send_value: Any = None
             while True:
+                # Pick the active generator slot.
+                if agent_gen is not None:
+                    gen = agent_gen
+                    send = agent_send
+                    agent_send = None
+                    scope = "agent"
+                else:
+                    gen = workflow_gen
+                    send = workflow_send
+                    workflow_send = None
+                    scope = "workflow"
+
+                # Advance the chosen generator.
                 try:
-                    if send_value is None:
-                        item = await workflow_gen.__anext__()
+                    if send is None:
+                        item = await gen.__anext__()
                     else:
-                        item = await workflow_gen.asend(send_value)
-                    send_value = None
+                        item = await gen.asend(send)
                 except StopAsyncIteration:
+                    if scope == "agent":
+                        # Implicit "switch back to workflow".
+                        if fallback_slot is not None:
+                            workflow_send = fallback_slot.value
+                            fallback_slot = None
+                        if agent_mode_stack is not None:
+                            await agent_mode_stack.__aexit__(None, None, None)
+                            agent_mode_stack = None
+                        agent_gen = None
+                        continue
+                    # workflow exhausted naturally → run done.
                     break
                 except Exception as e:
-                    # Generator-internal error → full fallback
+                    if scope == "agent":
+                        # Agent body raised — snapshot must be popped, then
+                        # propagate. We do not auto-escalate agent failures.
+                        if agent_mode_stack is not None:
+                            await agent_mode_stack.__aexit__(
+                                type(e), e, e.__traceback__,
+                            )
+                            agent_mode_stack = None
+                        agent_gen = None
+                        fallback_slot = None
+                        raise
+                    # Workflow generator-internal error → full fallback.
                     if not self._has_agent():
                         raise RuntimeError(
                             f"Generator raised at step {state.step_index}: {e}\n"
@@ -987,6 +1047,9 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
                         f"falling back to on_agent().",
                         color="red",
                     )
+                    # workflow_gen is already dead from the raise; drive agent
+                    # linearly with the original context.
+                    workflow_gen = None
                     agent_return = await self._invoke_template(
                         self.on_agent(ctx), ctx, scope="agent",
                     )
@@ -994,7 +1057,10 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
                         return_value = agent_return
                     return return_value
 
-                # RETURN — terminate run
+                # Successfully advanced — handle the yielded item.
+
+                # RETURN: terminates the entire run regardless of which mode
+                # produced it (RETURN's only role is "set final answer + end").
                 if isinstance(item, RETURN):
                     return_value = item.value
                     preview = str(item.value)
@@ -1003,48 +1069,70 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
                     self._log("Dispatch", f"RETURN: {preview}", color="cyan")
                     break
 
-                # EnterAgent — state-machine transition (user-yielded)
+                # EnterAgent: user-yielded mode switch (workflow → agent).
                 if isinstance(item, EnterAgent):
+                    if scope != "workflow":
+                        raise RuntimeError(
+                            f"EnterAgent(goal={item.goal!r}) is only valid inside "
+                            f"on_workflow (scope='workflow'); got scope={scope!r}. "
+                            "EnterAgent is the deterministic→autonomous mode "
+                            "switch; once you are inside on_agent, keep "
+                            "thinking via ThinkUnit instead."
+                        )
                     if not self._has_agent():
                         raise RuntimeError(
                             f"EnterAgent(goal={item.goal!r}) requires an "
                             "on_agent() override on the agent class."
                         )
-                    snapshot_kwargs = self._build_enter_agent_snapshot(item, ctx)
                     self._log(
                         "Dispatch",
                         f"EnterAgent(goal={item.goal!r}) → switching to on_agent",
                         color="cyan",
                     )
-                    async with self.snapshot(**snapshot_kwargs):
-                        agent_return = await self._invoke_template(
-                            self.on_agent(ctx), ctx, scope="agent",
-                        )
-                    if agent_return is not None:
-                        # RETURN inside the agent flow → terminate run.
-                        return_value = agent_return
-                        break
-                    # Natural agent-gen exhaustion → resume workflow.
-                    send_value = None
+                    snapshot_kwargs = self._build_enter_agent_snapshot(item, ctx)
+                    agent_obj = self.on_agent(ctx)
+                    if not inspect.isasyncgen(agent_obj):
+                        # Coroutine-form on_agent: state-machine interleaving
+                        # is moot (no per-yield interleaving inside a coro).
+                        # Drive it inline under the snapshot.
+                        async with self.snapshot(**snapshot_kwargs):
+                            coro_return = await agent_obj
+                        if coro_return is not None:
+                            return_value = coro_return
+                            break  # terminate run
+                        # Natural exhaustion → resume workflow with asend(None).
+                        workflow_send = None
+                        continue
+                    # Generator-form on_agent: set up state-machine slot.
+                    agent_mode_stack = AsyncExitStack()
+                    await agent_mode_stack.__aenter__()
+                    await agent_mode_stack.enter_async_context(
+                        self.snapshot(**snapshot_kwargs),
+                    )
+                    agent_gen = agent_obj
+                    # No fallback slot for user-yielded EnterAgent; workflow
+                    # resumes via asend(None) when agent exhausts.
                     continue
 
-                # Other yields (ActionCall / HumanCall / LLMCall / unknown):
-                # dispatch via _dispatch_call, with fallback wrapping for
-                # the three atomic Calls.
-                is_underlying_call = isinstance(item, (ActionCall, HumanCall, LLMCall))
+                # Other yields → _dispatch_call, with fallback wrapping for
+                # the three atomic Calls in workflow scope.
+                is_atomic_call = isinstance(item, (ActionCall, HumanCall, LLMCall))
                 try:
-                    send_value = await self._dispatch_call(
-                        item, ctx, scope="workflow",
-                    )
-                    if is_underlying_call:
-                        state.consecutive_failures = 0
-                        state.step_index += 1
+                    result = await self._dispatch_call(item, ctx, scope=scope)
+                    if scope == "agent":
+                        agent_send = result
+                    else:
+                        workflow_send = result
+                        if is_atomic_call:
+                            state.consecutive_failures = 0
+                            state.step_index += 1
                 except Exception as e:
-                    if not is_underlying_call:
-                        # ThinkUnit / EnterAgent / unknown errors propagate.
+                    if scope == "agent" or not is_atomic_call:
+                        # ThinkUnit failure / non-atomic error / atomic-Call
+                        # error from within agent scope: propagate.
                         raise
 
-                    # Atomic-Call failure → fallback bookkeeping.
+                    # Atomic-Call failure in workflow scope → fallback.
                     state.consecutive_failures += 1
                     state.step_index += 1
                     item_label = self._describe_call(item)
@@ -1059,6 +1147,7 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
                     )
 
                     if state.consecutive_failures >= state.max_consecutive_fallbacks:
+                        # Full fallback.
                         if not self._has_agent():
                             raise RuntimeError(
                                 f"Workflow degradation failed: consecutive "
@@ -1079,30 +1168,70 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
                             return_value = agent_return
                         return return_value
 
-                    # Step-level fallback: drive on_agent with snapshotted
-                    # fallback goal; resume workflow on agent exhaustion.
+                    # Step-level fallback: synthesise an EnterAgent with a
+                    # fallback-goal snapshot AND an injected
+                    # resolve_step_fallback tool bound to a fresh slot.
                     if not self._has_agent():
                         raise  # No on_agent — re-raise the original failure.
-                    fallback_goal = self._build_fallback_goal(item, item_label, e, state)
+                    fallback_slot = self._make_fallback_slot(item)
+                    resolve_tool = self._make_resolve_tool(fallback_slot, item)
+                    fallback_goal = self._build_fallback_goal(
+                        item, item_label, e, state,
+                    )
+                    augmented_tools = CognitiveTools()
+                    for t in ctx.tools.get_all():
+                        augmented_tools.add(t)
+                    augmented_tools.add(resolve_tool)
                     self._log(
                         "Dispatch",
                         f"Step-level fallback to on_agent for: {item_label}",
                         color="yellow",
                     )
-                    async with self.snapshot(goal=fallback_goal):
-                        agent_return = await self._invoke_template(
-                            self.on_agent(ctx), ctx, scope="agent",
-                        )
-                    if agent_return is not None:
-                        # RETURN inside the fallback agent flow → terminate run.
-                        return_value = agent_return
-                        break
-                    # Resume workflow with send_value=None (asend(None) on
-                    # the suspended workflow_gen continues the next iteration).
-                    send_value = None
+                    agent_obj = self.on_agent(ctx)
+                    if not inspect.isasyncgen(agent_obj):
+                        # Coroutine-form on_agent: drive inline under snapshot.
+                        async with self.snapshot(goal=fallback_goal, tools=augmented_tools):
+                            coro_return = await agent_obj
+                        if coro_return is not None:
+                            return_value = coro_return
+                            fallback_slot = None
+                            break  # terminate run
+                        # Natural exhaustion → asend slot.value to workflow.
+                        workflow_send = fallback_slot.value
+                        fallback_slot = None
+                        continue
+                    # Generator-form: set up state-machine slot.
+                    agent_mode_stack = AsyncExitStack()
+                    await agent_mode_stack.__aenter__()
+                    await agent_mode_stack.enter_async_context(
+                        self.snapshot(goal=fallback_goal, tools=augmented_tools),
+                    )
+                    agent_gen = agent_obj
+                    # workflow_send stays unset; once agent_gen exhausts, the
+                    # StopAsyncIteration branch will populate workflow_send
+                    # with fallback_slot.value.
+                    continue
         finally:
+            # Cleanup order: close suspended generators first (so their
+            # finally blocks see the snapshotted ctx, matching the view
+            # they had during execution), then roll back the snapshot,
+            # then close workflow_gen. All are best-effort — never mask
+            # the primary control-flow exception.
+            if agent_gen is not None:
+                try:
+                    await agent_gen.aclose()
+                except Exception:
+                    pass
+            if agent_mode_stack is not None:
+                try:
+                    await agent_mode_stack.__aexit__(None, None, None)
+                except Exception:
+                    pass
             if workflow_gen is not None:
-                await workflow_gen.aclose()
+                try:
+                    await workflow_gen.aclose()
+                except Exception:
+                    pass
 
         return return_value
 
@@ -1151,6 +1280,173 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         return type(item).__name__
 
     @staticmethod
+    def _make_fallback_slot(item: Any) -> _FallbackSlot:
+        """Create a fallback slot pre-loaded with a benign default value.
+
+        The default is what the workflow's failed yield will receive if
+        the agent does not call the auto-injected
+        ``resolve_step_fallback`` tool. Defaults are chosen so a "void"
+        atomic Call (one whose return value the workflow does not use)
+        can be left alone without blowing up downstream code:
+
+        ============================  ====================================
+        Failed Call                   Default slot value
+        ============================  ====================================
+        ActionCall                    one ToolResult with result=None
+        HumanCall                     ""
+        LLMCall(protocol="chat")      ""
+        LLMCall("structure_output")   None
+        LLMCall("tool_selector")      ([], None)
+        ============================  ====================================
+        """
+        if isinstance(item, ActionCall):
+            default: Any = [
+                ToolResult(
+                    tool_name=item.tool_name,
+                    tool_arguments=dict(item.tool_args),
+                    result=None,
+                    success=True,
+                )
+            ]
+        elif isinstance(item, HumanCall):
+            default = ""
+        elif isinstance(item, LLMCall):
+            if item.protocol == "chat":
+                default = ""
+            elif item.protocol == "tool_selector":
+                default = ([], None)
+            else:
+                default = None
+        else:
+            default = None
+        return _FallbackSlot(default)
+
+    def _make_resolve_tool(
+        self,
+        slot: _FallbackSlot,
+        item: Any,
+    ) -> FunctionToolSpec:
+        """Build a ``resolve_step_fallback`` tool bound to ``slot``.
+
+        Each step-level fallback gets a fresh tool instance (closure
+        captures ``slot`` and ``item``) with a signature tuned to the
+        failed Call's expected return type. The tool overwrites the
+        slot's default; if the agent never calls it, the default
+        applies.
+
+        Tool-name collisions with user tools are unlikely in practice
+        — the ``resolve_step_fallback`` name is reserved for this
+        framework purpose. The tool is only present in ``ctx.tools``
+        for the duration of one step-level fallback (snapshot scope).
+        """
+        if isinstance(item, ActionCall):
+            tool_name = item.tool_name
+            tool_args = dict(item.tool_args)
+
+            async def resolve_step_fallback(result: Any) -> str:
+                """Submit the recovered result for the failed workflow step.
+
+                Call this once when you have produced the value the
+                failed step should have returned. The workflow will
+                resume with this value as if the original step had
+                succeeded.
+
+                Parameters
+                ----------
+                result : Any
+                    The result the failed step should have produced
+                    (whatever type its tool would normally return).
+                """
+                slot.set([
+                    ToolResult(
+                        tool_name=tool_name,
+                        tool_arguments=tool_args,
+                        result=result,
+                        success=True,
+                    )
+                ])
+                return "Result submitted; workflow will resume after you finish."
+
+            return FunctionToolSpec.from_raw(resolve_step_fallback)
+
+        if isinstance(item, HumanCall):
+            async def resolve_step_fallback(response: str) -> str:
+                """Submit the human response for the failed step.
+
+                Call this once with the response the human would have
+                given. The workflow will resume with this string as the
+                HumanCall's return value.
+
+                Parameters
+                ----------
+                response : str
+                    The response text to feed back to the workflow.
+                """
+                slot.set(response)
+                return "Response submitted; workflow will resume after you finish."
+
+            return FunctionToolSpec.from_raw(resolve_step_fallback)
+
+        if isinstance(item, LLMCall):
+            protocol = item.protocol
+            if protocol == "chat":
+                async def resolve_step_fallback(text: str) -> str:
+                    """Submit text for the failed LLMCall(chat).
+
+                    Parameters
+                    ----------
+                    text : str
+                        The text content the failed chat call should
+                        have returned.
+                    """
+                    slot.set(text)
+                    return "Text submitted; workflow will resume after you finish."
+
+                return FunctionToolSpec.from_raw(resolve_step_fallback)
+            if protocol == "structure_output":
+                constraint = item.constraint
+
+                async def resolve_step_fallback(value_json: str) -> str:
+                    """Submit a JSON-encoded value for the failed structure_output LLMCall.
+
+                    Parameters
+                    ----------
+                    value_json : str
+                        JSON string conforming to the constraint's
+                        schema. The framework will parse it into the
+                        expected typed instance.
+                    """
+                    from bridgic.core.model.protocols import PydanticModel
+                    if isinstance(constraint, PydanticModel):
+                        slot.set(constraint.model.model_validate_json(value_json))
+                    else:
+                        slot.set(value_json)
+                    return "Value submitted; workflow will resume after you finish."
+
+                return FunctionToolSpec.from_raw(resolve_step_fallback)
+            # tool_selector protocol — its return type is hard to
+            # express cleanly via tool args. Inject a no-op tool that
+            # just acknowledges; the slot keeps its ([], None) default.
+
+            async def resolve_step_fallback() -> str:
+                """No-op for failed LLMCall(tool_selector) — the
+                framework will resume the workflow with the empty
+                tool-selection default. Submit explicit recovery is
+                not supported for this protocol."""
+                return (
+                    "Acknowledged. The workflow will resume with the "
+                    "empty tool-selection default; explicit submission "
+                    "is not supported for tool_selector failures."
+                )
+
+            return FunctionToolSpec.from_raw(resolve_step_fallback)
+
+        raise ValueError(
+            f"Cannot build resolve_step_fallback tool for item of type "
+            f"{type(item).__name__}."
+        )
+
+    @staticmethod
     def _build_fallback_goal(
         item: Any,
         item_label: str,
@@ -1159,10 +1455,18 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
     ) -> str:
         """Goal text fed to on_agent on step-level fallback.
 
-        The goal explains the failure narrowly so the on_agent flow can
-        focus on resolving this single step. Once the agent generator
-        exhausts (signal: "I am done with this scoped task"), the
-        state-machine driver resumes the workflow.
+        Tells the agent (a) what failed and why, (b) that it should
+        recover however it sees fit, and (c) how to feed the result
+        back to the workflow via ``resolve_step_fallback``. The
+        framework auto-injects that tool for the duration of this
+        fallback; calling it once with the recovered value is the only
+        way to override the slot's default value.
+
+        Agent generator exhaustion (with or without calling
+        ``resolve_step_fallback``) is the implicit "I am done with
+        this scoped task" signal — the state-machine driver then
+        asends ``slot.value`` to the workflow's failed yield and
+        resumes the workflow.
         """
         if isinstance(item, ActionCall):
             intent = item.decision.step_content or item.tool_name
@@ -1173,11 +1477,16 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
             f"Step intent: {intent}\n"
             f"Failed call: {item_label}\n"
             f"Error: {error}\n\n"
-            f"You must do TWO things:\n"
-            f"1. Resolve the error — fix whatever is blocking this step.\n"
-            f"2. Complete the original step intent.\n\n"
-            f"End your reasoning when both are done; the workflow will "
-            f"then resume at the next step."
+            f"Recover however you see fit. When you have produced the "
+            f"value the failed step should have returned, call the "
+            f"`resolve_step_fallback` tool with that value to feed it "
+            f"back to the workflow. The workflow will resume with it "
+            f"as if the original step had succeeded.\n\n"
+            f"If the failed call's return value is not used downstream, "
+            f"you may omit the `resolve_step_fallback` call — a benign "
+            f"default value is then sent back. End your reasoning when "
+            f"recovery is complete; the workflow will resume "
+            f"automatically."
         )
 
 

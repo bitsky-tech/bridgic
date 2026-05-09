@@ -4,9 +4,12 @@ In AMPHIFLOW mode, all three atomic Call types share the same two-tier
 fallback semantics:
 
 * **Step-level fallback**: when ``consecutive_failures < threshold``,
-  the dispatcher snapshots the context with a fallback goal and runs
-  ``on_agent`` to handle just this step. After ``on_agent`` exhausts,
-  the workflow generator resumes at the next instruction.
+  the dispatcher snapshots the context with a fallback goal AND a
+  fresh ``resolve_step_fallback`` tool, then runs ``on_agent``. The
+  agent can call ``resolve_step_fallback(...)`` to set the value the
+  workflow's failed yield should receive; if it doesn't, a benign
+  default is used. After ``on_agent`` exhausts, the workflow generator
+  resumes at the next instruction with that value.
 * **Full fallback**: when ``consecutive_failures >= threshold`` (or the
   workflow generator raises an internal exception), the workflow
   generator is closed and ``on_agent`` runs with the original context;
@@ -27,8 +30,13 @@ from bridgic.amphibious import (
     LLMCall,
     RETURN,
     RunMode,
+    StepToolCall,
+    ToolArgument,
+    ThinkUnit,
     human_channel,
+    think_unit,
 )
+from bridgic.core.agentic.tool_specs import FunctionToolSpec
 
 
 ThinkDecision = CognitiveWorker._create_think_model(
@@ -301,7 +309,224 @@ class TestFallbackCounterReset:
             "workflow should have completed all four steps "
             f"(fallback + success + fallback + success); got {len(results)}"
         )
-        assert results[0][1] is None  # step-level fallback returns None
+        # The fallback agent in this test does not call resolve_step_fallback,
+        # so the slot keeps its benign default. For LLMCall(chat) that's "".
+        assert results[0][1] == ""    # step-level fallback default for chat
         assert results[1][1] == "ok-2"
-        assert results[2][1] is None  # step-level fallback returns None
+        assert results[2][1] == ""    # step-level fallback default for chat
         assert results[3][1] == "ok-4"
+
+
+# ---------------------------------------------------------------------------
+# Slot mechanism — agent calls resolve_step_fallback to feed value back
+# ---------------------------------------------------------------------------
+
+
+class TestSlotMechanism:
+
+    @pytest.mark.asyncio
+    async def test_action_call_resolve_via_tool_flows_to_workflow(self):
+        """Fallback agent calls resolve_step_fallback → workflow's yield
+        receives a ToolResult wrapping the agent's submitted value."""
+
+        async def always_fails():
+            raise RuntimeError("boom")
+
+        # Worker sees the resolve_step_fallback tool in its tools surface
+        # and decides to call it. Then on next cycle, finishes.
+        recover_step = ThinkDecision(
+            step_content="Submitting recovered value",
+            output=[StepToolCall(
+                tool="resolve_step_fallback",
+                tool_arguments=[ToolArgument(name="result", value="recovered_data")],
+            )],
+            finish=False,
+        )
+        finish_step = ThinkDecision(step_content="Done", output=[], finish=True)
+        llm = _MockLLM(structured_responses=[recover_step, finish_step])
+
+        captured = []
+
+        class Agent(AmphibiousAutoma[CognitiveContext]):
+            recoverer = think_unit(CognitiveWorker.inline("Recover."), max_attempts=5)
+
+            async def on_agent(self, ctx) -> AsyncGenerator[Any, Any]:
+                yield ThinkUnit("recoverer")
+
+            async def on_workflow(self, ctx) -> AsyncGenerator[
+                Union[ActionCall, HumanCall, EnterAgent, LLMCall, RETURN], None
+            ]:
+                data = yield ActionCall("always_fails")
+                captured.append(data)
+
+        await Agent(llm=llm).arun(
+            goal="test slot recovery",
+            tools=[FunctionToolSpec.from_raw(always_fails)],
+            mode=RunMode.AMPHIFLOW,
+            max_consecutive_fallbacks=2,
+        )
+
+        assert len(captured) == 1
+        result_list = captured[0]
+        assert isinstance(result_list, list) and len(result_list) == 1
+        rec = result_list[0]
+        assert rec.tool_name == "always_fails"
+        assert rec.success is True
+        assert rec.result == "recovered_data"
+
+    @pytest.mark.asyncio
+    async def test_action_call_no_resolve_uses_default_slot(self):
+        """If fallback agent never calls resolve_step_fallback, workflow
+        receives the benign default (one ToolResult with result=None)."""
+
+        async def always_fails():
+            raise RuntimeError("boom")
+
+        finish_step = ThinkDecision(step_content="Gave up", output=[], finish=True)
+        llm = _MockLLM(structured_responses=[finish_step])
+
+        captured = []
+
+        class Agent(AmphibiousAutoma[CognitiveContext]):
+            recoverer = think_unit(CognitiveWorker.inline("Recover."), max_attempts=5)
+
+            async def on_agent(self, ctx) -> AsyncGenerator[Any, Any]:
+                yield ThinkUnit("recoverer")
+
+            async def on_workflow(self, ctx) -> AsyncGenerator[
+                Union[ActionCall, HumanCall, EnterAgent, LLMCall, RETURN], None
+            ]:
+                data = yield ActionCall("always_fails", arg1="x")
+                captured.append(data)
+
+        await Agent(llm=llm).arun(
+            goal="default slot test",
+            tools=[FunctionToolSpec.from_raw(always_fails)],
+            mode=RunMode.AMPHIFLOW,
+            max_consecutive_fallbacks=2,
+        )
+
+        # Default slot: one ToolResult with result=None for the failed call.
+        assert len(captured) == 1
+        result_list = captured[0]
+        assert isinstance(result_list, list) and len(result_list) == 1
+        rec = result_list[0]
+        assert rec.tool_name == "always_fails"
+        assert rec.tool_arguments == {"arg1": "x"}
+        assert rec.success is True
+        assert rec.result is None
+
+    @pytest.mark.asyncio
+    async def test_human_call_resolve_via_tool_flows_to_workflow(self):
+        """HumanCall fallback: agent submits a response via resolve tool."""
+
+        recover_step = ThinkDecision(
+            step_content="Submitting human response",
+            output=[StepToolCall(
+                tool="resolve_step_fallback",
+                tool_arguments=[ToolArgument(name="response", value="yes please")],
+            )],
+            finish=False,
+        )
+        finish_step = ThinkDecision(step_content="Done", output=[], finish=True)
+        llm = _MockLLM(structured_responses=[recover_step, finish_step])
+
+        captured = []
+
+        class Agent(AmphibiousAutoma[CognitiveContext]):
+            recoverer = think_unit(CognitiveWorker.inline("Recover."), max_attempts=5)
+
+            @human_channel
+            async def broken(self, prompt: str) -> str:
+                raise RuntimeError("channel broken")
+
+            async def on_agent(self, ctx) -> AsyncGenerator[Any, Any]:
+                yield ThinkUnit("recoverer")
+
+            async def on_workflow(self, ctx) -> AsyncGenerator[
+                Union[ActionCall, HumanCall, EnterAgent, LLMCall, RETURN], None
+            ]:
+                feedback = yield HumanCall(prompt="confirm?")
+                captured.append(feedback)
+
+        await Agent(llm=llm).arun(
+            goal="human resolve test",
+            mode=RunMode.AMPHIFLOW,
+            max_consecutive_fallbacks=2,
+        )
+
+        assert captured == ["yes please"]
+
+    @pytest.mark.asyncio
+    async def test_resolve_tool_only_present_during_fallback(self):
+        """The resolve_step_fallback tool is only injected for the duration
+        of the fallback's snapshot; user tools are restored on exit."""
+
+        async def always_fails():
+            raise RuntimeError("boom")
+
+        async def real_user_tool() -> str:
+            return "user-tool-output"
+
+        observed_tool_names_during_recovery = []
+
+        # Worker decision: call real_user_tool first (record what tools are
+        # visible to the LLM), then resolve, then finish.
+        check_step = ThinkDecision(
+            step_content="Inspecting tools",
+            output=[StepToolCall(
+                tool="real_user_tool",
+                tool_arguments=[],
+            )],
+            finish=False,
+        )
+        recover_step = ThinkDecision(
+            step_content="Submitting",
+            output=[StepToolCall(
+                tool="resolve_step_fallback",
+                tool_arguments=[ToolArgument(name="result", value="recovered")],
+            )],
+            finish=False,
+        )
+        finish_step = ThinkDecision(step_content="Done", output=[], finish=True)
+        llm = _MockLLM(structured_responses=[check_step, recover_step, finish_step])
+
+        captured = []
+
+        class Agent(AmphibiousAutoma[CognitiveContext]):
+            recoverer = think_unit(CognitiveWorker.inline("Recover."), max_attempts=5)
+
+            async def on_agent(self, ctx) -> AsyncGenerator[Any, Any]:
+                # Record the tool names visible inside fallback agent.
+                observed_tool_names_during_recovery.extend(
+                    [t.tool_name for t in ctx.tools.get_all()]
+                )
+                yield ThinkUnit("recoverer")
+
+            async def on_workflow(self, ctx) -> AsyncGenerator[
+                Union[ActionCall, HumanCall, EnterAgent, LLMCall, RETURN], None
+            ]:
+                data = yield ActionCall("always_fails")
+                captured.append(data)
+                # After workflow resumes, the fallback tool should be GONE.
+                captured.append([t.tool_name for t in ctx.tools.get_all()])
+
+        await Agent(llm=llm).arun(
+            goal="tool scope test",
+            tools=[
+                FunctionToolSpec.from_raw(always_fails),
+                FunctionToolSpec.from_raw(real_user_tool),
+            ],
+            mode=RunMode.AMPHIFLOW,
+            max_consecutive_fallbacks=2,
+        )
+
+        # During fallback, resolve_step_fallback is in the tool surface
+        # alongside user tools.
+        assert "resolve_step_fallback" in observed_tool_names_during_recovery
+        assert "real_user_tool" in observed_tool_names_during_recovery
+        # After workflow resumes (snapshot rolled back), the fallback tool
+        # is gone but user tools remain.
+        post_resume_tools = captured[1]
+        assert "resolve_step_fallback" not in post_resume_tools
+        assert "real_user_tool" in post_resume_tools
