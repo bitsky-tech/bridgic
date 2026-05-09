@@ -1159,7 +1159,12 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
                             "[ERROR] threshold breached → full fallback to on_agent",
                             color="red",
                         )
-                        await workflow_gen.aclose()
+                        # Close workflow_gen best-effort; do not let an aclose
+                        # exception block the fallback we are about to run.
+                        try:
+                            await workflow_gen.aclose()
+                        except Exception:
+                            pass
                         workflow_gen = None
                         agent_return = await self._invoke_template(
                             self.on_agent(ctx), ctx, scope="agent",

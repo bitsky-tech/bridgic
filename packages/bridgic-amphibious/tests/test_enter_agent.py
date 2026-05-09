@@ -204,3 +204,57 @@ class TestEnterAgentToolScoping:
 
         # The sub-agent saw only the filtered tool name.
         assert seen_tool_names == [["request_human"]]
+
+
+# ---------------------------------------------------------------------------
+# 4. EnterAgent in pure WORKFLOW mode (non-state-machine path)
+# ---------------------------------------------------------------------------
+
+
+class TestEnterAgentInWorkflowMode:
+    """When the user forces ``mode=RunMode.WORKFLOW`` but yields EnterAgent,
+    dispatch goes through ``_dispatch_call``'s recursive ``_invoke_template``
+    branch (no state machine — there's no fallback to track). Verify it works."""
+
+    @pytest.mark.asyncio
+    async def test_enter_agent_works_in_forced_workflow_mode(self):
+        from bridgic.amphibious import RunMode
+
+        on_agent_invocations = []
+
+        class Agent(AmphibiousAutoma[CognitiveContext]):
+            async def on_agent(self, ctx):
+                on_agent_invocations.append(ctx.goal)
+                worker = CognitiveWorker.inline("plan", llm=self.llm)
+                await self._run(worker, max_attempts=1)
+
+            async def on_workflow(self, ctx) -> AsyncGenerator[
+                Union[ActionCall, HumanCall, EnterAgent, LLMCall], None
+            ]:
+                yield EnterAgent(goal="forced-workflow-sub")
+
+        llm = MockLLM([_finish()])
+        await Agent(llm=llm).arun(context=_ctx(), mode=RunMode.WORKFLOW)
+
+        # on_agent ran once with the snapshotted sub-goal.
+        assert on_agent_invocations == ["forced-workflow-sub"]
+
+    @pytest.mark.asyncio
+    async def test_enter_agent_in_workflow_mode_with_async_gen_on_agent(self):
+        """Forced WORKFLOW + EnterAgent + async-gen on_agent yielding ThinkUnit."""
+        from bridgic.amphibious import RunMode
+
+        class Agent(AmphibiousAutoma[CognitiveContext]):
+            sub_think = think_unit(CognitiveWorker.inline("sub"), max_attempts=1)
+
+            async def on_agent(self, ctx) -> AsyncGenerator[Any, Any]:
+                yield ThinkUnit("sub_think")
+
+            async def on_workflow(self, ctx) -> AsyncGenerator[
+                Union[ActionCall, HumanCall, EnterAgent, LLMCall], None
+            ]:
+                yield EnterAgent(goal="A")
+
+        llm = MockLLM([_finish()])
+        await Agent(llm=llm).arun(context=_ctx(), mode=RunMode.WORKFLOW)
+        assert llm.call_count >= 1
