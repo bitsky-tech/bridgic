@@ -980,7 +980,13 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
             The value captured from a ``RETURN(value)`` yield, or
             ``None`` if the run ends without RETURN.
         """
-        workflow_gen = self.on_workflow(ctx)
+        workflow_obj = self.on_workflow(ctx)
+        if not inspect.isasyncgen(workflow_obj):
+            # Coroutine-form on_workflow: no yields, so no fallback
+            # machinery applies. Just await it; treat the coroutine's
+            # return value as RETURN-equivalent (None means no override).
+            return await workflow_obj
+        workflow_gen = workflow_obj
         agent_gen: Optional[Any] = None
         agent_mode_stack: Optional[AsyncExitStack] = None
         fallback_slot: Optional[_FallbackSlot] = None
@@ -2568,8 +2574,10 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
 
         A subclass that writes ``async def on_workflow(...): pass`` (e.g. an
         AI-generated stub) produces a coroutine, not an async generator —
-        treat that as "not overridden" so RunMode resolution falls back to
-        the agent path instead of crashing on generator-protocol calls.
+        treat that as "not overridden" so RunMode.AUTO falls back to the
+        agent path. Users who deliberately want a coroutine-form workflow
+        can force ``mode=RunMode.WORKFLOW`` or ``RunMode.AMPHIFLOW``; the
+        dispatcher handles both forms in those paths.
         """
         impl = type(self).on_workflow
         if impl is AmphibiousAutoma.on_workflow:

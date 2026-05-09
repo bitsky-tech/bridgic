@@ -193,3 +193,48 @@ class TestGeneratorVsCoroutineForms:
                 await self._run(worker)
 
         await Agent(llm=llm).arun(context=_ctx())  # no exception → pass
+
+    @pytest.mark.asyncio
+    async def test_forced_amphiflow_with_coroutine_form_on_workflow(self):
+        """Coroutine-form on_workflow in FORCED AMPHIFLOW mode is awaited
+        directly (no state-machine driving). Without proper coroutine
+        handling the framework would crash on ``__anext__`` or silently
+        fall back to on_agent.
+
+        Note: under RunMode.AUTO, ``_has_workflow`` only counts async-gen
+        forms — coroutine on_workflow is treated as a stub and AUTO
+        resolves to AGENT. This test forces AMPHIFLOW to exercise the
+        ``_drive_amphiflow`` coroutine path explicitly.
+        """
+        from bridgic.amphibious import RunMode
+
+        llm = MockLLM(structured_responses=[_finish_step()])
+        workflow_ran = []
+        on_agent_ran = []
+
+        class Agent(AmphibiousAutoma[CognitiveContext]):
+            async def on_agent(self, ctx):
+                on_agent_ran.append(True)
+                worker = CognitiveWorker.inline("plan", llm=self.llm)
+                await self._run(worker)
+
+            # Coroutine-form on_workflow (no yields, just imperative code).
+            async def on_workflow(self, ctx):
+                workflow_ran.append(True)
+                return "coroutine-result"
+
+        agent = Agent(llm=llm)
+        await agent.arun(context=_ctx(), mode=RunMode.AMPHIFLOW)
+
+        # The user's coroutine workflow MUST have executed.
+        assert workflow_ran == [True], (
+            "coroutine-form on_workflow was skipped — framework probably "
+            "fell back to on_agent silently."
+        )
+        # And on_agent should NOT have run (no failure to recover from).
+        assert on_agent_ran == [], (
+            "on_agent should not have run; coroutine workflow returned "
+            "normally without error."
+        )
+        # The coroutine's return value becomes final_answer.
+        assert agent.final_answer == "coroutine-result"
