@@ -17,7 +17,7 @@ from bridgic.amphibious import (
     CognitiveWorker,
     ActionCall,
     HumanCall,
-    AgentCall,
+    EnterAgent,
     LLMCall,
     RETURN,
     StepToolCall,
@@ -167,15 +167,15 @@ class TestGeneratorVsCoroutineForms:
 
     @pytest.mark.asyncio
     async def test_on_agent_generator_form_with_thinkcall(self):
-        """on_agent as a generator yielding ThinkCall."""
+        """on_agent as a generator yielding ThinkUnit."""
         llm = MockLLM(structured_responses=[_finish_step()])
-        from bridgic.amphibious import ThinkCall
+        from bridgic.amphibious import ThinkUnit
 
         class Agent(AmphibiousAutoma[CognitiveContext]):
             main_think = think_unit(CognitiveWorker.inline("plan"), max_attempts=1)
 
             async def on_agent(self, ctx) -> AsyncGenerator[Any, Any]:
-                yield ThinkCall("main_think")
+                yield ThinkUnit("main_think")
 
         await Agent(llm=llm).arun(context=_ctx())  # no exception → pass
 

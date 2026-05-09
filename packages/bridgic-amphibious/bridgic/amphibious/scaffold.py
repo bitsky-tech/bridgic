@@ -36,10 +36,10 @@ _AMPHI_PY = '''\
     CognitiveWorker,
     think_unit,
     ActionCall,
-    AgentCall,
+    EnterAgent,
     HumanCall,
     LLMCall,
-    ThinkCall,
+    ThinkUnit,
     RETURN,
 )
 
@@ -51,29 +51,31 @@ class AmphiContext(CognitiveContext):
 
 class Amphi(AmphibiousAutoma[AmphiContext]):
     # Think unit — one observe-think-act cycle driven by an LLM. Invoked
-    # from on_agent via ``yield ThinkCall("main_think")``.
+    # from on_agent via ``yield ThinkUnit("main_think")``.
     main_think = think_unit(
         CognitiveWorker.inline("Decide and execute the next step."),
         max_attempts=10,
     )
 
-    # Agent mode: LLM-driven cognitive flow. Yield ThinkCall (named
-    # think_units), ActionCall / HumanCall / LLMCall as needed. Yield
+    # Agent mode: LLM-driven cognitive flow. Only ThinkUnit (named
+    # think_units) and RETURN are allowed here — deterministic tool /
+    # HITL / LLM calls belong in on_workflow or in worker hooks. Yield
     # RETURN(answer) to set the final answer; otherwise the framework
     # auto-captures from the finishing think step's step_content.
     async def on_agent(self, ctx: AmphiContext):
-        yield ThinkCall("main_think")
+        yield ThinkUnit("main_think")
         # TODO
 
     # Workflow mode: developer-defined deterministic steps. Implementing
-    # both on_agent and on_workflow enables AMPHIFLOW (workflow-first with
-    # automatic agent fallback). Yield ActionCall / HumanCall / LLMCall /
-    # AgentCall (delegates to on_agent for a sub-task).
+    # both on_agent and on_workflow enables AMPHIFLOW (workflow-led, with
+    # automatic agent fallback on底层-Call failure). EnterAgent is the
+    # explicit mode-switch primitive: workflow suspends, on_agent runs,
+    # workflow resumes when on_agent's generator exhausts.
     async def on_workflow(self, ctx: AmphiContext):
         # result = yield ActionCall("tool_name", arg="value")
         # feedback = yield HumanCall(prompt="Confirm?")
         # text = yield LLMCall.chat("Summarize the run")
-        # yield AgentCall(goal="Delegate sub-task to on_agent")
+        # yield EnterAgent(goal="Switch to agent mode for this sub-task")
         # yield RETURN("final answer")
         if False:
             yield  # makes this a proper async generator

@@ -1,10 +1,10 @@
-"""Tests for the ``ThinkCall`` yield primitive.
+"""Tests for the ``ThinkUnit`` yield primitive.
 
 Verifies:
 
-* ``yield ThinkCall("name")`` resolves a class-level ``think_unit`` descriptor
+* ``yield ThinkUnit("name")`` resolves a class-level ``think_unit`` descriptor
 * descriptor field overlays work (max_attempts, until, tools, skills)
-* ThinkCall result is sent back via ``asend`` (worker output_schema or None)
+* ThinkUnit result is sent back via ``asend`` (worker output_schema or None)
 * unknown / non-descriptor names raise ``AttributeError``
 * descriptor instance access returns the descriptor itself (no
   ``await self.<name>`` shortcut)
@@ -20,9 +20,9 @@ from bridgic.amphibious import (
     CognitiveWorker,
     ActionCall,
     HumanCall,
-    AgentCall,
+    EnterAgent,
     LLMCall,
-    ThinkCall,
+    ThinkUnit,
     ThinkUnitDescriptor,
     RETURN,
     StepToolCall,
@@ -64,10 +64,10 @@ def _finish() -> ThinkDecision:
 
 
 def _ctx() -> CognitiveContext:
-    return CognitiveContext(goal="ThinkCall test")
+    return CognitiveContext(goal="ThinkUnit test")
 
 
-class TestThinkCallResolution:
+class TestThinkUnitResolution:
 
     def test_descriptor_returned_at_class_and_instance_level(self):
         """Descriptor.__get__ returns self for both class and instance access."""
@@ -98,7 +98,7 @@ class TestThinkCallResolution:
         assert not hasattr(descriptor, "until")
 
 
-class TestThinkCallDispatch:
+class TestThinkUnitDispatch:
 
     @pytest.mark.asyncio
     async def test_yield_think_call_invokes_descriptor(self):
@@ -108,7 +108,7 @@ class TestThinkCallDispatch:
             main_think = think_unit(CognitiveWorker.inline("plan"), max_attempts=1)
 
             async def on_agent(self, ctx) -> AsyncGenerator[Any, Any]:
-                yield ThinkCall("main_think")
+                yield ThinkUnit("main_think")
 
         await Agent(llm=llm).arun(context=_ctx())
 
@@ -116,7 +116,7 @@ class TestThinkCallDispatch:
 
     @pytest.mark.asyncio
     async def test_max_attempts_overlay(self):
-        """ThinkCall(max_attempts=N) overrides the descriptor's default."""
+        """ThinkUnit(max_attempts=N) overrides the descriptor's default."""
         llm = MockLLM([_finish()] * 5)
 
         class Agent(AmphibiousAutoma[CognitiveContext]):
@@ -124,14 +124,14 @@ class TestThinkCallDispatch:
 
             async def on_agent(self, ctx) -> AsyncGenerator[Any, Any]:
                 # First call hits descriptor's default (1)
-                yield ThinkCall("main_think")
+                yield ThinkUnit("main_think")
                 # Second call overrides to 3 — but worker finish=True so it
                 # short-circuits after 1 cycle anyway. Verify call doesn't error.
-                yield ThinkCall("main_think", max_attempts=3)
+                yield ThinkUnit("main_think", max_attempts=3)
 
         await Agent(llm=llm).arun(context=_ctx())
 
-        # Two ThinkCall yields, each runs at least one cycle → 2+ astructured_output calls.
+        # Two ThinkUnit yields, each runs at least one cycle → 2+ astructured_output calls.
         assert llm.call_count >= 2
 
     @pytest.mark.asyncio
@@ -139,27 +139,27 @@ class TestThinkCallDispatch:
 
         class Agent(AmphibiousAutoma[CognitiveContext]):
             async def on_agent(self, ctx) -> AsyncGenerator[Any, Any]:
-                yield ThinkCall("does_not_exist")
+                yield ThinkUnit("does_not_exist")
 
         with pytest.raises(AttributeError, match="does_not_exist"):
             await Agent(llm=MockLLM([])).arun(context=_ctx())
 
     @pytest.mark.asyncio
     async def test_non_descriptor_name_raises_attribute_error(self):
-        """yield ThinkCall("attr_name") where attr exists but isn't a ThinkUnitDescriptor."""
+        """yield ThinkUnit("attr_name") where attr exists but isn't a ThinkUnitDescriptor."""
 
         class Agent(AmphibiousAutoma[CognitiveContext]):
             some_var = 42  # not a descriptor
 
             async def on_agent(self, ctx) -> AsyncGenerator[Any, Any]:
-                yield ThinkCall("some_var")
+                yield ThinkUnit("some_var")
 
         with pytest.raises(AttributeError, match="some_var"):
             await Agent(llm=MockLLM([])).arun(context=_ctx())
 
     @pytest.mark.asyncio
     async def test_until_callback_overrides_descriptor_default(self):
-        """ThinkCall(until=...) overrides the descriptor's until callback."""
+        """ThinkUnit(until=...) overrides the descriptor's until callback."""
         llm = MockLLM([_finish()])
         invocations = []
 
@@ -175,7 +175,7 @@ class TestThinkCallDispatch:
             )
 
             async def on_agent(self, ctx) -> AsyncGenerator[Any, Any]:
-                yield ThinkCall("looped", until=my_condition)
+                yield ThinkUnit("looped", until=my_condition)
 
         await Agent(llm=llm).arun(context=_ctx())
 
@@ -186,49 +186,49 @@ class TestThinkCallDispatch:
 
     @pytest.mark.asyncio
     async def test_think_call_in_on_workflow_raises(self):
-        """ThinkCall is on_agent-only; yielding it from on_workflow raises."""
+        """ThinkUnit is on_agent-only; yielding it from on_workflow raises."""
         llm = MockLLM([_finish()])
 
         class Agent(AmphibiousAutoma[CognitiveContext]):
             inline_think = think_unit(CognitiveWorker.inline("plan"), max_attempts=1)
 
             async def on_workflow(self, ctx) -> AsyncGenerator[
-                Union[ActionCall, HumanCall, AgentCall, LLMCall], None
+                Union[ActionCall, HumanCall, EnterAgent, LLMCall], None
             ]:
-                yield ThinkCall("inline_think")
+                yield ThinkUnit("inline_think")
 
         with pytest.raises(RuntimeError, match="only valid inside on_agent"):
             await Agent(llm=llm).arun(context=_ctx())
 
     @pytest.mark.asyncio
     async def test_think_call_in_on_agent_allowed(self):
-        """ThinkCall yielded from on_agent works (the canonical case)."""
+        """ThinkUnit yielded from on_agent works (the canonical case)."""
         llm = MockLLM([_finish()])
 
         class Agent(AmphibiousAutoma[CognitiveContext]):
             inline_think = think_unit(CognitiveWorker.inline("plan"), max_attempts=1)
 
             async def on_agent(self, ctx) -> AsyncGenerator[Any, Any]:
-                yield ThinkCall("inline_think")
+                yield ThinkUnit("inline_think")
 
         await Agent(llm=llm).arun(context=_ctx())
         assert llm.call_count == 1
 
     @pytest.mark.asyncio
     async def test_think_call_inside_recursive_agent_call_allowed(self):
-        """ThinkCall is allowed inside on_agent when reached via AgentCall."""
+        """ThinkUnit is allowed inside on_agent when reached via EnterAgent."""
         llm = MockLLM([_finish()])
 
         class Agent(AmphibiousAutoma[CognitiveContext]):
             inline_think = think_unit(CognitiveWorker.inline("plan"), max_attempts=1)
 
             async def on_agent(self, ctx) -> AsyncGenerator[Any, Any]:
-                yield ThinkCall("inline_think")
+                yield ThinkUnit("inline_think")
 
             async def on_workflow(self, ctx) -> AsyncGenerator[
-                Union[ActionCall, HumanCall, AgentCall, LLMCall], None
+                Union[ActionCall, HumanCall, EnterAgent, LLMCall], None
             ]:
-                yield AgentCall(goal="sub-task")
+                yield EnterAgent(goal="sub-task")
 
         await Agent(llm=llm).arun(context=_ctx())
         assert llm.call_count == 1

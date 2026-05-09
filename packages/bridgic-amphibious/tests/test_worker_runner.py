@@ -3,7 +3,7 @@
 Verifies:
 
 * A custom (non-CognitiveWorker) class satisfying the ``WorkerRunner``
-  Protocol can be plugged into ``think_unit`` / ``ThinkCall``
+  Protocol can be plugged into ``think_unit`` / ``ThinkUnit``
 * The framework calls ``run(agent, ctx)`` once and skips the
   observe-think-act cycle
 * ``until`` / ``max_attempts`` / ``tools`` overlays are ignored on the
@@ -22,9 +22,9 @@ from bridgic.amphibious import (
     WorkerRunner,
     ActionCall,
     HumanCall,
-    AgentCall,
+    EnterAgent,
     LLMCall,
-    ThinkCall,
+    ThinkUnit,
     Step,
     StepToolCall,
     ToolArgument,
@@ -109,11 +109,11 @@ class TestWorkerRunnerProtocol:
         assert not isinstance(_NoRunObject(), WorkerRunner)
 
 
-class TestThinkCallWithWorkerRunner:
+class TestThinkUnitWithWorkerRunner:
 
     @pytest.mark.asyncio
     async def test_external_runner_invoked_once_per_thinkcall(self):
-        """yield ThinkCall(name) where descriptor wraps a WorkerRunner →
+        """yield ThinkUnit(name) where descriptor wraps a WorkerRunner →
         runner.run(agent, ctx) called once."""
         runner = CountingExternalWorker()
 
@@ -121,9 +121,9 @@ class TestThinkCallWithWorkerRunner:
             external = think_unit(runner)
 
             async def on_agent(self, ctx) -> AsyncGenerator[Any, Any]:
-                yield ThinkCall("external")
-                yield ThinkCall("external")
-                yield ThinkCall("external")
+                yield ThinkUnit("external")
+                yield ThinkUnit("external")
+                yield ThinkUnit("external")
 
         await Agent(llm=_DummyLLM()).arun(context=CognitiveContext(goal="Q3 test"))
 
@@ -138,7 +138,7 @@ class TestThinkCallWithWorkerRunner:
             external = think_unit(recorder)
 
             async def on_agent(self, ctx) -> AsyncGenerator[Any, Any]:
-                yield ThinkCall("external")
+                yield ThinkUnit("external")
 
         agent = Agent(llm=_DummyLLM())
         ctx = CognitiveContext(goal="hello-runner")
@@ -164,11 +164,11 @@ class TestThinkCallWithWorkerRunner:
             )
 
             async def on_agent(self, ctx) -> AsyncGenerator[Any, Any]:
-                yield ThinkCall("external")
+                yield ThinkUnit("external")
 
         await Agent(llm=_DummyLLM()).arun(context=CognitiveContext(goal="overlay-ignore"))
 
-        # WorkerRunner is invoked exactly once per ThinkCall — overlays ignored.
+        # WorkerRunner is invoked exactly once per ThinkUnit — overlays ignored.
         assert runner.invocations == 1
 
 

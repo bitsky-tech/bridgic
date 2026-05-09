@@ -82,5 +82,5 @@ class TestCreateProject:
         assert "async def on_agent(self, ctx" in source
         assert "async def on_workflow(self, ctx" in source
         # Workflow primitives imported (referenced in commented hints)
-        for name in ("ActionCall", "AgentCall", "HumanCall"):
+        for name in ("ActionCall", "EnterAgent", "HumanCall"):
             assert name in source, f"{name} should be visible in the template"

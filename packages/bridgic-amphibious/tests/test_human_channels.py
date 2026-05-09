@@ -18,7 +18,7 @@ from bridgic.amphibious import (
     CognitiveContext,
     ActionCall,
     HumanCall,
-    AgentCall,
+    EnterAgent,
     LLMCall,
     human_channel,
 )

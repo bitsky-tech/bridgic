@@ -174,18 +174,28 @@ def _coerce_none_to_list(v: Any) -> list:
 #
 # Used by every user-facing template method (on_workflow / on_agent /
 # observation / before_action / after_action) as an async generator
-# yielding these. Six atomic types:
+# yielding these. Three categories, six atomic types:
 #
-#   ActionCall  — deterministic single-tool execution           (any scope)
-#   HumanCall   — pause and request human input via             (any scope)
-#                 ``@human_channel`` registry
-#   LLMCall     — direct LLM invocation via a bridgic-core      (any scope)
-#                 protocol (chat / structure_output / tool_selector)
-#   AgentCall   — delegate a sub-task by recursively driving    (on_workflow only)
-#                 ``on_agent`` in a snapshotted context
-#   ThinkCall   — invoke a class-level ``think_unit`` by name   (on_agent only)
-#   RETURN      — communicate a "return value" out of an async  (any scope)
-#                 generator (PEP 525 forbids native ``return value``)
+#   底层 (atomic operations on the world):
+#     ActionCall  — deterministic single-tool execution         (on_workflow / hooks)
+#     HumanCall   — pause and request human input via           (on_workflow / hooks)
+#                   ``@human_channel`` registry
+#     LLMCall     — direct LLM invocation via a bridgic-core    (on_workflow / hooks)
+#                   protocol (chat / structure_output / tool_selector)
+#
+#   模式切换 (mode-switch signals — state-machine transitions):
+#     EnterAgent  — suspend on_workflow, run on_agent in a      (on_workflow only)
+#                   snapshotted context; agent generator
+#                   exhaustion implicitly resumes workflow
+#
+#   认知 (cognitive composition inside on_agent):
+#     ThinkUnit   — invoke a class-level ``think_unit`` by name (on_agent only)
+#
+#   控制 (control flow):
+#     RETURN      — communicate a "return value" out of an      (any scope)
+#                   async generator (PEP 525 forbids native
+#                   ``return value``); from a top-level body
+#                   this terminates the entire arun
 #
 # Scope validation lives in ``_dispatch_call``; mismatches raise
 # ``RuntimeError`` at dispatch time.
@@ -195,7 +205,7 @@ class WorkflowDecision(BaseModel):
     """
     Single-step deterministic decision for workflow mode.
 
-    Used by: _amphibious_automa.py (_dispatch_flow, ActionCall)
+    Used by: _amphibious_automa.py (state-machine driver, ActionCall)
     """
     model_config = ConfigDict(extra="forbid")
 
@@ -205,21 +215,19 @@ class WorkflowDecision(BaseModel):
 
 @dataclass(init=False)
 class ActionCall:
-    """Yielded by on_workflow() for deterministic single-tool execution.
+    """Yielded by on_workflow() / hooks for deterministic single-tool execution.
 
-    Replaces the removed ``step()`` shorthand function. Each instance wraps
-    exactly one tool call together with an optional CognitiveWorker override.
+    Each instance wraps exactly one tool call.
 
-    Used by: _amphibious_automa.py (_dispatch_flow)
+    Used by: _amphibious_automa.py (state-machine driver)
 
     Usage::
         yield ActionCall("navigate_to", url="http://example.com")
         yield ActionCall("click_element_by_ref", description="Click submit", ref="e42")
-        result = yield ActionCall("fill_field", name="user", value="john", worker=my_worker)
+        result = yield ActionCall("fill_field", name="user", value="john")
     """
     tool_name: str
     description: str
-    worker: Optional[Any]
     tool_args: Dict[str, Any]
     decision: WorkflowDecision = field(repr=False)
 
@@ -228,12 +236,10 @@ class ActionCall:
         tool_name: str,
         *,
         description: str = "",
-        worker: Optional[Any] = None,
         **tool_args: Any,
     ) -> None:
         self.tool_name = tool_name
         self.description = description
-        self.worker = worker
         self.tool_args = tool_args
         self.decision = WorkflowDecision(
             step_content=description,
@@ -276,36 +282,50 @@ class HumanCall:
 
 
 @dataclass
-class AgentCall:
-    """Yielded to delegate a sub-task to the agent's own ``on_agent`` strategy.
+class EnterAgent:
+    """Yielded to suspend ``on_workflow`` and switch into ``on_agent``.
 
-    Only valid inside ``on_workflow``. AgentCall snapshots the context
-    (fresh ``goal``, optional ``history`` / ``tools`` / ``skills``
-    filters) and recursively re-enters ``on_agent`` to handle the
-    sub-task. Whatever the user has declared on the class —
-    ``think_unit`` declarations, ``@human_channel`` handlers,
-    ``observation`` hooks — is reused for the sub-goal.
+    Only valid inside ``on_workflow``. EnterAgent is a **mode-switch**
+    signal — not a function call. The dispatcher is a state machine
+    holding both a workflow generator and an agent generator slot;
+    yielding ``EnterAgent`` suspends the workflow generator at this
+    point and creates a fresh agent generator. When the agent
+    generator naturally exhausts (an implicit suspend signal), control
+    returns to the workflow generator at the next instruction after
+    this yield.
 
-    AgentCall scopes the sub-agent's *context* (what it sees); it does
-    not control *how it thinks*. For a single named cognitive step,
-    declare a ``think_unit`` and ``yield ThinkCall("name")`` from
-    inside ``on_agent`` instead.
+    The optional ``goal`` / ``history`` / ``tools`` / ``skills`` fields
+    snapshot the context for the duration of the agent flow:
+
+    * ``goal``    — overrides ``ctx.goal`` while in agent mode
+    * ``history`` — overrides ``ctx.cognitive_history`` (None → fresh)
+    * ``tools``   — name-filter applied to ``ctx.tools``
+    * ``skills``  — name-filter applied to ``ctx.skills``
+
+    All overrides are restored when the agent generator exhausts. Each
+    EnterAgent creates a fresh agent generator from scratch — there is
+    no stack, no recursion, no resumable agent state across switches.
+
+    EnterAgent scopes *what the agent sees*; it does not control *how
+    it thinks*. For a single named cognitive step, declare a
+    ``think_unit`` and ``yield ThinkUnit("name")`` from inside
+    ``on_agent`` instead.
 
     Requires the agent class to override ``on_agent``; raises
     ``RuntimeError`` at dispatch time otherwise.
 
-    Used by: _amphibious_automa.py (_dispatch_call)
+    Used by: _amphibious_automa.py (state-machine driver)
 
     Usage::
 
-        yield AgentCall(goal="Handle the login popup")
-        yield AgentCall(goal="Pick a flight", tools=["search_flights", "book"])
-        yield AgentCall(goal="Summarize", history=prior_messages, skills=["summary"])
+        yield EnterAgent(goal="Handle the login popup")
+        yield EnterAgent(goal="Pick a flight", tools=["search_flights", "book"])
+        yield EnterAgent(goal="Summarize", history=prior_messages, skills=["summary"])
     """
     goal: str = ""
     history: Optional[Any] = None       # Optional[CognitiveHistory]; None → fresh CognitiveHistory()
-    tools: Optional[List[str]] = None   # Tool-name filter applied to ctx.tools for the sub-agent
-    skills: Optional[List[str]] = None  # Skill-name filter applied to ctx.skills for the sub-agent
+    tools: Optional[List[str]] = None   # Tool-name filter applied to ctx.tools while in agent mode
+    skills: Optional[List[str]] = None  # Skill-name filter applied to ctx.skills while in agent mode
 
 
 LLMCallProtocol = Literal["chat", "structure_output", "tool_selector"]
@@ -405,7 +425,7 @@ class LLMCall:
 
 
 @dataclass(frozen=True)
-class ThinkCall:
+class ThinkUnit:
     """Yielded to invoke a class-level ``think_unit`` declaration by name.
 
     Only valid inside ``on_agent``. The dispatcher resolves ``name`` via
@@ -417,11 +437,11 @@ class ThinkCall:
     The result returned via ``asend()`` is the worker's typed output (or
     ``None`` if the worker has no ``output_schema``).
 
-    Used by: _amphibious_automa.py (_dispatch_call)
+    Used by: _amphibious_automa.py (state-machine driver)
 
     Usage::
-        result = yield ThinkCall("main_think")
-        result = yield ThinkCall("exec_think", until=lambda c: c.done, max_attempts=20)
+        result = yield ThinkUnit("main_think")
+        result = yield ThinkUnit("exec_think", until=lambda c: c.done, max_attempts=20)
     """
     name: str
     until: Optional[Callable[..., Union[bool, Awaitable[bool]]]] = None
@@ -449,7 +469,7 @@ class RETURN:
 
     Usage::
         async def on_agent(self, ctx):
-            yield ThinkCall("main_think", max_attempts=20)
+            yield ThinkUnit("main_think", max_attempts=20)
             yield RETURN(ctx.cognitive_history.get_all()[-1].content)
     """
     value: Any = None
@@ -508,7 +528,7 @@ class ActionResult(BaseModel):
 class ToolResult:
     """Single tool execution result returned to workflow generator via asend().
 
-    Used by: _amphibious_automa.py (_dispatch_flow), on_workflow user code
+    Used by: _amphibious_automa.py (state-machine driver), on_workflow user code
     """
     tool_name: str
     tool_arguments: Dict[str, Any]

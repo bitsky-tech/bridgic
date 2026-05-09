@@ -19,7 +19,7 @@ from bridgic.amphibious import (
     CognitiveWorker,
     ActionCall,
     HumanCall,
-    AgentCall,
+    EnterAgent,
     LLMCall,
     RETURN,
     StepToolCall,
@@ -64,7 +64,7 @@ class TestReturnPrimitive:
 
         class Agent(AmphibiousAutoma[CognitiveContext]):
             async def on_workflow(self, ctx) -> AsyncGenerator[
-                Union[ActionCall, HumanCall, AgentCall, LLMCall], None
+                Union[ActionCall, HumanCall, EnterAgent, LLMCall], None
             ]:
                 yield RETURN("explicit-answer")
 
@@ -80,7 +80,7 @@ class TestReturnPrimitive:
 
         class Agent(AmphibiousAutoma[CognitiveContext]):
             async def on_workflow(self, ctx) -> AsyncGenerator[
-                Union[ActionCall, HumanCall, AgentCall, LLMCall], None
+                Union[ActionCall, HumanCall, EnterAgent, LLMCall], None
             ]:
                 yield RETURN("done")
                 executed_after.append("REACHED")  # must never run
@@ -96,7 +96,7 @@ class TestReturnPrimitive:
 
         class Agent(AmphibiousAutoma[CognitiveContext]):
             async def on_workflow(self, ctx) -> AsyncGenerator[
-                Union[ActionCall, HumanCall, AgentCall, LLMCall], None
+                Union[ActionCall, HumanCall, EnterAgent, LLMCall], None
             ]:
                 if False:
                     yield  # empty generator
@@ -135,7 +135,7 @@ class TestReturnPrimitive:
                 return "ok"
 
             async def on_workflow(self, ctx) -> AsyncGenerator[
-                Union[ActionCall, HumanCall, AgentCall, LLMCall], None
+                Union[ActionCall, HumanCall, EnterAgent, LLMCall], None
             ]:
                 resp = yield HumanCall(prompt="step-1")
                 log.append(("got", resp))
@@ -153,15 +153,16 @@ class TestReturnPrimitive:
 
         class Agent(AmphibiousAutoma[CognitiveContext]):
             async def on_workflow(self, ctx) -> AsyncGenerator[
-                Union[ActionCall, HumanCall, AgentCall, LLMCall], None
+                Union[ActionCall, HumanCall, EnterAgent, LLMCall], None
             ]:
                 yield RETURN({"kind": "structured", "n": 42})
 
         agent = Agent()
         agent._current_context = _ctx()
-        captured = await agent._dispatch_flow(
+        captured = await agent._invoke_template(
             agent.on_workflow(agent._current_context),
             agent._current_context,
+            scope="workflow",
         )
 
         assert captured == {"kind": "structured", "n": 42}

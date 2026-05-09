@@ -23,7 +23,7 @@ from bridgic.amphibious import (
     CognitiveWorker,
     ActionCall,
     HumanCall,
-    AgentCall,
+    EnterAgent,
     LLMCall,
     StepToolCall,
     ToolArgument,
@@ -107,7 +107,7 @@ class TestHumanCallInWorkflow:
                 return "approved"
 
             async def on_workflow(self, ctx) -> AsyncGenerator[
-                Union[ActionCall, HumanCall, AgentCall, LLMCall], None
+                Union[ActionCall, HumanCall, EnterAgent, LLMCall], None
             ]:
                 resp = yield HumanCall(prompt="Confirm the plan?")
                 captured.append(("response", resp))
@@ -133,7 +133,7 @@ class TestHumanCallInWorkflow:
                 return "terminal-reply"
 
             async def on_workflow(self, ctx) -> AsyncGenerator[
-                Union[ActionCall, HumanCall, AgentCall, LLMCall], None
+                Union[ActionCall, HumanCall, EnterAgent, LLMCall], None
             ]:
                 a = yield HumanCall(channel="feishu", prompt="Q1")
                 b = yield HumanCall(channel="terminal", prompt="Q2")
@@ -159,7 +159,7 @@ class TestHumanCallInWorkflow:
                 return "b"
 
             async def on_workflow(self, ctx) -> AsyncGenerator[
-                Union[ActionCall, HumanCall, AgentCall, LLMCall], None
+                Union[ActionCall, HumanCall, EnterAgent, LLMCall], None
             ]:
                 yield HumanCall(prompt="ambiguous")
 
@@ -174,7 +174,7 @@ class TestHumanCallInWorkflow:
                 return "a"
 
             async def on_workflow(self, ctx) -> AsyncGenerator[
-                Union[ActionCall, HumanCall, AgentCall, LLMCall], None
+                Union[ActionCall, HumanCall, EnterAgent, LLMCall], None
             ]:
                 yield HumanCall(channel="nonexistent", prompt="?")
 
@@ -192,7 +192,7 @@ class TestHumanCallInWorkflow:
                 return "yes"
 
             async def on_workflow(self, ctx) -> AsyncGenerator[
-                Union[ActionCall, HumanCall, AgentCall, LLMCall], None
+                Union[ActionCall, HumanCall, EnterAgent, LLMCall], None
             ]:
                 r = yield ActionCall(
                     "search_flights",
@@ -296,7 +296,7 @@ class TestChannelOverride:
                 return f"custom:{prompt}"
 
             async def on_workflow(self, ctx) -> AsyncGenerator[
-                Union[ActionCall, HumanCall, AgentCall, LLMCall], None
+                Union[ActionCall, HumanCall, EnterAgent, LLMCall], None
             ]:
                 resp = yield HumanCall(prompt="hi")
                 captured.append(("got", resp))
@@ -322,7 +322,7 @@ class TestChannelOverride:
                 return "from-child"
 
             async def on_workflow(self, ctx) -> AsyncGenerator[
-                Union[ActionCall, HumanCall, AgentCall, LLMCall], None
+                Union[ActionCall, HumanCall, EnterAgent, LLMCall], None
             ]:
                 resp = yield HumanCall(prompt="who answers?")
                 captured.append(resp)
@@ -351,7 +351,7 @@ class TestContextVarConcurrency:
                 return "from-A"
 
             async def on_workflow(self, ctx) -> AsyncGenerator[
-                Union[ActionCall, HumanCall, AgentCall, LLMCall], None
+                Union[ActionCall, HumanCall, EnterAgent, LLMCall], None
             ]:
                 r = yield HumanCall(prompt="A?")
                 results_a.append(r)
@@ -362,7 +362,7 @@ class TestContextVarConcurrency:
                 return "from-B"
 
             async def on_workflow(self, ctx) -> AsyncGenerator[
-                Union[ActionCall, HumanCall, AgentCall, LLMCall], None
+                Union[ActionCall, HumanCall, EnterAgent, LLMCall], None
             ]:
                 r = yield HumanCall(prompt="B?")
                 results_b.append(r)
@@ -464,7 +464,7 @@ class TestBuiltinToolInjection:
     async def test_builtin_injected_in_workflow_mode(self):
         class Agent(AmphibiousAutoma[CognitiveContext]):
             async def on_workflow(self, ctx) -> AsyncGenerator[
-                Union[ActionCall, HumanCall, AgentCall, LLMCall], None
+                Union[ActionCall, HumanCall, EnterAgent, LLMCall], None
             ]:
                 if False:
                     yield
@@ -510,7 +510,7 @@ class TestBuiltinToolInjection:
                 await self._run(worker, max_attempts=5)
 
             async def on_workflow(self, ctx) -> AsyncGenerator[
-                Union[ActionCall, HumanCall, AgentCall, LLMCall], None
+                Union[ActionCall, HumanCall, EnterAgent, LLMCall], None
             ]:
                 yield ActionCall("always_fails")
 

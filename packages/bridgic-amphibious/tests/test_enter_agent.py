@@ -1,6 +1,6 @@
-"""Tests for the unified ``AgentCall`` semantics (Q4).
+"""Tests for the unified ``EnterAgent`` semantics (Q4).
 
-After Q4: ``AgentCall`` defaults to delegating the sub-task to the
+After Q4: ``EnterAgent`` defaults to delegating the sub-task to the
 agent's own ``on_agent`` strategy (inside a snapshot). The legacy
 "ad-hoc worker" behavior is preserved as an escape hatch via the
 ``worker=`` field.
@@ -16,13 +16,13 @@ from bridgic.amphibious import (
     CognitiveWorker,
     ActionCall,
     HumanCall,
-    AgentCall,
+    EnterAgent,
     LLMCall,
     RETURN,
     StepToolCall,
     ToolArgument,
     think_unit,
-    ThinkCall,
+    ThinkUnit,
 )
 
 
@@ -61,15 +61,15 @@ def _finish() -> ThinkDecision:
 
 
 # ---------------------------------------------------------------------------
-# 1. Default delegation: AgentCall → on_agent
+# 1. Default delegation: EnterAgent → on_agent
 # ---------------------------------------------------------------------------
 
 
-class TestAgentCallDelegation:
+class TestEnterAgentDelegation:
 
     @pytest.mark.asyncio
     async def test_default_delegates_to_on_agent(self):
-        """AgentCall(goal=...) without worker → invokes on_agent in a snapshot."""
+        """EnterAgent(goal=...) without worker → invokes on_agent in a snapshot."""
         on_agent_invocations = []
 
         class Agent(AmphibiousAutoma[CognitiveContext]):
@@ -81,20 +81,20 @@ class TestAgentCallDelegation:
                 await self._run(worker, max_attempts=1)
 
             async def on_workflow(self, ctx) -> AsyncGenerator[
-                Union[ActionCall, HumanCall, AgentCall, LLMCall], None
+                Union[ActionCall, HumanCall, EnterAgent, LLMCall], None
             ]:
-                yield AgentCall(goal="sub-goal-1")
-                yield AgentCall(goal="sub-goal-2")
+                yield EnterAgent(goal="sub-goal-1")
+                yield EnterAgent(goal="sub-goal-2")
 
         llm = MockLLM([_finish(), _finish()])
         await Agent(llm=llm).arun(context=_ctx())
 
-        # on_agent runs once for each AgentCall, with the snapshotted goal.
+        # on_agent runs once for each EnterAgent, with the snapshotted goal.
         assert on_agent_invocations == ["sub-goal-1", "sub-goal-2"]
 
     @pytest.mark.asyncio
     async def test_snapshot_isolates_sub_goal_from_parent(self):
-        """The parent's ctx.goal is restored after the AgentCall returns."""
+        """The parent's ctx.goal is restored after the EnterAgent returns."""
         observed_goals = []
 
         class Agent(AmphibiousAutoma[CognitiveContext]):
@@ -104,10 +104,10 @@ class TestAgentCallDelegation:
                 await self._run(worker, max_attempts=1)
 
             async def on_workflow(self, ctx) -> AsyncGenerator[
-                Union[ActionCall, HumanCall, AgentCall, LLMCall], None
+                Union[ActionCall, HumanCall, EnterAgent, LLMCall], None
             ]:
                 observed_goals.append(("before-call", ctx.goal))
-                yield AgentCall(goal="sub-task")
+                yield EnterAgent(goal="sub-task")
                 observed_goals.append(("after-call", ctx.goal))
 
         llm = MockLLM([_finish()])
@@ -121,68 +121,68 @@ class TestAgentCallDelegation:
 
     @pytest.mark.asyncio
     async def test_no_on_agent_no_worker_raises(self):
-        """AgentCall without worker= and without on_agent override → RuntimeError."""
+        """EnterAgent without worker= and without on_agent override → RuntimeError."""
 
         class Agent(AmphibiousAutoma[CognitiveContext]):
             async def on_workflow(self, ctx) -> AsyncGenerator[
-                Union[ActionCall, HumanCall, AgentCall, LLMCall], None
+                Union[ActionCall, HumanCall, EnterAgent, LLMCall], None
             ]:
-                yield AgentCall(goal="orphan")
+                yield EnterAgent(goal="orphan")
 
         with pytest.raises(RuntimeError, match="requires an on_agent"):
             await Agent().arun(context=_ctx())
 
     @pytest.mark.asyncio
     async def test_delegation_reuses_think_units(self):
-        """on_agent's declared think_units are reusable from AgentCall."""
+        """on_agent's declared think_units are reusable from EnterAgent."""
         llm = MockLLM([_finish()] * 4)
 
         class Agent(AmphibiousAutoma[CognitiveContext]):
             sub_think = think_unit(CognitiveWorker.inline("sub"), max_attempts=1)
 
             async def on_agent(self, ctx) -> AsyncGenerator[Any, Any]:
-                yield ThinkCall("sub_think")
+                yield ThinkUnit("sub_think")
 
             async def on_workflow(self, ctx) -> AsyncGenerator[
-                Union[ActionCall, HumanCall, AgentCall, LLMCall], None
+                Union[ActionCall, HumanCall, EnterAgent, LLMCall], None
             ]:
-                yield AgentCall(goal="A")
-                yield AgentCall(goal="B")
+                yield EnterAgent(goal="A")
+                yield EnterAgent(goal="B")
 
         await Agent(llm=llm).arun(context=_ctx())
 
-        # Two AgentCall yields × one ThinkCall each → at least 2 think cycles
+        # Two EnterAgent yields × one ThinkUnit each → at least 2 think cycles
         assert llm.call_count >= 2
 
 
 # ---------------------------------------------------------------------------
-# 2. AgentCall fields: only context-scoping kwargs are allowed
+# 2. EnterAgent fields: only context-scoping kwargs are allowed
 # ---------------------------------------------------------------------------
 
 
-class TestAgentCallSlimFields:
+class TestEnterAgentSlimFields:
 
     def test_agent_call_rejects_worker_kwarg(self):
-        """AgentCall no longer accepts ``worker=`` — no ad-hoc escape hatch."""
+        """EnterAgent no longer accepts ``worker=`` — no ad-hoc escape hatch."""
         with pytest.raises(TypeError):
-            AgentCall(goal="x", worker=CognitiveWorker.inline("foo"))  # type: ignore[call-arg]
+            EnterAgent(goal="x", worker=CognitiveWorker.inline("foo"))  # type: ignore[call-arg]
 
     def test_agent_call_rejects_max_attempts_kwarg(self):
-        """AgentCall doesn't control "how to think" — no per-call attempt budget."""
+        """EnterAgent doesn't control "how to think" — no per-call attempt budget."""
         with pytest.raises(TypeError):
-            AgentCall(goal="x", max_attempts=3)  # type: ignore[call-arg]
+            EnterAgent(goal="x", max_attempts=3)  # type: ignore[call-arg]
 
     def test_agent_call_accepts_context_scoping_kwargs(self):
-        """AgentCall keeps tools / skills / history for sub-agent context scoping."""
+        """EnterAgent keeps tools / skills / history for sub-agent context scoping."""
         # No exception means the dataclass accepts these kwargs.
-        AgentCall(goal="x", tools=["t1"], skills=["s1"], history=None)
+        EnterAgent(goal="x", tools=["t1"], skills=["s1"], history=None)
 
 
-class TestAgentCallToolScoping:
+class TestEnterAgentToolScoping:
 
     @pytest.mark.asyncio
     async def test_agent_call_tools_filter_visible_to_sub_agent(self):
-        """``AgentCall(tools=[...])`` restricts what the sub-agent's on_agent sees."""
+        """``EnterAgent(tools=[...])`` restricts what the sub-agent's on_agent sees."""
         seen_tool_names: List[List[str]] = []
 
         class Agent(AmphibiousAutoma[CognitiveContext]):
@@ -195,9 +195,9 @@ class TestAgentCallToolScoping:
                     yield
 
             async def on_workflow(self, ctx) -> AsyncGenerator[
-                Union[ActionCall, HumanCall, AgentCall, LLMCall], None
+                Union[ActionCall, HumanCall, EnterAgent, LLMCall], None
             ]:
-                yield AgentCall(goal="scoped", tools=["request_human"])
+                yield EnterAgent(goal="scoped", tools=["request_human"])
 
         llm = MockLLM([_finish()])
         await Agent(llm=llm).arun(context=_ctx())

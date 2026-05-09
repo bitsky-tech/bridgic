@@ -27,7 +27,7 @@ import pytest
 
 from bridgic.amphibious import (
     ActionCall,
-    AgentCall,
+    EnterAgent,
     AmphibiousAutoma,
     CognitiveContext,
     CognitiveWorker,
@@ -118,7 +118,7 @@ class TestOnWorkflowStub:
         class WorkflowAgent(AmphibiousAutoma[CognitiveContext]):
             async def on_workflow(
                 self, ctx
-            ) -> AsyncGenerator[Union[ActionCall, HumanCall, AgentCall], None]:
+            ) -> AsyncGenerator[Union[ActionCall, HumanCall, EnterAgent], None]:
                 if False:  # pragma: no cover
                     yield
 

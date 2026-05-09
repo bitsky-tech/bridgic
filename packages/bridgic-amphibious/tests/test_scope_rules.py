@@ -5,17 +5,21 @@ Rules:
 ==============  =============  ==========  =======
 primitive       on_workflow    on_agent    hooks
 ==============  =============  ==========  =======
-ActionCall      OK             OK          OK
-HumanCall       OK             OK          OK
-LLMCall         OK             OK          OK
-AgentCall       OK             RAISE       RAISE
-ThinkCall       RAISE          OK          RAISE
+ActionCall      OK             RAISE       OK
+HumanCall       OK             RAISE       OK
+LLMCall         OK             RAISE       OK
+EnterAgent      OK             RAISE       RAISE
+ThinkUnit       RAISE          OK          RAISE
 ==============  =============  ==========  =======
 
 ``hooks`` = observation / before_action / after_action.
+
+on_agent body is reserved for orchestrating ThinkUnit cycles —
+deterministic tool / HITL / direct-LLM calls belong in on_workflow
+or in worker hooks.
 """
 
-from typing import Any, AsyncGenerator, List, Union
+from typing import Any, AsyncGenerator, Union
 
 import pytest
 
@@ -25,13 +29,11 @@ from bridgic.amphibious import (
     CognitiveWorker,
     ActionCall,
     HumanCall,
-    AgentCall,
+    EnterAgent,
     LLMCall,
-    ThinkCall,
-    Step,
-    StepToolCall,
-    ToolArgument,
+    ThinkUnit,
     think_unit,
+    human_channel,
 )
 
 
@@ -62,15 +64,15 @@ def _ctx() -> CognitiveContext:
 
 
 # ---------------------------------------------------------------------------
-# AgentCall scope rules
+# EnterAgent scope rules — workflow only
 # ---------------------------------------------------------------------------
 
 
-class TestAgentCallScope:
+class TestEnterAgentScope:
 
     @pytest.mark.asyncio
-    async def test_agent_call_in_on_workflow_works(self):
-        """AgentCall is the canonical workflow→agent transition primitive."""
+    async def test_enter_agent_in_on_workflow_works(self):
+        """EnterAgent is the canonical workflow→agent transition primitive."""
 
         class Agent(AmphibiousAutoma[CognitiveContext]):
             async def on_agent(self, ctx) -> AsyncGenerator[Any, Any]:
@@ -78,28 +80,27 @@ class TestAgentCallScope:
                     yield
 
             async def on_workflow(self, ctx) -> AsyncGenerator[
-                Union[ActionCall, HumanCall, AgentCall, LLMCall], None
+                Union[ActionCall, HumanCall, EnterAgent, LLMCall], None
             ]:
-                yield AgentCall(goal="sub")
+                yield EnterAgent(goal="sub")
 
         # Should not raise.
         await Agent(llm=_DummyLLM()).arun(context=_ctx())
 
     @pytest.mark.asyncio
-    async def test_agent_call_in_on_agent_raises(self):
-        """AgentCall yielded from on_agent → RuntimeError."""
+    async def test_enter_agent_in_on_agent_raises(self):
+        """EnterAgent yielded from on_agent → RuntimeError."""
 
         class Agent(AmphibiousAutoma[CognitiveContext]):
             async def on_agent(self, ctx) -> AsyncGenerator[Any, Any]:
-                yield AgentCall(goal="re-enter")
+                yield EnterAgent(goal="re-enter")
 
         with pytest.raises(RuntimeError, match="only valid inside on_workflow"):
             await Agent(llm=_DummyLLM()).arun(context=_ctx())
 
     @pytest.mark.asyncio
-    async def test_agent_call_in_hook_scope_raises(self):
-        """AgentCall yielded with scope='hook' (any of observation /
-        before_action / after_action) → RuntimeError."""
+    async def test_enter_agent_in_hook_scope_raises(self):
+        """EnterAgent yielded from any hook → RuntimeError."""
 
         class Agent(AmphibiousAutoma[CognitiveContext]):
             async def on_agent(self, ctx) -> AsyncGenerator[Any, Any]:
@@ -110,22 +111,22 @@ class TestAgentCallScope:
         agent._current_context = _ctx()
         with pytest.raises(RuntimeError, match="only valid inside on_workflow"):
             await agent._dispatch_call(
-                AgentCall(goal="x"),
+                EnterAgent(goal="x"),
                 agent._current_context,
                 scope="hook",
             )
 
 
 # ---------------------------------------------------------------------------
-# ThinkCall scope rules (in addition to those in test_think_call.py)
+# ThinkUnit scope rules — agent only
 # ---------------------------------------------------------------------------
 
 
-class TestThinkCallScope:
+class TestThinkUnitScope:
 
     @pytest.mark.asyncio
-    async def test_think_call_in_observation_raises(self):
-        """ThinkCall yielded from observation hook → RuntimeError."""
+    async def test_think_unit_in_hook_raises(self):
+        """ThinkUnit yielded with scope='hook' → RuntimeError."""
 
         class Agent(AmphibiousAutoma[CognitiveContext]):
             think_unit_a = think_unit(CognitiveWorker.inline("a"), max_attempts=1)
@@ -134,14 +135,14 @@ class TestThinkCallScope:
         agent._current_context = _ctx()
         with pytest.raises(RuntimeError, match="only valid inside on_agent"):
             await agent._dispatch_call(
-                ThinkCall("think_unit_a"),
+                ThinkUnit("think_unit_a"),
                 agent._current_context,
                 scope="hook",
             )
 
     @pytest.mark.asyncio
-    async def test_think_call_in_workflow_via_dispatch(self):
-        """ThinkCall yielded with scope='workflow' → RuntimeError."""
+    async def test_think_unit_in_workflow_raises(self):
+        """ThinkUnit yielded with scope='workflow' → RuntimeError."""
 
         class Agent(AmphibiousAutoma[CognitiveContext]):
             think_unit_a = think_unit(CognitiveWorker.inline("a"), max_attempts=1)
@@ -150,31 +151,59 @@ class TestThinkCallScope:
         agent._current_context = _ctx()
         with pytest.raises(RuntimeError, match="only valid inside on_agent"):
             await agent._dispatch_call(
-                ThinkCall("think_unit_a"),
+                ThinkUnit("think_unit_a"),
                 agent._current_context,
                 scope="workflow",
             )
 
 
 # ---------------------------------------------------------------------------
-# Universal primitives — ActionCall / HumanCall / LLMCall in any scope
+# 底层 Calls (ActionCall / HumanCall / LLMCall) — workflow + hooks, NOT agent
 # ---------------------------------------------------------------------------
 
 
-class TestUniversalPrimitivesByScope:
+class TestActionCallScope:
 
-    @pytest.mark.parametrize("scope", ["workflow", "agent", "hook"])
     @pytest.mark.asyncio
-    async def test_human_call_works_in_any_scope(self, scope):
-        """HumanCall passes scope validation in workflow / agent / hook."""
-
+    async def test_action_call_in_agent_raises(self):
         class Agent(AmphibiousAutoma[CognitiveContext]):
+            pass
+
+        agent = Agent(llm=_DummyLLM())
+        agent._current_context = _ctx()
+        with pytest.raises(RuntimeError, match="not allowed inside on_agent"):
+            await agent._dispatch_call(
+                ActionCall("some_tool", x=1),
+                agent._current_context,
+                scope="agent",
+            )
+
+
+class TestHumanCallScope:
+
+    @pytest.mark.asyncio
+    async def test_human_call_in_agent_raises(self):
+        class Agent(AmphibiousAutoma[CognitiveContext]):
+            @human_channel
             async def feed(self, prompt: str) -> str:
                 return "ok"
 
-        from bridgic.amphibious import human_channel
-        Agent.feed = human_channel(Agent.feed)
-        Agent._build_human_channel_registry()
+        agent = Agent(llm=_DummyLLM())
+        agent._current_context = _ctx()
+        with pytest.raises(RuntimeError, match="not allowed inside on_agent"):
+            await agent._dispatch_call(
+                HumanCall(prompt="confirm"),
+                agent._current_context,
+                scope="agent",
+            )
+
+    @pytest.mark.parametrize("scope", ["workflow", "hook"])
+    @pytest.mark.asyncio
+    async def test_human_call_works_in_workflow_and_hook(self, scope):
+        class Agent(AmphibiousAutoma[CognitiveContext]):
+            @human_channel
+            async def feed(self, prompt: str) -> str:
+                return "ok"
 
         agent = Agent(llm=_DummyLLM())
         agent._current_context = _ctx()
@@ -184,3 +213,20 @@ class TestUniversalPrimitivesByScope:
             scope=scope,
         )
         assert result == "ok"
+
+
+class TestLLMCallScope:
+
+    @pytest.mark.asyncio
+    async def test_llm_call_in_agent_raises(self):
+        class Agent(AmphibiousAutoma[CognitiveContext]):
+            pass
+
+        agent = Agent(llm=_DummyLLM())
+        agent._current_context = _ctx()
+        with pytest.raises(RuntimeError, match="not allowed inside on_agent"):
+            await agent._dispatch_call(
+                LLMCall.chat("hi"),
+                agent._current_context,
+                scope="agent",
+            )

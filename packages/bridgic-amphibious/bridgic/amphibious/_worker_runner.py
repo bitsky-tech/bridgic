@@ -35,7 +35,7 @@ Then declare it as a think_unit just like any other worker::
         external_think = think_unit(ClaudeCodeWorker())
 
         async def on_agent(self, ctx):
-            yield ThinkCall("external_think")
+            yield ThinkUnit("external_think")
 
 The dispatcher detects that the worker is *not* a ``CognitiveWorker``
 and skips the observe-think-act cycle, calling ``run(agent, ctx)``
@@ -69,7 +69,7 @@ class WorkerRunner(Protocol):
 
     Implement this Protocol on classes that wrap an external agent
     runtime and plug them in via ``think_unit(...)`` — invoked from
-    ``on_agent`` by ``yield ThinkCall("name")``.
+    ``on_agent`` by ``yield ThinkUnit("name")``.
     """
 
     async def run(

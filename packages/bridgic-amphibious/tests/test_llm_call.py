@@ -22,7 +22,7 @@ from bridgic.amphibious import (
     CognitiveWorker,
     ActionCall,
     HumanCall,
-    AgentCall,
+    EnterAgent,
     LLMCall,
     StepOutputType,
     StepToolCall,
@@ -229,7 +229,7 @@ class TestLLMCallDispatchChat:
 
         class Agent(AmphibiousAutoma[CognitiveContext]):
             async def on_workflow(self, ctx) -> AsyncGenerator[
-                Union[ActionCall, HumanCall, AgentCall, LLMCall], None
+                Union[ActionCall, HumanCall, EnterAgent, LLMCall], None
             ]:
                 text = yield LLMCall.chat("What is 2+2?")
                 captured.append(text)
@@ -248,7 +248,7 @@ class TestLLMCallDispatchChat:
 
         class Agent(AmphibiousAutoma[CognitiveContext]):
             async def on_workflow(self, ctx) -> AsyncGenerator[
-                Union[ActionCall, HumanCall, AgentCall, LLMCall], None
+                Union[ActionCall, HumanCall, EnterAgent, LLMCall], None
             ]:
                 yield LLMCall.chat("now", history=history)
 
@@ -271,7 +271,7 @@ class TestLLMCallDispatchChat:
 
         class Agent(AmphibiousAutoma[CognitiveContext]):
             async def on_workflow(self, ctx) -> AsyncGenerator[
-                Union[ActionCall, HumanCall, AgentCall, LLMCall], None
+                Union[ActionCall, HumanCall, EnterAgent, LLMCall], None
             ]:
                 v = yield LLMCall.chat("x")
                 captured.append(v)
@@ -298,7 +298,7 @@ class TestLLMCallDispatchStructured:
 
         class Agent(AmphibiousAutoma[CognitiveContext]):
             async def on_workflow(self, ctx) -> AsyncGenerator[
-                Union[ActionCall, HumanCall, AgentCall, LLMCall], None
+                Union[ActionCall, HumanCall, EnterAgent, LLMCall], None
             ]:
                 v = yield LLMCall.structure_output(
                     "extract",
@@ -318,7 +318,7 @@ class TestLLMCallDispatchStructured:
 
         class Agent(AmphibiousAutoma[CognitiveContext]):
             async def on_workflow(self, ctx) -> AsyncGenerator[
-                Union[ActionCall, HumanCall, AgentCall, LLMCall], None
+                Union[ActionCall, HumanCall, EnterAgent, LLMCall], None
             ]:
                 yield LLMCall.structure_output("x", constraint=constraint)
 
@@ -332,7 +332,7 @@ class TestLLMCallDispatchStructured:
 
         class Agent(AmphibiousAutoma[CognitiveContext]):
             async def on_workflow(self, ctx) -> AsyncGenerator[
-                Union[ActionCall, HumanCall, AgentCall, LLMCall], None
+                Union[ActionCall, HumanCall, EnterAgent, LLMCall], None
             ]:
                 yield LLMCall.structure_output(
                     "x", constraint=PydanticModel(model=MyResponseSchema)
@@ -362,7 +362,7 @@ class TestLLMCallDispatchToolSelector:
 
         class Agent(AmphibiousAutoma[CognitiveContext]):
             async def on_workflow(self, ctx) -> AsyncGenerator[
-                Union[ActionCall, HumanCall, AgentCall, LLMCall], None
+                Union[ActionCall, HumanCall, EnterAgent, LLMCall], None
             ]:
                 v = yield LLMCall.tool_selector("pick", tools=tools)
                 captured.append(v)
@@ -382,7 +382,7 @@ class TestLLMCallDispatchToolSelector:
 
         class Agent(AmphibiousAutoma[CognitiveContext]):
             async def on_workflow(self, ctx) -> AsyncGenerator[
-                Union[ActionCall, HumanCall, AgentCall, LLMCall], None
+                Union[ActionCall, HumanCall, EnterAgent, LLMCall], None
             ]:
                 yield LLMCall.tool_selector("x", tools=tools)
 
@@ -408,7 +408,7 @@ class TestLLMCallSendRoundTrip:
 
         class Agent(AmphibiousAutoma[CognitiveContext]):
             async def on_workflow(self, ctx) -> AsyncGenerator[
-                Union[ActionCall, HumanCall, AgentCall, LLMCall], None
+                Union[ActionCall, HumanCall, EnterAgent, LLMCall], None
             ]:
                 a = yield LLMCall.chat("q1")
                 captured.append(a)
@@ -426,7 +426,7 @@ class TestLLMCallSendRoundTrip:
 
         class Agent(AmphibiousAutoma[CognitiveContext]):
             async def on_workflow(self, ctx) -> AsyncGenerator[
-                Union[ActionCall, HumanCall, AgentCall, LLMCall], None
+                Union[ActionCall, HumanCall, EnterAgent, LLMCall], None
             ]:
                 yield LLMCall.chat("last")
 
@@ -445,7 +445,7 @@ class TestLLMCallErrorPaths:
 
         class Agent(AmphibiousAutoma[CognitiveContext]):
             async def on_workflow(self, ctx) -> AsyncGenerator[
-                Union[ActionCall, HumanCall, AgentCall, LLMCall], None
+                Union[ActionCall, HumanCall, EnterAgent, LLMCall], None
             ]:
                 yield LLMCall.chat("x")
 
@@ -468,7 +468,7 @@ class TestLLMCallErrorPaths:
                 await self._run(worker, max_attempts=1)
 
             async def on_workflow(self, ctx) -> AsyncGenerator[
-                Union[ActionCall, HumanCall, AgentCall, LLMCall], None
+                Union[ActionCall, HumanCall, EnterAgent, LLMCall], None
             ]:
                 yield LLMCall.chat("doomed")
 
@@ -483,7 +483,7 @@ class TestLLMCallErrorPaths:
 
         class Agent(AmphibiousAutoma[CognitiveContext]):
             async def on_workflow(self, ctx) -> AsyncGenerator[
-                Union[ActionCall, HumanCall, AgentCall, LLMCall], None
+                Union[ActionCall, HumanCall, EnterAgent, LLMCall], None
             ]:
                 yield LLMCall.chat("doomed")
 
@@ -504,7 +504,7 @@ class TestLLMCallTrace:
 
         class Agent(AmphibiousAutoma[CognitiveContext]):
             async def on_workflow(self, ctx) -> AsyncGenerator[
-                Union[ActionCall, HumanCall, AgentCall, LLMCall], None
+                Union[ActionCall, HumanCall, EnterAgent, LLMCall], None
             ]:
                 yield LLMCall.chat("captured prompt")
 

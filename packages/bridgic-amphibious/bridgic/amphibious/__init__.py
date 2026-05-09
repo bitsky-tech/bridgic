@@ -29,9 +29,9 @@ Architecture Layers
 **Orchestration Layer:**
 - AmphibiousAutoma: Dual-mode agent engine (agent mode + workflow mode)
   - think_unit: Descriptor for declaring named think units (used in on_agent)
-  - ThinkCall: yield primitive — only valid in on_agent
-  - AgentCall: yield primitive — only valid in on_workflow
-  - ActionCall, HumanCall, LLMCall: yield primitives — valid anywhere
+  - ThinkUnit: yield primitive — invoke a named think_unit (on_agent only)
+  - EnterAgent: yield primitive — suspend on_workflow and run on_agent (on_workflow only)
+  - ActionCall, HumanCall, LLMCall: yield primitives — on_workflow / hooks
   - RETURN: yield primitive — set the final answer / hook return value
 - ErrorStrategy: Error handling strategies (RAISE, IGNORE, RETRY)
 
@@ -40,7 +40,7 @@ Example
 >>> class MyAgent(AmphibiousAutoma[CognitiveContext]):
 ...     main_think = think_unit(CognitiveWorker.inline("Execute step"), max_attempts=20)
 ...     async def on_agent(self, ctx):
-...         yield ThinkCall("main_think")
+...         yield ThinkUnit("main_think")
 ...
 >>> answer = await MyAgent(llm=llm).arun(goal="Complete the task")
 """
@@ -96,9 +96,9 @@ from ._type import (
     WorkflowDecision,
     ActionCall,
     HumanCall,
-    AgentCall,
     LLMCall,
-    ThinkCall,
+    EnterAgent,
+    ThinkUnit,
     RETURN,
     # Action result data structures
     ErrorStrategy,
@@ -146,9 +146,9 @@ __all__ = [
     "WorkflowDecision",
     "ActionCall",
     "HumanCall",
-    "AgentCall",
     "LLMCall",
-    "ThinkCall",
+    "EnterAgent",
+    "ThinkUnit",
     "RETURN",
     # Human channel decorator
     "human_channel",

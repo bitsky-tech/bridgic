@@ -22,7 +22,7 @@ from bridgic.amphibious import (
     CognitiveWorker,
     ActionCall,
     HumanCall,
-    AgentCall,
+    EnterAgent,
     StepToolCall,
     ToolArgument,
 )
@@ -72,7 +72,7 @@ class TestWorkflowGeneratorError:
 
         class Agent(AmphibiousAutoma[CognitiveContext]):
             async def on_workflow(self, ctx) -> AsyncGenerator[
-                Union[ActionCall, HumanCall, AgentCall], None
+                Union[ActionCall, HumanCall, EnterAgent], None
             ]:
                 # Generator raises before any yield — equivalent to a helper
                 # call between yields blowing up.
@@ -98,7 +98,7 @@ class TestWorkflowGeneratorError:
                 await self._run(worker, max_attempts=1)
 
             async def on_workflow(self, ctx) -> AsyncGenerator[
-                Union[ActionCall, HumanCall, AgentCall], None
+                Union[ActionCall, HumanCall, EnterAgent], None
             ]:
                 raise RuntimeError("simulated helper failure")
                 yield  # pragma: no cover
@@ -124,7 +124,7 @@ class TestWorkflowGeneratorError:
 
         class Agent(AmphibiousAutoma[CognitiveContext]):
             async def on_workflow(self, ctx) -> AsyncGenerator[
-                Union[ActionCall, HumanCall, AgentCall], None
+                Union[ActionCall, HumanCall, EnterAgent], None
             ]:
                 raise KeyError("missing key")
                 yield  # pragma: no cover

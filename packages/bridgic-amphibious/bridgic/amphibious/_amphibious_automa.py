@@ -31,9 +31,9 @@ from bridgic.amphibious._type import (
     StepToolCall,
     ActionCall,
     HumanCall,
-    AgentCall,
+    EnterAgent,
     LLMCall,
-    ThinkCall,
+    ThinkUnit,
     RETURN,
     ErrorStrategy,
     ActionStepResult,
@@ -148,7 +148,7 @@ class AgentTrace:
 # Internal helper used by ``snapshot()`` to save/restore field values and
 # every ``LayeredExposure._revealed`` dict around a sub-task. Two modes:
 # clear-all (default — sub-agent sees a fresh revealed view) or custom
-# keep-list. AgentCall dispatch always goes through this so the parent
+# keep-list. EnterAgent dispatch always goes through this so the parent
 # agent's revealed state is restored when the sub-task returns.
 ################################################################################################################
 
@@ -228,7 +228,7 @@ class _AgentSnapshot:
 # ThinkUnit — descriptor-based think-step declaration
 #
 # Class-level marker placed via the ``think_unit(...)`` factory and
-# invoked by ``yield ThinkCall("name")`` from inside ``on_agent``. Stores
+# invoked by ``yield ThinkUnit("name")`` from inside ``on_agent``. Stores
 # the worker template plus per-unit overlays (until / max_attempts /
 # tools / skills / on_error / max_retries); the dispatcher clones a fresh
 # CognitiveWorker instance per call for state isolation, or uses a
@@ -243,7 +243,7 @@ class ThinkUnitDescriptor:
 
     Both class-level (``MyAgent.main_think``) and instance-level
     (``self.main_think``) access return the descriptor itself. Invocation
-    happens via ``yield ThinkCall("main_think", ...)`` inside an
+    happens via ``yield ThinkUnit("main_think", ...)`` inside an
     async-generator template method; the dispatcher resolves the name
     against the class, picks up the descriptor, clones its worker
     template, and runs it through ``_run``.
@@ -270,7 +270,7 @@ class ThinkUnitDescriptor:
 
     def __get__(self, obj: Any, objtype: Optional[type] = None) -> "ThinkUnitDescriptor":
         # Both class- and instance-level access return the descriptor
-        # itself. Invocation goes through ``yield ThinkCall("name")``.
+        # itself. Invocation goes through ``yield ThinkUnit("name")``.
         return self
 
     @staticmethod
@@ -282,7 +282,7 @@ class ThinkUnitDescriptor:
         GraphAutoma execution state). LLM is left as None — injected by
         the agent at runtime via ``_run()``.
 
-        Used by ``_dispatch_call`` when handling a ``ThinkCall`` yield.
+        Used by ``_dispatch_call`` when handling a ``ThinkUnit`` yield.
         """
         clone = type(template)(
             llm=None,
@@ -305,7 +305,7 @@ def think_unit(
     on_error: ErrorStrategy = ErrorStrategy.RAISE,
     max_retries: int = 0,
 ) -> ThinkUnitDescriptor:
-    """Declare a think unit, invoked via ``yield ThinkCall(name)``.
+    """Declare a think unit, invoked via ``yield ThinkUnit(name)``.
 
     Factory function that returns a ``ThinkUnitDescriptor``. Use as a
     class variable::
@@ -318,13 +318,13 @@ def think_unit(
             )
 
             async def on_agent(self, ctx):
-                yield ThinkCall("main_think")
+                yield ThinkUnit("main_think")
 
     Parameters
     ----------
     worker : CognitiveWorker | WorkerRunner
         The worker template. For ``CognitiveWorker`` a fresh clone is
-        created for each ``ThinkCall`` (state isolation). For an
+        created for each ``ThinkUnit`` (state isolation). For an
         external ``WorkerRunner`` implementation the template is used
         directly (the runner manages its own state). The
         ``until`` / ``max_attempts`` / ``tools`` / ``skills`` overlays
@@ -394,32 +394,23 @@ def human_channel(arg: Any = None) -> Any:
     return _decorator
 
 
-class _FullFallback(Exception):
-    """Internal sentinel signalling body-flow fallback to ``on_agent``.
-
-    Raised by ``_dispatch_call`` when an ActionCall threshold is reached
-    or an LLMCall fails under ``can_fallback=True``. The originating
-    cause is preserved as ``__cause__`` (via ``raise ... from e``).
-    Caught by ``_dispatch_flow``; not part of the public API.
-    """
-
-
 @dataclass
 class _FlowState:
     """Mutable per-flow state for body-mode fallback bookkeeping.
 
-    Created fresh per ``_dispatch_flow`` invocation and passed down to
-    ``_dispatch_call``. When ``_dispatch_call`` is invoked outside body
-    context (e.g. from ``_invoke_template`` for a hook), the caller
-    passes ``state=None`` and fallback paths are skipped entirely.
+    Created fresh per ``_drive_amphiflow`` invocation and passed down
+    to ``_dispatch_call``. When ``_dispatch_call`` is invoked outside
+    body context (e.g. from ``_invoke_template`` for a hook), the
+    caller passes ``state=None`` and fallback paths are skipped
+    entirely.
 
     Attributes
     ----------
     max_consecutive_fallbacks : int
-        ActionCall step-failure threshold before full fallback to
-        ``on_agent``. Forced to ``0`` when ``can_fallback`` is False.
+        Step-failure threshold before full fallback to ``on_agent``.
+        Forced to ``0`` when ``can_fallback`` is False.
     consecutive_failures : int, default 0
-        Running count of consecutive ActionCall failures, reset on success.
+        Running count of consecutive底层-Call failures, reset on success.
     step_index : int, default 0
         Running step counter (informational, surfaced in error messages).
     failed_steps : List[str]
@@ -441,9 +432,9 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
     Supports three execution modes:
 
     - **Agent mode** (``on_agent``): LLM-driven cognitive flow. Yields
-      ``ThinkCall`` to invoke named ``think_unit`` declarations.
+      ``ThinkUnit`` to invoke named ``think_unit`` declarations.
     - **Workflow mode** (``on_workflow``): Deterministic flow. Yields
-      ``ActionCall`` / ``HumanCall`` / ``LLMCall`` / ``AgentCall``.
+      ``ActionCall`` / ``HumanCall`` / ``LLMCall`` / ``EnterAgent``.
     - **Amphiflow mode** (``on_workflow`` + ``on_agent``): workflow-first
       with automatic agent fallback when a step fails.
 
@@ -472,19 +463,24 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
     ===========  ============  ========  =====
     primitive    on_workflow   on_agent  hooks
     ===========  ============  ========  =====
-    ActionCall   ✓             ✓         ✓
-    HumanCall    ✓             ✓         ✓
-    LLMCall      ✓             ✓         ✓
-    AgentCall    ✓             ✗         ✗
-    ThinkCall    ✗             ✓         ✗
+    ActionCall   ✓             ✗         ✓
+    HumanCall    ✓             ✗         ✓
+    LLMCall      ✓             ✗         ✓
+    EnterAgent   ✓             ✗         ✗
+    ThinkUnit    ✗             ✓         ✗
+    RETURN       ✓             ✓         ✓
     ===========  ============  ========  =====
+
+    on_agent body is reserved for orchestrating ``ThinkUnit`` cycles —
+    deterministic tool / HITL / direct-LLM operations belong in
+    on_workflow or inside a worker hook.
 
     Examples
     --------
     >>> class MyAgent(AmphibiousAutoma[CognitiveContext]):
     ...     main_think = think_unit(CognitiveWorker.inline("Execute step"), max_attempts=20)
     ...     async def on_agent(self, ctx: CognitiveContext):
-    ...         yield ThinkCall("main_think")
+    ...         yield ThinkUnit("main_think")
     ...
     >>> answer = await MyAgent(llm=llm).arun(goal="Complete the task", tools=[...])
     """
@@ -496,17 +492,10 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
     # ``_context_class`` (resolved from the ``Generic[T]`` parameter) and
     # ``_human_channels`` (registry walked from the MRO so subclass
     # overrides win over parent declarations). Subclasses can also
-    # override the ``WORKFLOW_STEP_FALLBACK_MAX_ATTEMPTS`` constant and
-    # the ``builtin_tools`` filter.
+    # override the ``builtin_tools`` filter.
     ############################################################################
 
     _context_class: Optional[Type[CognitiveContext]] = None
-
-    #: Max think-unit attempts when a workflow step falls back to agent
-    #: mode for per-step recovery (see ``_dispatch_call``'s ActionCall
-    #: branch). Subclasses may override to give the fallback agent a
-    #: longer or shorter runway.
-    WORKFLOW_STEP_FALLBACK_MAX_ATTEMPTS: int = 5
 
     #: Filter applied to ``_BUILTIN_TOOLS`` during ``arun()`` injection.
     #: ``None`` (default) injects every built-in tool. A ``frozenset`` of
@@ -639,9 +628,10 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
     # supports both forms. New code should prefer the yield form.
     #
     # Yield-type ↔ scope rules:
-    #   ActionCall / HumanCall / LLMCall — allowed in any template method
-    #   AgentCall                        — only on_workflow
-    #   ThinkCall                        — only on_agent
+    #   ActionCall / HumanCall / LLMCall — on_workflow + hooks (NOT on_agent)
+    #   EnterAgent                       — on_workflow only
+    #   ThinkUnit                        — on_agent only
+    #   RETURN                           — any scope
     ############################################################################
     async def observation(self, ctx: CognitiveContextT) -> AsyncGenerator[Any, Any]:
         """Agent-level default observation, shared across all workers.
@@ -658,7 +648,7 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         Yields
         ------
         ActionCall | HumanCall | LLMCall | RETURN
-            Hook scope — ``AgentCall`` and ``ThinkCall`` are rejected.
+            Hook scope — ``EnterAgent`` and ``ThinkUnit`` are rejected.
             Yield ``RETURN(text)`` to set the observation; exhausting
             without RETURN treats the observation as ``None``.
 
@@ -686,23 +676,28 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
 
         Yields
         ------
-        ThinkCall | ActionCall | HumanCall | LLMCall | RETURN
-            Agent scope — ``AgentCall`` is rejected (already inside an
-            autonomous flow). Yield ``RETURN(answer)`` to set the final
-            answer explicitly; otherwise the framework auto-captures
-            from the finishing think step's ``step_content``.
+        ThinkUnit | RETURN
+            Agent scope — only ``ThinkUnit`` (named cognitive step) and
+            ``RETURN`` (explicit final answer) are allowed. The底层
+            ``ActionCall`` / ``HumanCall`` / ``LLMCall`` and the
+            mode-switch ``EnterAgent`` are all rejected: on_agent body
+            is reserved for orchestrating cognitive steps; deterministic
+            tool / HITL / direct-LLM operations belong in on_workflow
+            or inside a worker hook. The framework auto-captures the
+            final answer from the finishing think step's
+            ``step_content`` if no ``RETURN`` is yielded.
 
         Examples
         --------
         >>> async def on_agent(self, ctx):
-        ...     yield ThinkCall("main_think", max_attempts=20)
-        ...     yield ThinkCall("exec_think", until=lambda c: c.done)
+        ...     yield ThinkUnit("main_think", max_attempts=20)
+        ...     yield ThinkUnit("exec_think", until=lambda c: c.done)
         ...     yield RETURN(ctx.cognitive_history.get_all()[-1].content)
         """
         if False:  # pragma: no cover — async generator stub
             yield
 
-    async def on_workflow(self, ctx: CognitiveContextT) -> AsyncGenerator[Union[ActionCall, HumanCall, AgentCall, LLMCall], None]:
+    async def on_workflow(self, ctx: CognitiveContextT) -> AsyncGenerator[Union[ActionCall, HumanCall, EnterAgent, LLMCall], None]:
         """Workflow mode: deterministic flow as an async generator.
 
         Override this method to declare a deterministic workflow. When
@@ -716,9 +711,9 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
 
         Yields
         ------
-        ActionCall | HumanCall | LLMCall | AgentCall | RETURN
-            Workflow scope — ``ThinkCall`` is rejected. Use
-            ``AgentCall`` to enter an autonomous sub-flow, or
+        ActionCall | HumanCall | LLMCall | EnterAgent | RETURN
+            Workflow scope — ``ThinkUnit`` is rejected. Use
+            ``EnterAgent`` to enter an autonomous sub-flow, or
             ``LLMCall`` for a one-shot LLM call. Use
             ``result = yield ActionCall(...)`` to receive tool
             execution results via ``asend()``. The generator exhausting
@@ -730,7 +725,7 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         ...     yield ActionCall("navigate_to", url="http://example.com")
         ...     result = yield ActionCall("click_element_by_ref", ref="42")
         ...     summary = yield LLMCall.chat("Summarize the page in one line.")
-        ...     yield AgentCall(goal="Handle complex case")
+        ...     yield EnterAgent(goal="Handle complex case")
         """
         if False:  # pragma: no cover — makes this a proper async generator stub
             yield
@@ -758,7 +753,7 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         Yields
         ------
         ActionCall | HumanCall | LLMCall | RETURN
-            Hook scope — ``AgentCall`` and ``ThinkCall`` are rejected.
+            Hook scope — ``EnterAgent`` and ``ThinkUnit`` are rejected.
             Yield ``RETURN(modified_decision)`` to override the decision.
             Exhausting without RETURN (or returning ``None`` from a
             coroutine override) is treated as passthrough — the
@@ -870,7 +865,7 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         Yields
         ------
         ActionCall | HumanCall | LLMCall
-            Hook scope — ``AgentCall`` and ``ThinkCall`` are rejected.
+            Hook scope — ``EnterAgent`` and ``ThinkUnit`` are rejected.
             ``RETURN`` is unused here; the hook's "return value" is
             ignored by the framework.
 
@@ -888,100 +883,99 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
     #
     # The dispatcher and the worker runner — the framework's two engines.
     #
-    # Dispatcher (``_dispatch_flow`` / ``_dispatch_call`` / ``_invoke_template``):
-    # drives a template-method generator and routes each yielded primitive
-    # to its handler. ``_dispatch_flow`` adds body-level fallback policy
-    # (RETURN capture, ``_FullFallback`` recovery) on top of the simpler
-    # ``_invoke_template`` driver; ``_dispatch_call`` is the per-APICall
-    # branch (validates yield-type ↔ scope, executes the call).
+    # Dispatcher:
+    # * ``_drive_amphiflow``    — state-machine driver for AMPHIFLOW mode.
+    #                             Holds the workflow generator and creates
+    #                             fresh on_agent generators on EnterAgent /
+    #                             step-level fallback. Workflow is the entry
+    #                             mode; on_agent generator exhaustion implicitly
+    #                             resumes the workflow generator.
+    # * ``_invoke_template``    — single-generator driver. Used for hooks
+    #                             (observation / before_action / after_action),
+    #                             for AGENT-mode body, for WORKFLOW-mode body,
+    #                             and recursively by EnterAgent /
+    #                             step-level fallback in the state machine.
+    # * ``_dispatch_call``      — per-yield handler. Validates scope, dispatches
+    #                             by isinstance. Failures from底层 Calls
+    #                             propagate; fallback bookkeeping lives in the
+    #                             state-machine driver.
     #
-    # Helpers used by the dispatcher: ``_dispatch_human_channel`` /
-    # ``_stdin_human_fallback`` (HumanCall routing) and ``_run_llm_call``
-    # (LLMCall protocol dispatch).
+    # Helpers: ``_dispatch_human_channel`` / ``_stdin_human_fallback`` (HumanCall
+    # routing); ``_run_llm_call`` (LLMCall protocol dispatch);
+    # ``_build_enter_agent_snapshot`` / ``_describe_call`` /
+    # ``_build_fallback_goal`` (state-machine helpers).
     #
     # Worker runner (``_run`` / ``_run_once`` / ``_action``): drives a
     # CognitiveWorker through one or more observe-think-act cycles. Used
-    # by ThinkCall dispatch, the ActionCall step-level fallback, and any
-    # user code that opts into a coroutine-form ``on_agent``.
+    # by ThinkUnit dispatch and any user code that opts into a coroutine-form
+    # ``on_agent``.
     #
     # ``snapshot`` / ``_phase_context`` provide the scoped-context
-    # mechanism that AgentCall and the workflow step fallback build on.
+    # mechanism that EnterAgent and step-level fallback build on.
     ############################################################################
-    async def _dispatch_flow(
+    async def _drive_amphiflow(
         self,
-        gen_or_coro: Any,
         ctx: CognitiveContextT,
-        *,
-        can_fallback: bool = False,
-        max_consecutive_fallbacks: int = 0,
-        scope: str = "workflow",
+        max_consecutive_fallbacks: int,
     ) -> Any:
-        """Body-flow driver for ``on_agent`` / ``on_workflow``.
+        """State-machine driver for AMPHIFLOW mode.
 
-        Responsibilities are minimal: drive the generator with
-        ``__anext__`` / ``asend``, recognise ``RETURN`` and capture
-        its value, and hand every other yield to ``_dispatch_call``.
-        All per-Call dispatch logic — including per-Call fallback
-        policy and yield-type validation — lives in ``_dispatch_call``.
+        Workflow is the entry mode. EnterAgent (user-yielded) and
+        step-level fallback (synthesized on底层-Call failure within
+        threshold) suspend the workflow generator and drive a fresh
+        on_agent generator in a snapshotted context; on_agent generator
+        exhaustion implicitly resumes the workflow generator. Full
+        fallback (threshold breached or generator-internal exception)
+        closes the workflow generator and drives on_agent with the
+        original context, ending the run.
 
         Parameters
         ----------
-        gen_or_coro : Any
-            The on_agent / on_workflow body — an async generator or a
-            coroutine. Coroutine form short-circuits to ``await``.
         ctx : CognitiveContextT
             The current cognitive context.
-        can_fallback : bool, default False
-            Whether body-level fallback to ``on_agent`` is permitted on
-            generator-internal errors or ``_FullFallback`` escalations.
-        max_consecutive_fallbacks : int, default 0
-            ActionCall step-failure threshold before full fallback.
-            Forced to ``0`` when ``can_fallback`` is False.
-        scope : {"workflow", "agent"}, default "workflow"
-            Identifies which body is being driven, forwarded to
-            ``_dispatch_call`` for AgentCall / ThinkCall validation.
-            ``_workflow`` / ``_amphiflow`` pass ``"workflow"``;
-            ``_agent`` passes ``"agent"``. Fallback paths invoke
-            ``_invoke_template(..., scope="agent")`` directly.
+        max_consecutive_fallbacks : int
+            Step-failure threshold before full fallback to on_agent.
 
         Returns
         -------
         Any
             The value captured from a ``RETURN(value)`` yield, or
-            ``None`` if the generator exhausts without RETURN.
+            ``None`` if the run ends without RETURN.
 
         Notes
         -----
-        Generator-internal errors (helper code raising between yields,
-        leaving the generator dead) are the only fallback concern owned
-        here. ``_dispatch_call`` signals "escalate to on_agent" by
-        raising ``_FullFallback`` — caught and handled in this method.
-        """
-        if not inspect.isasyncgen(gen_or_coro):
-            return await gen_or_coro
+        The driver alternates between two roles:
 
-        state = _FlowState(
-            max_consecutive_fallbacks=max_consecutive_fallbacks if can_fallback else 0,
-        )
-        send_value: Any = None
+        * **Active workflow mode**: drives ``workflow_gen`` with
+          ``__anext__`` / ``asend``. RETURN terminates the run.
+          EnterAgent transitions into agent mode (snapshot context,
+          drive a fresh on_agent gen, then resume workflow).
+          底层-Call failures are wrapped: if ``consecutive_failures``
+          is below threshold, transition into agent mode with a
+          fallback goal; if breached, full-fallback (close workflow,
+          drive on_agent with original ctx, end).
+        * **Active agent mode** (driven by ``_invoke_template`` from
+          within the workflow loop): drives the on_agent gen to
+          completion. RETURN inside agent terminates the run; natural
+          exhaustion resumes workflow.
+        """
+        workflow_gen = self.on_workflow(ctx)
+        state = _FlowState(max_consecutive_fallbacks=max_consecutive_fallbacks)
         return_value: Any = None
 
         try:
+            send_value: Any = None
             while True:
                 try:
                     if send_value is None:
-                        item = await gen_or_coro.__anext__()
+                        item = await workflow_gen.__anext__()
                     else:
-                        item = await gen_or_coro.asend(send_value)
+                        item = await workflow_gen.asend(send_value)
                     send_value = None
                 except StopAsyncIteration:
                     break
                 except Exception as e:
-                    # Generator-internal error: helper code between
-                    # yields raised. The generator object is dead now;
-                    # only options are full fallback or re-raise.
-                    if not can_fallback:
-                        raise
+                    # Generator-internal error → full fallback
                     if not self._has_agent():
                         raise RuntimeError(
                             f"Generator raised at step {state.step_index}: {e}\n"
@@ -993,72 +987,221 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
                         f"falling back to on_agent().",
                         color="red",
                     )
-                    await self._invoke_template(
+                    agent_return = await self._invoke_template(
                         self.on_agent(ctx), ctx, scope="agent",
                     )
+                    if agent_return is not None:
+                        return_value = agent_return
                     return return_value
-                else:
-                    if isinstance(item, RETURN):
-                        return_value = item.value
-                        preview = str(item.value)
-                        if len(preview) > 120:
-                            preview = preview[:120] + "..."
-                        self._log("Dispatch", f"RETURN: {preview}", color="cyan")
-                        break
 
-                    try:
-                        send_value = await self._dispatch_call(
-                            item, ctx,
-                            can_fallback=can_fallback,
-                            state=state,
-                            scope=scope,
+                # RETURN — terminate run
+                if isinstance(item, RETURN):
+                    return_value = item.value
+                    preview = str(item.value)
+                    if len(preview) > 120:
+                        preview = preview[:120] + "..."
+                    self._log("Dispatch", f"RETURN: {preview}", color="cyan")
+                    break
+
+                # EnterAgent — state-machine transition (user-yielded)
+                if isinstance(item, EnterAgent):
+                    if not self._has_agent():
+                        raise RuntimeError(
+                            f"EnterAgent(goal={item.goal!r}) requires an "
+                            "on_agent() override on the agent class."
                         )
-                    except _FullFallback as e:
-                        if not self._has_agent():
-                            raise RuntimeError(str(e)) from e.__cause__
-                        self._log(
-                            "Dispatch",
-                            f"[ERROR] {e} — falling back to on_agent().",
-                            color="red",
-                        )
-                        await self._invoke_template(
+                    snapshot_kwargs = self._build_enter_agent_snapshot(item, ctx)
+                    self._log(
+                        "Dispatch",
+                        f"EnterAgent(goal={item.goal!r}) → switching to on_agent",
+                        color="cyan",
+                    )
+                    async with self.snapshot(**snapshot_kwargs):
+                        agent_return = await self._invoke_template(
                             self.on_agent(ctx), ctx, scope="agent",
                         )
+                    if agent_return is not None:
+                        # RETURN inside the agent flow → terminate run.
+                        return_value = agent_return
+                        break
+                    # Natural agent-gen exhaustion → resume workflow.
+                    send_value = None
+                    continue
+
+                # Other yields (ActionCall / HumanCall / LLMCall / unknown):
+                # dispatch via _dispatch_call, with fallback wrapping for
+                # the底层 three.
+                is_underlying_call = isinstance(item, (ActionCall, HumanCall, LLMCall))
+                try:
+                    send_value = await self._dispatch_call(
+                        item, ctx, scope="workflow",
+                    )
+                    if is_underlying_call:
+                        state.consecutive_failures = 0
+                        state.step_index += 1
+                except Exception as e:
+                    if not is_underlying_call:
+                        # ThinkUnit / EnterAgent / unknown errors propagate.
+                        raise
+
+                    # 底层-Call failure → fallback bookkeeping.
+                    state.consecutive_failures += 1
+                    state.step_index += 1
+                    item_label = self._describe_call(item)
+                    state.failed_steps.append(
+                        f"Step {state.step_index}: {item_label} — {e}"
+                    )
+                    self._log(
+                        "Dispatch",
+                        f"[ERROR] Step {state.step_index} failed "
+                        f"({state.consecutive_failures}/{state.max_consecutive_fallbacks}): {e}",
+                        color="red",
+                    )
+
+                    if state.consecutive_failures >= state.max_consecutive_fallbacks:
+                        if not self._has_agent():
+                            raise RuntimeError(
+                                f"Workflow degradation failed: consecutive "
+                                f"failures reached {state.max_consecutive_fallbacks}.\n"
+                                f"Failed steps:\n" + "\n".join(state.failed_steps)
+                            ) from e
+                        self._log(
+                            "Dispatch",
+                            "[ERROR] threshold breached → full fallback to on_agent",
+                            color="red",
+                        )
+                        await workflow_gen.aclose()
+                        workflow_gen = None
+                        agent_return = await self._invoke_template(
+                            self.on_agent(ctx), ctx, scope="agent",
+                        )
+                        if agent_return is not None:
+                            return_value = agent_return
                         return return_value
+
+                    # Step-level fallback: drive on_agent with snapshotted
+                    # fallback goal; resume workflow on agent exhaustion.
+                    if not self._has_agent():
+                        raise  # No on_agent — re-raise the original failure.
+                    fallback_goal = self._build_fallback_goal(item, item_label, e, state)
+                    self._log(
+                        "Dispatch",
+                        f"Step-level fallback to on_agent for: {item_label}",
+                        color="yellow",
+                    )
+                    async with self.snapshot(goal=fallback_goal):
+                        agent_return = await self._invoke_template(
+                            self.on_agent(ctx), ctx, scope="agent",
+                        )
+                    if agent_return is not None:
+                        # RETURN inside the fallback agent flow → terminate run.
+                        return_value = agent_return
+                        break
+                    # Resume workflow with send_value=None (asend(None) on
+                    # the suspended workflow_gen continues the next iteration).
+                    send_value = None
         finally:
-            await gen_or_coro.aclose()
+            if workflow_gen is not None:
+                await workflow_gen.aclose()
 
         return return_value
-    
+
+    def _build_enter_agent_snapshot(
+        self,
+        item: EnterAgent,
+        ctx: CognitiveContextT,
+    ) -> Dict[str, Any]:
+        """Build snapshot kwargs for an EnterAgent transition.
+
+        Maps EnterAgent fields onto ``snapshot()`` overrides:
+        ``goal`` and ``history`` directly; ``tools`` / ``skills`` filter
+        the ctx surface by name.
+        """
+        history = item.history if item.history is not None else CognitiveHistory()
+        snapshot_kwargs: Dict[str, Any] = {
+            "goal": item.goal,
+            "cognitive_history": history,
+        }
+        if item.tools is not None:
+            allowed = set(item.tools)
+            filtered_tools = CognitiveTools()
+            for tool in ctx.tools.get_all():
+                if tool.tool_name in allowed:
+                    filtered_tools.add(tool)
+            snapshot_kwargs["tools"] = filtered_tools
+        if item.skills is not None:
+            allowed = set(item.skills)
+            filtered_skills = CognitiveSkills()
+            for skill in ctx.skills.get_all():
+                if skill.name in allowed:
+                    filtered_skills.add(skill)
+            snapshot_kwargs["skills"] = filtered_skills
+        return snapshot_kwargs
+
+    @staticmethod
+    def _describe_call(item: Any) -> str:
+        """One-line description of a底层 Call for logs / fallback goals."""
+        if isinstance(item, ActionCall):
+            return f"ActionCall(tool_name={item.tool_name!r})"
+        if isinstance(item, HumanCall):
+            channel = item.channel or "<default>"
+            return f"HumanCall(channel={channel!r})"
+        if isinstance(item, LLMCall):
+            return f"LLMCall(protocol={item.protocol!r})"
+        return type(item).__name__
+
+    @staticmethod
+    def _build_fallback_goal(
+        item: Any,
+        item_label: str,
+        error: BaseException,
+        state: _FlowState,
+    ) -> str:
+        """Goal text fed to on_agent on step-level fallback.
+
+        The goal explains the failure narrowly so the on_agent flow can
+        focus on resolving this single step. Once the agent generator
+        exhausts (signal: "I am done with this scoped task"), the
+        state-machine driver resumes the workflow.
+        """
+        if isinstance(item, ActionCall):
+            intent = item.decision.step_content or item.tool_name
+        else:
+            intent = item_label
+        return (
+            f"[Workflow fallback] Step {state.step_index} failed.\n"
+            f"Step intent: {intent}\n"
+            f"Failed call: {item_label}\n"
+            f"Error: {error}\n\n"
+            f"You must do TWO things:\n"
+            f"1. Resolve the error — fix whatever is blocking this step.\n"
+            f"2. Complete the original step intent.\n\n"
+            f"End your reasoning when both are done; the workflow will "
+            f"then resume at the next step."
+        )
+
+
     async def _dispatch_call(
         self,
         item: Any,
         ctx: CognitiveContextT,
         *,
-        can_fallback: bool = False,
-        state: Optional[_FlowState] = None,
         scope: str = "hook",
     ) -> Any:
-        """Per-APICall handler.
+        """Per-yield handler.
 
-        Routes one yielded item by isinstance, validates yield-type ↔
-        scope compatibility, and owns per-Call fallback policy.
+        Routes one yielded primitive by isinstance, validates yield-type
+        ↔ scope compatibility, executes the call. Failures from底层
+        Calls (ActionCall / HumanCall / LLMCall) propagate — fallback
+        bookkeeping lives in ``_drive_amphiflow``.
 
         Parameters
         ----------
         item : Any
             The yielded primitive (ActionCall / HumanCall / LLMCall /
-            AgentCall / ThinkCall).
+            EnterAgent / ThinkUnit).
         ctx : CognitiveContextT
             The current cognitive context.
-        can_fallback : bool, default False
-            When True, ActionCall step failures and LLMCall errors
-            trigger body-mode fallback (step-level retry or
-            ``_FullFallback`` escalation). Always False when invoked
-            from ``_invoke_template``.
-        state : Optional[_FlowState], default None
-            Mutable per-flow state for fallback bookkeeping; passed by
-            ``_dispatch_flow`` and ``None`` from ``_invoke_template``.
         scope : {"workflow", "agent", "hook"}, default "hook"
             Caller's flow scope, used for yield-type validation.
 
@@ -1072,68 +1215,51 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         Raises
         ------
         RuntimeError
-            ``AgentCall`` yielded outside ``scope='workflow'`` or
-            ``ThinkCall`` yielded outside ``scope='agent'``.
+            ``EnterAgent`` yielded outside ``scope='workflow'``,
+            ``ThinkUnit`` yielded outside ``scope='agent'``, or
+            ``ActionCall`` / ``HumanCall`` / ``LLMCall`` yielded with
+            ``scope='agent'``.
         TypeError
             ``item`` is not one of the recognised primitive types.
-        _FullFallback
-            ``LLMCall`` raised or ``ActionCall`` exceeded
-            ``state.max_consecutive_fallbacks`` and ``can_fallback`` is
-            True. Caught by ``_dispatch_flow``.
 
         Notes
         -----
         Yield-type ↔ scope rules:
 
-        * ``ActionCall`` / ``HumanCall`` / ``LLMCall`` — allowed in any
-          scope (``"workflow"``, ``"agent"``, ``"hook"``).
-        * ``AgentCall`` — only ``"workflow"``.
-        * ``ThinkCall`` — only ``"agent"``.
+        * ``ActionCall`` / ``HumanCall`` / ``LLMCall`` — allowed in
+          ``"workflow"`` and ``"hook"`` scope. Rejected in
+          ``"agent"`` (on_agent body should only orchestrate cognitive
+          steps via ``ThinkUnit``; deterministic tool/HITL/LLM calls
+          belong in on_workflow or in a worker's hook).
+        * ``EnterAgent`` — only ``"workflow"``.
+        * ``ThinkUnit`` — only ``"agent"``.
+
+        EnterAgent dispatch here (called from ``_invoke_template`` in
+        WORKFLOW mode without state-machine wrapping) recursively drives
+        ``on_agent`` via ``_invoke_template``. In AMPHIFLOW mode the
+        state-machine driver intercepts EnterAgent before this method is
+        reached.
         """
-        if isinstance(item, AgentCall):
+        if isinstance(item, EnterAgent):
             if scope != "workflow":
                 raise RuntimeError(
-                    f"AgentCall(goal={item.goal!r}) is only valid inside "
+                    f"EnterAgent(goal={item.goal!r}) is only valid inside "
                     f"on_workflow (scope='workflow'); got scope={scope!r}. "
-                    "AgentCall represents the deterministic→autonomous "
-                    "transition; once you are inside on_agent, keep "
-                    "thinking via ThinkCall instead."
+                    "EnterAgent is the deterministic→autonomous mode "
+                    "switch; once you are inside on_agent, keep "
+                    "thinking via ThinkUnit instead."
                 )
             if not self._has_agent():
                 raise RuntimeError(
-                    f"AgentCall(goal={item.goal!r}) requires an on_agent() "
-                    "override on the agent class — AgentCall always "
-                    "delegates the sub-task to on_agent."
+                    f"EnterAgent(goal={item.goal!r}) requires an on_agent() "
+                    "override on the agent class."
                 )
-            history = item.history if item.history is not None else CognitiveHistory()
+            snapshot_kwargs = self._build_enter_agent_snapshot(item, ctx)
             self._log(
                 "Dispatch",
-                f"AgentCall(goal={item.goal!r}) → delegating to on_agent",
+                f"EnterAgent(goal={item.goal!r}) → switching to on_agent",
                 color="cyan",
             )
-
-            # Build snapshot overrides — filter ctx.tools / ctx.skills by
-            # the user-supplied name lists so the sub-agent sees only the
-            # scoped subset (and original lists are restored on exit).
-            snapshot_kwargs: Dict[str, Any] = {
-                "goal": item.goal,
-                "cognitive_history": history,
-            }
-            if item.tools is not None:
-                allowed_tools = set(item.tools)
-                filtered_tools = CognitiveTools()
-                for tool in ctx.tools.get_all():
-                    if tool.tool_name in allowed_tools:
-                        filtered_tools.add(tool)
-                snapshot_kwargs["tools"] = filtered_tools
-            if item.skills is not None:
-                allowed_skills = set(item.skills)
-                filtered_skills = CognitiveSkills()
-                for skill in ctx.skills.get_all():
-                    if skill.name in allowed_skills:
-                        filtered_skills.add(skill)
-                snapshot_kwargs["skills"] = filtered_skills
-
             async with self.snapshot(**snapshot_kwargs):
                 await self._invoke_template(
                     self.on_agent(ctx), ctx, scope="agent",
@@ -1141,6 +1267,15 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
             return None
 
         if isinstance(item, HumanCall):
+            if scope == "agent":
+                raise RuntimeError(
+                    f"HumanCall(prompt={item.prompt!r}) is not allowed inside "
+                    "on_agent — the agent should request human input via the "
+                    "auto-injected ``request_human`` tool (called by the LLM "
+                    "during a ThinkUnit), not by yielding HumanCall directly. "
+                    "If you need a deterministic human step, put it in "
+                    "on_workflow."
+                )
             channel_label = item.channel or "<default>"
             self._log(
                 "Dispatch",
@@ -1156,20 +1291,21 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
             return response
 
         if isinstance(item, LLMCall):
+            if scope == "agent":
+                raise RuntimeError(
+                    f"LLMCall(protocol={item.protocol!r}) is not allowed inside "
+                    "on_agent — on_agent body is reserved for orchestrating "
+                    "cognitive steps via ThinkUnit. Direct LLM calls belong "
+                    "in on_workflow, in a hook, or inside a CognitiveWorker's "
+                    "thinking() method."
+                )
             prompt_preview = item.prompt[:80] + ("..." if len(item.prompt) > 80 else "")
             self._log(
                 "Dispatch",
                 f"LLMCall protocol={item.protocol} prompt={prompt_preview}",
                 color="cyan",
             )
-            try:
-                result = await self._run_llm_call(item)
-            except Exception as e:
-                if not can_fallback:
-                    raise
-                raise _FullFallback(
-                    f"LLMCall(protocol={item.protocol!r}) raised: {e}"
-                ) from e
+            result = await self._run_llm_call(item)
             result_preview = str(result)
             if len(result_preview) > 120:
                 result_preview = result_preview[:120] + "..."
@@ -1177,20 +1313,20 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
             self._record_llm_call_trace(item, result)
             return result
 
-        if isinstance(item, ThinkCall):
+        if isinstance(item, ThinkUnit):
             if scope != "agent":
                 raise RuntimeError(
-                    f"ThinkCall(name={item.name!r}) is only valid inside "
+                    f"ThinkUnit(name={item.name!r}) is only valid inside "
                     f"on_agent (scope='agent'); got scope={scope!r}. "
-                    "ThinkCall references a class-level think_unit and "
+                    "ThinkUnit references a class-level think_unit and "
                     "represents a step in the agent's cognitive strategy; "
                     "use LLMCall for a direct LLM invocation outside the "
-                    "cognitive loop, or AgentCall to enter an on_agent flow."
+                    "cognitive loop, or EnterAgent to enter an on_agent flow."
                 )
             descriptor = getattr(type(self), item.name, None)
             if not isinstance(descriptor, ThinkUnitDescriptor):
                 raise AttributeError(
-                    f"ThinkCall(name={item.name!r}) does not match any "
+                    f"ThinkUnit(name={item.name!r}) does not match any "
                     f"think_unit declaration on {type(self).__name__}."
                 )
             template = descriptor._worker_template
@@ -1208,7 +1344,7 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
             skills = item.skills if item.skills is not None else descriptor._skills
             self._log(
                 "Dispatch",
-                f"ThinkCall name={item.name} max_attempts={max_attempts}",
+                f"ThinkUnit name={item.name} max_attempts={max_attempts}",
                 color="cyan",
             )
             await self._run(
@@ -1233,16 +1369,18 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
             return worker_output
 
         if isinstance(item, ActionCall):
-            worker = item.worker
+            if scope == "agent":
+                raise RuntimeError(
+                    f"ActionCall(tool_name={item.tool_name!r}) is not allowed "
+                    "inside on_agent — let the LLM decide tool calls inside a "
+                    "ThinkUnit. If you need a deterministic tool call, put it "
+                    "in on_workflow or in a worker hook (observation / "
+                    "before_action / after_action)."
+                )
             decision = item.decision
 
-            # 1. Observe — worker-level None ≡ _DELEGATE → agent-level hook.
-            if worker is not None:
-                obs = await worker.observation(ctx)
-                if obs is _DELEGATE or obs is None:
-                    obs = await self._invoke_template(self.observation(ctx), ctx)
-            else:
-                obs = await self._invoke_template(self.observation(ctx), ctx)
+            # 1. Observe via agent-level hook.
+            obs = await self._invoke_template(self.observation(ctx), ctx)
             ctx.observation = obs
 
             obs_str = str(obs) if obs is not None else "None"
@@ -1251,90 +1389,30 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
             self._log("Observe", f"dispatch: {obs_str}", color="green")
             self._log("Think", f"dispatch: {decision.step_content}", color="cyan")
 
-            # 2. Act with body-mode fallback wrapping
-            try:
-                action_result = await self._action(decision, ctx, _worker=worker)
+            # 2. Act. Tool failures bubble up as RuntimeError; the
+            # state-machine driver's fallback wrapping catches them.
+            action_result = await self._action(decision, ctx, _worker=None)
 
-                # Surface tool failures as exceptions
-                inner = getattr(action_result, "result", None)
-                if isinstance(inner, ActionResult):
-                    failed = [r for r in inner.results if not r.success]
-                    if failed:
-                        errors = "; ".join(f"{r.tool_name}: {r.error}" for r in failed)
-                        raise RuntimeError(
-                            f"Tool execution failed for: "
-                            f"{decision.step_content} — {errors}"
-                        )
-
-                if action_result is not None:
-                    formatted = action_result.model_dump_json(indent=4)
-                    self._log("Act", f"dispatch:\n{formatted}", color="purple")
-
-                self._record_trace_step(worker, obs, decision, action_result, ctx)
-
-                if state is not None:
-                    state.consecutive_failures = 0
-                    state.step_index += 1
-
-                return self._build_tool_results(action_result)
-
-            except Exception as e:
-                if not can_fallback or state is None:
-                    raise
-
-                state.consecutive_failures += 1
-                state.step_index += 1
-                state.failed_steps.append(
-                    f"Step {state.step_index}: {decision.step_content} — {e}"
-                )
-                self._log(
-                    "Dispatch",
-                    f"[ERROR] Step {state.step_index} failed "
-                    f"({state.consecutive_failures}/{state.max_consecutive_fallbacks}): {e}",
-                    color="red",
-                )
-
-                if state.consecutive_failures >= state.max_consecutive_fallbacks:
-                    failed_summary = "\n".join(state.failed_steps)
-                    raise _FullFallback(
-                        f"Workflow degradation failed: consecutive failures reached "
-                        f"{state.max_consecutive_fallbacks}.\n"
-                        f"Failed steps:\n{failed_summary}"
-                    ) from e
-
-                # Step-level fallback
-                fallback_goal = (
-                    f"[Workflow fallback] Step {state.step_index} failed.\n"
-                    f"Step intent: {decision.step_content}\n"
-                    f"Error: {e}\n\n"
-                    f"You must do TWO things:\n"
-                    f"1. Resolve the error — fix whatever is blocking this step "
-                    f"(e.g. login, navigate, wait for page load).\n"
-                    f"2. Complete the original step intent: {decision.step_content}\n\n"
-                    f"Set finish=True ONLY after both are done. "
-                    f"Do NOT continue with subsequent steps."
-                )
-                self._log(
-                    "Dispatch",
-                    f"Falling back to agent mode for step {state.step_index}: "
-                    f"{decision.step_content}",
-                    color="yellow",
-                )
-                async with self.snapshot(goal=fallback_goal):
-                    fallback_worker = (
-                        item.worker
-                        if item.worker is not None
-                        else CognitiveWorker.inline("Complete the goal.")
+            inner = getattr(action_result, "result", None)
+            if isinstance(inner, ActionResult):
+                failed = [r for r in inner.results if not r.success]
+                if failed:
+                    errors = "; ".join(f"{r.tool_name}: {r.error}" for r in failed)
+                    raise RuntimeError(
+                        f"Tool execution failed for: "
+                        f"{decision.step_content} — {errors}"
                     )
-                    await self._run(
-                        fallback_worker,
-                        max_attempts=self.WORKFLOW_STEP_FALLBACK_MAX_ATTEMPTS,
-                    )
-                return None
+
+            if action_result is not None:
+                formatted = action_result.model_dump_json(indent=4)
+                self._log("Act", f"dispatch:\n{formatted}", color="purple")
+
+            self._record_trace_step(None, obs, decision, action_result, ctx)
+            return self._build_tool_results(action_result)
 
         raise TypeError(
             f"Unknown yield type: {type(item).__name__}. Expected one of "
-            "RETURN / ActionCall / HumanCall / LLMCall / AgentCall / ThinkCall."
+            "RETURN / ActionCall / HumanCall / LLMCall / EnterAgent / ThinkUnit."
         )
 
     async def _dispatch_human_channel(
@@ -1527,9 +1605,11 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
 
         Notes
         -----
-        Used by hook callsites and by ``_dispatch_call``'s AgentCall
-        delegation. Errors propagate; the body-level fallback policy
-        lives in ``_dispatch_flow``.
+        Used by hook callsites, by AGENT / WORKFLOW mode entry points,
+        by ``_dispatch_call``'s EnterAgent recursive call (in
+        WORKFLOW mode), and by ``_drive_amphiflow`` for EnterAgent /
+        step-level / full-fallback agent runs. Errors propagate;
+        body-level fallback policy lives in ``_drive_amphiflow``.
         """
         if not inspect.isasyncgen(gen_or_coro):
             return await gen_or_coro
@@ -1585,7 +1665,7 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
           ``on_error`` / ``max_retries`` overlays are ignored on this
           path because they are CognitiveWorker concepts.
 
-        Internal method used by ``_dispatch_call`` (ThinkCall path and
+        Internal method used by ``_dispatch_call`` (ThinkUnit path and
         the ActionCall step-level fallback) and by user code written as
         a coroutine-form ``on_agent`` that drives workers manually.
 
@@ -2195,9 +2275,9 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
     # ``_resolve_builtin_filter`` decides which built-in tools to inject.
     # ``router`` is the GraphAutoma start worker that ferries to the
     # chosen mode entry — ``_agent`` (AGENT), ``_workflow`` (WORKFLOW),
-    # or ``_amphiflow`` (AMPHIFLOW). All three converge on
-    # ``_dispatch_flow`` after each picks its own ``can_fallback`` /
-    # ``scope`` arguments.
+    # or ``_amphiflow`` (AMPHIFLOW). AGENT and WORKFLOW use
+    # ``_invoke_template`` (single-generator drive). AMPHIFLOW uses
+    # ``_drive_amphiflow`` (state-machine drive with fallback).
     ############################################################################
     def _resolve_builtin_filter(
         self, override: Optional[Iterable[str]]
@@ -2265,12 +2345,11 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
 
     @worker(is_output=True)
     async def _agent(self) -> str:
-        """Agent mode entry point.
+        """AGENT mode entry point.
 
-        Drives ``on_agent`` through ``_dispatch_flow`` with
-        ``scope='agent'`` and no body-level fallback (the agent flow is
-        itself the LLM-driven fallback target — there is no "more
-        autonomous" tier).
+        Drives ``on_agent`` through ``_invoke_template`` with
+        ``scope='agent'``. No state machine, no fallback (agent IS
+        already the autonomous tier).
 
         Returns
         -------
@@ -2279,10 +2358,8 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
             or by a worker's ``finish=True``) or ``ctx.summary()``.
         """
         ctx = self._current_context
-        return_value = await self._dispatch_flow(
-            self.on_agent(ctx), ctx,
-            can_fallback=False,
-            scope="agent",
+        return_value = await self._invoke_template(
+            self.on_agent(ctx), ctx, scope="agent",
         )
         if return_value is not None:
             self._final_answer = str(return_value)
@@ -2290,11 +2367,13 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
 
     @worker(is_output=True)
     async def _workflow(self) -> str:
-        """Workflow mode entry point.
+        """WORKFLOW mode entry point.
 
-        Drives ``on_workflow`` through ``_dispatch_flow`` with
-        ``scope='workflow'`` and ``can_fallback=False`` — failures
-        propagate, no agent fallback.
+        Drives ``on_workflow`` through ``_invoke_template`` with
+        ``scope='workflow'``. No fallback — failures propagate.
+        ``EnterAgent`` yielded from on_workflow is dispatched through
+        ``_dispatch_call``'s recursive ``_invoke_template`` path (works
+        without a state machine because there is no fallback to track).
 
         Returns
         -------
@@ -2303,10 +2382,8 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
             or ``ctx.summary()``.
         """
         ctx = self._current_context
-        return_value = await self._dispatch_flow(
-            self.on_workflow(ctx), ctx,
-            can_fallback=False,
-            scope="workflow",
+        return_value = await self._invoke_template(
+            self.on_workflow(ctx), ctx, scope="workflow",
         )
         if return_value is not None:
             self._final_answer = str(return_value)
@@ -2314,32 +2391,32 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
 
     @worker(is_output=True)
     async def _amphiflow(self, max_consecutive_fallbacks: int) -> str:
-        """Amphiflow mode entry point.
+        """AMPHIFLOW mode entry point.
 
-        Drives ``on_workflow`` through ``_dispatch_flow`` with
-        ``scope='workflow'`` and ``can_fallback=True``. Fallback paths
-        inside ``_dispatch_flow`` re-invoke ``on_agent`` with
-        ``scope='agent'``.
+        Drives ``on_workflow`` through ``_drive_amphiflow`` — the
+        state-machine driver. ``EnterAgent`` (user-yielded) and
+        step-level fallback (synthesized on底层-Call failure within
+        threshold) suspend the workflow generator and run a fresh
+        on_agent generator in a snapshotted context; on_agent generator
+        exhaustion implicitly resumes the workflow generator. Full
+        fallback (threshold breached or generator-internal exception)
+        closes the workflow generator and runs on_agent with the
+        original context, ending the run.
 
         Parameters
         ----------
         max_consecutive_fallbacks : int
-            ActionCall step-failure threshold before full fallback.
+            底层-Call step-failure threshold before full fallback.
 
         Returns
         -------
         str
             ``self._final_answer`` (if set by a ``RETURN(value)`` yield
-            or by a fallback worker's ``finish=True``) or
-            ``ctx.summary()``.
+            from any flow, or by a fallback worker's ``finish=True``)
+            or ``ctx.summary()``.
         """
         ctx = self._current_context
-        return_value = await self._dispatch_flow(
-            self.on_workflow(ctx), ctx,
-            can_fallback=True,
-            max_consecutive_fallbacks=max_consecutive_fallbacks,
-            scope="workflow",
-        )
+        return_value = await self._drive_amphiflow(ctx, max_consecutive_fallbacks)
         if return_value is not None:
             self._final_answer = str(return_value)
         return self._final_answer or ctx.summary()
