@@ -25,6 +25,9 @@ from bridgic.amphibious._context import CognitiveContext, CognitiveTools, Cognit
 from bridgic.amphibious._cognitive_worker import CognitiveWorker, _DELEGATE
 from bridgic.amphibious._worker_runner import WorkerRunner
 from bridgic.amphibious.builtin_tools import ALL_BUILTIN_TOOLS, current_agent
+from bridgic.amphibious.builtin_tools.human.request_human import (
+    build_request_human_tool,
+)
 from bridgic.amphibious._type import (
     RunMode,
     Step,
@@ -2910,8 +2913,17 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         for builtin in _BUILTIN_TOOLS:
             if allowed_builtins is not None and builtin.tool_name not in allowed_builtins:
                 continue
-            if builtin.tool_name not in existing_tool_names:
-                context.tools.add(builtin)
+            if builtin.tool_name in existing_tool_names:
+                continue
+            # Specialise ``request_human`` against this agent class's
+            # ``@human_channel`` registry so the LLM sees the actual
+            # channel names — both in the tool description and as an
+            # ``enum`` constraint on the ``channel`` parameter. With no
+            # channels registered the factory returns the generic spec.
+            if builtin.tool_name == "request_human":
+                channels = type(self)._human_channels.keys()
+                builtin = build_request_human_tool(channels)
+            context.tools.add(builtin)
 
         # Set the LLM to the context
         if self._llm is not None:

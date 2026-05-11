@@ -79,7 +79,7 @@ def test_all_tool_specs_registered():
     """All seven built-ins are present and expose the documented parameters."""
     by_name = {t.tool_name: t for t in ALL_BUILTIN_TOOLS}
     expected = {
-        "request_human": {"prompt"},
+        "request_human": {"prompt", "channel"},
         "bash": {"command", "timeout", "cwd"},
         "read_file": {"file_path", "offset", "limit"},
         "write_file": {"file_path", "content"},

@@ -219,6 +219,12 @@ class MyAgent(AmphibiousAutoma[CognitiveContext]):
 #
 # With one handler registered on the class, both HumanCall(channel=None)
 # and the auto-injected request_human tool route to it implicitly.
+# With multiple handlers, both sides target a channel by name —
+# workflow: HumanCall(channel="feishu", ...), agent: the LLM passes
+# channel="feishu" to the request_human tool. The tool spec is rebuilt
+# per agent class from the @human_channel registry, so the LLM sees the
+# real channel names (description + enum-constrained `channel` param)
+# without you having to spell them out in the system_prompt.
 await MyAgent(llm=llm).arun(goal="...", tools=[my_tool])
 ```
 

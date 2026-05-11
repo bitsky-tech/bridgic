@@ -480,7 +480,7 @@ await agent.arun(goal="Plan a trip, ask me if you need confirmation.", tools=[se
 
 Passing `request_human_tool` explicitly is harmless — the injection step deduplicates by tool name. The tool resolves to the running agent through `current_agent` (a `contextvars.ContextVar`), so each concurrent `arun()` task gets its own binding and parallel agents do not interfere.
 
-### @human_channel — register handlers for HumanCall
+### @human_channel — register handlers for HumanCall + request_human
 
 `@human_channel` is a **method decorator** — apply it to an `async` method of your `AmphibiousAutoma` subclass. The framework walks the MRO at class-definition time (`__init_subclass__`) and builds a per-class `_human_channels: Dict[str, str]` registry mapping channel names to method names.
 
@@ -498,6 +498,8 @@ class MyAgent(AmphibiousAutoma[CognitiveContext]):
 ```
 
 When `HumanCall(channel="feishu", ...)` dispatches, the registered handler is invoked. With one handler registered on the class and `channel=None`, the dispatcher uses that handler implicitly; with zero handlers it falls back to stdin; with two or more, an explicit `channel=` is required (or the dispatcher raises `RuntimeError`).
+
+The same `_human_channels` registry also drives the auto-injected `request_human` built-in tool — the LLM passes `channel="name"` from `on_agent`/any `ThinkUnit`, and the call routes through identical `_dispatch_human_channel` logic. The tool's JSON schema is rebuilt per agent class from this registry (see [request_human as a built-in tool](#request_human-as-a-built-in-tool) above), so the LLM is `enum`-constrained to valid names — it cannot fabricate a channel that would later be rejected.
 
 Channel handlers are plain `async def` methods returning `str`. They are leaf I/O operations and do not dispatch yields (don't `yield ActionCall` / `HumanCall` / etc. inside).
 
@@ -522,10 +524,19 @@ ActionStepResult(success=False, error=str(exc), tool_result=None)
 ### request_human
 
 ```python
-async def request_human(prompt: str) -> str
+async def request_human(prompt: str, channel: str | None = None) -> str
 ```
 
-Pause and ask the human operator a question. Internally resolves the running agent via the `current_agent` ContextVar and routes through `agent._dispatch_human_channel(prompt, channel=None)` — the same dispatcher used by `yield HumanCall(prompt=...)` from `on_workflow`. See [Human-in-the-Loop](#human-in-the-loop) for the full HITL story.
+Pause and ask the human operator a question. Internally resolves the running agent via the `current_agent` ContextVar and routes through `agent._dispatch_human_channel(prompt, channel=channel)` — the same dispatcher used by `yield HumanCall(prompt=..., channel=...)` from `on_workflow`.
+
+| Param | Description |
+|-------|-------------|
+| `prompt` | The question or message shown to the human. |
+| `channel` | Optional. Name of a registered `@human_channel` to route through (e.g. `"feishu"`, `"slack"`). Omit for the implicit default: sole registered channel, or stdin fallback if none are registered. **Required when 2+ channels are registered** — otherwise the dispatcher raises an ambiguity error. |
+
+**Dynamic schema**: The spec the LLM actually sees is *not* the module-level `request_human_tool`; it is rebuilt per `arun()` from the agent class's `@human_channel` registry. When one or more channels are registered, the injected spec has its `channel` parameter constrained to a JSON-schema `enum` of the registered channel names, and the top-level description lists them — so the LLM picks from real names instead of guessing. With zero channels, the static spec is reused as-is. The factory is `build_request_human_tool(channel_names)` in `bridgic.amphibious.builtin_tools.human.request_human`; you normally do not call it directly.
+
+See [Human-in-the-Loop](#human-in-the-loop) for the full HITL story.
 
 ### bash
 

@@ -263,7 +263,9 @@ You can also use the bare form `@human_channel` (no parens) — the channel name
 
 #### Multiple named handlers
 
-With 2+ handlers registered on the same class, address each by name. The auto-injected `request_human` tool always uses `channel=None`, so it cannot disambiguate — if you need autonomous LLM-driven HITL alongside multiple named workflows, give one handler an obvious "default" name and route through it from a single-handler subclass, or restrict the LLM-driven path to one channel.
+With 2+ handlers registered on the same class, address each by name from either side. Workflow uses `HumanCall(channel="name", ...)`; agent mode has the LLM pass `channel="name"` to the auto-injected `request_human` tool. Both routes go through the same `@human_channel` registry, so the agent loop can choose its target as freely as the workflow can.
+
+The LLM does not need to memorise channel names — the auto-injected `request_human` spec is rebuilt per agent class from its `@human_channel` registry, so the `channel` parameter's JSON schema is constrained to an `enum` of the actual registered names and the description lists them. Even with no extra wording in the system prompt, the LLM is hard-bounded to valid channels.
 
 ```python
 class HybridAgent(AmphibiousAutoma[CognitiveContext]):
@@ -275,10 +277,24 @@ class HybridAgent(AmphibiousAutoma[CognitiveContext]):
     async def ask_slack(self, prompt: str) -> str:
         return await send_to_slack_and_wait(prompt)
 
+    triage = think_unit(
+        CognitiveWorker.inline(
+            "Route the question to the right human. Use channel='feishu' "
+            "for engineering questions, channel='slack' for product/design. "
+            "Call request_human(prompt, channel=...) — the channel arg is "
+            "required when multiple channels are registered."
+        )
+    )
+
     async def on_workflow(self, ctx):
-        # Each yield routes to the named handler explicitly.
+        # Workflow side picks the channel explicitly.
         approval = yield HumanCall(channel="feishu", prompt="Approve deploy?")
         followup = yield HumanCall(channel="slack", prompt="Anything else?")
+
+    async def on_agent(self, ctx):
+        # Agent side: the LLM passes `channel="feishu"` or `channel="slack"`
+        # to the request_human tool based on the goal.
+        yield ThinkUnit("triage")
 ```
 
 ## Amphiflow Mode
