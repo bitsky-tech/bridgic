@@ -555,21 +555,15 @@ See [Human-in-the-Loop](#human-in-the-loop) for the full HITL story.
 async def bash(command: str, timeout: int = 120000, cwd: str = "") -> str
 ```
 
-Execute a shell command via the user's default shell. Returns a tagged envelope:
+Execute a shell command via the user's default shell. Returns the captured `stdout` **verbatim** — no envelope, no tags, no decoration. Downstream consumers (workflow `yield ActionCall("bash", ...)` or LLM tool dispatch) get the raw shell output and parse it directly.
 
-```
-<stdout>
-...captured stdout...
-</stdout>
-<stderr>
-...captured stderr...
-</stderr>
-<exit_code>0</exit_code>
-```
+Failure handling matches `subprocess.check_output`: a non-zero exit code raises `RuntimeError` whose message contains the exit code and any captured `stderr` (falling back to `stdout` when `stderr` is empty). The framework's `_action` then surfaces it as `ActionStepResult(success=False, error=...)`, so callers never need to inspect tags to detect failure.
+
+`stderr` is NOT mixed into the return value on success — it's typical progress / warning noise. If a command writes its useful output to `stderr` (some tools do), append `2>&1` to redirect it into stdout.
 
 | Param | Description |
 |-------|-------------|
-| `command` | Shell command. Multiple commands may be chained with `&&` / `\|\|` / `;`. |
+| `command` | Shell command. Multiple commands may be chained with `&&` / `\|\|` / `;`. Append `2>&1` to merge stderr into stdout. |
 | `timeout` | Milliseconds before the process is killed. Default 120000 (2 min); maximum 600000 (10 min). |
 | `cwd` | Working directory. Empty string inherits the parent process's cwd. |
 

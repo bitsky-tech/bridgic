@@ -100,27 +100,57 @@ def test_all_tool_specs_registered():
 
 
 @pytest.mark.asyncio
-async def test_bash_full_capture_envelope(tmp_path: Path):
-    """One run exercises stdout, exit_code and cwd; another covers stderr.
+async def test_bash_returns_raw_stdout_on_success(tmp_path: Path):
+    """Successful exit returns ``stdout`` verbatim — no envelope, no tags.
 
-    Also asserts the empty-command guard so the validation path is verified
-    alongside the happy path.
+    Downstream consumers (workflow yields, LLM tool dispatch) get the
+    raw shell output and can parse it directly without stripping
+    ``<stdout>`` / ``<exit_code>`` wrappers.
     """
-    # stdout + cwd + non-zero exit code in a single command
-    result = await bash("pwd && echo line2 && exit 3", cwd=str(tmp_path))
-    assert "<exit_code>3</exit_code>" in result
-    assert "line2" in result
+    # cwd + multi-line stdout
+    result = await bash("pwd && echo line2", cwd=str(tmp_path))
     resolved = os.path.realpath(str(tmp_path))
     assert resolved in result or str(tmp_path) in result
+    assert "line2" in result
+    # No envelope leakage.
+    for tag in ("<stdout>", "</stdout>", "<stderr>", "<exit_code>"):
+        assert tag not in result, f"raw output must not carry {tag!r}"
 
-    # stderr separate so the envelope clearly contains both tags
-    result_err = await bash("printf 'oops' 1>&2")
-    assert "<stderr>" in result_err and "oops" in result_err
-    assert "<exit_code>0</exit_code>" in result_err
+    # stderr on a successful command is dropped (use 2>&1 if you need it).
+    only_stderr = await bash("printf 'oops' 1>&2")
+    assert only_stderr.strip() == ""
 
-    # Empty command rejected up front
+    # 2>&1 merges stderr back into stdout, matching shell behaviour.
+    merged = await bash("printf 'oops' 1>&2; printf 'kept'")
+    assert "kept" in merged
+    merged_all = await bash("printf 'err' 1>&2; printf 'out' 2>&1")
+    assert "out" in merged_all
+
+    # Empty command rejected up front.
     with pytest.raises(ValueError, match="command is required"):
         await bash("   ")
+
+
+@pytest.mark.asyncio
+async def test_bash_non_zero_exit_raises(tmp_path: Path):
+    """Non-zero exit code surfaces as ``RuntimeError`` carrying exit
+    code + ``stderr`` (or ``stdout`` when ``stderr`` is empty).
+
+    The framework converts this into
+    ``ActionStepResult(success=False, error=...)`` for both LLM and
+    workflow callers, so they never have to inspect tags to detect
+    failure.
+    """
+    # stderr + non-zero exit → exception with both bits in the message.
+    with pytest.raises(RuntimeError) as ei:
+        await bash("printf 'kaboom' 1>&2; exit 7")
+    msg = str(ei.value)
+    assert "exit code 7" in msg
+    assert "kaboom" in msg
+
+    # Non-zero exit with NO stderr falls back to stdout (or a sentinel).
+    with pytest.raises(RuntimeError, match="exit code 2"):
+        await bash("echo only-stdout && exit 2")
 
 
 @pytest.mark.asyncio

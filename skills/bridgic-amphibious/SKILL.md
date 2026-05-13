@@ -265,7 +265,7 @@ Every `AmphibiousAutoma` agent receives seven built-in tools in `context.tools` 
 | Tool | What it does |
 |------|--------------|
 | `request_human` | Pause and ask the human operator a question (HITL) |
-| `bash` | Execute a shell command (stdout / stderr / exit_code captured) |
+| `bash` | Execute a shell command. Returns raw `stdout`; non-zero exit raises `RuntimeError`. |
 | `read_file` | Read a file with line numbers; required before `write_file` / `edit_file` modify it |
 | `write_file` | Create a new file, or overwrite an existing one (read-before-overwrite enforced) |
 | `edit_file` | Exact-string replacement with uniqueness check; `replace_all` for refactors |

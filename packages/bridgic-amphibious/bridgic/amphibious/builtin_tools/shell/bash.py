@@ -1,13 +1,20 @@
 """Bash built-in tool — execute shell commands.
 
 Stateless: does not depend on the running ``AmphibiousAutoma`` instance.
-Captures stdout, stderr and exit code. Output is truncated past
-``MAX_OUTPUT_BYTES`` to keep tool results LLM-friendly.
+Returns the captured ``stdout`` of the command verbatim, with no
+decoration / envelope / tags. Downstream consumers (LLM tool dispatch
+or workflow ``yield ActionCall``) get the raw shell output and can
+parse it directly.
 
-Errors propagate as exceptions; ``AmphibiousAutoma._action`` converts
-them into ``ActionStepResult(success=False, error=...)`` for the LLM.
-A non-zero exit code is NOT an exception — the LLM receives the full
-stdout/stderr/exit_code envelope and decides what to do.
+Failure handling follows the ``subprocess.check_output`` convention:
+a non-zero exit code raises ``RuntimeError`` carrying ``stderr`` and
+the exit code. The framework (``AmphibiousAutoma._action``) converts
+this exception into ``ActionStepResult(success=False, error=...)`` for
+either the LLM or the workflow, so callers never have to parse tags
+to detect failure.
+
+Output past ``MAX_OUTPUT_BYTES`` is truncated with a clear marker so a
+chatty command does not blow up the LLM's context window.
 """
 
 import asyncio
@@ -29,24 +36,45 @@ async def bash(
     timeout: int = DEFAULT_TIMEOUT_MS,
     cwd: str = "",
 ) -> str:
-    """Execute a shell command and return its captured output.
+    """Execute a shell command and return its captured ``stdout``.
 
-    Runs the command via the user's default shell. Captures stdout,
-    stderr and the exit code, then formats them into a single string
-    response. Use this for tasks like listing files, running tests,
-    building projects or invoking ``git``.
+    Runs the command via the user's default shell. On success (exit
+    code 0) returns the ``stdout`` exactly as the shell produced it —
+    no tags, no envelope, no decoration. Use this for tasks like
+    listing files, running tests, building projects, or invoking
+    ``git``.
 
     Parameters
     ----------
     command : str
         The shell command to execute. Multiple commands can be chained
-        with ``&&``, ``||`` or ``;``.
+        with ``&&``, ``||`` or ``;``. To merge stderr into stdout
+        (e.g. when a tool writes its useful output to stderr), append
+        ``2>&1``.
     timeout : int
         Maximum duration in milliseconds before the process is killed.
         Default 120000 (2 minutes); maximum 600000 (10 minutes).
     cwd : str
         Working directory for the command. Empty string means inherit
         the parent process's current working directory.
+
+    Returns
+    -------
+    str
+        Raw ``stdout`` from the command. Output longer than
+        ``MAX_OUTPUT_BYTES`` is truncated with a ``[truncated, N more
+        chars]`` marker.
+
+    Raises
+    ------
+    ValueError
+        ``command`` is empty or whitespace-only.
+    TimeoutError
+        The command exceeded ``timeout`` and was killed.
+    RuntimeError
+        The command exited with a non-zero status. The message
+        includes the exit code and any captured ``stderr`` (falling
+        back to ``stdout`` when ``stderr`` is empty).
     """
     if not command or not command.strip():
         raise ValueError("command is required")
@@ -67,7 +95,7 @@ async def bash(
         )
     except asyncio.TimeoutError as exc:
         # Best-effort cleanup so we don't leak the killed process. The
-        # raise below is what actually surfaces the failure to the LLM.
+        # raise below is what actually surfaces the failure.
         try:
             proc.kill()
             await proc.wait()
@@ -81,13 +109,16 @@ async def bash(
     stderr = _decode_truncate(stderr_bytes)
     exit_code = proc.returncode if proc.returncode is not None else -1
 
-    parts = []
-    if stdout:
-        parts.append(f"<stdout>\n{stdout}\n</stdout>")
-    if stderr:
-        parts.append(f"<stderr>\n{stderr}\n</stderr>")
-    parts.append(f"<exit_code>{exit_code}</exit_code>")
-    return "\n".join(parts)
+    if exit_code != 0:
+        # subprocess.check_output convention: non-zero exit is an error.
+        # The framework wraps the raised exception into an
+        # ``ActionStepResult(success=False, error=...)`` for the caller.
+        detail = stderr.strip() or stdout.strip() or "(no output captured)"
+        raise RuntimeError(
+            f"Command failed with exit code {exit_code}: {detail}"
+        )
+
+    return stdout
 
 
 def _decode_truncate(data: bytes) -> str:
