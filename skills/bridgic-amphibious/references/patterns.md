@@ -588,6 +588,27 @@ class SecurityAgent(AmphibiousAutoma[CognitiveContext]):
         yield ThinkUnit("auditor")
 ```
 
+#### Generator-form observation — capture a fresh snapshot every cycle
+
+When the observation needs a live tool call (e.g. take a browser snapshot, query an external system) before each `ThinkUnit`, write the hook as an async generator and `yield ActionCall` / `RETURN`:
+
+```python
+class BrowserAgent(AmphibiousAutoma[CognitiveContext]):
+    explorer = think_unit(CognitiveWorker.inline("Decide next click."), max_attempts=10)
+
+    # Async-generator form: yield ActionCall to fetch the snapshot, then
+    # RETURN it so the framework writes it into ctx.observation for the
+    # upcoming think step.
+    async def observation(self, ctx):
+        snapshot = yield ActionCall("bridgic_browser_snapshot")
+        yield RETURN(snapshot[0].result if snapshot else None)
+
+    async def on_agent(self, ctx):
+        yield ThinkUnit("explorer")
+```
+
+Hook-scope semantics: the `yield ActionCall(...)` here is a raw tool execution. It does NOT re-enter `observation` / `before_action` / `after_action` (hooks are not OTC participants — only `on_workflow` is). The same generator form applies to `before_action` (e.g. yield an audit-log ActionCall before every tool dispatch) and `after_action` (e.g. yield a refresh ActionCall after each step). Exhausting the generator without `RETURN` is treated as no-op / passthrough; `RETURN(value)` becomes the hook's effective return value.
+
 ### build_messages — Reshape LLM Messages
 
 ```python

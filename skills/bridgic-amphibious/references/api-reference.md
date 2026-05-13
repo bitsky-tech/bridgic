@@ -254,8 +254,15 @@ worker = CognitiveWorker.from_prompt("...")
 # Required: Define thinking prompt
 async def thinking(self) -> str: ...
 
-# Optional hooks
-async def observation(self, context) -> Any: ...           # Return _DELEGATE or str
+# Optional hooks — observation / before_action / after_action accept
+# BOTH async-coroutine and async-generator forms (symmetric with the
+# AmphibiousAutoma-level hooks; both go through _invoke_template).
+#   Coroutine form: `return _DELEGATE` / `return value` / `return None`.
+#   Generator form: yield ActionCall / HumanCall / LLMCall, then optionally
+#                   yield RETURN(value). Exhausting without RETURN is
+#                   equivalent to returning None → treated as _DELEGATE
+#                   (chains to the agent-level hook).
+async def observation(self, context) -> Any: ...           # Return _DELEGATE / str / None, OR yield primitives
 async def build_messages(self, think_prompt, tools_description,
                          output_instructions, context_info) -> List[Message]: ...
 async def before_action(self, decision_result, context) -> Any: ...
