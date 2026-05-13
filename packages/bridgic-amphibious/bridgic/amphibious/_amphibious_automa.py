@@ -480,6 +480,12 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         Optional name for the agent instance.
     verbose : bool, default False
         Enable logging of execution summary (tokens, time).
+    verbose_hook_calls : bool, default False
+        Whether to emit dispatch logs for Calls yielded from hook-scope
+        generators (``observation`` / ``before_action`` / ``after_action``).
+        These are internal side-effects and would clutter the workflow
+        narrative; suppressed by default. Flip to ``True`` to surface
+        them when debugging a hook.
 
     Notes
     -----
@@ -600,12 +606,17 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         running_options: Optional[RunningOptions] = None,
         llm: Optional[Any] = None,
         verbose: bool = False,
+        verbose_hook_calls: bool = False,
     ):
         super().__init__(name=name, thread_pool=thread_pool, running_options=running_options)
 
         self._llm = llm
         self._current_context: Optional[CognitiveContextT] = None
         self._verbose = verbose
+        # Hook-scope dispatch logs are suppressed by default so the visible
+        # log focuses on workflow narrative. Flip ``verbose_hook_calls`` to
+        # ``True`` to surface them while debugging a hook generator.
+        self._verbose_hook_calls = verbose_hook_calls
 
         # Trace capture
         self._agent_trace: Optional[AgentTrace] = None
@@ -1616,13 +1627,15 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
                     "on_workflow."
                 )
             channel_label = item.channel or "<default>"
-            self._log(
+            self._log_call(
+                scope,
                 "Dispatch",
                 f"Requesting human input via {channel_label}: {item.prompt}",
                 color="yellow",
             )
             response = await self._dispatch_human_channel(item.prompt, channel=item.channel)
-            self._log(
+            self._log_call(
+                scope,
                 "Dispatch",
                 f"Human responded: {response[:100]}{'...' if len(response) > 100 else ''}",
                 color="green",
@@ -1639,7 +1652,8 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
                     "thinking() method."
                 )
             prompt_preview = item.prompt[:80] + ("..." if len(item.prompt) > 80 else "")
-            self._log(
+            self._log_call(
+                scope,
                 "Dispatch",
                 f"LLMCall protocol={item.protocol} prompt={prompt_preview}",
                 color="cyan",
@@ -1648,7 +1662,7 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
             result_preview = str(result)
             if len(result_preview) > 120:
                 result_preview = result_preview[:120] + "..."
-            self._log("Dispatch", f"LLMCall result: {result_preview}", color="green")
+            self._log_call(scope, "Dispatch", f"LLMCall result: {result_preview}", color="green")
             # Trace is workflow-narrative only — hook-scope LLM calls are
             # internal side-effects (mirror of the ActionCall trace policy).
             if scope != "hook":
@@ -1774,7 +1788,7 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
             if action_result is not None:
                 formatted = action_result.model_dump_json(indent=4)
                 log_label = "hook-dispatch" if scope == "hook" else "dispatch"
-                self._log("Act", f"{log_label}:\n{formatted}", color="purple")
+                self._log_call(scope, "Act", f"{log_label}:\n{formatted}", color="purple")
 
             # Trace recording is workflow-narrative only. Hook-scope tool
             # executions are internal side-effects and do not appear in the
@@ -2576,6 +2590,23 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
     # / ``_has_agent``) used by ``_resolve_mode``. These are called by the
     # dispatcher and ``_run_once`` — never by user code.
     ############################################################################
+
+    def _log_call(self, scope: str, stage: str, message: str, *, color: str = "white") -> None:
+        """Scope-aware ``_log`` for primitive dispatch.
+
+        Hook-scope Calls (yielded from a generator-form ``observation`` /
+        ``before_action`` / ``after_action``) are internal side-effects,
+        not workflow narrative. Their dispatch logs are suppressed by
+        default so the visible log stays focused on the workflow. Set
+        ``verbose_hook_calls=True`` on the constructor to surface them
+        for debugging.
+
+        Workflow-scope Calls always log (subject to the usual
+        ``self._verbose`` gate enforced by ``_log``).
+        """
+        if scope == "hook" and not self._verbose_hook_calls:
+            return
+        self._log(stage, message, color=color)
 
     def _log(self, stage: str, message: str, data: Any = None, color: str = "white"):
         """Log formatted message with timestamp and caller location.

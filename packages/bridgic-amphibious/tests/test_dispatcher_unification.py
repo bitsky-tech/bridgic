@@ -78,6 +78,107 @@ def _finish_step():
 # ---------------------------------------------------------------------------
 
 
+class TestHookCallLogging:
+    """Logs for Calls dispatched at hook scope are suppressed by default
+    (``verbose_hook_calls=False``) and surfaced when the flag is True.
+
+    Workflow-scope Call logs are unaffected by the flag.
+    """
+
+    @pytest.mark.asyncio
+    async def test_hook_dispatch_log_suppressed_by_default(self):
+        """Default: an ActionCall yielded from an observation hook does
+        NOT emit an ``Act`` dispatch log, while a workflow-scope
+        ActionCall still does."""
+        llm = MockLLM(structured_responses=[_finish_step()])
+
+        async def snapshot_tool() -> str:
+            return "snap"
+
+        async def workflow_tool() -> str:
+            return "wf"
+
+        class Agent(AmphibiousAutoma[CognitiveContext]):
+            async def observation(self, ctx):
+                snap = yield ActionCall("snapshot_tool")
+                yield RETURN(snap[0].result if snap else None)
+
+            async def on_workflow(self, ctx):
+                yield ActionCall("workflow_tool")
+
+        ctx = _ctx()
+        ctx.tools.add(FunctionToolSpec.from_raw(snapshot_tool))
+        ctx.tools.add(FunctionToolSpec.from_raw(workflow_tool))
+
+        # ``verbose=True`` so _log itself is not gated out; the only thing
+        # under test is the per-scope hook gate.
+        agent = Agent(llm=llm, verbose=True)
+
+        emitted: List[tuple] = []
+        original_log = agent._log
+
+        def _capture(stage, message, data=None, color="white"):
+            emitted.append((stage, message))
+            # Skip the real _log to avoid noisy test output, but exercise
+            # nothing else by short-circuiting here.
+            return None
+
+        agent._log = _capture  # type: ignore[assignment]
+        try:
+            await agent.arun(context=ctx)
+        finally:
+            agent._log = original_log  # type: ignore[assignment]
+
+        # Workflow-scope ActionCall surfaced as an ``Act`` log (label
+        # ``dispatch:``); hook-scope ActionCall did NOT (label would have
+        # been ``hook-dispatch:``).
+        act_messages = [msg for stage, msg in emitted if stage == "Act"]
+        assert any("dispatch:" in m and "hook-dispatch:" not in m for m in act_messages), \
+            f"workflow-scope ActionCall should log; got {act_messages!r}"
+        assert not any("hook-dispatch:" in m for m in act_messages), \
+            f"hook-scope ActionCall must NOT log by default; got {act_messages!r}"
+
+    @pytest.mark.asyncio
+    async def test_hook_dispatch_log_surfaces_when_flag_on(self):
+        """With ``verbose_hook_calls=True``, hook-scope ActionCall logs DO
+        appear (useful for debugging a misbehaving hook)."""
+        llm = MockLLM(structured_responses=[_finish_step()])
+
+        async def snapshot_tool() -> str:
+            return "snap"
+
+        class Agent(AmphibiousAutoma[CognitiveContext]):
+            async def observation(self, ctx):
+                snap = yield ActionCall("snapshot_tool")
+                yield RETURN(snap[0].result if snap else None)
+
+            async def on_agent(self, ctx):
+                worker = CognitiveWorker.inline("plan", llm=self.llm)
+                await self._run(worker)
+
+        ctx = _ctx()
+        ctx.tools.add(FunctionToolSpec.from_raw(snapshot_tool))
+
+        agent = Agent(llm=llm, verbose=True, verbose_hook_calls=True)
+
+        emitted: List[tuple] = []
+        original_log = agent._log
+
+        def _capture(stage, message, data=None, color="white"):
+            emitted.append((stage, message))
+            return None
+
+        agent._log = _capture  # type: ignore[assignment]
+        try:
+            await agent.arun(context=ctx)
+        finally:
+            agent._log = original_log  # type: ignore[assignment]
+
+        act_messages = [msg for stage, msg in emitted if stage == "Act"]
+        assert any("hook-dispatch:" in m for m in act_messages), \
+            f"with verbose_hook_calls=True, hook ActionCall should log; got {act_messages!r}"
+
+
 class TestYieldsInObservation:
 
     @pytest.mark.asyncio

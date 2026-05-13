@@ -124,9 +124,13 @@ Base class for dual-mode agents. Subclass with a generic `CognitiveContext` type
 
 ```python
 AmphibiousAutoma(
-    llm: Optional[BaseLlm] = None,  # Optional. Required for AGENT/AMPHIFLOW modes
-    name: str = None,                # Optional agent name
-    verbose: bool = False,           # Enable execution logging
+    llm: Optional[BaseLlm] = None,    # Optional. Required for AGENT/AMPHIFLOW modes
+    name: str = None,                  # Optional agent name
+    verbose: bool = False,             # Enable execution logging
+    verbose_hook_calls: bool = False,  # Surface dispatch logs for Calls yielded from
+                                       # observation / before_action / after_action hooks.
+                                       # Suppressed by default — hook-yielded Calls are
+                                       # internal side-effects, not workflow narrative.
 )
 ```
 
