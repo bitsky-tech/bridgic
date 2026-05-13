@@ -683,6 +683,18 @@ class CognitiveWorker(GraphAutoma):
         """
         Enhance or customize the observation before thinking.
 
+        Two forms are accepted (the framework's ``_invoke_template`` driver
+        handles both uniformly):
+
+        * **Coroutine form** — ``return _DELEGATE`` / ``return "..."`` /
+          ``return None``.
+        * **Async-generator form** — ``yield ActionCall(...) /
+          HumanCall(...) / LLMCall(...)`` for side-effect calls, then
+          ``yield RETURN(value)`` to set the observation. Hook-scope
+          dispatch rules apply (see ``AmphibiousAutoma._dispatch_call`` and
+          ``_action_raw``): ActionCall yielded here is a raw tool execution
+          and does NOT re-enter the OTC wrap.
+
         Parameters
         ----------
         context : CognitiveContext
@@ -691,20 +703,29 @@ class CognitiveWorker(GraphAutoma):
         Returns
         -------
         Any
-            _DELEGATE to delegate observation to AmphibiousAutoma.observation().
-            A string to use as the observation directly.
+            ``_DELEGATE`` (or ``None``) to delegate observation to
+            ``AmphibiousAutoma.observation()``. Any other value is used as
+            the observation directly.
 
-            Returning ``None`` (e.g. an empty ``pass`` override) is treated
-            identically to ``_DELEGATE`` so that stub overrides do not
-            bypass the agent-level fallback.
+            Returning ``None`` (e.g. an empty ``pass`` override, or a
+            generator exhausting without ``RETURN``) is treated identically
+            to ``_DELEGATE`` so that stub overrides do not bypass the
+            agent-level fallback.
 
         Examples
         --------
+        >>> # Coroutine form — delegate to agent-level.
         >>> async def observation(self, context):
-        ...     return _DELEGATE  # Use agent-level observation (default)
+        ...     return _DELEGATE
         ...
+        >>> # Coroutine form — direct value.
         >>> async def observation(self, context):
-        ...     return f"Current state: {context.goal}"  # Custom observation
+        ...     return f"Current state: {context.goal}"
+        ...
+        >>> # Generator form — capture snapshot via a tool, then RETURN it.
+        >>> async def observation(self, context):
+        ...     snap = yield ActionCall("snapshot_tool")
+        ...     yield RETURN(snap[0].result if snap else None)
         """
         return _DELEGATE
 
@@ -795,9 +816,20 @@ class CognitiveWorker(GraphAutoma):
         ``before_action()`` method. Override to intercept and modify tool calls
         at the worker level.
 
-        Returning ``None`` (e.g. an empty ``pass`` override) is treated
-        identically to ``_DELEGATE`` so that stub overrides do not break the
-        delegation chain.
+        Two forms are accepted (the framework's ``_invoke_template`` driver
+        handles both uniformly):
+
+        * **Coroutine form** — ``return _DELEGATE`` / ``return modified`` /
+          ``return None``.
+        * **Async-generator form** — yield ``ActionCall`` / ``HumanCall`` /
+          ``LLMCall`` for side-effect calls, then optionally ``yield
+          RETURN(modified_decision)``. Hook-scope rules apply; see
+          ``AmphibiousAutoma.before_action`` for the agent-level mirror.
+
+        Returning ``None`` (e.g. an empty ``pass`` override, or a generator
+        exhausting without ``RETURN``) is treated identically to
+        ``_DELEGATE`` so that stub overrides do not break the delegation
+        chain.
 
         Parameters
         ----------
@@ -814,9 +846,14 @@ class CognitiveWorker(GraphAutoma):
 
         Examples
         --------
+        >>> # Coroutine form — filter dangerous tools.
         >>> async def before_action(self, decision_result, context):
-        ...     # Filter out dangerous tools
         ...     return decision_result.filter(lambda x: x.tool_name not in ["delete", "drop"])
+        ...
+        >>> # Generator form — audit then passthrough.
+        >>> async def before_action(self, decision_result, context):
+        ...     yield ActionCall("audit_tool", payload=str(decision_result))
+        ...     # No RETURN → delegate to agent-level.
         """
         return _DELEGATE
 
@@ -827,6 +864,15 @@ class CognitiveWorker(GraphAutoma):
         Returns ``_DELEGATE`` by default, which chains to the agent-level
         ``after_action()`` method. Override this hook to mutate custom
         context fields or perform side effects at the worker level.
+
+        Two forms are accepted (the framework's ``_invoke_template`` driver
+        handles both uniformly):
+
+        * **Coroutine form** — ``return _DELEGATE`` / ``return suppress`` /
+          ``return None``.
+        * **Async-generator form** — yield ``ActionCall`` / ``HumanCall`` /
+          ``LLMCall`` for follow-up side-effect calls, then optionally
+          ``yield RETURN(value)``. Hook-scope rules apply.
 
         The return value is a *control signal*, not a data channel:
         - Return ``_DELEGATE`` (or ``None``) to also invoke the agent-level
@@ -852,10 +898,15 @@ class CognitiveWorker(GraphAutoma):
 
         Examples
         --------
+        >>> # Coroutine form — update context field, chain to agent-level.
         >>> async def after_action(self, step_result, ctx):
-        ...     # Update custom context fields (side effect only)
         ...     ctx.current_document = extract_document(step_result)
-        ...     return _DELEGATE  # still let the agent-level hook run
+        ...     return _DELEGATE
+        ...
+        >>> # Generator form — fire a follow-up tool, then chain.
+        >>> async def after_action(self, step_result, ctx):
+        ...     yield ActionCall("refresh_index")
+        ...     # No RETURN → chain to agent-level.
         """
         return _DELEGATE
 

@@ -25,6 +25,7 @@ from bridgic.amphibious import (
     human_channel,
     think_unit,
 )
+from bridgic.core.agentic.tool_specs import FunctionToolSpec
 from bridgic.core.model.types import Message, Response, Role
 
 
@@ -124,6 +125,51 @@ class TestYieldsInObservation:
 
         assert agent._current_context.observation == "legacy-obs"
 
+    @pytest.mark.asyncio
+    async def test_observation_can_yield_action_call(self):
+        """observation generator may ``yield ActionCall(...)`` to capture
+        a fresh snapshot, ``RETURN`` the tool result, and ctx.observation
+        is set to that value — all without infinite recursion.
+
+        Regression test for the documented docstring pattern on
+        ``AmphibiousAutoma.observation``. Previously, dispatching an
+        ActionCall yielded from within a hook (``scope="hook"``)
+        re-entered the same hook generator and blew the stack with
+        ``RecursionError``. The fix splits ``_dispatch_call``'s
+        ActionCall branch by scope: hook-scope runs ``_action_raw`` (no
+        observation, no before/after_action wrap, no trace step) while
+        workflow-scope keeps the full OTC wrap.
+        """
+        llm = MockLLM(structured_responses=[_finish_step()])
+        call_count = 0
+
+        async def snapshot_tool() -> str:
+            """Mock snapshot tool used by the observation hook."""
+            nonlocal call_count
+            call_count += 1
+            return "snap-v1"
+
+        class Agent(AmphibiousAutoma[CognitiveContext]):
+            async def observation(self, ctx) -> AsyncGenerator[Any, Any]:
+                snap = yield ActionCall("snapshot_tool")
+                yield RETURN(snap[0].result if snap else None)
+
+            async def on_agent(self, ctx):
+                worker = CognitiveWorker.inline("plan", llm=self.llm)
+                await self._run(worker)
+
+        ctx = _ctx()
+        ctx.tools.add(FunctionToolSpec.from_raw(snapshot_tool))
+
+        agent = Agent(llm=llm)
+        await agent.arun(context=ctx)  # must NOT raise RecursionError
+
+        # The hook's ActionCall executed exactly once (the bug would have
+        # either recursed forever or, with a guard, fired zero times).
+        assert call_count == 1
+        # The RETURN value reached ctx.observation.
+        assert agent._current_context.observation == "snap-v1"
+
 
 class TestYieldsInBeforeAction:
 
@@ -149,6 +195,172 @@ class TestYieldsInBeforeAction:
 
         # before_action invoked at least once
         assert len(seen_decisions) >= 1
+
+    @pytest.mark.asyncio
+    async def test_before_action_can_yield_action_call(self):
+        """before_action generator may ``yield ActionCall(...)`` for an
+        out-of-band tool call (e.g. an audit log) without recursing.
+
+        Regression test for the same recursion bug as
+        ``test_observation_can_yield_action_call``: the ActionCall is
+        dispatched with ``scope="hook"`` and must NOT re-enter the
+        before_action chain.
+        """
+        llm = MockLLM(structured_responses=[_finish_step()])
+        call_count = 0
+
+        async def audit_tool() -> str:
+            """Mock audit tool used by the before_action hook."""
+            nonlocal call_count
+            call_count += 1
+            return "audited"
+
+        class Agent(AmphibiousAutoma[CognitiveContext]):
+            async def before_action(self, decision_result, ctx) -> AsyncGenerator[Any, Any]:
+                yield ActionCall("audit_tool")
+                # No RETURN → passthrough.
+                if False:
+                    yield
+
+            async def on_agent(self, ctx):
+                worker = CognitiveWorker.inline("plan", llm=self.llm)
+                await self._run(worker)
+
+        ctx = _ctx()
+        ctx.tools.add(FunctionToolSpec.from_raw(audit_tool))
+
+        agent = Agent(llm=llm)
+        await agent.arun(context=ctx)  # must NOT raise RecursionError
+
+        # Tool fires exactly once — once per before_action invocation, and
+        # before_action runs once per action phase. With the bug it would
+        # have recursed; with the fix it runs cleanly.
+        assert call_count == 1
+
+
+class TestWorkerHookGeneratorForm:
+    """Worker-level hooks accept async-generator form, symmetric with
+    the agent-level hooks. Pre-fix, ``await worker.observation(ctx)``
+    crashed with ``TypeError: can't await async_generator`` when the
+    user wrote the hook as a generator. Now ``_invoke_template`` drives
+    both forms uniformly."""
+
+    @pytest.mark.asyncio
+    async def test_worker_observation_generator_form_with_action_call(self):
+        """Worker-level observation as a generator yielding ActionCall +
+        RETURN(value) sets ctx.observation and short-circuits the
+        agent-level fallback."""
+        llm = MockLLM(structured_responses=[_finish_step()])
+        agent_fallback_ran = False
+        call_count = 0
+
+        async def snapshot_tool() -> str:
+            nonlocal call_count
+            call_count += 1
+            return "worker-snap"
+
+        class GenObservationWorker(CognitiveWorker):
+            async def thinking(self):
+                return "Plan ONE step"
+
+            async def observation(self, context) -> AsyncGenerator[Any, Any]:
+                snap = yield ActionCall("snapshot_tool")
+                yield RETURN(snap[0].result if snap else None)
+
+        worker = GenObservationWorker(llm=llm)
+
+        class Agent(AmphibiousAutoma[CognitiveContext]):
+            async def observation(self, ctx):
+                nonlocal agent_fallback_ran
+                agent_fallback_ran = True
+                return "agent-fallback"
+
+            async def on_agent(self, ctx):
+                await self._run(worker, max_attempts=1)
+
+        ctx = _ctx()
+        ctx.tools.add(FunctionToolSpec.from_raw(snapshot_tool))
+
+        agent = Agent(llm=llm)
+        await agent.arun(context=ctx)  # must NOT raise TypeError
+
+        # Worker-level generator returned "worker-snap" → no delegation.
+        assert call_count == 1
+        assert agent_fallback_ran is False
+        assert agent._current_context.observation == "worker-snap"
+
+    @pytest.mark.asyncio
+    async def test_worker_observation_generator_no_return_delegates(self):
+        """Worker generator that exhausts without RETURN → returns None
+        → treated as _DELEGATE → agent-level observation runs."""
+        llm = MockLLM(structured_responses=[_finish_step()])
+        agent_fallback_ran = False
+
+        class GenObservationWorker(CognitiveWorker):
+            async def thinking(self):
+                return "Plan ONE step"
+
+            async def observation(self, context) -> AsyncGenerator[Any, Any]:
+                # Generator with no yields/RETURN — exhausts immediately.
+                if False:
+                    yield
+
+        worker = GenObservationWorker(llm=llm)
+
+        class Agent(AmphibiousAutoma[CognitiveContext]):
+            async def observation(self, ctx):
+                nonlocal agent_fallback_ran
+                agent_fallback_ran = True
+                return "agent-fallback"
+
+            async def on_agent(self, ctx):
+                await self._run(worker, max_attempts=1)
+
+        agent = Agent(llm=llm)
+        await agent.arun(context=_ctx())
+
+        assert agent_fallback_ran is True
+        assert agent._current_context.observation == "agent-fallback"
+
+
+class TestYieldsInAfterAction:
+
+    @pytest.mark.asyncio
+    async def test_after_action_can_yield_action_call(self):
+        """after_action generator may ``yield ActionCall(...)`` for a
+        follow-up tool call (e.g. a side-effect refresh) without
+        recursing.
+
+        Regression test for the same recursion bug. ActionCall yielded
+        from after_action is dispatched with ``scope="hook"`` and must
+        NOT re-enter the after_action chain.
+        """
+        llm = MockLLM(structured_responses=[_finish_step()])
+        call_count = 0
+
+        async def followup_tool() -> str:
+            """Mock follow-up tool used by the after_action hook."""
+            nonlocal call_count
+            call_count += 1
+            return "followed-up"
+
+        class Agent(AmphibiousAutoma[CognitiveContext]):
+            async def after_action(self, step_result, ctx) -> AsyncGenerator[Any, Any]:
+                yield ActionCall("followup_tool")
+                if False:
+                    yield
+
+            async def on_agent(self, ctx):
+                worker = CognitiveWorker.inline("plan", llm=self.llm)
+                await self._run(worker)
+
+        ctx = _ctx()
+        ctx.tools.add(FunctionToolSpec.from_raw(followup_tool))
+
+        agent = Agent(llm=llm)
+        await agent.arun(context=ctx)  # must NOT raise RecursionError
+
+        assert call_count == 1
 
 
 class TestGeneratorVsCoroutineForms:

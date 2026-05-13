@@ -674,8 +674,12 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         ------
         ActionCall | HumanCall | LLMCall | RETURN
             Hook scope — ``EnterAgent`` and ``ThinkUnit`` are rejected.
-            Yield ``RETURN(text)`` to set the observation; exhausting
-            without RETURN treats the observation as ``None``.
+            Yield ``RETURN(text)`` to set ``ctx.observation`` for this
+            cycle. Exhausting without ``RETURN`` (or yielding
+            ``RETURN(None)``) **preserves** the previous
+            ``ctx.observation`` instead of overwriting it — so
+            ``after_action``-driven refresh patterns work without a
+            dedicated passthrough override.
 
         Examples
         --------
@@ -1503,7 +1507,6 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
             f"automatically."
         )
 
-
     async def _dispatch_call(
         self,
         item: Any,
@@ -1556,6 +1559,19 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
           belong in on_workflow or in a worker's hook).
         * ``EnterAgent`` — only ``"workflow"``.
         * ``ThinkUnit`` — only ``"agent"``.
+
+        ActionCall semantics differ by scope:
+
+        * ``scope == "workflow"`` — full OTC wrap: agent-level
+          ``observation`` runs first, then ``_action`` runs (which
+          invokes ``before_action`` + tool + ``after_action``), and a
+          workflow trace step is recorded.
+        * ``scope == "hook"`` — raw tool execution via ``_action_raw``:
+          no observation, no ``before_action`` / ``after_action`` wrap,
+          no trace step. Hooks are imperative side-effect channels and
+          are explicitly NOT OTC participants — re-entering the hook
+          chain here would recurse into the same generator that yielded
+          the ActionCall and blow the stack.
 
         EnterAgent dispatch here (called from ``_invoke_template`` in
         WORKFLOW mode without state-machine wrapping) recursively drives
@@ -1633,7 +1649,10 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
             if len(result_preview) > 120:
                 result_preview = result_preview[:120] + "..."
             self._log("Dispatch", f"LLMCall result: {result_preview}", color="green")
-            self._record_llm_call_trace(item, result)
+            # Trace is workflow-narrative only — hook-scope LLM calls are
+            # internal side-effects (mirror of the ActionCall trace policy).
+            if scope != "hook":
+                self._record_llm_call_trace(item, result)
             return result
 
         if isinstance(item, ThinkUnit):
@@ -1702,19 +1721,45 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
                 )
             decision = item.decision
 
-            # 1. Observe via agent-level hook.
-            obs = await self._invoke_template(self.observation(ctx), ctx)
-            ctx.observation = obs
+            # ActionCall dispatch splits by scope, reflecting the framework's
+            # design philosophy: hooks (``observation`` / ``before_action`` /
+            # ``after_action``) are NOT OTC participants — they are
+            # imperative side-effect channels. Only ``on_workflow`` does an
+            # OTC-wrapped dispatch.
+            #
+            # * ``scope == "hook"``     — raw tool execution. No
+            #   observation, no ``before_action`` / ``after_action`` wrap,
+            #   no workflow trace step. Re-entering the hook chain here
+            #   would recurse into the same generator that yielded this
+            #   ActionCall and blow the stack.
+            # * ``scope == "workflow"`` — full OTC wrap (observation +
+            #   ``_action`` which runs before/after_action, plus a
+            #   workflow trace step).
+            if scope == "hook":
+                action_result = await self._action_raw(decision, ctx)
+            else:
+                # 1. Observe via agent-level hook.
+                #
+                # ``None`` (observation hook didn't yield ``RETURN`` — the
+                # default stub case, or a deliberate "no fresh observation
+                # here") is treated as "preserve the previous
+                # ``ctx.observation``" so that snapshots written by
+                # ``after_action`` survive across yields where
+                # ``observation`` is intentionally a no-op.
+                obs = await self._invoke_template(self.observation(ctx), ctx)
+                if obs is not None:
+                    ctx.observation = obs
 
-            obs_str = str(obs) if obs is not None else "None"
-            if len(obs_str) > 200:
-                obs_str = obs_str[:200] + "..."
-            self._log("Observe", f"dispatch: {obs_str}", color="green")
-            self._log("Think", f"dispatch: {decision.step_content}", color="cyan")
+                obs_str = str(obs) if obs is not None else "None"
+                if len(obs_str) > 200:
+                    obs_str = obs_str[:200] + "..."
+                self._log("Observe", f"dispatch: {obs_str}", color="green")
+                self._log("Think", f"dispatch: {decision.step_content}", color="cyan")
 
-            # 2. Act. Tool failures bubble up as RuntimeError; the
-            # state-machine driver's fallback wrapping catches them.
-            action_result = await self._action(decision, ctx, _worker=None)
+                # 2. Act with before/after_action wrap. Tool failures bubble
+                # up as RuntimeError; the state-machine driver's fallback
+                # wrapping catches them.
+                action_result = await self._action(decision, ctx, _worker=None)
 
             inner = getattr(action_result, "result", None)
             if isinstance(inner, ActionResult):
@@ -1728,9 +1773,14 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
 
             if action_result is not None:
                 formatted = action_result.model_dump_json(indent=4)
-                self._log("Act", f"dispatch:\n{formatted}", color="purple")
+                log_label = "hook-dispatch" if scope == "hook" else "dispatch"
+                self._log("Act", f"{log_label}:\n{formatted}", color="purple")
 
-            self._record_trace_step(None, obs, decision, action_result, ctx)
+            # Trace recording is workflow-narrative only. Hook-scope tool
+            # executions are internal side-effects and do not appear in the
+            # workflow trace.
+            if scope != "hook":
+                self._record_trace_step(None, obs, decision, action_result, ctx)
             return self._build_tool_results(action_result)
 
         raise TypeError(
@@ -2061,12 +2111,20 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
             # 1. Observe
             # Worker-level ``None`` (e.g. an AI-generated ``pass`` stub) is
             # treated identically to ``_DELEGATE`` so the agent-level
-            # observation fallback still runs. Agent-level hook may be a
-            # generator; ``_invoke_template`` handles both forms.
-            obs = await worker.observation(context)
+            # observation fallback still runs. Both worker- and agent-level
+            # hooks may be written as plain coroutines OR async generators
+            # — ``_invoke_template`` handles both forms uniformly.
+            #
+            # If both layers ultimately return ``None``, preserve the
+            # previous ``context.observation`` instead of overwriting it.
+            # This lets ``after_action``-driven refresh patterns work
+            # without forcing the user to write a passthrough
+            # ``observation`` override solely to defeat the overwrite.
+            obs = await self._invoke_template(worker.observation(context), context)
             if obs is _DELEGATE or obs is None:
                 obs = await self._invoke_template(self.observation(context), context)
-            context.observation = obs
+            if obs is not None:
+                context.observation = obs
 
             obs_str = str(obs) if obs is not None else "None"
             if len(obs_str) > 200:
@@ -2187,32 +2245,29 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
 
         return finished
 
-    async def _action(
+    def _parse_decision_for_action(
         self,
         decision: Any,
         ctx: CognitiveContextT,
-        *,
-        _worker: Optional[CognitiveWorker] = None,
-    ) -> Step:
+    ) -> Tuple[bool, Optional[List[StepToolCall]], Any]:
+        """Parse a thinking decision into its execution form.
+
+        Returns
+        -------
+        (is_tool_call_form, calls, decision_result)
+            * ``is_tool_call_form`` — True when ``decision.output`` is
+              declared as ``List[StepToolCall]`` (tool-call path); False
+              when it is a BaseModel (custom-output path).
+            * ``calls`` — the raw ``StepToolCall`` list when tool-call
+              form, else ``None``.
+            * ``decision_result`` — ``List[Tuple[ToolCall, ToolSpec]]``
+              for tool-call form (ready for ``action_tool_call``), or
+              the raw output BaseModel for custom-output form.
+
+        Pure helper shared by ``_action`` (OTC-wrapped) and
+        ``_action_raw`` (hook-scope, no wrapping).
         """
-        Execute the action phase based on the thinking decision.
-
-        Routes to ``action_tool_call()`` for tool-call output or
-        ``action_custom_output()`` for structured output (output_schema).
-        Calls ``before_action()`` on both the worker and agent level
-        (with delegation via ``_DELEGATE``).
-
-        Parameters
-        ----------
-        decision : Any
-            The thinking decision with 'output' field (List[StepToolCall] or BaseModel).
-        ctx : CognitiveContextT
-            The cognitive context.
-        _worker : Optional[CognitiveWorker]
-            The worker that produced this decision (used for before_action callback).
-        """ 
         def _is_list_step_tool_call(d: Any) -> bool:
-            # Get the declared type of the output field
             if not isinstance(d, BaseModel):
                 return False
             fi = type(d).model_fields.get('output')
@@ -2221,8 +2276,6 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
             ann = fi.annotation
             if get_origin(ann) is Annotated:
                 ann = get_args(ann)[0]
-
-            # if the type is not List[StepToolCall], return False
             if ann is None:
                 return False
             origin = get_origin(ann)
@@ -2283,35 +2336,100 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
                         break
             return matched
 
-        ########################
-        # Analysis of the decision output
-        ########################
-        # Get the output structure of the decision
         output = getattr(decision, 'output', None)
-
-        # If the output is a list of StepToolCall
         if _is_list_step_tool_call(decision):
             calls = output
             tool_calls = _convert_decision_to_tool_calls(calls, ctx)
             decision_result = _match_tool_calls(tool_calls, ctx)
+            return True, calls, decision_result
+        return False, None, output
 
-        # If the output is a BaseModel
-        else:
-            decision_result = output
+    async def _execute_parsed_decision(
+        self,
+        decision: Any,
+        decision_result: Any,
+        ctx: CognitiveContextT,
+        *,
+        is_tool_call_form: bool,
+        calls: Optional[List[StepToolCall]],
+    ) -> Step:
+        """Run the action proper — no ``before_action`` / ``after_action`` wrapping.
 
+        Dispatches to ``action_tool_call`` (tool-call form) or
+        ``action_custom_output`` (custom-output form) and builds the
+        resulting ``Step``. Shared by ``_action`` and ``_action_raw``.
+        """
+        if is_tool_call_form:
+            if not calls:
+                result = Step(
+                    content=decision.step_content,
+                    result=None,
+                    metadata={"tool_calls": []},
+                )
+                ctx.add_info(result)
+                return result
+            action_result = await self.action_tool_call(decision_result, ctx)
+            result = Step(
+                content=decision.step_content,
+                result=action_result,
+                metadata={},
+            )
+            ctx.add_info(result)
+            return result
 
-        ########################
-        # Execution of the action based on the decision result
-        ########################
+        # Custom-output form. ``None`` (e.g. from an AI-generated ``pass``
+        # stub of ``action_custom_output``) is treated as passthrough so the
+        # typed output is preserved instead of being silently dropped.
+        custom_ret = await self.action_custom_output(decision_result, ctx)
+        action_result = decision_result if custom_ret is None else custom_ret
+        result = Step(content=decision.step_content, result=action_result, metadata={})
+        ctx.add_info(result)
+        return result
+
+    async def _action(
+        self,
+        decision: Any,
+        ctx: CognitiveContextT,
+        *,
+        _worker: Optional[CognitiveWorker] = None,
+    ) -> Step:
+        """OTC-wrapped action: ``before_action`` → execute → ``after_action``.
+
+        Routes to ``action_tool_call()`` for tool-call output or
+        ``action_custom_output()`` for structured output (output_schema).
+        Calls ``before_action()`` and ``after_action()`` on both the
+        worker and agent level (with delegation via ``_DELEGATE``).
+
+        Used by the OTC cycle (``_run_observe_think_act``) and by
+        ``_dispatch_call``'s workflow-scope ActionCall path. The hook-scope
+        ActionCall path uses ``_action_raw()`` instead, because hooks are
+        not OTC participants — re-entering the hook chain there would
+        recurse into the same generator that yielded the ActionCall.
+
+        Parameters
+        ----------
+        decision : Any
+            The thinking decision with 'output' field (List[StepToolCall] or BaseModel).
+        ctx : CognitiveContextT
+            The cognitive context.
+        _worker : Optional[CognitiveWorker]
+            The worker that produced this decision (used for before_action callback).
+        """
+        is_tool_call_form, calls, decision_result = self._parse_decision_for_action(decision, ctx)
+
         # before_action delegation: worker → agent.
         # ``None`` is treated as "no-op override" so that AI-generated stubs
         # (``async def before_action(...): pass``) behave identically to not
         # overriding the hook at all:
         #   - worker-level None ≡ _DELEGATE → fall through to agent-level
         #   - agent-level None  ≡ passthrough → keep original decision_result
+        # Both layers accept coroutine OR async-generator form;
+        # ``_invoke_template`` drives either uniformly.
         original_decision_result = decision_result
         if _worker is not None:
-            worker_ret = await _worker.before_action(decision_result, ctx)
+            worker_ret = await self._invoke_template(
+                _worker.before_action(decision_result, ctx), ctx,
+            )
             if worker_ret is _DELEGATE or worker_ret is None:
                 agent_ret = await self._invoke_template(
                     self.before_action(original_decision_result, ctx), ctx,
@@ -2325,45 +2443,56 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
             )
             decision_result = original_decision_result if agent_ret is None else agent_ret
 
-        # Execute the action based on the (possibly delegated) decision result
-        result = None
-        if _is_list_step_tool_call(decision):
-            if not calls:
-                result = Step(
-                    content=decision.step_content,
-                    result=None,
-                    metadata={"tool_calls": []}
-                )
-                ctx.add_info(result)
-            else:
-                action_result = await self.action_tool_call(decision_result, ctx)
-                result = Step(
-                    content=decision.step_content,
-                    result=action_result,
-                    metadata={}
-                )
-                ctx.add_info(result)
-        else:
-            # ``None`` (e.g. from an AI-generated ``pass`` stub) is treated as
-            # passthrough so the typed output is preserved instead of being
-            # silently dropped.
-            custom_ret = await self.action_custom_output(decision_result, ctx)
-            action_result = decision_result if custom_ret is None else custom_ret
-            result = Step(content=decision.step_content, result=action_result, metadata={})
-            ctx.add_info(result)
+        result = await self._execute_parsed_decision(
+            decision, decision_result, ctx,
+            is_tool_call_form=is_tool_call_form, calls=calls,
+        )
 
         # after_action delegation: worker → agent.
         # Worker-level ``None`` ≡ ``_DELEGATE`` so AI-generated ``pass`` stubs
-        # still chain to the agent-level hook. Agent-level hook may be a
-        # generator; ``_invoke_template`` handles both forms.
+        # still chain to the agent-level hook. Both layers accept coroutine
+        # OR async-generator form; ``_invoke_template`` drives either
+        # uniformly.
         if _worker is not None:
-            delegate = await _worker.after_action(result, ctx)
+            delegate = await self._invoke_template(
+                _worker.after_action(result, ctx), ctx,
+            )
             if delegate is _DELEGATE or delegate is None:
                 await self._invoke_template(self.after_action(result, ctx), ctx)
         else:
             await self._invoke_template(self.after_action(result, ctx), ctx)
 
         return result
+
+    async def _action_raw(
+        self,
+        decision: Any,
+        ctx: CognitiveContextT,
+    ) -> Step:
+        """Execute an action with NO hook participation.
+
+        Used by ``_dispatch_call`` when an ActionCall is yielded from
+        within a hook (``scope="hook"``). Hooks (``observation`` /
+        ``before_action`` / ``after_action``) are **not** OTC participants
+        — they are imperative side-effect channels that may yield to
+        request a one-off tool execution. Running the OTC wrap
+        (observation + before_action + after_action) here would re-enter
+        the same hook generator that yielded this ActionCall and recurse
+        infinitely.
+
+        The two paths intentionally diverge:
+        * ``scope="workflow"`` ActionCall → ``_action()`` (OTC-wrapped,
+          recorded as a workflow trace step).
+        * ``scope="hook"``     ActionCall → ``_action_raw()`` (raw tool
+          execution, no hooks, no workflow-trace step).
+
+        See ``_action()`` for the OTC-wrapped variant.
+        """
+        is_tool_call_form, calls, decision_result = self._parse_decision_for_action(decision, ctx)
+        return await self._execute_parsed_decision(
+            decision, decision_result, ctx,
+            is_tool_call_form=is_tool_call_form, calls=calls,
+        )
 
     @staticmethod
     def _build_tool_results(action_result: Optional[Step]) -> List[ToolResult]:

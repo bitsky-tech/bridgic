@@ -311,6 +311,69 @@ class TestWorkerObservationStub:
         # ``None`` into ctx.observation.
         assert agent._current_context.observation == "agent-level observation"
 
+    @pytest.mark.asyncio
+    async def test_observation_none_at_both_levels_preserves_prior_value(self):
+        """When both worker- and agent-level observation return None, the prior
+        ``ctx.observation`` is preserved — not overwritten with ``None``.
+
+        This is the contract that makes the ``after_action``-driven refresh
+        pattern work without forcing the user to write a passthrough
+        ``observation`` override solely to defeat overwrites.
+        """
+        llm = _SeqLLM([_search_decision(finish=True)])
+
+        class StubWorker(CognitiveWorker):
+            async def thinking(self):
+                return "Plan ONE step"
+
+            async def observation(self, context):  # noqa: D401 — stub
+                pass
+
+        worker = StubWorker(llm=llm)
+
+        class StubAgent(AmphibiousAutoma[_TravelCtx]):
+            async def observation(self, ctx):  # noqa: D401 — stub
+                pass
+
+            async def on_agent(self, ctx):
+                # Pre-seed as if a prior after_action had refreshed observation.
+                ctx.observation = "from-after-action"
+                await self._run(worker, max_attempts=1)
+
+        agent = StubAgent(llm=llm)
+        await agent.arun(goal="Both-None observation must preserve prior value")
+        assert agent._current_context.observation == "from-after-action"
+
+    @pytest.mark.asyncio
+    async def test_default_observation_stub_preserves_prior_value(self):
+        """Default (unoverridden) agent observation must not blank ctx.observation.
+
+        Without this guarantee, every workflow yield (which triggers the
+        agent observation hook) would silently null out any state written
+        by ``after_action``.
+        """
+        llm = _SeqLLM([_search_decision(finish=True)])
+
+        class StubWorker(CognitiveWorker):
+            async def thinking(self):
+                return "Plan ONE step"
+
+            async def observation(self, context):
+                pass
+
+        worker = StubWorker(llm=llm)
+
+        # NOTE: no observation override on the agent — exercises the default
+        # stub method baked into AmphibiousAutoma.
+        class StubAgent(AmphibiousAutoma[_TravelCtx]):
+            async def on_agent(self, ctx):
+                ctx.observation = "from-after-action"
+                await self._run(worker, max_attempts=1)
+
+        agent = StubAgent(llm=llm)
+        await agent.arun(goal="Default observation stub must preserve")
+        assert agent._current_context.observation == "from-after-action"
+
 
 # ---------------------------------------------------------------------------
 # Agent-level action_custom_output stub returning None
