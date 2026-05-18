@@ -16,6 +16,9 @@ from bridgic.amphibious import (
     ToolArgument,
     TraceStep,
     RecordedToolCall,
+    ThinkUnit,
+    think_unit,
+    RETURN,
 )
 from .tools import get_travel_planning_tools
 
@@ -106,11 +109,11 @@ class TestRunMethod:
     async def test_run_single_step(self):
         """_run() executes a single OTA cycle."""
         llm = MockLLM([_make_search_step(), _make_hotel_step()])
-        worker = CognitiveWorker.inline("Plan step", llm=llm)
-
         class Agent(AmphibiousAutoma[CognitiveContext]):
+            plan = think_unit(CognitiveWorker.inline("Plan step"))
+
             async def on_agent(self, ctx):
-                await self._run(worker)
+                yield ThinkUnit("plan")
 
         agent = Agent(llm=llm)
         ctx = _make_ctx()
@@ -124,11 +127,11 @@ class TestRunMethod:
     async def test_run_with_until(self):
         """_run(until=..., max_attempts=...) loops correctly."""
         llm = MockLLM([_make_search_step(), _make_hotel_step(finish=True)])
-        worker = CognitiveWorker.inline("Execute step", llm=llm)
-
         class Agent(AmphibiousAutoma[CognitiveContext]):
+            step = think_unit(CognitiveWorker.inline("Execute step"), max_attempts=5)
+
             async def on_agent(self, ctx):
-                await self._run(worker, max_attempts=5)
+                yield ThinkUnit("step")
 
         agent = Agent(llm=llm)
         ctx = _make_ctx()
@@ -153,11 +156,11 @@ class TestRunMethod:
             _make_search_step(),
             _make_search_step(),
         ])
-        worker = CognitiveWorker.inline("Execute", llm=llm)
-
         class Agent(AmphibiousAutoma[CognitiveContext]):
+            step = think_unit(CognitiveWorker.inline("Execute"), until=condition, max_attempts=10)
+
             async def on_agent(self, ctx):
-                await self._run(worker, until=condition, max_attempts=10)
+                yield ThinkUnit("step")
 
         agent = Agent(llm=llm)
         ctx = _make_ctx()
@@ -170,12 +173,14 @@ class TestRunMethod:
     async def test_run_tool_filtering(self):
         """_run(tools=[...]) filters visible tools."""
         llm = MockLLM([_make_search_step()])
-        worker = CognitiveWorker.inline("Search", llm=llm)
-
         class Agent(AmphibiousAutoma[CognitiveContext]):
+            step = think_unit(
+                CognitiveWorker.inline("Search"),
+                tools=["search_flights", "search_hotels"],
+            )
+
             async def on_agent(self, ctx):
-                await self._run(worker,
-                               tools=["search_flights", "search_hotels"])
+                yield ThinkUnit("step")
 
         agent = Agent(llm=llm)
         ctx = _make_ctx()
@@ -197,11 +202,11 @@ class TestRunMethod:
             def stream(self, messages, **kwargs): ...
 
         llm = FailLLM()
-        worker = CognitiveWorker.inline("Fail", llm=llm)
-
         class Agent(AmphibiousAutoma[CognitiveContext]):
+            step = think_unit(CognitiveWorker.inline("Fail"), on_error=ErrorStrategy.IGNORE)
+
             async def on_agent(self, ctx):
-                await self._run(worker, on_error=ErrorStrategy.IGNORE)
+                yield ThinkUnit("step")
 
         agent = Agent(llm=llm)
         ctx = _make_ctx()
@@ -211,17 +216,18 @@ class TestRunMethod:
 
     @pytest.mark.asyncio
     async def test_run_no_context_raises(self):
-        """_run() outside on_agent() raises RuntimeError."""
+        """_run_think_unit() outside on_agent() raises RuntimeError."""
         llm = MockLLM([_make_search_step()])
         worker = CognitiveWorker.inline("Test", llm=llm)
 
         class Agent(AmphibiousAutoma[CognitiveContext]):
             async def on_agent(self, ctx):
-                pass
+                if False:
+                    yield
 
         agent = Agent(llm=llm)
         with pytest.raises(RuntimeError, match="no active context"):
-            await agent._run(worker)
+            await agent._run_think_unit(worker)
 
 
 # ---------------------------------------------------------------------------
@@ -236,10 +242,11 @@ class TestAmphibiousAutomaMisc:
         llm = MockLLM([_make_search_step()])
 
         class Agent(AmphibiousAutoma[CognitiveContext]):
+            step = think_unit(CognitiveWorker.inline("Test"))
+
             async def on_agent(self, ctx):
                 assert self.llm is not None
-                worker = CognitiveWorker.inline("Test", llm=self.llm)
-                await self._run(worker)
+                yield ThinkUnit("step")
 
         agent = Agent(llm=llm)
         ctx = _make_ctx()
@@ -251,10 +258,11 @@ class TestAmphibiousAutomaMisc:
         llm = MockLLM([_make_search_step()])
 
         class Agent(AmphibiousAutoma[CognitiveContext]):
+            step = think_unit(CognitiveWorker.inline("Test"))
+
             async def on_agent(self, ctx):
                 assert ctx.goal == "Test goal"
-                worker = CognitiveWorker.inline("Test", llm=self.llm)
-                await self._run(worker)
+                yield ThinkUnit("step")
 
         agent = Agent(llm=llm)
         await agent.arun(
@@ -269,7 +277,8 @@ class TestAmphibiousAutomaMisc:
         """arun() raises if no LLM is provided."""
         class Agent(AmphibiousAutoma[CognitiveContext]):
             async def on_agent(self, ctx):
-                pass
+                if False:
+                    yield
 
         agent = Agent()
         with pytest.raises(RuntimeError, match="must be initialized with an LLM"):
@@ -281,11 +290,12 @@ class TestAmphibiousAutomaMisc:
         llm = MockLLM([_make_search_step(), _make_hotel_step()])
 
         class Agent(AmphibiousAutoma[CognitiveContext]):
+            planner = think_unit(CognitiveWorker.inline("Plan"))
+            executor = think_unit(CognitiveWorker.inline("Execute"))
+
             async def on_agent(self, ctx):
-                planner = CognitiveWorker.inline("Plan", llm=self.llm)
-                executor = CognitiveWorker.inline("Execute", llm=self.llm)
-                await self._run(planner)
-                await self._run(executor)
+                yield ThinkUnit("planner")
+                yield ThinkUnit("executor")
 
         agent = Agent(llm=llm)
         ctx = _make_ctx()
@@ -307,11 +317,11 @@ class TestAgentTrace:
     async def test_trace_step_has_observation_field(self):
         """Trace steps should have the observation field (None when no observation provided)."""
         llm = MockLLM([_make_search_step()])
-        worker = CognitiveWorker.inline("Plan", llm=llm)
-
         class Agent(AmphibiousAutoma[CognitiveContext]):
+            plan = think_unit(CognitiveWorker.inline("Plan"))
+
             async def on_agent(self, ctx):
-                await self._run(worker)
+                yield ThinkUnit("plan")
 
         agent = Agent(llm=llm)
         ctx = _make_ctx()
@@ -329,14 +339,14 @@ class TestAgentTrace:
     async def test_trace_records_observation_when_provided(self):
         """Trace steps should record observation text when the agent provides one."""
         llm = MockLLM([_make_search_step()])
-        worker = CognitiveWorker.inline("Plan", llm=llm)
-
         class Agent(AmphibiousAutoma[CognitiveContext]):
+            plan = think_unit(CognitiveWorker.inline("Plan"))
+
             async def observation(self, ctx):
-                return "Current page: login form with username and password fields"
+                yield RETURN("Current page: login form with username and password fields")
 
             async def on_agent(self, ctx):
-                await self._run(worker)
+                yield ThinkUnit("plan")
 
         agent = Agent(llm=llm)
         ctx = _make_ctx()
@@ -352,11 +362,11 @@ class TestAgentTrace:
     async def test_trace_tool_call_success_error(self):
         """RecordedToolCall should carry success and error fields."""
         llm = MockLLM([_make_search_step()])
-        worker = CognitiveWorker.inline("Plan", llm=llm)
-
         class Agent(AmphibiousAutoma[CognitiveContext]):
+            plan = think_unit(CognitiveWorker.inline("Plan"))
+
             async def on_agent(self, ctx):
-                await self._run(worker)
+                yield ThinkUnit("plan")
 
         agent = Agent(llm=llm)
         ctx = _make_ctx()
@@ -378,11 +388,11 @@ class TestAgentTrace:
     async def test_trace_save_load_roundtrip(self):
         """save() then load() should produce equivalent data."""
         llm = MockLLM([_make_search_step()])
-        worker = CognitiveWorker.inline("Plan", llm=llm)
-
         class Agent(AmphibiousAutoma[CognitiveContext]):
+            plan = think_unit(CognitiveWorker.inline("Plan"))
+
             async def on_agent(self, ctx):
-                await self._run(worker)
+                yield ThinkUnit("plan")
 
         agent = Agent(llm=llm)
         ctx = _make_ctx()
@@ -413,11 +423,11 @@ class TestAgentTrace:
     async def test_trace_records_all_steps(self):
         """All steps are recorded in the flat trace."""
         llm = MockLLM([_make_search_step()])
-        worker = CognitiveWorker.inline("Plan", llm=llm)
-
         class Agent(AmphibiousAutoma[CognitiveContext]):
+            plan = think_unit(CognitiveWorker.inline("Plan"))
+
             async def on_agent(self, ctx):
-                await self._run(worker)
+                yield ThinkUnit("plan")
 
         agent = Agent(llm=llm)
         ctx = _make_ctx()

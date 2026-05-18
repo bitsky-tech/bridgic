@@ -28,6 +28,8 @@ from bridgic.amphibious import (
     StepToolCall,
     ToolArgument,
     RunMode,
+    ThinkUnit,
+    think_unit,
 )
 from bridgic.core.model.types import Message, Response, Role, Tool, ToolCall
 from bridgic.core.model.protocols import PydanticModel
@@ -462,10 +464,11 @@ class TestLLMCallErrorPaths:
         )
 
         class Agent(AmphibiousAutoma[CognitiveContext]):
-            async def on_agent(self, ctx):
+            recoverer = think_unit(CognitiveWorker.inline("Recover."), max_attempts=1)
+
+            async def on_agent(self, ctx) -> AsyncGenerator[Any, Any]:
                 on_agent_calls.append(ctx.goal)
-                worker = CognitiveWorker.inline("Recover.", llm=self.llm)
-                await self._run(worker, max_attempts=1)
+                yield ThinkUnit("recoverer")
 
             async def on_workflow(self, ctx) -> AsyncGenerator[
                 Union[ActionCall, HumanCall, EnterAgent, LLMCall], None

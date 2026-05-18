@@ -1,23 +1,19 @@
-"""Robustness tests for AI-generated stub overrides of template methods.
+"""Robustness tests for stub-form template overrides.
 
-When AI coding tools generate skeleton subclasses, they often emit::
+Two layers of conventions:
 
-    async def before_action(self, decision_result, ctx): pass
-    async def after_action(self, step_result, ctx): pass
-    async def on_workflow(self, ctx): pass
-    async def observation(self, context): pass
-    async def action_custom_output(self, decision_result, ctx): pass
+* **AmphibiousAutoma** templates (``on_agent`` / ``on_workflow`` /
+  ``observation`` / ``before_action`` / ``after_action``) must be async
+  generators. Coroutine-form overrides (``async def`` with no ``yield``)
+  are rejected at class-creation time by
+  ``_validate_template_forms``. A stub with no real yields keeps the
+  async-gen shape via ``if False: yield``.
 
-These should NOT crash the framework. The contracts are:
-
-- Worker-level ``before_action`` / ``after_action`` / ``observation`` returning
-  ``None`` is treated identically to ``_DELEGATE`` (delegate to the agent-level
-  hook).
-- Agent-level ``before_action`` and ``action_custom_output`` returning ``None``
-  are treated as passthrough (the original input is preserved).
-- ``on_workflow`` written as a plain ``async def ... : pass`` (a coroutine, not
-  an async generator) is treated as "not overridden" — ``_has_workflow()``
-  returns False and ``RunMode.AUTO`` falls back to the agent path.
+* **CognitiveWorker** hooks (``observation`` / ``before_action`` /
+  ``after_action``) keep their dual-form contract: a coroutine returning
+  ``None`` / ``_DELEGATE`` is the canonical short form for "delegate to
+  the agent-level hook". Async-gen worker hooks that exhaust without
+  ``RETURN`` are treated identically.
 """
 
 from typing import Any, AsyncGenerator, List, Union
@@ -35,6 +31,8 @@ from bridgic.amphibious import (
     RunMode,
     StepToolCall,
     ToolArgument,
+    ThinkUnit,
+    think_unit,
 )
 from .tools import get_travel_planning_tools
 
@@ -46,10 +44,6 @@ ThinkDecision = CognitiveWorker._create_think_model(
     output_schema=None,
 )
 
-
-# ---------------------------------------------------------------------------
-# Mock LLM
-# ---------------------------------------------------------------------------
 
 class _SeqLLM:
     """Returns a fixed sequence of structured-output responses."""
@@ -93,93 +87,72 @@ def _search_decision(finish: bool = False) -> ThinkDecision:
 
 
 # ---------------------------------------------------------------------------
-# on_workflow stub (`pass` body) — coroutine, not async generator
+# AmphibiousAutoma template form validation
 # ---------------------------------------------------------------------------
 
-class TestOnWorkflowStub:
 
-    def test_pass_body_makes_has_workflow_return_false(self):
-        """`async def on_workflow(...): pass` is a coroutine, not async-gen → not a real override."""
+class TestTemplateFormValidation:
+    """``_validate_template_forms`` rejects coroutine-form overrides at
+    class-creation time. Stubs must use ``if False: yield`` to keep the
+    async-generator shape."""
 
-        class StubAgent(AmphibiousAutoma[CognitiveContext]):
-            async def on_workflow(self, ctx):  # noqa: D401 — stub
-                pass
+    def test_pass_body_on_agent_rejected(self):
+        with pytest.raises(TypeError, match="must be an ``async def`` function with at least one ``yield``"):
+            class _StubAgent(AmphibiousAutoma[CognitiveContext]):
+                async def on_agent(self, ctx):
+                    pass
 
-            async def on_agent(self, ctx):
-                pass
+    def test_pass_body_on_workflow_rejected(self):
+        with pytest.raises(TypeError, match="must be an ``async def`` function with at least one ``yield``"):
+            class _StubAgent(AmphibiousAutoma[CognitiveContext]):
+                async def on_workflow(self, ctx):
+                    pass
 
-        agent = StubAgent(llm=_SeqLLM([]))
-        assert agent._has_workflow() is False
-        assert agent._has_agent() is True
+    def test_pass_body_observation_rejected(self):
+        with pytest.raises(TypeError, match="must be an ``async def`` function with at least one ``yield``"):
+            class _StubAgent(AmphibiousAutoma[CognitiveContext]):
+                async def observation(self, ctx):
+                    pass
 
-    def test_real_async_generator_still_detected(self):
-        """A real `yield`-bearing override is still recognized as workflow."""
+    def test_pass_body_before_action_rejected(self):
+        with pytest.raises(TypeError, match="must be an ``async def`` function with at least one ``yield``"):
+            class _StubAgent(AmphibiousAutoma[CognitiveContext]):
+                async def before_action(self, decision_result, ctx):
+                    pass
 
-        class WorkflowAgent(AmphibiousAutoma[CognitiveContext]):
+    def test_pass_body_after_action_rejected(self):
+        with pytest.raises(TypeError, match="must be an ``async def`` function with at least one ``yield``"):
+            class _StubAgent(AmphibiousAutoma[CognitiveContext]):
+                async def after_action(self, step_result, ctx):
+                    pass
+
+    def test_unreachable_yield_stub_accepted(self):
+        """``if False: yield`` is the canonical no-op async-gen stub."""
+
+        class _NoOpAgent(AmphibiousAutoma[CognitiveContext]):
             async def on_workflow(
                 self, ctx
             ) -> AsyncGenerator[Union[ActionCall, HumanCall, EnterAgent], None]:
                 if False:  # pragma: no cover
                     yield
 
-        agent = WorkflowAgent(llm=_SeqLLM([]))
+        agent = _NoOpAgent(llm=_SeqLLM([]))
         assert agent._has_workflow() is True
 
-    def test_auto_mode_resolves_to_agent_when_workflow_is_stub(self):
-        """RunMode.AUTO should pick AGENT when on_workflow is a `pass` stub but on_agent is real."""
-
-        class StubAgent(AmphibiousAutoma[CognitiveContext]):
-            async def on_workflow(self, ctx):
-                pass
-
-            async def on_agent(self, ctx):
-                pass
-
-        agent = StubAgent(llm=_SeqLLM([]))
-        assert agent._resolve_mode(RunMode.AUTO) is RunMode.AGENT
-
-    def test_only_stub_workflow_no_agent_raises(self):
-        """If both hooks are absent (workflow is a stub, agent not overridden), surface the existing RuntimeError."""
-
-        class OnlyStubAgent(AmphibiousAutoma[CognitiveContext]):
-            async def on_workflow(self, ctx):
-                pass
-
-        agent = OnlyStubAgent(llm=_SeqLLM([]))
-        with pytest.raises(RuntimeError, match="must override on_agent\\(\\) or on_workflow\\(\\)"):
-            agent._resolve_mode(RunMode.AUTO)
-
-    @pytest.mark.asyncio
-    async def test_arun_does_not_crash_on_stub_workflow(self):
-        """End-to-end: `arun()` with a `pass`-body on_workflow runs via on_agent without errors."""
-
-        on_agent_calls = []
-        llm = _SeqLLM([_search_decision(finish=True)])
-
-        class StubWorkflowAgent(AmphibiousAutoma[_TravelCtx]):
-            async def on_workflow(self, ctx):  # AI-generated stub
-                pass
-
-            async def on_agent(self, ctx):
-                on_agent_calls.append(ctx.goal)
-                worker = CognitiveWorker.inline("Plan step.", llm=self.llm)
-                await self._run(worker, max_attempts=1)
-
-        agent = StubWorkflowAgent(llm=llm)
-        await agent.arun(goal="Trigger fallback to on_agent")
-
-        assert on_agent_calls == ["Trigger fallback to on_agent"]
-
 
 # ---------------------------------------------------------------------------
-# Worker-level before_action / after_action stubs returning None
+# Worker-level hook stubs (CognitiveWorker keeps dual-form: coroutine OK)
 # ---------------------------------------------------------------------------
+
 
 class TestWorkerHookStubs:
+    """``CognitiveWorker`` hooks (``observation`` / ``before_action`` /
+    ``after_action``) retain their dual-form contract: a coroutine
+    returning ``None`` is identical to returning ``_DELEGATE``."""
 
     @pytest.mark.asyncio
     async def test_worker_before_action_pass_delegates_to_agent(self):
-        """Worker `before_action` returning None must chain to agent-level hook (not drop decision)."""
+        """Worker ``before_action`` returning None must chain to agent-level hook."""
 
         agent_before_calls = []
         llm = _SeqLLM([_search_decision(finish=True)])
@@ -188,18 +161,21 @@ class TestWorkerHookStubs:
             async def thinking(self):
                 return "Plan ONE step"
 
-            async def before_action(self, decision_result, context):  # noqa: D401 — stub
-                pass
+            async def before_action(self, decision_result, context):
+                pass  # legacy "delegate" form
 
         worker = StubWorker(llm=llm)
 
         class StubAgent(AmphibiousAutoma[_TravelCtx]):
-            async def before_action(self, decision_result, ctx):
-                agent_before_calls.append(decision_result)
-                return decision_result
+            main_step = think_unit(worker, max_attempts=1)
 
-            async def on_agent(self, ctx):
-                await self._run(worker, max_attempts=1)
+            async def before_action(self, decision_result, ctx) -> AsyncGenerator[Any, Any]:
+                agent_before_calls.append(decision_result)
+                if False:
+                    yield
+
+            async def on_agent(self, ctx) -> AsyncGenerator[Any, Any]:
+                yield ThinkUnit("main_step")
 
         agent = StubAgent(llm=llm)
         await agent.arun(goal="Trigger before_action delegation")
@@ -218,7 +194,7 @@ class TestWorkerHookStubs:
 
     @pytest.mark.asyncio
     async def test_worker_after_action_pass_delegates_to_agent(self):
-        """Worker `after_action` returning None must still chain to agent-level after_action."""
+        """Worker ``after_action`` returning None must still chain to agent-level."""
 
         agent_after_calls = []
         llm = _SeqLLM([_search_decision(finish=True)])
@@ -227,17 +203,21 @@ class TestWorkerHookStubs:
             async def thinking(self):
                 return "Plan ONE step"
 
-            async def after_action(self, step_result, ctx):  # noqa: D401 — stub
-                pass
+            async def after_action(self, step_result, ctx):
+                pass  # legacy "delegate" form
 
         worker = StubWorker(llm=llm)
 
         class StubAgent(AmphibiousAutoma[_TravelCtx]):
-            async def after_action(self, step_result, ctx):
-                agent_after_calls.append(step_result)
+            main_step = think_unit(worker, max_attempts=1)
 
-            async def on_agent(self, ctx):
-                await self._run(worker, max_attempts=1)
+            async def after_action(self, step_result, ctx) -> AsyncGenerator[Any, Any]:
+                agent_after_calls.append(step_result)
+                if False:
+                    yield
+
+            async def on_agent(self, ctx) -> AsyncGenerator[Any, Any]:
+                yield ThinkUnit("main_step")
 
         agent = StubAgent(llm=llm)
         await agent.arun(goal="Trigger after_action delegation")
@@ -246,45 +226,9 @@ class TestWorkerHookStubs:
             "Agent-level after_action should run when worker returns None"
         )
 
-
-# ---------------------------------------------------------------------------
-# Agent-level before_action stub returning None
-# ---------------------------------------------------------------------------
-
-class TestAgentBeforeActionStub:
-
-    @pytest.mark.asyncio
-    async def test_agent_before_action_pass_passes_through_decision(self):
-        """Agent-level `before_action` returning None preserves the original decision_result."""
-
-        llm = _SeqLLM([_search_decision(finish=True)])
-        worker = CognitiveWorker.inline("Plan step.", llm=llm)
-
-        class StubAgent(AmphibiousAutoma[_TravelCtx]):
-            async def before_action(self, decision_result, ctx):  # noqa: D401 — stub
-                pass
-
-            async def on_agent(self, ctx):
-                await self._run(worker, max_attempts=1)
-
-        agent = StubAgent(llm=llm)
-        await agent.arun(goal="Trigger agent before_action passthrough")
-
-        # The original tool call survives the None-returning hook and executes.
-        last_step = agent._current_context.cognitive_history[-1]
-        tool_names = [r.tool_name for r in last_step.result.results]
-        assert tool_names == ["search_flights"]
-
-
-# ---------------------------------------------------------------------------
-# Worker-level observation stub returning None
-# ---------------------------------------------------------------------------
-
-class TestWorkerObservationStub:
-
     @pytest.mark.asyncio
     async def test_worker_observation_pass_falls_back_to_agent(self):
-        """Worker-level `observation` returning None must delegate to agent-level."""
+        """Worker-level ``observation`` returning None must delegate to agent-level."""
 
         llm = _SeqLLM([_search_decision(finish=True)])
 
@@ -292,33 +236,34 @@ class TestWorkerObservationStub:
             async def thinking(self):
                 return "Plan ONE step"
 
-            async def observation(self, context):  # noqa: D401 — stub
-                pass
+            async def observation(self, context):
+                pass  # legacy "delegate" form
 
         worker = StubWorker(llm=llm)
 
         class StubAgent(AmphibiousAutoma[_TravelCtx]):
-            async def observation(self, ctx):
-                return "agent-level observation"
+            main_step = think_unit(worker, max_attempts=1)
 
-            async def on_agent(self, ctx):
-                await self._run(worker, max_attempts=1)
+            async def observation(self, ctx) -> AsyncGenerator[Any, Any]:
+                from bridgic.amphibious import RETURN
+                yield RETURN("agent-level observation")
+
+            async def on_agent(self, ctx) -> AsyncGenerator[Any, Any]:
+                yield ThinkUnit("main_step")
 
         agent = StubAgent(llm=llm)
         await agent.arun(goal="Trigger observation delegation")
 
-        # Agent-level observation wins instead of the worker silently writing
-        # ``None`` into ctx.observation.
         assert agent._current_context.observation == "agent-level observation"
 
     @pytest.mark.asyncio
     async def test_observation_none_at_both_levels_preserves_prior_value(self):
-        """When both worker- and agent-level observation return None, the prior
-        ``ctx.observation`` is preserved — not overwritten with ``None``.
+        """When both worker- and agent-level observation produce no value,
+        the prior ``ctx.observation`` is preserved — not overwritten.
 
-        This is the contract that makes the ``after_action``-driven refresh
-        pattern work without forcing the user to write a passthrough
-        ``observation`` override solely to defeat overwrites.
+        Makes the ``after_action``-driven refresh pattern work without
+        forcing the user to write a passthrough ``observation`` override
+        solely to defeat overwrites.
         """
         llm = _SeqLLM([_search_decision(finish=True)])
 
@@ -326,19 +271,23 @@ class TestWorkerObservationStub:
             async def thinking(self):
                 return "Plan ONE step"
 
-            async def observation(self, context):  # noqa: D401 — stub
-                pass
+            async def observation(self, context):
+                pass  # worker coroutine stub — None
 
         worker = StubWorker(llm=llm)
 
         class StubAgent(AmphibiousAutoma[_TravelCtx]):
-            async def observation(self, ctx):  # noqa: D401 — stub
-                pass
+            main_step = think_unit(worker, max_attempts=1)
 
-            async def on_agent(self, ctx):
+            async def observation(self, ctx) -> AsyncGenerator[Any, Any]:
+                # async-gen stub — exhausts without RETURN → None
+                if False:
+                    yield
+
+            async def on_agent(self, ctx) -> AsyncGenerator[Any, Any]:
                 # Pre-seed as if a prior after_action had refreshed observation.
                 ctx.observation = "from-after-action"
-                await self._run(worker, max_attempts=1)
+                yield ThinkUnit("main_step")
 
         agent = StubAgent(llm=llm)
         await agent.arun(goal="Both-None observation must preserve prior value")
@@ -348,9 +297,9 @@ class TestWorkerObservationStub:
     async def test_default_observation_stub_preserves_prior_value(self):
         """Default (unoverridden) agent observation must not blank ctx.observation.
 
-        Without this guarantee, every workflow yield (which triggers the
-        agent observation hook) would silently null out any state written
-        by ``after_action``.
+        The base-class default is itself an unreachable-yield async-gen
+        stub; without the "None preserves prior" contract, every workflow
+        yield would silently null out any state written by ``after_action``.
         """
         llm = _SeqLLM([_search_decision(finish=True)])
 
@@ -366,9 +315,11 @@ class TestWorkerObservationStub:
         # NOTE: no observation override on the agent — exercises the default
         # stub method baked into AmphibiousAutoma.
         class StubAgent(AmphibiousAutoma[_TravelCtx]):
-            async def on_agent(self, ctx):
+            main_step = think_unit(worker, max_attempts=1)
+
+            async def on_agent(self, ctx) -> AsyncGenerator[Any, Any]:
                 ctx.observation = "from-after-action"
-                await self._run(worker, max_attempts=1)
+                yield ThinkUnit("main_step")
 
         agent = StubAgent(llm=llm)
         await agent.arun(goal="Default observation stub must preserve")
@@ -387,10 +338,13 @@ class _PlanOutput(BaseModel):
 
 
 class TestActionCustomOutputStub:
+    """``action_custom_output`` is NOT one of the yield-driven templates
+    (it's a plain coroutine returning the post-processed output), so
+    coroutine-form stubs remain valid for it."""
 
     @pytest.mark.asyncio
     async def test_action_custom_output_pass_passes_through(self):
-        """Agent-level `action_custom_output` returning None preserves the typed output."""
+        """Agent-level ``action_custom_output`` returning None preserves the typed output."""
 
         expected = _PlanOutput(note="should be preserved")
 
@@ -412,17 +366,17 @@ class TestActionCustomOutputStub:
         worker.set_llm(llm)
 
         class StubAgent(AmphibiousAutoma[CognitiveContext]):
-            async def action_custom_output(self, decision_result, ctx):  # noqa: D401 — stub
-                pass
+            main_step = think_unit(worker, max_attempts=1)
 
-            async def on_agent(self, ctx):
-                await self._run(worker, max_attempts=1)
+            async def action_custom_output(self, decision_result, ctx):
+                pass  # stub — preserves the original typed output
+
+            async def on_agent(self, ctx) -> AsyncGenerator[Any, Any]:
+                yield ThinkUnit("main_step")
 
         agent = StubAgent(llm=llm)
         await agent.arun(goal="Trigger action_custom_output passthrough")
 
-        # The typed output survives a None-returning override.
+        # The typed _PlanOutput survives the None-returning hook and lands as result.
         last_step = agent._current_context.cognitive_history[-1]
         assert last_step.result is expected
-        assert isinstance(last_step.result, _PlanOutput)
-        assert last_step.result.note == "should be preserved"

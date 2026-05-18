@@ -1,28 +1,43 @@
 """
-CognitiveWorker — Core thinking unit of the amphibious agent framework.
+Cognitive workers — the "think" units of the amphibious agent framework.
 
-A CognitiveWorker represents the "think" phase of one observe-think-act cycle.
-Observation (before) and action (after) are orchestrated by AmphibiousAutoma.
+This module hosts the two worker shapes the framework recognizes:
 
-Design:
-1. Think-only unit: Each arun() call performs exactly the thinking phase.
-   Observation is injected via context.observation (set by AmphibiousAutoma._run_once
-   before calling arun). Action is executed by AmphibiousAutoma.action() after arun
-   returns.
+* ``CognitiveWorker`` — the default observe-think-act unit (each ``arun``
+  call performs exactly the thinking phase; observation is injected by
+  ``AmphibiousAutoma._run_think_unit`` before calling, and action is
+  executed by ``AmphibiousAutoma._run_action_call`` after). Multi-round
+  thinking is driven by the cognitive policies (acquiring / rehearsal
+  / reflection).
 
-2. Multi-round thinking loop: The thinking phase calls the LLM at least once.
-   Cognitive policies (acquiring, rehearsal, reflection) may trigger additional
-   rounds within the same arun() call. Each policy fires at most once per call,
-   then permanently closes for that round.
+* ``WorkerRunner`` — the minimal alternative Protocol for plugging in an
+  external worker implementation (e.g. an external agent runtime that
+  already has its own internal loop, like the one ``ThinkAgent`` uses to
+  drive Claude Code). A class satisfying this Protocol gets a single
+  ``run(agent, ctx)`` callback per invocation, takes full responsibility
+  for completing the sub-task, and mutates ``ctx.cognitive_history``
+  directly when it wants framework-level visibility.
 
-3. Works directly with CognitiveContext:
-   - CognitiveWorker extends GraphAutoma (single-node graph, _thinking as start+output)
-   - CognitiveContext extends Context (Exposure-based field management)
+The dispatcher distinguishes the two by ``isinstance(worker,
+CognitiveWorker)``; everything else that satisfies the ``WorkerRunner``
+Protocol goes down the single-shot ``run(agent, ctx)`` path.
 """
 
 import time
 import json
-from typing import Annotated, Any, Dict, List, Optional, Tuple, Type, Union
+from typing import (
+    TYPE_CHECKING,
+    Annotated,
+    Any,
+    Dict,
+    List,
+    Optional,
+    Protocol,
+    Tuple,
+    Type,
+    Union,
+    runtime_checkable,
+)
 
 from pydantic import BaseModel, Field, create_model
 from pydantic.functional_validators import BeforeValidator
@@ -42,6 +57,9 @@ from bridgic.amphibious._type import (
     _coerce_none_to_list,
 )
 
+if TYPE_CHECKING:
+    from bridgic.amphibious._amphibious_automa import AmphibiousAutoma
+
 
 #############################################################################
 # Sentinel
@@ -54,63 +72,28 @@ _DELEGATE = object()  # Worker returns this to delegate observation to Agent
 #############################################################################
 
 class CognitiveWorker(GraphAutoma):
-    """
-    Cognitive worker: pure thinking unit of an agent.
+    """Cognitive worker — one thinking cycle, owns "what to think and how".
 
-    A CognitiveWorker represents one thinking cycle and is responsible for
-    "what to think and how to think". Observation and action execution are
-    handled by AmphibiousAutoma as shared infrastructure.
+    Observation and action execution are handled by ``AmphibiousAutoma``
+    as shared infrastructure. Subclass and override template methods
+    (``thinking`` is required; ``build_messages`` / ``observation`` /
+    ``before_action`` / ``after_action`` are optional) to customize.
 
-    Subclass and override template methods to customize behavior.
+    Constructor params: ``llm`` (may be ``None`` if the agent injects
+    via ``set_llm()``), ``enable_rehearsal`` / ``enable_reflection``
+    (cognitive policies), ``verbose`` / ``verbose_prompt`` (logging).
 
-    Parameters
-    ----------
-    llm : Optional[BaseLlm]
-        LLM used for thinking. Can be None if the agent will inject one via set_llm().
-    enable_rehearsal : bool, optional
-        Enable rehearsal policy (predict tool execution outcomes). Default is False.
-    enable_reflection : bool, optional
-        Enable reflection policy (assess information quality). Default is False.
-    verbose : bool, optional
-        Enable logging of thinking process. Default is False.
-    verbose_prompt : bool, optional
-        Enable logging of full prompts sent to LLM. Default is False.
+    Class attribute ``output_schema``: if set, the worker produces a
+    typed Pydantic instance directly (output_schema is the LLM
+    constraint); the action phase is skipped and ``await ThinkUnit``
+    returns the typed instance. Policy rounds still run.
 
-    Class Attributes
-    ----------------
-    output_schema : Optional[Type[BaseModel]]
-        If set, the worker produces a typed Pydantic instance directly using the
-        output_schema as the LLM constraint. The agent's action() phase is skipped
-        entirely. ``await think_unit`` returns the typed instance.
-        Policy rounds (rehearsal/reflection) still run if enabled.
-
-    Template Methods (override in subclasses)
-    -----------------------------------------
-    thinking() -> str
-        Return the thinking prompt (how to decide next steps). Must be implemented.
-
-    build_messages(think_prompt, tools_description, output_instructions, context_info)
-        Assemble the final messages for the thinking phase. Returns List[Message].
-
-    observation(context, default_observation) -> Union[str, _DELEGATE]
-        Enhance or customize observation. Default returns _DELEGATE.
-        Return _DELEGATE to delegate observation to AmphibiousAutoma.
-
-    before_action(decision_result, context) -> Any
-        Verify/adjust the decision before execution. Called by AmphibiousAutoma._action().
-
-    Examples
-    --------
     >>> class ReactWorker(CognitiveWorker):
-    ...     def __init__(self, llm):
-    ...         super().__init__(llm, enable_rehearsal=True)
-    ...
     ...     async def thinking(self):
     ...         return "Plan ONE immediate next step with appropriate tools."
     ...
     >>> class PlannerWorker(CognitiveWorker):
     ...     output_schema = PlanningResult  # skip tool loop, return typed instance
-    ...
     ...     async def thinking(self):
     ...         return "Analyze the goal and produce a phased execution plan."
     """
@@ -680,49 +663,19 @@ class CognitiveWorker(GraphAutoma):
     ############################################################################
 
     async def observation(self, context: CognitiveContext) -> Any:
-        """
-        Enhance or customize the observation before thinking.
+        """Worker-level observation hook. Override to customize.
 
-        Two forms are accepted (the framework's ``_invoke_template`` driver
-        handles both uniformly):
+        Both forms accepted: coroutine (``return _DELEGATE`` /
+        ``return value``) or async-generator (yield side-effect calls,
+        then ``yield RETURN(value)``). ActionCall yielded here is a raw
+        tool execution and does NOT re-enter the OTC wrap.
 
-        * **Coroutine form** — ``return _DELEGATE`` / ``return "..."`` /
-          ``return None``.
-        * **Async-generator form** — ``yield ActionCall(...) /
-          HumanCall(...) / LLMCall(...)`` for side-effect calls, then
-          ``yield RETURN(value)`` to set the observation. Hook-scope
-          dispatch rules apply (see ``AmphibiousAutoma._dispatch_call`` and
-          ``_action_raw``): ActionCall yielded here is a raw tool execution
-          and does NOT re-enter the OTC wrap.
+        Returning ``_DELEGATE`` (or ``None``, treated identically) hands
+        off to ``AmphibiousAutoma.observation()``. Other values are used
+        as the observation directly.
 
-        Parameters
-        ----------
-        context : CognitiveContext
-            The cognitive context.
-
-        Returns
-        -------
-        Any
-            ``_DELEGATE`` (or ``None``) to delegate observation to
-            ``AmphibiousAutoma.observation()``. Any other value is used as
-            the observation directly.
-
-            Returning ``None`` (e.g. an empty ``pass`` override, or a
-            generator exhausting without ``RETURN``) is treated identically
-            to ``_DELEGATE`` so that stub overrides do not bypass the
-            agent-level fallback.
-
-        Examples
-        --------
-        >>> # Coroutine form — delegate to agent-level.
-        >>> async def observation(self, context):
-        ...     return _DELEGATE
-        ...
-        >>> # Coroutine form — direct value.
         >>> async def observation(self, context):
         ...     return f"Current state: {context.goal}"
-        ...
-        >>> # Generator form — capture snapshot via a tool, then RETURN it.
         >>> async def observation(self, context):
         ...     snap = yield ActionCall("snapshot_tool")
         ...     yield RETURN(snap[0].result if snap else None)
@@ -730,21 +683,10 @@ class CognitiveWorker(GraphAutoma):
         return _DELEGATE
 
     async def thinking(self) -> str:
-        """
-        Define how to think about the next step(s). Must be implemented.
+        """Return the thinking prompt for the LLM. Must be implemented.
 
-        The returned prompt is used to guide the LLM. This is the core template method.
-
-        Returns
-        -------
-        str
-            Thinking prompt for the LLM.
-
-        Examples
-        --------
         >>> async def thinking(self):
         ...     return "Plan ONE immediate next step."  # React-style
-        ...
         >>> async def thinking(self):
         ...     return "Create a complete step-by-step plan."  # Plan-style
         """
@@ -757,41 +699,11 @@ class CognitiveWorker(GraphAutoma):
         output_instructions: str,
         context_info: str,
     ) -> List[Message]:
-        """
-        Assemble the final messages for the thinking phase.
+        """Assemble the final messages for the thinking phase.
 
-        Override this method to customize how the prompt components are structured
-        across messages. This allows you to reorder, modify, or add to the message list.
-
-        Parameters
-        ----------
-        think_prompt : str
-            The thinking prompt from the thinking() method.
-        tools_description : str
-            Formatted description of available tools and skills.
-        output_instructions : str
-            Instructions for the output format (finish, steps/step_content, etc.).
-        context_info : str
-            Context information including goal, status, history, and fetched details.
-
-        Returns
-        -------
-        List[Message]
-            Messages to be sent to the LLM. Default structure:
-            - Message 1 (system): think_prompt + tools_description (if non-empty) + output_instructions
-            - Message 2 (user): context_info
-
-        Examples
-        --------
-        >>> async def build_messages(self, think_prompt, tools_description,
-        ...                          output_instructions, context_info):
-        ...     # Custom: merge everything into a single system + user pair
-        ...     extra = "EXTRA_INSTRUCTION: Always prefer cheapest option."
-        ...     system = f"{think_prompt}\\n\\n{extra}\\n\\n{tools_description}\\n\\n{output_instructions}"
-        ...     return [
-        ...         Message.from_text(text=system, role="system"),
-        ...         Message.from_text(text=context_info, role="user"),
-        ...     ]
+        Default: one system message (``think_prompt`` + ``tools_description``
+        + ``output_instructions``) + one user message (``context_info``).
+        Override to reorder or restructure.
         """
         parts = [think_prompt]
         if tools_description:
@@ -809,48 +721,15 @@ class CognitiveWorker(GraphAutoma):
         decision_result: Any,
         context: CognitiveContext
     ) -> Any:
-        """
-        Verify and optionally adjust the output before execution.
+        """Worker-level before_action hook. Override to intercept tool calls.
 
-        Returns ``_DELEGATE`` by default, which delegates to the agent-level
-        ``before_action()`` method. Override to intercept and modify tool calls
-        at the worker level.
+        Both forms accepted: coroutine or async-generator (yielding hook-
+        scope primitives). Return ``_DELEGATE`` / ``None`` to chain to
+        the agent-level hook; return any other value (or ``yield
+        RETURN(...)``) to override the decision.
 
-        Two forms are accepted (the framework's ``_invoke_template`` driver
-        handles both uniformly):
-
-        * **Coroutine form** — ``return _DELEGATE`` / ``return modified`` /
-          ``return None``.
-        * **Async-generator form** — yield ``ActionCall`` / ``HumanCall`` /
-          ``LLMCall`` for side-effect calls, then optionally ``yield
-          RETURN(modified_decision)``. Hook-scope rules apply; see
-          ``AmphibiousAutoma.before_action`` for the agent-level mirror.
-
-        Returning ``None`` (e.g. an empty ``pass`` override, or a generator
-        exhausting without ``RETURN``) is treated identically to
-        ``_DELEGATE`` so that stub overrides do not break the delegation
-        chain.
-
-        Parameters
-        ----------
-        decision_result : Any
-            The result of the decision.
-        context : CognitiveContext
-            Current cognitive context.
-
-        Returns
-        -------
-        Any
-            Verified/adjusted decision result, or ``_DELEGATE`` to delegate
-            to the agent-level hook.
-
-        Examples
-        --------
-        >>> # Coroutine form — filter dangerous tools.
         >>> async def before_action(self, decision_result, context):
         ...     return decision_result.filter(lambda x: x.tool_name not in ["delete", "drop"])
-        ...
-        >>> # Generator form — audit then passthrough.
         >>> async def before_action(self, decision_result, context):
         ...     yield ActionCall("audit_tool", payload=str(decision_result))
         ...     # No RETURN → delegate to agent-level.
@@ -858,52 +737,17 @@ class CognitiveWorker(GraphAutoma):
         return _DELEGATE
 
     async def after_action(self, step_result: Any, ctx: "CognitiveContext") -> Any:
-        """
-        Worker-level post-action hook for side effects on the context.
+        """Worker-level after_action hook. Override for side-effects.
 
-        Returns ``_DELEGATE`` by default, which chains to the agent-level
-        ``after_action()`` method. Override this hook to mutate custom
-        context fields or perform side effects at the worker level.
+        Both forms accepted. The return value is a control signal, not a
+        data channel: ``_DELEGATE`` / ``None`` chains to the agent-level
+        hook; any other value suppresses it. The returned value itself
+        is discarded — mutate ``ctx`` / ``step_result`` in place for any
+        change to survive.
 
-        Two forms are accepted (the framework's ``_invoke_template`` driver
-        handles both uniformly):
-
-        * **Coroutine form** — ``return _DELEGATE`` / ``return suppress`` /
-          ``return None``.
-        * **Async-generator form** — yield ``ActionCall`` / ``HumanCall`` /
-          ``LLMCall`` for follow-up side-effect calls, then optionally
-          ``yield RETURN(value)``. Hook-scope rules apply.
-
-        The return value is a *control signal*, not a data channel:
-        - Return ``_DELEGATE`` (or ``None``) to also invoke the agent-level
-          ``after_action``. Treating ``None`` as ``_DELEGATE`` keeps stub
-          overrides (``async def after_action(...): pass``) safe.
-        - Return anything else to suppress the agent-level hook.
-        The returned value itself is discarded — the step_result stored in
-        history is never replaced by this hook. Perform any mutation by
-        updating ``ctx`` or ``step_result`` in place.
-
-        Parameters
-        ----------
-        step_result : Any
-            The result of the action step (typically a ``Step`` instance).
-        ctx : CognitiveContext
-            Current cognitive context.
-
-        Returns
-        -------
-        Any
-            ``_DELEGATE`` to chain to the agent-level hook, or any other
-            value to suppress it.
-
-        Examples
-        --------
-        >>> # Coroutine form — update context field, chain to agent-level.
         >>> async def after_action(self, step_result, ctx):
         ...     ctx.current_document = extract_document(step_result)
         ...     return _DELEGATE
-        ...
-        >>> # Generator form — fire a follow-up tool, then chain.
         >>> async def after_action(self, step_result, ctx):
         ...     yield ActionCall("refresh_index")
         ...     # No RETURN → chain to agent-level.
@@ -925,42 +769,11 @@ class CognitiveWorker(GraphAutoma):
         verbose_prompt: Optional[bool] = None,
         output_schema: Optional[Type[BaseModel]] = None,
     ) -> "CognitiveWorker":
-        """
-        Create a simple CognitiveWorker from a thinking prompt string.
+        """Create a CognitiveWorker from a thinking prompt string.
 
-        Convenience factory for cases where you only need to customize the
-        thinking prompt without overriding other methods.
+        Convenience factory when you only need to customize ``thinking()``.
 
-        Parameters
-        ----------
-        thinking_prompt : str
-            The thinking prompt to use.
-        llm : Optional[BaseLlm]
-            LLM instance to use.
-        enable_rehearsal : bool
-            Enable rehearsal policy.
-        enable_reflection : bool
-            Enable reflection policy.
-        verbose : Optional[bool]
-            Enable verbose logging.
-        verbose_prompt : Optional[bool]
-            Enable prompt logging.
-        output_schema : Optional[Type[BaseModel]]
-            If set, the worker produces a typed instance directly instead of
-            going through the standard tool-call loop.
-
-        Returns
-        -------
-        CognitiveWorker
-            A worker instance with the specified thinking prompt.
-
-        Examples
-        --------
-        >>> worker = CognitiveWorker.inline(
-        ...     "Plan ONE immediate next step",
-        ...     llm=llm,
-        ...     enable_rehearsal=True
-        ... )
+        >>> worker = CognitiveWorker.inline("Plan ONE immediate next step", llm=llm)
         >>> planner = CognitiveWorker.inline(
         ...     "Analyze the goal and produce a phased plan.",
         ...     output_schema=PlanningResult,
@@ -993,3 +806,47 @@ class CognitiveWorker(GraphAutoma):
         result = await super().arun(*args, feedback_data=feedback_data, **kwargs)
         self.spent_time += time.time() - start_time
         return result
+
+
+#############################################################################
+# WorkerRunner Protocol — plug-in slot for external worker implementations
+#############################################################################
+
+
+@runtime_checkable
+class WorkerRunner(Protocol):
+    """Minimal runtime interface for an external worker implementation.
+
+    Plug in via ``think_unit(...)``. The dispatcher detects that the
+    worker is NOT a ``CognitiveWorker`` and skips the OTC cycle, calling
+    ``run(agent, ctx)`` directly. The runner manages its own loop and
+    tool exposure — overlays (``until`` / ``max_attempts`` / ``tools`` /
+    ``skills``) are ignored on this path.
+
+    Note: ``CognitiveWorker`` does NOT satisfy ``WorkerRunner`` — the
+    two paths stay distinct so the ``isinstance`` check is unambiguous.
+
+    >>> class ClaudeCodeWorker:
+    ...     async def run(self, agent, ctx):
+    ...         # subprocess out to claude, write history into ctx.
+    ...         ...
+    >>> class MyAgent(AmphibiousAutoma[CognitiveContext]):
+    ...     external_think = think_unit(ClaudeCodeWorker())
+    ...     async def on_agent(self, ctx):
+    ...         yield ThinkUnit("external_think")
+    """
+
+    async def run(
+        self,
+        agent: "AmphibiousAutoma",
+        ctx: "CognitiveContext",
+    ) -> None:
+        """Execute the worker's own loop against ``ctx``.
+
+        The runner is expected to ``ctx.add_info(Step(...))`` for any
+        history it wants the framework to see.
+        """
+        ...
+
+
+__all__ = ["CognitiveWorker", "WorkerRunner"]

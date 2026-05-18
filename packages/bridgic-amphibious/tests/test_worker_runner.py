@@ -179,8 +179,10 @@ class TestRunDispatchType:
         """Passing a random object to _run is rejected with a clear TypeError."""
 
         class Agent(AmphibiousAutoma[CognitiveContext]):
-            async def on_agent(self, ctx):
-                await self._run(_NoRunObject())  # type: ignore[arg-type]
+            bad = think_unit(_NoRunObject())  # type: ignore[arg-type]
+
+            async def on_agent(self, ctx) -> AsyncGenerator[Any, Any]:
+                yield ThinkUnit("bad")
 
         with pytest.raises(TypeError, match="CognitiveWorker or a WorkerRunner"):
             await Agent(llm=_DummyLLM()).arun(context=CognitiveContext(goal="bad-arg"))

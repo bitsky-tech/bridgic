@@ -110,7 +110,7 @@ class TestEnterAgentScope:
         agent = Agent(llm=_DummyLLM())
         agent._current_context = _ctx()
         with pytest.raises(RuntimeError, match="only valid inside on_workflow"):
-            await agent._dispatch_call(
+            await agent._dispatch_step(
                 EnterAgent(goal="x"),
                 agent._current_context,
                 scope="hook",
@@ -134,7 +134,7 @@ class TestThinkUnitScope:
         agent = Agent(llm=_DummyLLM())
         agent._current_context = _ctx()
         with pytest.raises(RuntimeError, match="only valid inside on_agent"):
-            await agent._dispatch_call(
+            await agent._dispatch_step(
                 ThinkUnit("think_unit_a"),
                 agent._current_context,
                 scope="hook",
@@ -150,7 +150,7 @@ class TestThinkUnitScope:
         agent = Agent(llm=_DummyLLM())
         agent._current_context = _ctx()
         with pytest.raises(RuntimeError, match="only valid inside on_agent"):
-            await agent._dispatch_call(
+            await agent._dispatch_step(
                 ThinkUnit("think_unit_a"),
                 agent._current_context,
                 scope="workflow",
@@ -172,7 +172,7 @@ class TestActionCallScope:
         agent = Agent(llm=_DummyLLM())
         agent._current_context = _ctx()
         with pytest.raises(RuntimeError, match="not allowed inside on_agent"):
-            await agent._dispatch_call(
+            await agent._dispatch_step(
                 ActionCall("some_tool", x=1),
                 agent._current_context,
                 scope="agent",
@@ -191,7 +191,7 @@ class TestHumanCallScope:
         agent = Agent(llm=_DummyLLM())
         agent._current_context = _ctx()
         with pytest.raises(RuntimeError, match="not allowed inside on_agent"):
-            await agent._dispatch_call(
+            await agent._dispatch_step(
                 HumanCall(prompt="confirm"),
                 agent._current_context,
                 scope="agent",
@@ -207,12 +207,12 @@ class TestHumanCallScope:
 
         agent = Agent(llm=_DummyLLM())
         agent._current_context = _ctx()
-        result = await agent._dispatch_call(
+        outcome = await agent._dispatch_step(
             HumanCall(prompt="confirm"),
             agent._current_context,
             scope=scope,
         )
-        assert result == "ok"
+        assert outcome == "ok"
 
 
 class TestLLMCallScope:
@@ -225,7 +225,7 @@ class TestLLMCallScope:
         agent = Agent(llm=_DummyLLM())
         agent._current_context = _ctx()
         with pytest.raises(RuntimeError, match="not allowed inside on_agent"):
-            await agent._dispatch_call(
+            await agent._dispatch_step(
                 LLMCall.chat("hi"),
                 agent._current_context,
                 scope="agent",

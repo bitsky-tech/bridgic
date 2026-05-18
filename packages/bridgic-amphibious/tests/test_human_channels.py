@@ -123,26 +123,33 @@ class TestRegistryBuild:
 class TestChannelDispatchBehavior:
 
     @pytest.mark.asyncio
-    async def test_zero_channels_falls_back_to_stdin_helper(self):
-        """No @human_channel registered → _dispatch_human_channel uses stdin."""
+    async def test_zero_channels_falls_back_to_stdin_helper(self, monkeypatch):
+        """No @human_channel registered → _run_human_call uses stdin.
+
+        The framework's stdin fallback is a closure inside
+        ``_run_human_call`` that goes through ``input()`` in a thread
+        executor. Stub the actual stdin layer by patching
+        ``builtins.input``.
+        """
 
         class Agent(AmphibiousAutoma[CognitiveContext]):
             pass
 
         agent = Agent(llm=MockLLM())
-        # Stub out _stdin_human_fallback to avoid actual stdin in tests.
-        captured = []
+        captured: list = []
 
-        async def fake_stdin(prompt):
+        def fake_input(prompt):
             captured.append(prompt)
             return "stdin-reply"
 
-        agent._stdin_human_fallback = fake_stdin
+        monkeypatch.setattr("builtins.input", fake_input)
 
-        result = await agent._dispatch_human_channel("question?")
+        result = await agent._run_human_call("question?")
 
         assert result == "stdin-reply"
-        assert captured == ["question?"]
+        # The closure formats the prompt as "\n[HumanInput] question?\n> ".
+        assert len(captured) == 1
+        assert "question?" in captured[0]
 
     @pytest.mark.asyncio
     async def test_explicit_channel_works(self):
@@ -157,8 +164,8 @@ class TestChannelDispatchBehavior:
                 return f"B:{prompt}"
 
         agent = Agent()
-        a = await agent._dispatch_human_channel("Q", channel="a")
-        b = await agent._dispatch_human_channel("Q", channel="b")
+        a = await agent._run_human_call("Q", channel="a")
+        b = await agent._run_human_call("Q", channel="b")
 
         assert a == "A:Q"
         assert b == "B:Q"
@@ -177,7 +184,7 @@ class TestChannelDispatchBehavior:
 
         agent = Agent()
         with pytest.raises(RuntimeError, match="ambiguous"):
-            await agent._dispatch_human_channel("Q")
+            await agent._run_human_call("Q")
 
     @pytest.mark.asyncio
     async def test_unknown_channel_raises(self):
@@ -189,7 +196,7 @@ class TestChannelDispatchBehavior:
 
         agent = Agent()
         with pytest.raises(RuntimeError, match="Unknown human channel"):
-            await agent._dispatch_human_channel("Q", channel="fake")
+            await agent._run_human_call("Q", channel="fake")
 
 
 class TestRequestHumanToolChannelParam:

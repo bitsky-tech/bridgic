@@ -197,7 +197,7 @@ def _coerce_none_to_list(v: Any) -> list:
 #                   ``return value``); from a top-level body
 #                   this terminates the entire arun
 #
-# Scope validation lives in ``_dispatch_call``; mismatches raise
+# Scope validation lives in ``_dispatch_step``; mismatches raise
 # ``RuntimeError`` at dispatch time.
 ################################################################################################################
 
@@ -271,7 +271,7 @@ class HumanCall:
     Per-call timeouts are not exposed; if needed, the channel handler
     should enforce its own timeout.
 
-    Used by: _amphibious_automa.py (_dispatch_call)
+    Used by: _amphibious_automa.py (_dispatch_step)
 
     Usage::
         feedback = yield HumanCall(prompt="Please verify (yes/no):")
@@ -285,42 +285,24 @@ class HumanCall:
 class EnterAgent:
     """Yielded to suspend ``on_workflow`` and switch into ``on_agent``.
 
-    Only valid inside ``on_workflow``. EnterAgent is a **mode-switch**
-    signal — not a function call. The dispatcher is a state machine
-    holding both a workflow generator and an agent generator slot;
-    yielding ``EnterAgent`` suspends the workflow generator at this
-    point and creates a fresh agent generator. When the agent
-    generator naturally exhausts (an implicit suspend signal), control
-    returns to the workflow generator at the next instruction after
-    this yield.
+    A **mode-switch** signal (not a function call): the workflow
+    generator suspends; a fresh agent generator runs until it exhausts;
+    workflow resumes at the next instruction after this yield. No stack,
+    no recursion — each EnterAgent creates a fresh agent generator.
 
-    The optional ``goal`` / ``history`` / ``tools`` / ``skills`` fields
-    snapshot the context for the duration of the agent flow:
+    The optional fields snapshot context for the agent flow only:
+    ``goal`` overrides ``ctx.goal``; ``history`` overrides
+    ``ctx.cognitive_history`` (``None`` → fresh); ``tools`` / ``skills``
+    are name-filters applied to ``ctx.tools`` / ``ctx.skills``. All
+    overrides restore when the agent exhausts.
 
-    * ``goal``    — overrides ``ctx.goal`` while in agent mode
-    * ``history`` — overrides ``ctx.cognitive_history`` (None → fresh)
-    * ``tools``   — name-filter applied to ``ctx.tools``
-    * ``skills``  — name-filter applied to ``ctx.skills``
+    EnterAgent scopes *what the agent sees*; it does not control *how it
+    thinks*. For a single named cognitive step, use ``ThinkUnit`` from
+    inside ``on_agent``. Requires the class to override ``on_agent``.
 
-    All overrides are restored when the agent generator exhausts. Each
-    EnterAgent creates a fresh agent generator from scratch — there is
-    no stack, no recursion, no resumable agent state across switches.
-
-    EnterAgent scopes *what the agent sees*; it does not control *how
-    it thinks*. For a single named cognitive step, declare a
-    ``think_unit`` and ``yield ThinkUnit("name")`` from inside
-    ``on_agent`` instead.
-
-    Requires the agent class to override ``on_agent``; raises
-    ``RuntimeError`` at dispatch time otherwise.
-
-    Used by: _amphibious_automa.py (state-machine driver)
-
-    Usage::
-
-        yield EnterAgent(goal="Handle the login popup")
-        yield EnterAgent(goal="Pick a flight", tools=["search_flights", "book"])
-        yield EnterAgent(goal="Summarize", history=prior_messages, skills=["summary"])
+    >>> yield EnterAgent(goal="Handle the login popup")
+    >>> yield EnterAgent(goal="Pick a flight", tools=["search_flights", "book"])
+    >>> yield EnterAgent(goal="Summarize", history=prior_messages, skills=["summary"])
     """
     goal: str = ""
     history: Optional[Any] = None       # Optional[CognitiveHistory]; None → fresh CognitiveHistory()
@@ -333,33 +315,21 @@ LLMCallProtocol = Literal["chat", "structure_output", "tool_selector"]
 
 @dataclass(frozen=True)
 class LLMCall:
-    """Yielded by on_workflow() to invoke ``self._llm`` via a bridgic-core protocol.
+    """Yielded by ``on_workflow`` to invoke ``self._llm`` via a bridgic-core protocol.
 
-    Used by: _amphibious_automa.py (_dispatch_call, _run_llm_call)
+    Result via ``asend()`` by protocol:
 
-    The result returned via ``asend()`` depends on ``protocol``:
+    * ``"chat"`` → ``str`` (extracted from ``Response.message.content``)
+    * ``"structure_output"`` → value from ``StructuredOutput.astructured_output()``
+    * ``"tool_selector"`` → ``Tuple[List[ToolCall], Optional[str]]``
 
-    * ``"chat"``             — returns ``str`` (extracted from ``Response.message.content``)
-    * ``"structure_output"`` — returns the value produced by
-      ``StructuredOutput.astructured_output()`` (typically a Pydantic
-      ``BaseModel`` instance, or a plain value matching the constraint)
-    * ``"tool_selector"``    — returns ``Tuple[List[ToolCall], Optional[str]]``
+    ``prompt`` becomes the final ``Role.USER`` message; ``history`` (if
+    given) is prepended verbatim. Per-call temperature / kwargs are
+    deliberately not exposed — those are baked at LLM construction time.
 
-    The ``prompt`` is appended as the final ``Role.USER`` message; if
-    ``history`` is supplied it is prepended verbatim before the prompt.
-
-    Per-call ``temperature`` / ``**kwargs`` overrides are deliberately
-    not exposed — those are baked at LLM construction time.
-
-    Usage::
-
-        text = yield LLMCall.chat("What is 2+2?")
-        parsed = yield LLMCall.structure_output("Extract...", constraint=PydanticModel(model=Schema))
-        calls, reply = yield LLMCall.tool_selector("...", tools=[...])
-
-    Equivalent direct construction::
-
-        yield LLMCall(protocol="chat", prompt="What is 2+2?")
+    >>> text = yield LLMCall.chat("What is 2+2?")
+    >>> parsed = yield LLMCall.structure_output("Extract...", constraint=PydanticModel(model=Schema))
+    >>> calls, reply = yield LLMCall.tool_selector("...", tools=[...])
     """
     protocol: LLMCallProtocol
     prompt: str = ""
@@ -426,28 +396,50 @@ class LLMCall:
 
 @dataclass(frozen=True)
 class ThinkUnit:
-    """Yielded to invoke a class-level ``think_unit`` declaration by name.
+    """Yielded inside ``on_agent`` to invoke a class-level ``think_unit``.
 
-    Only valid inside ``on_agent``. The dispatcher resolves ``name`` via
-    ``getattr(type(self), name)`` and expects a ``ThinkUnitDescriptor``.
+    The dispatcher resolves ``name`` against the class and runs the
+    associated ``ThinkUnitDescriptor`` via ``_ThinkUnitRuntime``. Fields
+    beyond ``name`` overlay the descriptor's defaults (``None`` =
+    descriptor value). The ``asend()`` result is the worker's typed
+    output (or ``None`` if there is no ``output_schema``).
 
-    All fields beyond ``name`` overlay the descriptor's defaults. ``None``
-    means "use the descriptor's value for this field".
-
-    The result returned via ``asend()`` is the worker's typed output (or
-    ``None`` if the worker has no ``output_schema``).
-
-    Used by: _amphibious_automa.py (state-machine driver)
-
-    Usage::
-        result = yield ThinkUnit("main_think")
-        result = yield ThinkUnit("exec_think", until=lambda c: c.done, max_attempts=20)
+    >>> result = yield ThinkUnit("main_think")
+    >>> result = yield ThinkUnit("exec_think", until=lambda c: c.done, max_attempts=20)
     """
     name: str
     until: Optional[Callable[..., Union[bool, Awaitable[bool]]]] = None
     max_attempts: Optional[int] = None
     tools: Optional[List[str]] = None
     skills: Optional[List[str]] = None
+
+
+@dataclass(frozen=True)
+class ThinkAgent:
+    """Yielded to invoke a class-level ``think_agent`` declaration by name.
+
+    Unlike ``ThinkUnit`` (one in-process OTC cycle), ``ThinkAgent`` hands
+    the sub-goal off to an **external** agent runtime (currently
+    ``claude code``). The external agent is bound to the parent's task
+    tools via an in-process MCP server, so every tool call routes back
+    through ``_run_action_call`` and the parent's hooks fire normally.
+
+    Fields beyond ``name`` overlay the descriptor's defaults (``None`` =
+    descriptor value). The ``asend()`` result is the string the external
+    agent passed to ``agent_done(result=...)``, or the last chunk of
+    assistant text if the agent exited without signalling.
+
+    >>> class MyAutoma(AmphibiousAutoma[MyContext]):
+    ...     write_article = think_agent()
+    ...     async def on_agent(self, ctx):
+    ...         result = yield ThinkAgent("write_article", goal="Write the article.")
+    ...         yield RETURN(result)
+    """
+    name: str
+    goal: Optional[str] = None
+    expose_tools: Optional[List[str]] = None
+    allowed_builtin_tools: Optional[List[str]] = None
+    permission_mode: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -465,7 +457,7 @@ class RETURN:
     ``on_workflow``), the captured value is written to
     ``self._final_answer`` (overriding the auto-capture from history).
 
-    Used by: _amphibious_automa.py (_dispatch_call)
+    Used by: _amphibious_automa.py (_dispatch_step)
 
     Usage::
         async def on_agent(self, ctx):
@@ -545,12 +537,13 @@ class StepOutputType(str, Enum):
     """Discriminator for the kind of output a trace step produced.
 
     Used by: _amphibious_automa.py (AgentTrace, _record_trace_step,
-    _record_llm_call_trace)
+    _record_llm_call_trace, _record_think_agent_trace)
     """
     TOOL_CALLS = "tool_calls"
     STRUCTURED = "structured"
     CONTENT_ONLY = "content_only"
     LLM_CALL = "llm_call"
+    THINK_AGENT = "think_agent"
 
 
 class RecordedToolCall(BaseModel):
@@ -583,6 +576,7 @@ class TraceStep(BaseModel):
     structured_output: Optional[Dict[str, Any]] = None
     structured_output_class: Optional[str] = None
     llm_call_protocol: Optional[str] = None  # set when output_type == LLM_CALL
+    think_agent_name: Optional[str] = None   # set when output_type == THINK_AGENT
 
 
 ################################################################################################################

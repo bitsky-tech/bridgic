@@ -60,7 +60,7 @@ async def request_human(prompt: str, channel: Optional[str] = None) -> str:
     # multiple, the LLM must pass an explicit ``channel`` matching one
     # of the registered ``@human_channel`` names for routing to be
     # deterministic.
-    return await agent._dispatch_human_channel(prompt, channel=channel)
+    return await agent._run_human_call(prompt, channel=channel)
 
 
 request_human_tool: FunctionToolSpec = FunctionToolSpec.from_raw(request_human)
@@ -79,7 +79,7 @@ def build_request_human_tool(
       channel names verbatim, and
     * the ``channel`` parameter's schema is constrained to an ``enum``
       of those exact names — so the LLM cannot hallucinate a name that
-      will be rejected by ``_dispatch_human_channel``.
+      will be rejected by ``_run_human_call``.
 
     Parameters
     ----------

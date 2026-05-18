@@ -73,12 +73,13 @@ class TestEnterAgentDelegation:
         on_agent_invocations = []
 
         class Agent(AmphibiousAutoma[CognitiveContext]):
-            async def on_agent(self, ctx):
+            plan = think_unit(CognitiveWorker.inline("plan"), max_attempts=1)
+
+            async def on_agent(self, ctx) -> AsyncGenerator[Any, Any]:
                 # Record the goal seen by each on_agent invocation —
                 # demonstrates snapshot scoping.
                 on_agent_invocations.append(ctx.goal)
-                worker = CognitiveWorker.inline("plan", llm=self.llm)
-                await self._run(worker, max_attempts=1)
+                yield ThinkUnit("plan")
 
             async def on_workflow(self, ctx) -> AsyncGenerator[
                 Union[ActionCall, HumanCall, EnterAgent, LLMCall], None
@@ -98,10 +99,11 @@ class TestEnterAgentDelegation:
         observed_goals = []
 
         class Agent(AmphibiousAutoma[CognitiveContext]):
-            async def on_agent(self, ctx):
+            plan = think_unit(CognitiveWorker.inline("plan"), max_attempts=1)
+
+            async def on_agent(self, ctx) -> AsyncGenerator[Any, Any]:
                 observed_goals.append(("inside-on_agent", ctx.goal))
-                worker = CognitiveWorker.inline("plan", llm=self.llm)
-                await self._run(worker, max_attempts=1)
+                yield ThinkUnit("plan")
 
             async def on_workflow(self, ctx) -> AsyncGenerator[
                 Union[ActionCall, HumanCall, EnterAgent, LLMCall], None
@@ -213,7 +215,7 @@ class TestEnterAgentToolScoping:
 
 class TestEnterAgentInWorkflowMode:
     """When the user forces ``mode=RunMode.WORKFLOW`` but yields EnterAgent,
-    dispatch goes through ``_dispatch_call``'s recursive ``_invoke_template``
+    dispatch goes through ``_dispatch_step``'s recursive ``_invoke_template``
     branch (no state machine — there's no fallback to track). Verify it works."""
 
     @pytest.mark.asyncio
@@ -223,10 +225,11 @@ class TestEnterAgentInWorkflowMode:
         on_agent_invocations = []
 
         class Agent(AmphibiousAutoma[CognitiveContext]):
-            async def on_agent(self, ctx):
+            plan = think_unit(CognitiveWorker.inline("plan"), max_attempts=1)
+
+            async def on_agent(self, ctx) -> AsyncGenerator[Any, Any]:
                 on_agent_invocations.append(ctx.goal)
-                worker = CognitiveWorker.inline("plan", llm=self.llm)
-                await self._run(worker, max_attempts=1)
+                yield ThinkUnit("plan")
 
             async def on_workflow(self, ctx) -> AsyncGenerator[
                 Union[ActionCall, HumanCall, EnterAgent, LLMCall], None

@@ -326,10 +326,12 @@ publish = [{ name = "tomli", specifier = ">=2.0.0" }]
 
 [[package]]
 name = "bridgic-amphibious"
-version = "0.1.2.dev1"
+version = "0.1.2.dev6"
 source = { editable = "packages/bridgic-amphibious" }
 dependencies = [
     { name = "bridgic-core" },
+    { name = "fastmcp" },
+    { name = "mcp" },
     { name = "pyyaml" },
 ]
 
@@ -342,6 +344,8 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "bridgic-core", editable = "packages/bridgic-core" },
+    { name = "fastmcp", specifier = ">=2.13.0" },
+    { name = "mcp", specifier = ">=1.24.0" },
     { name = "pyyaml", specifier = ">=6.0.3" },
 ]
 

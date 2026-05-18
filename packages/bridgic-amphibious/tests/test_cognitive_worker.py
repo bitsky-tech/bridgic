@@ -14,6 +14,9 @@ from bridgic.amphibious import (
     DetailRequest,
     _DELEGATE,
     AmphibiousAutoma,
+    ThinkUnit,
+    think_unit,
+    RETURN,
 )
 from bridgic.core.model.types import ToolCall
 from .tools import get_travel_planning_tools
@@ -284,9 +287,11 @@ class TestCognitiveWorker:
         worker = _SimpleWorker(llm=llm)
 
         class SimpleAgent(AmphibiousAutoma[TravelCtx]):
+            step = think_unit(worker)
+
             async def on_agent(self, ctx):
-                await self._run(worker)  # search_flights
-                await self._run(worker)  # no tools
+                yield ThinkUnit("step")  # search_flights
+                yield ThinkUnit("step")  # no tools
 
         agent = SimpleAgent(llm=llm)
         await agent.arun(goal="Plan a trip to Tokyo")
@@ -321,8 +326,10 @@ class TestCognitiveWorker:
         worker = _ActionPipelineWorker(llm=llm)
 
         class PipelineAgent(AmphibiousAutoma[TravelCtx]):
+            step = think_unit(worker)
+
             async def on_agent(self, ctx):
-                await self._run(worker)
+                yield ThinkUnit("step")
 
         agent = PipelineAgent(llm=llm)
         await agent.arun(goal="test")
@@ -489,11 +496,13 @@ class TestCognitiveWorker:
         worker = EnhancementWorker(llm=llm)
 
         class EnhancementAgent(AmphibiousAutoma[TravelCtx]):
+            step = think_unit(worker)
+
             async def observation(self, ctx):
-                return "Default observation from agent"
+                yield RETURN("Default observation from agent")
 
             async def on_agent(self, ctx):
-                await self._run(worker)
+                yield ThinkUnit("step")
 
         agent = EnhancementAgent(llm=llm)
         await agent.arun(goal="test")
@@ -552,8 +561,10 @@ class TestCognitiveWorker:
         )
 
         class SimpleAgent(AmphibiousAutoma[TravelCtx]):
+            step = think_unit(worker)
+
             async def on_agent(self, ctx):
-                await self._run(worker)
+                yield ThinkUnit("step")
 
         agent = SimpleAgent(llm=llm)
         await agent.arun(goal="test")
@@ -763,8 +774,10 @@ class TestOutputType:
         planner_worker = _PlannerWorker(llm=MockLLM())
 
         class _TrackingAgent(AmphibiousAutoma[CognitiveContext]):
+            plan = think_unit(planner_worker)
+
             async def on_agent(self, ctx):
-                await self._run(planner_worker)
+                yield ThinkUnit("plan")
 
         llm = MockLLM()
         planner_worker.set_llm(llm)
@@ -836,8 +849,10 @@ class TestFinishSignal:
         worker = CognitiveWorker.inline("Plan one step.")
 
         class _SimpleAgent(AmphibiousAutoma[CognitiveContext]):
+            step = think_unit(worker, max_attempts=10)
+
             async def on_agent(self, ctx):
-                await self._run(worker, max_attempts=10)
+                yield ThinkUnit("step")
 
         agent = _SimpleAgent(llm=_FinishLLM())
         await agent.arun(goal="Test finish signal")
@@ -857,8 +872,10 @@ class TestFinishSignal:
         worker = CognitiveWorker.inline("Plan one step.")
 
         class _LoopAgent(AmphibiousAutoma[CognitiveContext]):
+            step = think_unit(worker, max_attempts=3)
+
             async def on_agent(self, ctx):
-                await self._run(worker, max_attempts=3)
+                yield ThinkUnit("step")
 
         agent = _LoopAgent(llm=_NeverFinishLLM())
         await agent.arun(goal="Test no finish")
@@ -880,7 +897,9 @@ class TestActionDefensive:
         worker = CognitiveWorker.inline("Plan.", output_schema=_MySchema)
 
         class _SchemaAgent(AmphibiousAutoma[CognitiveContext]):
-            async def on_agent(self, ctx): pass
+            async def on_agent(self, ctx):
+                if False:
+                    yield
 
         agent = _SchemaAgent(llm=MockLLM())
         ctx = CognitiveContext(goal="Test")
@@ -892,7 +911,7 @@ class TestActionDefensive:
             'step_content': "done",
         })()
 
-        await agent._action(schema_decision, ctx, _worker=worker)
+        await agent._run_action_call(schema_decision, ctx, _worker=worker)
         last_step = ctx.cognitive_history._items[-1]
         assert last_step.content == "done"
         assert last_step.result.value == "result"

@@ -28,6 +28,8 @@ from bridgic.amphibious import (
     StepToolCall,
     ToolArgument,
     human_channel,
+    ThinkUnit,
+    think_unit,
 )
 from bridgic.amphibious.builtin_tools import request_human_tool
 
@@ -260,9 +262,10 @@ class TestRequestHumanTool:
                 seen_prompts.append(prompt)
                 return "yes, go ahead"
 
-            async def on_agent(self, ctx):
-                worker = CognitiveWorker.inline("Plan", llm=self.llm)
-                await self._run(worker, max_attempts=5)
+            plan = think_unit(CognitiveWorker.inline("Plan"), max_attempts=5)
+
+            async def on_agent(self, ctx) -> AsyncGenerator[Any, Any]:
+                yield ThinkUnit("plan")
 
         await Agent(llm=llm).arun(
             goal="Trigger request_human via tool",
@@ -387,9 +390,10 @@ class TestContextVarConcurrency:
             async def stdin(self, prompt: str) -> str:
                 return f"reply-from-{self.name}"
 
-            async def on_agent(self, ctx):
-                worker = CognitiveWorker.inline("Plan", llm=self.llm)
-                await self._run(worker)
+            plan = think_unit(CognitiveWorker.inline("Plan"))
+
+            async def on_agent(self, ctx) -> AsyncGenerator[Any, Any]:
+                yield ThinkUnit("plan")
                 result = await request_human_tool._func(prompt="who?")
                 tool_results[self.name] = result
 
@@ -414,9 +418,10 @@ class TestContextVarConcurrency:
         llm = MockLLM([_make_finish_step()])
 
         class Agent(AmphibiousAutoma[CognitiveContext]):
-            async def on_agent(self, ctx):
-                worker = CognitiveWorker.inline("Plan", llm=self.llm)
-                await self._run(worker)
+            plan = think_unit(CognitiveWorker.inline("Plan"))
+
+            async def on_agent(self, ctx) -> AsyncGenerator[Any, Any]:
+                yield ThinkUnit("plan")
 
         await Agent(llm=llm).arun(context=_make_ctx())
 
@@ -435,9 +440,10 @@ class TestBuiltinToolInjection:
         llm = MockLLM([_make_finish_step()])
 
         class Agent(AmphibiousAutoma[CognitiveContext]):
-            async def on_agent(self, ctx):
-                worker = CognitiveWorker.inline("Plan", llm=self.llm)
-                await self._run(worker)
+            plan = think_unit(CognitiveWorker.inline("Plan"))
+
+            async def on_agent(self, ctx) -> AsyncGenerator[Any, Any]:
+                yield ThinkUnit("plan")
 
         agent = Agent(llm=llm)
         await agent.arun(goal="Test builtin injection")
@@ -450,9 +456,10 @@ class TestBuiltinToolInjection:
         llm = MockLLM([_make_finish_step()])
 
         class Agent(AmphibiousAutoma[CognitiveContext]):
-            async def on_agent(self, ctx):
-                worker = CognitiveWorker.inline("Plan", llm=self.llm)
-                await self._run(worker)
+            plan = think_unit(CognitiveWorker.inline("Plan"))
+
+            async def on_agent(self, ctx) -> AsyncGenerator[Any, Any]:
+                yield ThinkUnit("plan")
 
         agent = Agent(llm=llm)
         await agent.arun(goal="Test dedupe", tools=[request_human_tool])
@@ -505,9 +512,10 @@ class TestBuiltinToolInjection:
                 captured.append(prompt)
                 return "here is help"
 
-            async def on_agent(self, ctx):
-                worker = CognitiveWorker.inline("Recover.", llm=self.llm)
-                await self._run(worker, max_attempts=5)
+            recoverer = think_unit(CognitiveWorker.inline("Recover."), max_attempts=5)
+
+            async def on_agent(self, ctx) -> AsyncGenerator[Any, Any]:
+                yield ThinkUnit("recoverer")
 
             async def on_workflow(self, ctx) -> AsyncGenerator[
                 Union[ActionCall, HumanCall, EnterAgent, LLMCall], None

@@ -12,7 +12,7 @@ These tests cover the exception path added in ``_run_workflow``'s inner try
 around ``gen.__anext__()`` / ``gen.asend()``.
 """
 
-from typing import AsyncGenerator, Union
+from typing import Any, AsyncGenerator, Union
 
 import pytest
 
@@ -25,6 +25,8 @@ from bridgic.amphibious import (
     EnterAgent,
     StepToolCall,
     ToolArgument,
+    ThinkUnit,
+    think_unit,
 )
 
 
@@ -92,10 +94,11 @@ class TestWorkflowGeneratorError:
         llm = _MockLLM([_finish_decision()])
 
         class Agent(AmphibiousAutoma[CognitiveContext]):
-            async def on_agent(self, ctx):
+            recoverer = think_unit(CognitiveWorker.inline("Recover."), max_attempts=1)
+
+            async def on_agent(self, ctx) -> AsyncGenerator[Any, Any]:
                 on_agent_calls.append(ctx.goal)
-                worker = CognitiveWorker.inline("Recover.", llm=self.llm)
-                await self._run(worker, max_attempts=1)
+                yield ThinkUnit("recoverer")
 
             async def on_workflow(self, ctx) -> AsyncGenerator[
                 Union[ActionCall, HumanCall, EnterAgent], None
@@ -113,12 +116,13 @@ class TestWorkflowGeneratorError:
         )
 
     @pytest.mark.asyncio
-    async def test_helper_raises_in_workflow_without_agent_raises_clear_error(self):
-        """No on_agent override + AMPHIFLOW forced: must surface a clear RuntimeError.
+    async def test_amphiflow_without_agent_override_raises_at_routing(self):
+        """No on_agent override + AMPHIFLOW forced: rejected at ``_resolve_mode``.
 
-        We force AMPHIFLOW via mode= since auto-resolution would pick WORKFLOW
-        when on_agent is not overridden. This isolates the ``not self._has_agent()``
-        branch on the new generator-error path.
+        ``_resolve_mode`` validates that an explicit ``RunMode.AMPHIFLOW``
+        requires both ``on_agent`` and ``on_workflow`` to be overridden;
+        the run is rejected at the routing boundary before any driver
+        runs, with an error that names the missing template(s).
         """
         from bridgic.amphibious import RunMode
 
@@ -129,10 +133,12 @@ class TestWorkflowGeneratorError:
                 raise KeyError("missing key")
                 yield  # pragma: no cover
 
-        # Forced AMPHIFLOW requires an LLM at startup, even though we never reach it.
         agent = Agent(llm=_MockLLM([]))
 
-        with pytest.raises(RuntimeError, match="on_agent\\(\\) is not overridden"):
+        with pytest.raises(
+            RuntimeError,
+            match=r"requested mode=RunMode\.AMPHIFLOW but does not override on_agent\(\)",
+        ):
             await agent.arun(
                 goal="Trigger amphiflow without agent",
                 mode=RunMode.AMPHIFLOW,

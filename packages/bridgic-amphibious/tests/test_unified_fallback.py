@@ -100,10 +100,11 @@ class TestLLMCallFallback:
         post_fallback_steps = []
 
         class Agent(AmphibiousAutoma[CognitiveContext]):
-            async def on_agent(self, ctx):
+            recoverer = think_unit(CognitiveWorker.inline("Recover."), max_attempts=1)
+
+            async def on_agent(self, ctx) -> AsyncGenerator[Any, Any]:
                 agent_invocations.append(ctx.goal)
-                worker = CognitiveWorker.inline("Recover.", llm=self.llm)
-                await self._run(worker, max_attempts=1)
+                yield ThinkUnit("recoverer")
 
             async def on_workflow(self, ctx) -> AsyncGenerator[
                 Union[ActionCall, HumanCall, EnterAgent, LLMCall, RETURN], None
@@ -139,10 +140,11 @@ class TestLLMCallFallback:
         post_fallback_steps = []
 
         class Agent(AmphibiousAutoma[CognitiveContext]):
-            async def on_agent(self, ctx):
+            recoverer = think_unit(CognitiveWorker.inline("Recover."), max_attempts=1)
+
+            async def on_agent(self, ctx) -> AsyncGenerator[Any, Any]:
                 agent_invocations.append(ctx.goal)
-                worker = CognitiveWorker.inline("Recover.", llm=self.llm)
-                await self._run(worker, max_attempts=1)
+                yield ThinkUnit("recoverer")
 
             async def on_workflow(self, ctx) -> AsyncGenerator[
                 Union[ActionCall, HumanCall, EnterAgent, LLMCall, RETURN], None
@@ -179,14 +181,15 @@ class TestHumanCallFallback:
         post_fallback_steps = []
 
         class Agent(AmphibiousAutoma[CognitiveContext]):
+            recoverer = think_unit(CognitiveWorker.inline("Recover."), max_attempts=1)
+
             @human_channel
             async def broken(self, prompt: str) -> str:
                 raise RuntimeError("channel broken")
 
-            async def on_agent(self, ctx):
+            async def on_agent(self, ctx) -> AsyncGenerator[Any, Any]:
                 agent_invocations.append(ctx.goal)
-                worker = CognitiveWorker.inline("Recover.", llm=self.llm)
-                await self._run(worker, max_attempts=1)
+                yield ThinkUnit("recoverer")
 
             async def on_workflow(self, ctx) -> AsyncGenerator[
                 Union[ActionCall, HumanCall, EnterAgent, LLMCall, RETURN], None
@@ -213,14 +216,15 @@ class TestHumanCallFallback:
         post_fallback_steps = []
 
         class Agent(AmphibiousAutoma[CognitiveContext]):
+            recoverer = think_unit(CognitiveWorker.inline("Recover."), max_attempts=1)
+
             @human_channel
             async def broken(self, prompt: str) -> str:
                 raise RuntimeError("channel broken")
 
-            async def on_agent(self, ctx):
+            async def on_agent(self, ctx) -> AsyncGenerator[Any, Any]:
                 agent_invocations.append(ctx.goal)
-                worker = CognitiveWorker.inline("Recover.", llm=self.llm)
-                await self._run(worker, max_attempts=1)
+                yield ThinkUnit("recoverer")
 
             async def on_workflow(self, ctx) -> AsyncGenerator[
                 Union[ActionCall, HumanCall, EnterAgent, LLMCall, RETURN], None
@@ -278,10 +282,11 @@ class TestFallbackCounterReset:
         results = []
 
         class Agent(AmphibiousAutoma[CognitiveContext]):
-            async def on_agent(self, ctx):
+            recoverer = think_unit(CognitiveWorker.inline("Recover."), max_attempts=1)
+
+            async def on_agent(self, ctx) -> AsyncGenerator[Any, Any]:
                 agent_invocations.append(ctx.goal)
-                worker = CognitiveWorker.inline("Recover.", llm=self.llm)
-                await self._run(worker, max_attempts=1)
+                yield ThinkUnit("recoverer")
 
             async def on_workflow(self, ctx) -> AsyncGenerator[
                 Union[ActionCall, HumanCall, EnterAgent, LLMCall, RETURN], None

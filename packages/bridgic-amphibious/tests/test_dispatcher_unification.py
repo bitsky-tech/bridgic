@@ -24,6 +24,7 @@ from bridgic.amphibious import (
     ToolArgument,
     human_channel,
     think_unit,
+    ThinkUnit,
 )
 from bridgic.core.agentic.tool_specs import FunctionToolSpec
 from bridgic.core.model.types import Message, Response, Role
@@ -152,9 +153,10 @@ class TestHookCallLogging:
                 snap = yield ActionCall("snapshot_tool")
                 yield RETURN(snap[0].result if snap else None)
 
+            plan_unit = think_unit(CognitiveWorker.inline("plan"))
+
             async def on_agent(self, ctx):
-                worker = CognitiveWorker.inline("plan", llm=self.llm)
-                await self._run(worker)
+                yield ThinkUnit("plan_unit")
 
         ctx = _ctx()
         ctx.tools.add(FunctionToolSpec.from_raw(snapshot_tool))
@@ -194,37 +196,18 @@ class TestYieldsInObservation:
                 obs = yield LLMCall.chat("Summarize the page")
                 yield RETURN(obs)
 
-            # Coroutine form for on_agent — avoid yielding bare ``None``
-            # which the dispatcher would attempt to treat as a yield item.
+            plan_unit = think_unit(CognitiveWorker.inline("plan"))
+
             async def on_agent(self, ctx):
-                worker = CognitiveWorker.inline("plan", llm=self.llm)
-                # Run the worker — it'll trigger observation() via the
-                # _run_observe_think_act observe phase.
-                await self._run(worker)
+                # Run the worker via ThinkUnit — it'll trigger
+                # observation() via the _run_observe_think_act observe phase.
+                yield ThinkUnit("plan_unit")
 
         agent = Agent(llm=llm)
         await agent.arun(context=_ctx())
 
         # observation was invoked, ctx.observation set
         assert agent._current_context.observation == "computed-observation"
-
-    @pytest.mark.asyncio
-    async def test_observation_as_coroutine_still_works(self):
-        """Legacy form: observation as a plain coroutine returning a string."""
-        llm = MockLLM(structured_responses=[_finish_step()])
-
-        class Agent(AmphibiousAutoma[CognitiveContext]):
-            async def observation(self, ctx):
-                return "legacy-obs"
-
-            async def on_agent(self, ctx):
-                worker = CognitiveWorker.inline("plan", llm=self.llm)
-                await self._run(worker)
-
-        agent = Agent(llm=llm)
-        await agent.arun(context=_ctx())
-
-        assert agent._current_context.observation == "legacy-obs"
 
     @pytest.mark.asyncio
     async def test_observation_can_yield_action_call(self):
@@ -236,10 +219,11 @@ class TestYieldsInObservation:
         ``AmphibiousAutoma.observation``. Previously, dispatching an
         ActionCall yielded from within a hook (``scope="hook"``)
         re-entered the same hook generator and blew the stack with
-        ``RecursionError``. The fix splits ``_dispatch_call``'s
-        ActionCall branch by scope: hook-scope runs ``_action_raw`` (no
-        observation, no before/after_action wrap, no trace step) while
-        workflow-scope keeps the full OTC wrap.
+        ``RecursionError``. The fix splits ``_dispatch_step``'s
+        ActionCall branch by scope: hook-scope runs
+        ``_run_action_call(..., with_hooks=False)`` (no observation, no
+        before/after_action wrap, no trace step) while workflow-scope
+        keeps the full OTC wrap.
         """
         llm = MockLLM(structured_responses=[_finish_step()])
         call_count = 0
@@ -255,9 +239,10 @@ class TestYieldsInObservation:
                 snap = yield ActionCall("snapshot_tool")
                 yield RETURN(snap[0].result if snap else None)
 
+            plan_unit = think_unit(CognitiveWorker.inline("plan"))
+
             async def on_agent(self, ctx):
-                worker = CognitiveWorker.inline("plan", llm=self.llm)
-                await self._run(worker)
+                yield ThinkUnit("plan_unit")
 
         ctx = _ctx()
         ctx.tools.add(FunctionToolSpec.from_raw(snapshot_tool))
@@ -287,9 +272,10 @@ class TestYieldsInBeforeAction:
                 if False:
                     yield
 
+            plan_unit = think_unit(CognitiveWorker.inline("plan"))
+
             async def on_agent(self, ctx):
-                worker = CognitiveWorker.inline("plan", llm=self.llm)
-                await self._run(worker)
+                yield ThinkUnit("plan_unit")
 
         agent = Agent(llm=llm)
         await agent.arun(context=_ctx())
@@ -323,9 +309,10 @@ class TestYieldsInBeforeAction:
                 if False:
                     yield
 
+            plan_unit = think_unit(CognitiveWorker.inline("plan"))
+
             async def on_agent(self, ctx):
-                worker = CognitiveWorker.inline("plan", llm=self.llm)
-                await self._run(worker)
+                yield ThinkUnit("plan_unit")
 
         ctx = _ctx()
         ctx.tools.add(FunctionToolSpec.from_raw(audit_tool))
@@ -371,13 +358,15 @@ class TestWorkerHookGeneratorForm:
         worker = GenObservationWorker(llm=llm)
 
         class Agent(AmphibiousAutoma[CognitiveContext]):
+            recovery_unit = think_unit(worker, max_attempts=1)
+
             async def observation(self, ctx):
                 nonlocal agent_fallback_ran
                 agent_fallback_ran = True
-                return "agent-fallback"
+                yield RETURN("agent-fallback")
 
             async def on_agent(self, ctx):
-                await self._run(worker, max_attempts=1)
+                yield ThinkUnit("recovery_unit")
 
         ctx = _ctx()
         ctx.tools.add(FunctionToolSpec.from_raw(snapshot_tool))
@@ -409,13 +398,15 @@ class TestWorkerHookGeneratorForm:
         worker = GenObservationWorker(llm=llm)
 
         class Agent(AmphibiousAutoma[CognitiveContext]):
+            recovery_unit = think_unit(worker, max_attempts=1)
+
             async def observation(self, ctx):
                 nonlocal agent_fallback_ran
                 agent_fallback_ran = True
-                return "agent-fallback"
+                yield RETURN("agent-fallback")
 
             async def on_agent(self, ctx):
-                await self._run(worker, max_attempts=1)
+                yield ThinkUnit("recovery_unit")
 
         agent = Agent(llm=llm)
         await agent.arun(context=_ctx())
@@ -451,9 +442,10 @@ class TestYieldsInAfterAction:
                 if False:
                     yield
 
+            plan_unit = think_unit(CognitiveWorker.inline("plan"))
+
             async def on_agent(self, ctx):
-                worker = CognitiveWorker.inline("plan", llm=self.llm)
-                await self._run(worker)
+                yield ThinkUnit("plan_unit")
 
         ctx = _ctx()
         ctx.tools.add(FunctionToolSpec.from_raw(followup_tool))
@@ -472,9 +464,10 @@ class TestGeneratorVsCoroutineForms:
         llm = MockLLM(structured_responses=[_finish_step()])
 
         class Agent(AmphibiousAutoma[CognitiveContext]):
+            plan_unit = think_unit(CognitiveWorker.inline("plan"))
+
             async def on_agent(self, ctx):
-                worker = CognitiveWorker.inline("plan", llm=self.llm)
-                await self._run(worker)
+                yield ThinkUnit("plan_unit")
 
         await Agent(llm=llm).arun(context=_ctx())  # no exception → pass
 
@@ -493,61 +486,28 @@ class TestGeneratorVsCoroutineForms:
         await Agent(llm=llm).arun(context=_ctx())  # no exception → pass
 
     @pytest.mark.asyncio
-    async def test_after_action_coroutine_pass_body(self):
-        """after_action as a plain coroutine with `pass` body still works."""
-        llm = MockLLM(structured_responses=[_finish_step()])
+    async def test_amphibious_template_must_be_async_gen(self):
+        """Coroutine-form AmphibiousAutoma templates raise at class creation.
 
-        class Agent(AmphibiousAutoma[CognitiveContext]):
-            async def after_action(self, step_result, ctx):
-                pass  # legacy "do nothing" form
-
-            async def on_agent(self, ctx):
-                worker = CognitiveWorker.inline("plan", llm=self.llm)
-                await self._run(worker)
-
-        await Agent(llm=llm).arun(context=_ctx())  # no exception → pass
-
-    @pytest.mark.asyncio
-    async def test_forced_amphiflow_with_coroutine_form_on_workflow(self):
-        """Coroutine-form on_workflow in FORCED AMPHIFLOW mode is awaited
-        directly (no state-machine driving). Without proper coroutine
-        handling the framework would crash on ``__anext__`` or silently
-        fall back to on_agent.
-
-        Note: under RunMode.AUTO, ``_has_workflow`` only counts async-gen
-        forms — coroutine on_workflow is treated as a stub and AUTO
-        resolves to AGENT. This test forces AMPHIFLOW to exercise the
-        ``_drive_amphiflow`` coroutine path explicitly.
+        The framework's dispatch model is yield-driven; every primitive
+        (ActionCall / HumanCall / LLMCall / EnterAgent / ThinkUnit /
+        ThinkAgent / RETURN) reaches the framework via ``yield``.
+        Coroutine-form template overrides cannot use any of these
+        primitives, so ``_validate_template_forms`` rejects them at
+        class-creation time with a clear error pointing at the bad
+        method.
         """
-        from bridgic.amphibious import RunMode
+        with pytest.raises(TypeError, match="must be an ``async def`` function with at least one ``yield``"):
+            class _BadAgent1(AmphibiousAutoma[CognitiveContext]):
+                async def on_agent(self, ctx):
+                    pass  # no yield → coroutine form, rejected
 
-        llm = MockLLM(structured_responses=[_finish_step()])
-        workflow_ran = []
-        on_agent_ran = []
+        with pytest.raises(TypeError, match="must be an ``async def`` function with at least one ``yield``"):
+            class _BadAgent2(AmphibiousAutoma[CognitiveContext]):
+                async def on_workflow(self, ctx):
+                    return "coroutine-result"  # no yield → rejected
 
-        class Agent(AmphibiousAutoma[CognitiveContext]):
-            async def on_agent(self, ctx):
-                on_agent_ran.append(True)
-                worker = CognitiveWorker.inline("plan", llm=self.llm)
-                await self._run(worker)
-
-            # Coroutine-form on_workflow (no yields, just imperative code).
-            async def on_workflow(self, ctx):
-                workflow_ran.append(True)
-                return "coroutine-result"
-
-        agent = Agent(llm=llm)
-        await agent.arun(context=_ctx(), mode=RunMode.AMPHIFLOW)
-
-        # The user's coroutine workflow MUST have executed.
-        assert workflow_ran == [True], (
-            "coroutine-form on_workflow was skipped — framework probably "
-            "fell back to on_agent silently."
-        )
-        # And on_agent should NOT have run (no failure to recover from).
-        assert on_agent_ran == [], (
-            "on_agent should not have run; coroutine workflow returned "
-            "normally without error."
-        )
-        # The coroutine's return value becomes final_answer.
-        assert agent.final_answer == "coroutine-result"
+        with pytest.raises(TypeError, match="must be an ``async def`` function with at least one ``yield``"):
+            class _BadAgent3(AmphibiousAutoma[CognitiveContext]):
+                async def after_action(self, step_result, ctx):
+                    pass  # no yield → rejected
