@@ -11,11 +11,11 @@ pip install bridgic-llms-litellm
 ## Usage
 
 ```python
-from bridgic.llms.litellm import LiteLLMLlm
+from bridgic.llms.litellm import LiteLLM
 from bridgic.core.model.types import Message, Role
 
 # API keys are read from environment variables (e.g. OPENAI_API_KEY)
-llm = LiteLLMLlm()
+llm = LiteLLM()
 
 response = llm.chat(
     model="openai/gpt-4o",

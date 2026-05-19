@@ -32,7 +32,7 @@ class LiteLLMConfiguration(BaseModel):
     """Up to 4 sequences where generation will stop."""
 
 
-class LiteLLMLlm(BaseLlm):
+class LiteLLM(BaseLlm):
     """
     LiteLLM integration for Bridgic, providing access to 100+ LLM providers
     (OpenAI, Anthropic, Google, Groq, Together AI, AWS Bedrock, Azure, etc.)

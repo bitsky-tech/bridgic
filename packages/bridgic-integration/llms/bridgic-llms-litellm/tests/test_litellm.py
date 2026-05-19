@@ -13,7 +13,7 @@ from bridgic.core.model.types import *
 
 @pytest.fixture
 def mock_litellm():
-    """Install a fake litellm module so LiteLLMLlm can be imported without the real package."""
+    """Install a fake litellm module so LiteLLM can be imported without the real package."""
     fake = types.ModuleType("litellm")
 
     fake_usage = mock.MagicMock()
@@ -43,9 +43,9 @@ def mock_litellm():
 
 @pytest.fixture
 def llm_instance(mock_litellm):
-    from bridgic.llms.litellm import LiteLLMLlm, LiteLLMConfiguration
+    from bridgic.llms.litellm import LiteLLM, LiteLLMConfiguration
     config = LiteLLMConfiguration(model="openai/gpt-4o-mini")
-    return LiteLLMLlm(configuration=config)
+    return LiteLLM(configuration=config)
 
 
 def test_chat_basic(llm_instance, mock_litellm):
@@ -74,8 +74,8 @@ def test_chat_model_override(llm_instance, mock_litellm):
 
 
 def test_api_key_forwarded(mock_litellm):
-    from bridgic.llms.litellm import LiteLLMLlm
-    llm = LiteLLMLlm(api_key="sk-test-123")
+    from bridgic.llms.litellm import LiteLLM
+    llm = LiteLLM(api_key="sk-test-123")
     llm.chat(
         messages=[Message.from_text("Hi", role=Role.USER)],
         model="openai/gpt-4o",
@@ -93,8 +93,8 @@ def test_api_key_omitted_when_none(llm_instance, mock_litellm):
 
 
 def test_api_base_forwarded(mock_litellm):
-    from bridgic.llms.litellm import LiteLLMLlm
-    llm = LiteLLMLlm(api_base="http://localhost:4000")
+    from bridgic.llms.litellm import LiteLLM
+    llm = LiteLLM(api_base="http://localhost:4000")
     llm.chat(
         messages=[Message.from_text("Hi", role=Role.USER)],
         model="openai/gpt-4o",
@@ -104,8 +104,8 @@ def test_api_base_forwarded(mock_litellm):
 
 
 def test_timeout_forwarded(mock_litellm):
-    from bridgic.llms.litellm import LiteLLMLlm
-    llm = LiteLLMLlm(timeout=30.0)
+    from bridgic.llms.litellm import LiteLLM
+    llm = LiteLLM(timeout=30.0)
     llm.chat(
         messages=[Message.from_text("Hi", role=Role.USER)],
         model="openai/gpt-4o",
@@ -156,13 +156,13 @@ def test_message_conversion_tool_blocks(llm_instance, mock_litellm):
 
 
 def test_configuration_defaults_merge(mock_litellm):
-    from bridgic.llms.litellm import LiteLLMLlm, LiteLLMConfiguration
+    from bridgic.llms.litellm import LiteLLM, LiteLLMConfiguration
     config = LiteLLMConfiguration(
         model="openai/gpt-4o-mini",
         temperature=0.5,
         max_tokens=100,
     )
-    llm = LiteLLMLlm(configuration=config)
+    llm = LiteLLM(configuration=config)
     llm.chat(messages=[Message.from_text("Hi", role=Role.USER)])
 
     call_kwargs = mock_litellm.completion.call_args[1]
@@ -171,9 +171,9 @@ def test_configuration_defaults_merge(mock_litellm):
 
 
 def test_call_time_overrides_config(mock_litellm):
-    from bridgic.llms.litellm import LiteLLMLlm, LiteLLMConfiguration
+    from bridgic.llms.litellm import LiteLLM, LiteLLMConfiguration
     config = LiteLLMConfiguration(temperature=0.5)
-    llm = LiteLLMLlm(configuration=config)
+    llm = LiteLLM(configuration=config)
     llm.chat(
         messages=[Message.from_text("Hi", role=Role.USER)],
         model="openai/gpt-4o",
@@ -194,9 +194,9 @@ async def test_achat_basic(llm_instance, mock_litellm):
 
 
 def test_serialization_roundtrip(mock_litellm):
-    from bridgic.llms.litellm import LiteLLMLlm, LiteLLMConfiguration
+    from bridgic.llms.litellm import LiteLLM, LiteLLMConfiguration
     config = LiteLLMConfiguration(model="openai/gpt-4o", temperature=0.7)
-    llm = LiteLLMLlm(api_key="sk-test", api_base="http://proxy:4000", timeout=60.0, configuration=config)
+    llm = LiteLLM(api_key="sk-test", api_base="http://proxy:4000", timeout=60.0, configuration=config)
 
     state = llm.dump_to_dict()
     assert state["api_key"] == "sk-test"
@@ -205,13 +205,214 @@ def test_serialization_roundtrip(mock_litellm):
     assert state["configuration"]["model"] == "openai/gpt-4o"
     assert state["configuration"]["temperature"] == 0.7
 
-    new_llm = LiteLLMLlm()
+    new_llm = LiteLLM()
     new_llm.load_from_dict(state)
     assert new_llm.api_key == "sk-test"
     assert new_llm.api_base == "http://proxy:4000"
     assert new_llm.timeout == 60.0
     assert new_llm.configuration.model == "openai/gpt-4o"
     assert new_llm.configuration.temperature == 0.7
+
+
+# ---------------------------------------------------------------------------
+# Edge case tests — exception handling, malformed responses, streaming
+# ---------------------------------------------------------------------------
+
+def test_auth_error_raises_unrecoverable(mock_litellm):
+    """Invalid/expired API key → ModelUnrecoverableError (not retried)."""
+    from bridgic.llms.litellm import LiteLLM
+    from bridgic.core.model._model_error import ModelUnrecoverableError
+
+    exc_mod = types.ModuleType("litellm.exceptions")
+    exc_mod.AuthenticationError = type("AuthenticationError", (Exception,), {})
+    sys.modules["litellm.exceptions"] = exc_mod
+
+    mock_litellm.completion.side_effect = exc_mod.AuthenticationError(
+        "Invalid API key"
+    )
+    llm = LiteLLM(api_key="sk-invalid")
+    with pytest.raises(ModelUnrecoverableError):
+        llm.chat(
+            messages=[Message.from_text("Hi", role=Role.USER)],
+            model="openai/gpt-4o",
+        )
+    assert mock_litellm.completion.call_count == 1
+
+    sys.modules.pop("litellm.exceptions", None)
+
+
+def test_rate_limit_retried(mock_litellm):
+    """429 rate limit → retried by retryable_model_call (has '429' in text)."""
+    from bridgic.llms.litellm import LiteLLM
+    from bridgic.core.model._model_error import ModelRetryLimitError
+
+    rate_exc = Exception("Rate limit exceeded (429)")
+    mock_litellm.completion.side_effect = rate_exc
+    llm = LiteLLM()
+    with pytest.raises(ModelRetryLimitError):
+        llm.chat(
+            messages=[Message.from_text("Hi", role=Role.USER)],
+            model="openai/gpt-4o",
+        )
+    assert mock_litellm.completion.call_count == 3
+
+
+def test_timeout_retried(mock_litellm):
+    """Timeout → retried by retryable_model_call."""
+    from bridgic.llms.litellm import LiteLLM
+    from bridgic.core.model._model_error import ModelRetryLimitError
+
+    mock_litellm.completion.side_effect = TimeoutError("Request timed out")
+    llm = LiteLLM(timeout=5.0)
+    with pytest.raises(ModelRetryLimitError):
+        llm.chat(
+            messages=[Message.from_text("Hi", role=Role.USER)],
+            model="openai/gpt-4o",
+        )
+    assert mock_litellm.completion.call_count == 3
+
+
+def test_empty_response_content(mock_litellm):
+    """Provider returns empty content → handled gracefully (empty string)."""
+    from bridgic.llms.litellm import LiteLLM
+
+    mock_litellm.completion.return_value.choices[0].message.content = None
+    mock_litellm.completion.return_value.choices[0].message.refusal = None
+    llm = LiteLLM()
+    response = llm.chat(
+        messages=[Message.from_text("Hi", role=Role.USER)],
+        model="openai/gpt-4o",
+    )
+    assert response.message.content == ""
+
+
+def test_no_usage_in_response(mock_litellm):
+    """Provider returns no usage data → usage is None, not crash."""
+    from bridgic.llms.litellm import LiteLLM
+
+    mock_litellm.completion.return_value.usage = None
+    mock_litellm.completion.return_value.choices[0].message.content = "OK"
+    mock_litellm.completion.return_value.choices[0].message.refusal = None
+    llm = LiteLLM()
+    response = llm.chat(
+        messages=[Message.from_text("Hi", role=Role.USER)],
+        model="openai/gpt-4o",
+    )
+    assert response.usage is None
+    assert response.message.content == "OK"
+
+
+def test_refusal_emits_warning(mock_litellm):
+    """Provider refusal → RuntimeWarning emitted."""
+    from bridgic.llms.litellm import LiteLLM
+    import warnings
+
+    mock_litellm.completion.return_value.choices[0].message.content = ""
+    mock_litellm.completion.return_value.choices[0].message.refusal = "Content policy violation"
+    llm = LiteLLM()
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        llm.chat(
+            messages=[Message.from_text("Hi", role=Role.USER)],
+            model="openai/gpt-4o",
+        )
+        assert len(w) == 1
+        assert "Content policy violation" in str(w[0].message)
+        assert issubclass(w[0].category, RuntimeWarning)
+
+
+def test_stream_partial_chunks(mock_litellm):
+    """Streaming: partial chunks, some with empty delta."""
+    from bridgic.llms.litellm import LiteLLM
+
+    chunk1 = mock.MagicMock()
+    chunk1.choices = [mock.MagicMock()]
+    chunk1.choices[0].delta.content = "Hello"
+
+    chunk2 = mock.MagicMock()
+    chunk2.choices = [mock.MagicMock()]
+    chunk2.choices[0].delta.content = None
+
+    chunk3 = mock.MagicMock()
+    chunk3.choices = [mock.MagicMock()]
+    chunk3.choices[0].delta.content = " world"
+
+    chunk4 = mock.MagicMock()
+    chunk4.choices = []
+
+    mock_litellm.completion.return_value = iter([chunk1, chunk2, chunk3, chunk4])
+    llm = LiteLLM()
+    result = ""
+    for chunk in llm.stream(
+        messages=[Message.from_text("Hi", role=Role.USER)],
+        model="openai/gpt-4o",
+    ):
+        result += chunk.delta
+    assert result == "Hello world"
+
+
+@pytest.mark.asyncio
+async def test_astream_partial_chunks(mock_litellm):
+    """Async streaming: partial chunks, some with empty delta."""
+    from bridgic.llms.litellm import LiteLLM
+
+    chunk1 = mock.MagicMock()
+    chunk1.choices = [mock.MagicMock()]
+    chunk1.choices[0].delta.content = "Async"
+
+    chunk2 = mock.MagicMock()
+    chunk2.choices = [mock.MagicMock()]
+    chunk2.choices[0].delta.content = None
+
+    chunk3 = mock.MagicMock()
+    chunk3.choices = [mock.MagicMock()]
+    chunk3.choices[0].delta.content = " hello"
+
+    async def async_iter():
+        for c in [chunk1, chunk2, chunk3]:
+            yield c
+
+    mock_litellm.acompletion = mock.AsyncMock(return_value=async_iter())
+    llm = LiteLLM()
+    result = ""
+    async for chunk in llm.astream(
+        messages=[Message.from_text("Hi", role=Role.USER)],
+        model="openai/gpt-4o",
+    ):
+        result += chunk.delta
+    assert result == "Async hello"
+
+
+def test_provider_prefixed_model_string(llm_instance, mock_litellm):
+    """Model string uses provider-prefix format consistently."""
+    llm_instance.chat(
+        messages=[Message.from_text("Hi", role=Role.USER)],
+        model="anthropic/claude-sonnet-4-6",
+    )
+    call_kwargs = mock_litellm.completion.call_args[1]
+    assert call_kwargs["model"] == "anthropic/claude-sonnet-4-6"
+    assert "/" in call_kwargs["model"]
+
+
+def test_missing_model_raises(mock_litellm):
+    """No model in config or call → validation error."""
+    from bridgic.llms.litellm import LiteLLM
+
+    llm = LiteLLM()
+    with pytest.raises(Exception):
+        llm.chat(messages=[Message.from_text("Hi", role=Role.USER)])
+
+
+def test_extra_kwargs_forwarded(llm_instance, mock_litellm):
+    """Extra kwargs (seed, user, etc.) are forwarded to litellm.completion."""
+    llm_instance.chat(
+        messages=[Message.from_text("Hi", role=Role.USER)],
+        seed=42,
+        user="test-user",
+    )
+    call_kwargs = mock_litellm.completion.call_args[1]
+    assert call_kwargs["seed"] == 42
+    assert call_kwargs["user"] == "test-user"
 
 
 # ---------------------------------------------------------------------------
@@ -224,9 +425,9 @@ _model_name = os.environ.get("LITELLM_MODEL") or "openai/gpt-4o-mini"
 
 @pytest.fixture
 def live_llm():
-    from bridgic.llms.litellm import LiteLLMLlm, LiteLLMConfiguration
+    from bridgic.llms.litellm import LiteLLM, LiteLLMConfiguration
     config = LiteLLMConfiguration(model=_model_name)
-    return LiteLLMLlm(api_key=_api_key, configuration=config)
+    return LiteLLM(api_key=_api_key, configuration=config)
 
 
 @pytest.mark.skipif(

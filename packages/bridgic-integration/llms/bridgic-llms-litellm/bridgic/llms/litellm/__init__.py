@@ -16,7 +16,7 @@ pip install bridgic-llms-litellm
 """
 
 from importlib.metadata import version
-from ._litellm_llm import LiteLLMConfiguration, LiteLLMLlm
+from ._litellm_llm import LiteLLMConfiguration, LiteLLM
 
 __version__ = version("bridgic-llms-litellm")
-__all__ = ["LiteLLMConfiguration", "LiteLLMLlm", "__version__"]
+__all__ = ["LiteLLMConfiguration", "LiteLLM", "__version__"]
