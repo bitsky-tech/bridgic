@@ -54,13 +54,14 @@ async def request_human(prompt: str, channel: Optional[str] = None) -> str:
             "request_human can only be called during agent execution. "
             "Ensure the tool is used within an AmphibiousAutoma.arun() context."
         )
-    # Route through the framework's @human_channel registry. With no
-    # channels registered, this falls through to the stdin handler;
-    # with one registered, that channel is the implicit default; with
-    # multiple, the LLM must pass an explicit ``channel`` matching one
-    # of the registered ``@human_channel`` names for routing to be
-    # deterministic.
-    return await agent._run_human_call(prompt, channel=channel)
+    # Route through the framework's @human_channel registry by
+    # constructing a HumanCall item and handing off to the canonical
+    # ``_run_human_call`` driver (which also emits the
+    # ``[Human Interaction]`` header + ``-> result:`` arrow).
+    from bridgic.amphibious._type import HumanCall
+    return await agent._run_human_call(
+        HumanCall(prompt=prompt, channel=channel),
+    )
 
 
 request_human_tool: FunctionToolSpec = FunctionToolSpec.from_raw(request_human)

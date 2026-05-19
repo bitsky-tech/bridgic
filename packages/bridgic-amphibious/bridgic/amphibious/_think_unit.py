@@ -130,6 +130,7 @@ class _ThinkUnitRuntime:
         item: ThinkUnit,
     ) -> None:
         self.descriptor = descriptor
+        self.item = item
         # Resolve overlays (item-level beats descriptor-level). Worker
         # cloning is deferred to ``run`` so each invocation gets a
         # fresh CognitiveWorker with clean runtime state.
@@ -181,9 +182,12 @@ class _ThinkUnitRuntime:
             # External WorkerRunner — use the template directly.
             worker = template
 
-        # 2. Drive.
+        # 2. Drive. ``_name`` triggers the ``[Think] <name>`` header
+        # + ``_log_depth`` bump inside ``_run_think_unit`` so per-cycle
+        # arrows nest underneath.
         await agent._run_think_unit(
             worker,
+            _name=self.item.name,
             until=self.until,
             max_attempts=self.max_attempts,
             tools=self.tools,

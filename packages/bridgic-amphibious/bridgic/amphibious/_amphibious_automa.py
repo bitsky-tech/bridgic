@@ -4,6 +4,7 @@ import inspect
 import json
 import time
 from concurrent.futures import ThreadPoolExecutor
+import contextlib
 from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -66,6 +67,29 @@ _BUILTIN_TOOLS: Tuple[ToolSpec, ...] = ALL_BUILTIN_TOOLS
 ################################################################################################################
 # AgentTrace — flat execution path recorder
 ################################################################################################################
+
+_LOG_BRIEF_CHARS: int = 2000
+
+# Width of the ``[HH:MM:SS.mmm] `` timestamp prefix on header lines.
+# Arrow sub-phase lines lead with a same-width spacer so ``->`` aligns
+# under the header's ``[Label]`` column.
+_LOG_TS_PREFIX_WIDTH: int = 15
+
+
+def _brief(value: Any, n: int = _LOG_BRIEF_CHARS) -> str:
+    """One-line truncated repr suitable for log lines.
+
+    Collapses newlines / tabs, trims surrounding whitespace, and caps
+    length at ``n`` chars with an ellipsis if longer.
+    """
+    if value is None:
+        return ""
+    text = str(value)
+    text = " ".join(text.split())
+    if len(text) > n:
+        return text[:n] + "…"
+    return text
+
 
 def observation_fingerprint(obs: Any) -> Optional[str]:
     """Compute a stable hash fingerprint of an observation value.
@@ -623,7 +647,7 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
 
     Constructor params: ``llm`` (default LLM for workers), ``name``
     (instance name), ``verbose`` (log execution summary), and
-    ``verbose_hook_calls`` (surface dispatch logs for Calls yielded from
+    ``verbose_hook`` (surface dispatch logs for Calls yielded from
     hooks — suppressed by default since hooks are internal side-effects).
 
     Examples
@@ -753,7 +777,7 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         thread_pool: Optional[ThreadPoolExecutor] = None,
         running_options: Optional[RunningOptions] = None,
         verbose: bool = False,
-        verbose_hook_calls: bool = False,
+        verbose_hook: bool = False,
     ):
         super().__init__(name=name, thread_pool=thread_pool, running_options=running_options)
 
@@ -761,8 +785,12 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         self._llm = None
         self._current_context: Optional[CognitiveContextT] = None
         self._run_mode: Optional[RunMode] = None
+
+        # Log configuration
         self._verbose = verbose
-        self._verbose_hook_calls = verbose_hook_calls
+        self._verbose_hook = verbose_hook
+        self._log_depth: int = 0
+        self._log_hook_name: Optional[str] = None
 
         # Trace capture
         self._agent_trace: Optional[AgentTrace] = None
@@ -1053,10 +1081,8 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
                     "override on the agent class."
                 )
 
-            # Handle the mode switch.
-            result = await self._enter_agent(self.on_agent(ctx), ctx, item=item)
-            self._record_enter_agent(item, result)
-            return result
+            # Mode switch
+            return await self._enter_agent(self.on_agent(ctx), ctx, item=item)
 
         if isinstance(item, HumanCall):
             # Scope validation
@@ -1070,10 +1096,8 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
                     "on_workflow."
                 )
             
-            # Handle the human call and return the response.
-            response = await self._run_human_call(item.prompt, channel=item.channel)
-            self._record_human_call(item, response)
-            return response
+            # Human call
+            return await self._run_human_call(item)
 
         if isinstance(item, LLMCall):
             # Scope validation: LLMCall is an atomic step and must be handled
@@ -1086,10 +1110,8 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
                     "thinking() method."
                 )
             
-            # Handle the LLM call and return the response.
-            result = await self._run_llm_call(item)
-            self._record_llm_call(item, result)
-            return result
+            # LLM call
+            return await self._run_llm_call(item)
 
         if isinstance(item, ThinkUnit):
             # Scope validation: ThinkUnit is a cognitive step and must be handled by on_agent.
@@ -1109,7 +1131,7 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
                     f"think_unit declaration on {type(self).__name__}."
                 )
             
-            # Run the think unit.
+            # Run the think unit
             runtime = _ThinkUnitRuntime(descriptor, item)
             return await runtime.run(self, ctx)
 
@@ -1125,10 +1147,8 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
                     "agent flow, then yield ThinkAgent from there."
                 )
             
-            # Run the delegated agent and return its final answer.
-            result = await self._run_think_agent(item, ctx)
-            self._record_think_agent(item, result)
-            return result
+            # ThinkAgent
+            return await self._run_think_agent(item, ctx)
 
         if isinstance(item, ActionCall):
             # Scope validation: ActionCall is an atomic step and must be handled by on_workflow or a hook, never on_agent.
@@ -1141,19 +1161,16 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
                     "before_action / after_action)."
                 )
             
-            # Handle the action call.
+            # ActionCall
             decision = item.decision
             if scope == "hook":
-                action_result = await self._run_action_call(decision, ctx, with_hooks=False)
+                action_result = await self._run_action_call(
+                    decision, ctx, with_hooks=False, top_level=False,
+                )
             else:
-                obs = await self._invoke_template(self.observation(ctx), ctx)
-                if obs is not None:
-                    ctx.observation = obs
-                action_result = await self._run_action_call(decision, ctx, _worker=None)
-
-            self._record_action_call(
-                None, ctx.observation, decision, action_result, ctx,
-            )
+                action_result = await self._run_action_call(
+                    decision, ctx, _worker=None,
+                )
 
             inner = getattr(action_result, "result", None)
             if isinstance(inner, ActionResult):
@@ -1182,74 +1199,111 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         item: Optional[EnterAgent] = None,
         snapshot_kwargs: Optional[Dict[str, Any]] = None,
     ) -> Any:
-        # 1. If from EnterAgent. Build the snapshot kwargs 
-        if item is not None:
-            history = (
-                item.history if item.history is not None
-                else CognitiveHistory()
-            )
-            snapshot_kwargs = {
-                "goal": item.goal,
-                "cognitive_history": history,
-            }
-            if item.tools is not None:
-                allowed = set(item.tools)
-                filtered_tools = CognitiveTools()
-                for tool in ctx.tools.get_all():
-                    if tool.tool_name in allowed:
-                        filtered_tools.add(tool)
-                snapshot_kwargs["tools"] = filtered_tools
-            if item.skills is not None:
-                allowed = set(item.skills)
-                filtered_skills = CognitiveSkills()
-                for skill in ctx.skills.get_all():
-                    if skill.name in allowed:
-                        filtered_skills.add(skill)
-                snapshot_kwargs["skills"] = filtered_skills
-
-        # 2. AMPHIFLOW path: hand off to the state machine, return None.
-        if self._run_mode is RunMode.AMPHIFLOW:
-            fsm = self._amphi
-            assert fsm is not None, (
-                "AMPHIFLOW run_mode but ``self._amphi`` is None — "
-                "``_enter_agent`` was called outside ``_amphiflow``'s "
-                "state machine. Check the run-mode / FSM lifecycle."
-            )
-            if snapshot_kwargs is not None:
-                stack = AsyncExitStack()
-                try:
-                    await stack.__aenter__()
-                    await stack.enter_async_context(
-                        self.snapshot(**snapshot_kwargs),
-                    )
-                except BaseException:
-                    try:
-                        await agent_obj.aclose()
-                    except Exception:
-                        pass
-                    try:
-                        await stack.__aexit__(None, None, None)
-                    except Exception:
-                        pass
-                    raise
-                fsm.agent_mode_stack = stack
-            fsm.agent_gen = agent_obj
-            fsm.scope = "agent"
-            return None
-
-        # 3. Inline path: drive the agent to completion and return the inner RETURN value. 
-        if snapshot_kwargs is not None:
-            async with self.snapshot(**snapshot_kwargs):
-                return await self._invoke_template(
-                    agent_obj, ctx, scope="agent",
+        """Drive the on_agent generator. When ``item`` is provided
+        (yield-driven entry), emit ``[EnterAgent] goal=...`` header +
+        bump depth + ``-> final:`` arrow closer via
+        ``_record_enter_agent``. When ``item`` is None (inline /
+        AMPHIFLOW internal use) no envelope is emitted.
+        """
+        async def _enter_agent_body(
+            agent_obj: Any,
+            ctx: CognitiveContextT,
+            *,
+            item: Optional[EnterAgent] = None,
+            snapshot_kwargs: Optional[Dict[str, Any]] = None,
+        ) -> Any:
+            """Body of ``_enter_agent``: snapshot build + AMPHIFLOW hand-off
+            or inline drive. Header/depth/closer orchestration lives in the
+            outer ``_enter_agent``."""
+            # 1. If from EnterAgent. Build the snapshot kwargs
+            if item is not None:
+                history = (
+                    item.history if item.history is not None
+                    else CognitiveHistory()
                 )
-        return await self._invoke_template(
-            agent_obj, ctx, scope="agent",
-        )
+                snapshot_kwargs = {
+                    "goal": item.goal,
+                    "cognitive_history": history,
+                }
+                if item.tools is not None:
+                    allowed = set(item.tools)
+                    filtered_tools = CognitiveTools()
+                    for tool in ctx.tools.get_all():
+                        if tool.tool_name in allowed:
+                            filtered_tools.add(tool)
+                    snapshot_kwargs["tools"] = filtered_tools
+                if item.skills is not None:
+                    allowed = set(item.skills)
+                    filtered_skills = CognitiveSkills()
+                    for skill in ctx.skills.get_all():
+                        if skill.name in allowed:
+                            filtered_skills.add(skill)
+                    snapshot_kwargs["skills"] = filtered_skills
+
+            # 2. AMPHIFLOW path: hand off to the state machine, return None.
+            if self._run_mode is RunMode.AMPHIFLOW:
+                fsm = self._amphi
+                assert fsm is not None, (
+                    "AMPHIFLOW run_mode but ``self._amphi`` is None — "
+                    "``_enter_agent`` was called outside ``_amphiflow``'s "
+                    "state machine. Check the run-mode / FSM lifecycle."
+                )
+                if snapshot_kwargs is not None:
+                    stack = AsyncExitStack()
+                    try:
+                        await stack.__aenter__()
+                        await stack.enter_async_context(
+                            self.snapshot(**snapshot_kwargs),
+                        )
+                    except BaseException:
+                        try:
+                            await agent_obj.aclose()
+                        except Exception:
+                            pass
+                        try:
+                            await stack.__aexit__(None, None, None)
+                        except Exception:
+                            pass
+                        raise
+                    fsm.agent_mode_stack = stack
+                fsm.agent_gen = agent_obj
+                fsm.scope = "agent"
+                return None
+
+            # 3. Inline path: drive the agent to completion and return the inner RETURN value. 
+            if snapshot_kwargs is not None:
+                async with self.snapshot(**snapshot_kwargs):
+                    return await self._invoke_template(
+                        agent_obj, ctx, scope="agent",
+                    )
+            return await self._invoke_template(
+                agent_obj, ctx, scope="agent",
+            )
     
-    async def _run_human_call(
-        self, prompt: str, channel: Optional[str] = None
-    ) -> str:
+        envelope = item is not None
+        if envelope:
+            self._log(
+                "EnterAgent",
+                f"goal={_brief(item.goal)}",
+                color="yellow",
+            )
+            self._log_depth += 1
+        try:
+            result = await _enter_agent_body(
+                agent_obj, ctx, item=item, snapshot_kwargs=snapshot_kwargs,
+            )
+            if envelope:
+                self._record_enter_agent(item, result)
+            return result
+        finally:
+            if envelope:
+                self._log_depth -= 1
+    
+    async def _run_human_call(self, item: "HumanCall") -> str:
+        """Run one HumanCall and emit ``[Human Interaction]`` header +
+        ``-> result:`` arrow. ``_record_human_call`` is invoked here so
+        the trace + log live in this method (not the dispatcher).
+        """
         async def _stdin_human_fallback(prompt: str) -> str:
             """Default human-input source when no ``@human_channel`` is registered.
 
@@ -1262,75 +1316,103 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
                 None, input, f"\n[HumanInput] {prompt}\n> "
             )
 
-        registry = type(self)._human_channels
-        if not registry:
-            return await _stdin_human_fallback(prompt)
-        if channel is None:
-            if len(registry) != 1:
-                raise RuntimeError(
-                    "HumanCall(channel=None) is ambiguous: "
-                    f"{len(registry)} channels registered "
-                    f"({sorted(registry.keys())}). Specify channel='name' "
-                    "explicitly."
-                )
-            channel = next(iter(registry))
-        method_name = registry.get(channel)
-        if method_name is None:
-            raise RuntimeError(
-                f"Unknown human channel: {channel!r}. "
-                f"Registered: {sorted(registry.keys())}"
-            )
-        return await getattr(self, method_name)(prompt)
+        prompt = item.prompt
+        channel = item.channel
+
+        channel_str = channel or "default"
+        self._log(
+            "Human Interaction",
+            f"{channel_str}: {_brief(prompt or '')}",
+            color="purple",
+        )
+        self._log_depth += 1
+        try:
+            registry = type(self)._human_channels
+            if not registry:
+                response = await _stdin_human_fallback(prompt)
+            else:
+                ch = channel
+                if ch is None:
+                    if len(registry) != 1:
+                        raise RuntimeError(
+                            "HumanCall(channel=None) is ambiguous: "
+                            f"{len(registry)} channels registered "
+                            f"({sorted(registry.keys())}). Specify channel='name' "
+                            "explicitly."
+                        )
+                    ch = next(iter(registry))
+                method_name = registry.get(ch)
+                if method_name is None:
+                    raise RuntimeError(
+                        f"Unknown human channel: {ch!r}. "
+                        f"Registered: {sorted(registry.keys())}"
+                    )
+                response = await getattr(self, method_name)(prompt)
+            self._record_human_call(item, response)
+            return response
+        finally:
+            self._log_depth -= 1
 
     async def _run_llm_call(self, item: LLMCall) -> Any:
-        if self._llm is None:
-            raise RuntimeError(
-                f"LLMCall(protocol={item.protocol!r}) requires self._llm, "
-                "but no LLM was passed to arun(llm=...)."
-            )
-
-        messages: List[Message] = []
-        if item.history:
-            messages.extend(item.history)
-        messages.append(Message.from_text(item.prompt, role=Role.USER))
-
-        if item.protocol == "chat":
-            response = await self._llm.achat(messages)
-            text = ""
-            msg = getattr(response, "message", None)
-            if msg is not None:
-                text = msg.content or ""
-            if not text:
-                text = str(response)
-            return text
-
-        if item.protocol == "structure_output":
-            if not isinstance(self._llm, StructuredOutput):
-                raise TypeError(
-                    f"LLM {type(self._llm).__name__} does not implement the "
-                    "StructuredOutput protocol; cannot satisfy "
-                    "LLMCall(protocol='structure_output')."
+        """Run one LLMCall and emit ``[LLM Query]`` header +
+        ``-> result:`` arrow. ``_record_llm_call`` is invoked here so
+        the trace + log live in this method (not the dispatcher).
+        """
+        self._log("LLM Query", item.protocol, color="white")
+        self._log_depth += 1
+        try:
+            if self._llm is None:
+                raise RuntimeError(
+                    f"LLMCall(protocol={item.protocol!r}) requires self._llm, "
+                    "but no LLM was passed to arun(llm=...)."
                 )
-            return await self._llm.astructured_output(messages, item.constraint)
 
-        if item.protocol == "tool_selector":
-            if not isinstance(self._llm, ToolSelection):
-                raise TypeError(
-                    f"LLM {type(self._llm).__name__} does not implement the "
-                    "ToolSelection protocol; cannot satisfy "
-                    "LLMCall(protocol='tool_selector')."
+            messages: List[Message] = []
+            if item.history:
+                messages.extend(item.history)
+            messages.append(Message.from_text(item.prompt, role=Role.USER))
+
+            if item.protocol == "chat":
+                response = await self._llm.achat(messages)
+                text = ""
+                msg = getattr(response, "message", None)
+                if msg is not None:
+                    text = msg.content or ""
+                if not text:
+                    text = str(response)
+                result = text
+            elif item.protocol == "structure_output":
+                if not isinstance(self._llm, StructuredOutput):
+                    raise TypeError(
+                        f"LLM {type(self._llm).__name__} does not implement the "
+                        "StructuredOutput protocol; cannot satisfy "
+                        "LLMCall(protocol='structure_output')."
+                    )
+                result = await self._llm.astructured_output(messages, item.constraint)
+            elif item.protocol == "tool_selector":
+                if not isinstance(self._llm, ToolSelection):
+                    raise TypeError(
+                        f"LLM {type(self._llm).__name__} does not implement the "
+                        "ToolSelection protocol; cannot satisfy "
+                        "LLMCall(protocol='tool_selector')."
+                    )
+                result = await self._llm.aselect_tool(messages, item.tools)
+            else:
+                raise ValueError(
+                    f"Unknown LLMCall protocol: {item.protocol!r}. "
+                    "Expected 'chat', 'structure_output', or 'tool_selector'."
                 )
-            return await self._llm.aselect_tool(messages, item.tools)
 
-        raise ValueError(
-            f"Unknown LLMCall protocol: {item.protocol!r}. "
-            "Expected 'chat', 'structure_output', or 'tool_selector'."
-        )
+            self._record_llm_call(item, result)
+            return result
+        finally:
+            self._log_depth -= 1
 
     async def _run_think_unit(
         self,
         worker: CognitiveWorker,
         *,
+        _name: Optional[str] = None,
         until: Optional[Union[Callable[..., bool], Callable[..., Awaitable[bool]]]] = None,
         max_attempts: int = 1,
         tools: Optional[List[str]] = None,
@@ -1345,180 +1427,231 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         ``max_attempts`` control the loop); a ``WorkerRunner`` gets a
         single ``await worker.run(self, ctx)`` (it owns its own loop, so
         the per-yield overlays are ignored).
+
+        ``_name`` (when provided by ``_ThinkUnitRuntime``) is used as
+        the ``[Think] <name>`` header label and triggers ``_log_depth``
+        bump so per-cycle arrows nest underneath.
         """
-        ########################
-        # External WorkerRunner.
-        ########################
-        if not isinstance(worker, CognitiveWorker):
-            if isinstance(worker, WorkerRunner):
-                await worker.run(self, self._current_context)
-                return
-            raise TypeError(
-                f"_run_think_unit() expects a CognitiveWorker or a WorkerRunner; "
-                f"got {type(worker).__name__}."
-            )
+        async def _run_think_unit_body(
+            worker: CognitiveWorker,
+            worker_label: str,
+            *,
+            until: Optional[Union[Callable[..., bool], Callable[..., Awaitable[bool]]]] = None,
+            max_attempts: int = 1,
+            tools: Optional[List[str]] = None,
+            skills: Optional[List[str]] = None,
+            on_error: ErrorStrategy = ErrorStrategy.RAISE,
+            max_retries: int = 0,
+        ) -> None:
+            """OTC body — the actual CognitiveWorker observe-think-act loop.
+            Split out from ``_run_think_unit`` so the existing tool/skill
+            restoration ``try / finally`` keeps its shape; ``_run_think_unit``
+            wraps it with the ``[Think]`` header + depth bump.
+            """
 
-        worker_label = worker.__class__.__name__
+            ########################
+            # Setup runtime env.
+            ########################
+            # Context
+            context = self._current_context
+            if context is None:
+                raise RuntimeError(
+                    "Cannot call _run_think_unit(): no active context. "
+                    "_run_think_unit() must be called within an on_agent() method."
+                )
 
-        ########################
-        # Setup runtime env.
-        ########################
-        # Context
-        context = self._current_context
-        if context is None:
-            raise RuntimeError(
-                "Cannot call _run_think_unit(): no active context. "
-                "_run_think_unit() must be called within an on_agent() method."
-            )
+            # LLM
+            if worker._llm is None and self._llm is not None:
+                worker.set_llm(self._llm)
+            if worker._llm is None:
+                raise RuntimeError(
+                    f"ThinkUnit's CognitiveWorker ({worker_label}) has no LLM. "
+                    "Either pass llm=... to arun(), or set llm on the "
+                    "CognitiveWorker template itself."
+                )
 
-        # LLM
-        if worker._llm is None and self._llm is not None:
-            worker.set_llm(self._llm)
-        if worker._llm is None:
-            raise RuntimeError(
-                f"ThinkUnit's CognitiveWorker ({worker_label}) has no LLM. "
-                "Either pass llm=... to arun(), or set llm on the "
-                "CognitiveWorker template itself."
-            )
+            # verbose
+            injected_verbose = False
+            if worker._verbose is None:
+                worker._verbose = self._verbose
+                injected_verbose = True
 
-        # verbose
-        injected_verbose = False
-        if worker._verbose is None:
-            worker._verbose = self._verbose
-            injected_verbose = True
+            # tools filter
+            original_tools: Optional[CognitiveTools] = None
+            if tools is not None:
+                original_tools = context.tools
+                filtered_tools = CognitiveTools()
+                for tool in original_tools.get_all():
+                    if tool.tool_name in tools:
+                        filtered_tools.add(tool)
+                context.tools = filtered_tools
 
-        # tools filter
-        original_tools: Optional[CognitiveTools] = None
-        if tools is not None:
-            original_tools = context.tools
-            filtered_tools = CognitiveTools()
-            for tool in original_tools.get_all():
-                if tool.tool_name in tools:
-                    filtered_tools.add(tool)
-            context.tools = filtered_tools
+            # skills filter
+            original_skills: Optional[CognitiveSkills] = None
+            filtered_skills: Optional[CognitiveSkills] = None
+            filtered_to_orig: Dict[int, int] = {}
+            if skills is not None:
+                original_skills = context.skills
+                filtered_skills = CognitiveSkills()
+                orig_to_filtered: Dict[int, int] = {}
+                for orig_idx, skill in enumerate(original_skills.get_all()):
+                    if skill.name in skills:
+                        new_idx = len(filtered_skills)
+                        filtered_skills.add(skill)
+                        orig_to_filtered[orig_idx] = new_idx
+                        filtered_to_orig[new_idx] = orig_idx
+                for orig_idx, detail in original_skills._revealed.items():
+                    if orig_idx in orig_to_filtered:
+                        filtered_skills._revealed[orig_to_filtered[orig_idx]] = detail
+                context.skills = filtered_skills
 
-        # skills filter
-        original_skills: Optional[CognitiveSkills] = None
-        filtered_skills: Optional[CognitiveSkills] = None
-        filtered_to_orig: Dict[int, int] = {}
-        if skills is not None:
-            original_skills = context.skills
-            filtered_skills = CognitiveSkills()
-            orig_to_filtered: Dict[int, int] = {}
-            for orig_idx, skill in enumerate(original_skills.get_all()):
-                if skill.name in skills:
-                    new_idx = len(filtered_skills)
-                    filtered_skills.add(skill)
-                    orig_to_filtered[orig_idx] = new_idx
-                    filtered_to_orig[new_idx] = orig_idx
-            for orig_idx, detail in original_skills._revealed.items():
-                if orig_idx in orig_to_filtered:
-                    filtered_skills._revealed[orig_to_filtered[orig_idx]] = detail
-            context.skills = filtered_skills
+            # spent-tokens delta tracker
+            tokens_before = worker.spent_tokens
 
-        # spent-tokens delta tracker
-        tokens_before = worker.spent_tokens
+            ########################
+            # OTC cycle closure
+            ########################
+            async def _run_observe_think_act(cycle: int) -> bool:
+                # 1. Observe (worker → agent fallback)
+                obs = await self._invoke_template(worker.observation(context), context)
+                if obs is _DELEGATE or obs is None:
+                    obs = await self._invoke_template(self.observation(context), context)
+                if obs is not None:
+                    context.observation = obs
 
-        ########################
-        # OTC cycle closure
-        ########################
-        async def _run_observe_think_act() -> bool:
-            # 1. Observe (worker → agent fallback)
-            obs = await self._invoke_template(worker.observation(context), context)
-            if obs is _DELEGATE or obs is None:
-                obs = await self._invoke_template(self.observation(context), context)
-            if obs is not None:
-                context.observation = obs
+                # 2. Think
+                decision = await worker.arun(context=context)
+                self._record_think_unit(worker, obs, decision, cycle=cycle)
 
-            obs_str = str(obs) if obs is not None else "None"
-            if len(obs_str) > 200:
-                obs_str = obs_str[:200] + "..."
-            self._log("Observe", f"{worker_label}: {obs_str}", color="green")
+                # 3. Act — top_level=False so the act phase nests under
+                # the surrounding [Think] header (one ``-> result:`` arrow
+                # per tool call, not a new [Action Execution] section).
+                action_result = (
+                    await self._run_action_call(
+                        decision, context, _worker=worker, top_level=False,
+                    )
+                    if decision is not None else None
+                )
 
-            # 2. Think
-            decision = await worker.arun(context=context)
-            step_str = getattr(decision, 'step_content', str(decision))
-            finished = getattr(decision, 'finish', False)
-            self._log("Think", f"{worker_label}: finish={finished}, step={step_str}", color="cyan")
+                # Auto-captured final answer
+                if decision.finish and decision.step_content:
+                    self._final_answer = decision.step_content
 
-            # 3. Act
-            action_result = (
-                await self._run_action_call(decision, context, _worker=worker)
-                if decision is not None else None
-            )
-            if action_result is not None:
-                formatted = action_result.model_dump_json(indent=4)
-                self._log("Act", f"{worker_label}:\n{formatted}", color="purple")
+                return decision.finish
 
-            # Trace + auto-captured final answer
-            self._record_action_call(worker, obs, decision, action_result, context)
-            if decision.finish and decision.step_content:
-                self._final_answer = decision.step_content
-
-            return decision.finish
-
-        # Run loop with on_error handling, then restore environment.
-        try:
-            for _ in range(max_attempts):
-                try:
-                    finished = await _run_observe_think_act()
-                except Exception as e:
-                    if on_error == ErrorStrategy.RAISE:
-                        raise RuntimeError(
-                            f"Worker '{worker_label}' failed during "
-                            f"observe-think-act cycle: {e}"
-                        ) from e
-                    elif on_error == ErrorStrategy.IGNORE:
-                        finished = False
-                    elif on_error == ErrorStrategy.RETRY:
-                        finished = False
-                        for attempt in range(max_retries + 1):
-                            try:
-                                finished = await _run_observe_think_act()
+            # Run loop with on_error handling, then restore environment.
+            try:
+                for cycle_idx in range(max_attempts):
+                    cycle_num = cycle_idx + 1
+                    try:
+                        finished = await _run_observe_think_act(cycle_num)
+                    except Exception as e:
+                        if on_error == ErrorStrategy.RAISE:
+                            raise RuntimeError(
+                                f"Worker '{worker_label}' failed during "
+                                f"observe-think-act cycle: {e}"
+                            ) from e
+                        elif on_error == ErrorStrategy.IGNORE:
+                            finished = False
+                        elif on_error == ErrorStrategy.RETRY:
+                            finished = False
+                            for attempt in range(max_retries + 1):
+                                try:
+                                    finished = await _run_observe_think_act(cycle_num)
+                                    break
+                                except Exception as retry_e:
+                                    if attempt == max_retries:
+                                        raise RuntimeError(
+                                            f"Worker '{worker_label}' failed after "
+                                            f"{max_retries + 1} retries: {retry_e}"
+                                        ) from retry_e
+                    else:
+                        if finished:
+                            break
+                        if until is not None:
+                            cond_result = until(context)
+                            if inspect.iscoroutine(cond_result):
+                                cond_result = await cond_result
+                            if cond_result:
                                 break
-                            except Exception as retry_e:
-                                if attempt == max_retries:
-                                    raise RuntimeError(
-                                        f"Worker '{worker_label}' failed after "
-                                        f"{max_retries + 1} retries: {retry_e}"
-                                    ) from retry_e
+            finally:
+                self.spent_tokens += worker.spent_tokens - tokens_before
+                if injected_verbose:
+                    worker._verbose = None
+                if original_tools is not None:
+                    context.tools = original_tools
+                if original_skills is not None:
+                    if filtered_skills is not None:
+                        for filtered_idx, detail in filtered_skills._revealed.items():
+                            orig_idx = filtered_to_orig.get(filtered_idx)
+                            if orig_idx is not None:
+                                original_skills._revealed[orig_idx] = detail
+                    context.skills = original_skills
+        
+        # Emit the [Think] header and bump depth here so dispatcher
+        # stays log-free. ``_name`` is None only when invoked directly
+        # by callers that don't want an envelope.
+        if _name is not None:
+            self._log("Think", _name, color="cyan")
+            self._log_depth += 1
+        try:
+            ########################
+            # External WorkerRunner.
+            ########################
+            if not isinstance(worker, CognitiveWorker):
+                if isinstance(worker, WorkerRunner):
+                    await worker.run(self, self._current_context)
+                    return
+                raise TypeError(
+                    f"_run_think_unit() expects a CognitiveWorker or a WorkerRunner; "
+                    f"got {type(worker).__name__}."
+                )
 
-                if finished:
-                    break
-                if until is not None:
-                    cond_result = until(context)
-                    if inspect.iscoroutine(cond_result):
-                        cond_result = await cond_result
-                    if cond_result:
-                        break
+            worker_label = worker.__class__.__name__
+
+            return await _run_think_unit_body(
+                worker, worker_label,
+                until=until,
+                max_attempts=max_attempts,
+                tools=tools,
+                skills=skills,
+                on_error=on_error,
+                max_retries=max_retries,
+            )
         finally:
-            self.spent_tokens += worker.spent_tokens - tokens_before
-            if injected_verbose:
-                worker._verbose = None
-            if original_tools is not None:
-                context.tools = original_tools
-            if original_skills is not None:
-                if filtered_skills is not None:
-                    for filtered_idx, detail in filtered_skills._revealed.items():
-                        orig_idx = filtered_to_orig.get(filtered_idx)
-                        if orig_idx is not None:
-                            original_skills._revealed[orig_idx] = detail
-                context.skills = original_skills
+            if _name is not None:
+                self._log_depth -= 1
 
     async def _run_think_agent(
         self,
         item: ThinkAgent,
         ctx: CognitiveContextT,
     ) -> Any:
+        """Run one ThinkAgent yield and emit ``[ThinkAgent]`` header +
+        ``-> final:`` arrow. The MCP-bridged inner ActionCalls nest
+        underneath as ``-> result:`` arrows (via _record_action_call
+        called inside _run_action_call with top_level=False).
+        """
         descriptor = getattr(type(self), item.name, None)
         if not isinstance(descriptor, ThinkAgentDescriptor):
             raise AttributeError(
                 f"ThinkAgent(name={item.name!r}) does not match any "
                 f"think_agent declaration on {type(self).__name__}."
             )
-        runtime = _ThinkAgentRuntime(descriptor, item)
-        result_value = await runtime.run(self, ctx)
-        return result_value
+
+        self._log(
+            "ThinkAgent",
+            f"{item.name}  goal={_brief(item.goal or '')}",
+            color="yellow",
+        )
+        self._log_depth += 1
+        try:
+            runtime = _ThinkAgentRuntime(descriptor, item)
+            result_value = await runtime.run(self, ctx)
+            self._record_think_agent(item, result_value)
+            return result_value
+        finally:
+            self._log_depth -= 1
 
     async def _run_action_call(
         self,
@@ -1527,6 +1660,7 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         *,
         _worker: Optional[CognitiveWorker] = None,
         with_hooks: bool = True,
+        top_level: bool = True,
     ) -> Step:
         """Execute a thinking decision — the single canonical action executor.
 
@@ -1539,10 +1673,14 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         ``with_hooks=False`` skips ALL before/after_action — reserved for
         the hook-scope ActionCall path, where re-entering the hook chain
         would recurse into the generator that yielded the call.
+
+        ``top_level=True`` (default) emits the ``[Action Execution]``
+        header + ``-> observation:`` arrow and bumps ``_log_depth``.
+        Callers that wrap this in their own scope (worker OTC inside
+        ThinkUnit, the dispatcher's hook-scope branch, MCP bridge in
+        ThinkAgent) pass ``top_level=False`` to suppress the header.
         """
-        # Parsing closures — turn a thinking decision into either a
-        # matched (ToolCall, ToolSpec) list (tool-call form) or a raw
-        # BaseModel (custom-output form).
+        # Parsing closures
         def _parse_decision(
             decision: Any,
         ) -> Tuple[bool, Optional[List[StepToolCall]], Any]:
@@ -1629,15 +1767,14 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
                 return True, calls, _match_tool_calls(tool_calls)
             return False, None, output
 
-        # Execution closure — dispatch to action_tool_call (tool-call
-        # form) or action_custom_output (custom-output form) and build
-        # the resulting Step.
+        # Execution closure
         async def _execute(
             decision_result: Any,
             *,
             is_tool_call_form: bool,
             calls: Optional[List[StepToolCall]],
         ) -> Step:
+            # Tool-call form.
             if is_tool_call_form:
                 if not calls:
                     result = Step(
@@ -1656,57 +1793,87 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
                 ctx.add_info(result)
                 return result
 
-            # Custom-output form. ``None`` (e.g. from an AI-generated
-            # ``pass`` stub of ``action_custom_output``) is treated as
-            # passthrough so the typed output is preserved instead of
-            # being silently dropped.
+            # Custom-output form.
             custom_ret = await self.action_custom_output(decision_result, ctx)
             action_result = decision_result if custom_ret is None else custom_ret
             result = Step(content=decision.step_content, result=action_result, metadata={})
             ctx.add_info(result)
             return result
 
-        # Parse
-        is_tool_call_form, calls, decision_result = _parse_decision(decision)
+        # Top-level: emit header + bump depth so children (observation,
+        # hook arrows, result arrow) nest under ``[Action Execution]``.
+        if top_level:
+            desc = getattr(decision, "step_content", "") or ""
+            if not desc:
+                # Fall back to the tool name(s) from decision.output —
+                # workflow-yielded ActionCalls often omit ``description``.
+                output = getattr(decision, "output", None) or []
+                tools = [getattr(c, "tool", None) for c in output]
+                tools = [t for t in tools if t]
+                desc = ", ".join(tools) if tools else "<action>"
+            self._log("Action Execution", _brief(desc), color="green")
+            self._log_depth += 1
+        try:
+            # Top-level observation gathering (agent-level only).
+            if top_level:
+                obs = await self._invoke_template(self.observation(ctx), ctx)
+                if obs is not None:
+                    ctx.observation = obs
+                    self._log("Observation", _brief(obs), color="green")
 
-        # Before_action hooks — skipped entirely when with_hooks=False.
-        if with_hooks:
-            original_decision_result = decision_result
-            if _worker is not None:
-                worker_ret = await self._invoke_template(
-                    _worker.before_action(decision_result, ctx), ctx,
-                )
-                if worker_ret is _DELEGATE or worker_ret is None:
-                    agent_ret = await self._invoke_template(
-                        self.before_action(original_decision_result, ctx), ctx,
-                    )
-                    decision_result = original_decision_result if agent_ret is None else agent_ret
-                else:
-                    decision_result = worker_ret
-            else:
-                agent_ret = await self._invoke_template(
-                    self.before_action(decision_result, ctx), ctx,
-                )
-                decision_result = original_decision_result if agent_ret is None else agent_ret
+            # Parse
+            is_tool_call_form, calls, decision_result = _parse_decision(decision)
 
-        # Execute
-        result = await _execute(
-            decision_result,
-            is_tool_call_form=is_tool_call_form, calls=calls,
-        )
+            # Before_action hooks.
+            if with_hooks:
+                original_decision_result = decision_result
+                with self._hook_log_scope("before_action"):
+                    if _worker is not None:
+                        worker_ret = await self._invoke_template(
+                            _worker.before_action(decision_result, ctx), ctx,
+                        )
+                        if worker_ret is _DELEGATE or worker_ret is None:
+                            agent_ret = await self._invoke_template(
+                                self.before_action(original_decision_result, ctx), ctx,
+                            )
+                            decision_result = original_decision_result if agent_ret is None else agent_ret
+                        else:
+                            decision_result = worker_ret
+                    else:
+                        agent_ret = await self._invoke_template(
+                            self.before_action(decision_result, ctx), ctx,
+                        )
+                        decision_result = original_decision_result if agent_ret is None else agent_ret
 
-        # After_action hooks — skipped entirely when with_hooks=False.
-        if with_hooks:
-            if _worker is not None:
-                delegate = await self._invoke_template(
-                    _worker.after_action(result, ctx), ctx,
-                )
-                if delegate is _DELEGATE or delegate is None:
-                    await self._invoke_template(self.after_action(result, ctx), ctx)
-            else:
-                await self._invoke_template(self.after_action(result, ctx), ctx)
+            # Execute
+            result = await _execute(
+                decision_result,
+                is_tool_call_form=is_tool_call_form, calls=calls,
+            )
 
-        return result
+            # Record (trace + ``-> result:`` arrow). Sits between hooks
+            # so the arrow lands chronologically between ``-> before_action:``
+            # and ``-> after_action:`` arrows.
+            self._record_action_call(
+                _worker, ctx.observation, decision, result, ctx,
+            )
+
+            # After_action hooks — skipped entirely when with_hooks=False.
+            if with_hooks:
+                with self._hook_log_scope("after_action"):
+                    if _worker is not None:
+                        delegate = await self._invoke_template(
+                            _worker.after_action(result, ctx), ctx,
+                        )
+                        if delegate is _DELEGATE or delegate is None:
+                            await self._invoke_template(self.after_action(result, ctx), ctx)
+                    else:
+                        await self._invoke_template(self.after_action(result, ctx), ctx)
+
+            return result
+        finally:
+            if top_level:
+                self._log_depth -= 1
 
     @asynccontextmanager
     async def snapshot(self, *, goal: Optional[str] = None,
@@ -1766,35 +1933,117 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
     # Internal helpers — logging, trace recording, override detection.
     ############################################################################
 
-    def _log(self, stage: str, message: str, data: Any = None, color: str = "white"):
-        """Log formatted message with timestamp and caller location.
+    @contextlib.contextmanager
+    def _hook_log_scope(self, hook_name: str):
+        """Mark log entries inside the block as belonging to a hook.
 
-        Format: ``[HH:MM:SS.mmm] [Stage] (file:line) message``
-
-        Only prints when ``self._verbose`` is True.
+        While active, ``_log`` lazily emits a ``[<hook_name>]`` header on
+        first call, indents subsequent lines +1, and overrides color to
+        gray. Gated by ``self._verbose_hook`` (independent of
+        main-flow ``self._verbose``).
         """
-        if not self._verbose:
-            return
-        import inspect
-        from datetime import datetime
-        from os.path import basename
-
-        frame = inspect.currentframe()
+        prev = self._log_hook_name
+        self._log_hook_name = hook_name
         try:
-            caller = frame.f_back if frame is not None else None
-            if caller is not None:
-                filename = basename(caller.f_code.co_filename)
-                lineno = caller.f_lineno
-            else:
-                filename, lineno = "?", 0
+            yield
         finally:
-            del frame
+            self._log_hook_name = prev
 
-        ts = datetime.now().strftime("%H:%M:%S.%f")[:-3]
-        line = f"[{ts}] [{stage}] ({filename}:{lineno}) {message}"
-        printer.print(line, color=color)
-        if data is not None:
-            printer.print(str(data), color="gray")
+    def _log(
+        self,
+        label: str,
+        content: str = "",
+        *,
+        color: str = "white",
+    ) -> None:
+        """Render one log line.
+
+        Two display forms, chosen automatically:
+
+        * **Header** (``depth == 0``, not in hook scope) —
+          ``[HH:MM:SS.mmm] [<label>] <content>``. Used for top-level
+          Calls (``ActionCall`` / ``LLMCall`` / ``HumanCall`` /
+          ``ThinkUnit`` / ``ThinkAgent`` / ``EnterAgent``) and the
+          one-shot ``Router`` event.
+        * **Arrow** (``depth > 0`` or in hook scope) —
+          ``[HH:MM:SS.mmm]   -> <phase>: <content>``. Used for
+          sub-phases of a Call: ``observation`` / ``before_action`` /
+          ``result`` / ``after_action`` / ``think`` etc. When inside
+          ``_hook_log_scope(<name>)`` the phase tag is overridden to
+          ``<name>`` (the original ``label`` is discarded) and color
+          is forced to gray.
+
+        Long content wraps so continuation lines align with the start
+        of the first line's body (after the ``[<label>] `` or
+        ``-> <phase>: `` prefix), keeping the column layout intact.
+
+        Gating: main-scope lines need ``self._verbose``; hook-scope
+        lines need ``self._verbose_hook`` (independent flags).
+        """
+        import textwrap
+        from datetime import datetime
+
+        in_hook = self._log_hook_name is not None
+        # Gating
+        if in_hook:
+            if not self._verbose_hook:
+                return
+        else:
+            if not self._verbose:
+                return
+
+        # Compose prefix + body. Only header lines (depth 0, not in
+        # hook scope) get the timestamp marker — arrow sub-phase lines
+        # stay quiet AND lead with a timestamp-width spacer so ``->``
+        # aligns under the header's ``[Label]`` column.
+        #
+        # Indent shape:
+        #   depth 0, not hook  →  ``[ts] [Label] content``
+        #   depth ≥1 or hook   →  ``<ts_spacer><(depth-1)*2 spaces>-> phase: content``
+        if in_hook:
+            arrow_indent = " " * (
+                _LOG_TS_PREFIX_WIDTH + max(0, self._log_depth - 1) * 2
+            )
+            prefix = f"{arrow_indent}-> {self._log_hook_name}: "
+            body = str(content) if content else str(label)
+            # Preserve red for failure visibility — gray would hide a
+            # ``✗`` tool-call failure inside a hook. All other colors
+            # collapse to gray (hooks are visually subordinate).
+            final_color = "red" if color == "red" else "gray"
+        elif self._log_depth == 0:
+            ts = datetime.now().strftime("[%H:%M:%S.%f]")[:-4] + "]"
+            prefix = f"{ts} [{label}] "
+            body = str(content)
+            final_color = color
+        else:
+            arrow_indent = " " * (
+                _LOG_TS_PREFIX_WIDTH + max(0, self._log_depth - 1) * 2
+            )
+            prefix = f"{arrow_indent}-> {label}: "
+            body = str(content)
+            final_color = color
+
+        # Wrap so continuation lines align with body start. Terminal
+        # width is fixed at 120 — typical modern setups are wider, but
+        # this keeps things readable when piped to a narrower view.
+        terminal_width = 120
+        plain = prefix + body
+        if len(plain) <= terminal_width or not body:
+            printer.print(plain, color=final_color)
+            return
+        body_width = max(terminal_width - len(prefix), 20)
+        wrapped = textwrap.wrap(
+            body,
+            width=body_width,
+            initial_indent="",
+            subsequent_indent="",
+            break_long_words=True,
+            break_on_hyphens=False,
+        )
+        cont_indent = " " * len(prefix)
+        printer.print(prefix + (wrapped[0] if wrapped else ""), color=final_color)
+        for line in wrapped[1:]:
+            printer.print(cont_indent + line, color=final_color)
 
     def _record_action_call(
         self,
@@ -1804,7 +2053,7 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         action_result: Step,
         context: Any,
     ) -> None:
-        """Record an act-phase step.
+        """Record + log an act-phase step.
 
         Called both from worker OTC (per cycle, ``worker`` supplied) and
         from the dispatcher (per ``yield ActionCall``, ``worker=None``).
@@ -1814,13 +2063,11 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         * structured BaseModel output → ``STRUCTURED``
         * everything else (content only) → ``CONTENT_ONLY``
         """
-        if self._agent_trace is None:
-            return
-
         tool_calls = []
         output_type = StepOutputType.CONTENT_ONLY
         structured_output = None
         structured_output_class = None
+        result_obj = None
 
         if action_result is not None and isinstance(action_result, Step):
             result_obj = action_result.result
@@ -1842,61 +2089,121 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
                 )
             elif result_obj is not None:
                 output_type = StepOutputType.STRUCTURED
-                try:
-                    structured_output = {"__value__": result_obj}
-                except Exception:
-                    structured_output = {"__value__": str(result_obj)}
+                structured_output = {"__value__": result_obj}
 
-        self._agent_trace.record_step({
-            "name": worker.__class__.__name__ if worker is not None else "workflow",
-            "step_content": getattr(decision, "step_content", ""),
-            "tool_calls": tool_calls,
-            "observation": str(obs) if obs is not None else None,
-            "observation_hash": observation_fingerprint(obs),
-            "output_type": output_type.value,
-            "structured_output": structured_output,
-            "structured_output_class": structured_output_class,
-        })
+        # Trace storage
+        if self._agent_trace is not None:
+            self._agent_trace.record_step({
+                "name": worker.__class__.__name__ if worker is not None else "workflow",
+                "step_content": getattr(decision, "step_content", ""),
+                "tool_calls": tool_calls,
+                "observation": str(obs) if obs is not None else None,
+                "observation_hash": observation_fingerprint(obs),
+                "output_type": output_type.value,
+                "structured_output": structured_output,
+                "structured_output_class": structured_output_class,
+            })
+
+        # Log arrow(s). One ``-> result: ...`` line per tool call (so
+        # success/failure each get visibility); structured / content-only
+        # fall back to a single summary line. Under a ``_hook_log_scope``
+        # the "result" label is overridden to the hook name by ``_log``.
+        if output_type == StepOutputType.TOOL_CALLS:
+            for tc in tool_calls:
+                mark = "✓" if tc["success"] else "✗"
+                line_color = "green" if tc["success"] else "red"
+                content = (
+                    f"{tc['tool_name']}({_brief(tc['tool_arguments'])}) "
+                    f"{mark} {_brief(tc['tool_result'])}"
+                )
+                if not tc["success"] and tc["error"]:
+                    content += f" — {_brief(tc['error'], n=200)}"
+                self._log("result", content, color=line_color)
+        elif output_type == StepOutputType.STRUCTURED:
+            self._log(
+                "result",
+                f"<structured> {_brief(structured_output)}",
+                color="green",
+            )
+        else:  # CONTENT_ONLY
+            step_content = getattr(decision, "step_content", "")
+            if step_content:
+                self._log("result", _brief(step_content), color="green")
+
+    def _record_think_unit(
+        self,
+        worker: CognitiveWorker,
+        obs: Any,
+        decision: Any,
+        cycle: int = 0,
+    ) -> None:
+        """Log one ``ThinkUnit`` OTC cycle's observation + think phases.
+
+        Called from worker OTC inside ``_run_think_unit`` before
+        ``_run_action_call`` fires. The cycle's act phase is logged
+        separately by ``_record_action_call`` (invoked inside
+        ``_run_action_call`` between the worker hooks). No trace
+        storage — the cycle's outcome is captured by the per-cycle
+        ``_record_action_call`` trace step.
+
+        ``cycle`` (1-based) — when ``>= 2`` an ``-- cycle N --`` gray
+        divider line is emitted before the phase arrows so multi-cycle
+        OTC runs are visually delimited. Cycle 1 is the natural opener
+        right after the ``[Think]`` header, so no divider for it.
+        """
+        # Cycle divider (cycle 2+). Gated by ``_verbose`` since this
+        # is main-flow output, not hook-scope. Same spacer width as
+        # arrow lines so the divider aligns with the surrounding ``->``
+        # column.
+        if cycle >= 2 and self._verbose:
+            divider_indent = " " * (
+                _LOG_TS_PREFIX_WIDTH + max(0, self._log_depth - 1) * 2
+            )
+            printer.print(f"{divider_indent}-- cycle {cycle} --", color="gray")
+
+        if obs is not None:
+            self._log("observation", _brief(obs), color="green")
+        if decision is not None:
+            worker_label = worker.__class__.__name__
+            step_content = getattr(decision, "step_content", "") or ""
+            content = (
+                f"{worker_label}: {_brief(step_content)}" if step_content
+                else worker_label
+            )
+            self._log("think", content, color="cyan")
 
     def _record_human_call(self, item: "HumanCall", response: str) -> None:
-        """Record a ``HUMAN_CALL`` trace step.
+        """Record + log a ``HUMAN_CALL`` step.
 
         The prompt sits in the ``observation`` slot (closest analog);
         the response and channel land in ``structured_output``.
         """
-        if self._agent_trace is None:
-            return
-
         response_text = "" if response is None else str(response)
-        response_preview = (
-            (response_text[:1000] + "...")
-            if len(response_text) > 1000 else response_text
-        )
 
-        self._agent_trace.record_step({
-            "name": "human_call",
-            "step_content": f"HumanCall(channel={item.channel or 'default'})",
-            "tool_calls": [],
-            "observation": item.prompt or None,
-            "observation_hash": observation_fingerprint(item.prompt),
-            "output_type": StepOutputType.HUMAN_CALL.value,
-            "structured_output": {
-                "channel": item.channel,
-                "response": response_preview,
-            },
-            "structured_output_class": None,
-        })
+        if self._agent_trace is not None:
+            self._agent_trace.record_step({
+                "name": "human_call",
+                "step_content": f"HumanCall(channel={item.channel or 'default'})",
+                "tool_calls": [],
+                "observation": item.prompt or None,
+                "observation_hash": observation_fingerprint(item.prompt),
+                "output_type": StepOutputType.HUMAN_CALL.value,
+                "structured_output": {
+                    "channel": item.channel,
+                    "response": _brief(response_text),
+                },
+                "structured_output_class": None,
+            })
+
+        self._log("result", _brief(response_text), color="purple")
 
     def _record_llm_call(self, item: LLMCall, result: Any) -> None:
-        """Record an ``LLM_CALL`` trace step.
+        """Record + log an ``LLM_CALL`` step.
 
         The prompt sits in the ``observation`` slot; the result is
         serialised into ``structured_output``. ``llm_call_protocol`` on
         the top-level step records which LLM contract was invoked.
         """
-        if self._agent_trace is None:
-            return
-
         try:
             if isinstance(result, BaseModel):
                 serialized = result.model_dump()
@@ -1910,17 +2217,20 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
             serialized = {"__value__": str(result)}
             cls_name = type(result).__qualname__
 
-        self._agent_trace.record_step({
-            "name": "llm_call",
-            "step_content": f"LLMCall({item.protocol})",
-            "tool_calls": [],
-            "observation": item.prompt or None,
-            "observation_hash": observation_fingerprint(item.prompt),
-            "output_type": StepOutputType.LLM_CALL.value,
-            "structured_output": serialized,
-            "structured_output_class": cls_name,
-            "llm_call_protocol": item.protocol,
-        })
+        if self._agent_trace is not None:
+            self._agent_trace.record_step({
+                "name": "llm_call",
+                "step_content": f"LLMCall({item.protocol})",
+                "tool_calls": [],
+                "observation": item.prompt or None,
+                "observation_hash": observation_fingerprint(item.prompt),
+                "output_type": StepOutputType.LLM_CALL.value,
+                "structured_output": serialized,
+                "structured_output_class": cls_name,
+                "llm_call_protocol": item.protocol,
+            })
+
+        self._log("result", _brief(result), color="white")
 
     def _record_think_agent(self, item: "ThinkAgent", result: Any) -> None:
         """Record a ``THINK_AGENT`` trace step.
@@ -1930,38 +2240,33 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         ``_dispatch_project_tool`` → ``_run_action_call`` path. This
         record is the outer envelope marking the yield itself.
         """
-        if self._agent_trace is None:
-            return
-
-        result_preview: Optional[str]
-        if result is None:
-            result_preview = None
-        else:
-            text = str(result)
-            result_preview = (text[:1000] + "...") if len(text) > 1000 else text
+        result_preview = _brief(result) if result is not None else ""
 
         goal_preview = item.goal or ""
         step_content = f"ThinkAgent({item.name!r})"
         if goal_preview:
-            step_content += f": {goal_preview[:200]}{'...' if len(goal_preview) > 200 else ''}"
+            step_content += f": {_brief(goal_preview, n=200)}"
 
-        self._agent_trace.record_step({
-            "name": "think_agent",
-            "step_content": step_content,
-            "tool_calls": [],
-            "observation": None,
-            "observation_hash": None,
-            "output_type": StepOutputType.THINK_AGENT.value,
-            "structured_output": {
-                "goal": item.goal,
-                "result": result_preview,
-            },
-            "structured_output_class": None,
-            "think_agent_name": item.name,
-        })
+        if self._agent_trace is not None:
+            self._agent_trace.record_step({
+                "name": "think_agent",
+                "step_content": step_content,
+                "tool_calls": [],
+                "observation": None,
+                "observation_hash": None,
+                "output_type": StepOutputType.THINK_AGENT.value,
+                "structured_output": {
+                    "goal": item.goal,
+                    "result": result_preview or None,
+                },
+                "structured_output_class": None,
+                "think_agent_name": item.name,
+            })
+
+        self._log("final", result_preview or "(no return value)", color="yellow")
 
     def _record_enter_agent(self, item: "EnterAgent", result: Any) -> None:
-        """Record an ``ENTER_AGENT`` scope-switch marker.
+        """Record + log an ``ENTER_AGENT`` scope-switch closer.
 
         Minimal marker — the actual steps that ran inside the agent
         scope each produced their own records (ThinkUnit cycles,
@@ -1969,29 +2274,24 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         timeline reflects "we entered agent mode here with this goal
         and exited with this final answer".
         """
-        if self._agent_trace is None:
-            return
+        result_text = _brief(result) if result is not None else ""
 
-        result_text: Optional[str]
-        if result is None:
-            result_text = None
-        else:
-            text = str(result)
-            result_text = (text[:1000] + "...") if len(text) > 1000 else text
+        if self._agent_trace is not None:
+            self._agent_trace.record_step({
+                "name": "enter_agent",
+                "step_content": f"EnterAgent(goal={item.goal!r})",
+                "tool_calls": [],
+                "observation": None,
+                "observation_hash": None,
+                "output_type": StepOutputType.ENTER_AGENT.value,
+                "structured_output": {
+                    "goal": item.goal,
+                    "result": result_text or None,
+                },
+                "structured_output_class": None,
+            })
 
-        self._agent_trace.record_step({
-            "name": "enter_agent",
-            "step_content": f"EnterAgent(goal={item.goal!r})",
-            "tool_calls": [],
-            "observation": None,
-            "observation_hash": None,
-            "output_type": StepOutputType.ENTER_AGENT.value,
-            "structured_output": {
-                "goal": item.goal,
-                "result": result_text,
-            },
-            "structured_output_class": None,
-        })
+        self._log("final", result_text or "(no return value)", color="yellow")
 
     def _has_workflow(self) -> bool:
         """Check whether the subclass has overridden on_workflow().
@@ -2119,13 +2419,13 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         always receives a concrete mode.
         """
         if mode is RunMode.AGENT:
-            self._log("Router", "Ferrying to AGENT mode", color="green")
+            self._log("Router", "Ferrying to AGENT mode")
             self.ferry_to("_agent")
         elif mode is RunMode.WORKFLOW:
-            self._log("Router", "Ferrying to WORKFLOW mode", color="green")
+            self._log("Router", "Ferrying to WORKFLOW mode")
             self.ferry_to("_workflow")
         elif mode is RunMode.AMPHIFLOW:
-            self._log("Router", f"Ferrying to AMPHIFLOW mode, max_consecutive_fallbacks={max_consecutive_fallbacks}", color="green")
+            self._log("Router", f"Ferrying to AMPHIFLOW mode, max_consecutive_fallbacks={max_consecutive_fallbacks}")
             self.ferry_to("_amphiflow", max_consecutive_fallbacks=max_consecutive_fallbacks)
         else:
             raise RuntimeError(f"Unsupported run mode: {mode!r}")
@@ -2532,6 +2832,8 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         self._run_mode = self._resolve_mode(mode if mode is not None else RunMode.AUTO)
         self.spent_tokens = 0
         self.spent_time = 0.0
+        self._log_depth = 0
+        self._log_hook_name = None
 
         ########################
         # Run-dir + trace activation — orthogonal axes.

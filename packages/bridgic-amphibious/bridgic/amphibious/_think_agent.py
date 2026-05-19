@@ -499,8 +499,11 @@ class _ThinkAgentRuntime:
             pass
 
         step = await agent._run_action_call(
-            action_call.decision, ctx, _worker=None,
+            action_call.decision, ctx, _worker=None, top_level=False,
         )
+        # ``_record_action_call`` already fired inside
+        # ``_run_action_call`` (between hooks), so trace + log are
+        # taken care of. Nothing to record here.
         return _extract_tool_result(step)
 
 

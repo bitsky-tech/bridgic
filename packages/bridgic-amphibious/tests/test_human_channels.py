@@ -144,7 +144,7 @@ class TestChannelDispatchBehavior:
 
         monkeypatch.setattr("builtins.input", fake_input)
 
-        result = await agent._run_human_call("question?")
+        result = await agent._run_human_call(HumanCall(prompt="question?"))
 
         assert result == "stdin-reply"
         # The closure formats the prompt as "\n[HumanInput] question?\n> ".
@@ -164,8 +164,8 @@ class TestChannelDispatchBehavior:
                 return f"B:{prompt}"
 
         agent = Agent()
-        a = await agent._run_human_call("Q", channel="a")
-        b = await agent._run_human_call("Q", channel="b")
+        a = await agent._run_human_call(HumanCall(prompt="Q", channel="a"))
+        b = await agent._run_human_call(HumanCall(prompt="Q", channel="b"))
 
         assert a == "A:Q"
         assert b == "B:Q"
@@ -184,7 +184,7 @@ class TestChannelDispatchBehavior:
 
         agent = Agent()
         with pytest.raises(RuntimeError, match="ambiguous"):
-            await agent._run_human_call("Q")
+            await agent._run_human_call(HumanCall(prompt="Q"))
 
     @pytest.mark.asyncio
     async def test_unknown_channel_raises(self):
@@ -196,7 +196,7 @@ class TestChannelDispatchBehavior:
 
         agent = Agent()
         with pytest.raises(RuntimeError, match="Unknown human channel"):
-            await agent._run_human_call("Q", channel="fake")
+            await agent._run_human_call(HumanCall(prompt="Q", channel="fake"))
 
 
 class TestRequestHumanToolChannelParam:
