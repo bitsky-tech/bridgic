@@ -113,7 +113,7 @@ class TestHookCallLogging:
 
         # ``verbose=True`` so _log itself is not gated out; the only thing
         # under test is the per-scope hook gate.
-        agent = Agent(llm=llm, verbose=True)
+        agent = Agent(verbose=True)
 
         emitted: List[tuple] = []
         original_log = agent._log
@@ -126,7 +126,7 @@ class TestHookCallLogging:
 
         agent._log = _capture  # type: ignore[assignment]
         try:
-            await agent.arun(context=ctx)
+            await agent.arun(llm=llm, context=ctx)
         finally:
             agent._log = original_log  # type: ignore[assignment]
 
@@ -161,7 +161,7 @@ class TestHookCallLogging:
         ctx = _ctx()
         ctx.tools.add(FunctionToolSpec.from_raw(snapshot_tool))
 
-        agent = Agent(llm=llm, verbose=True, verbose_hook_calls=True)
+        agent = Agent(verbose=True, verbose_hook_calls=True)
 
         emitted: List[tuple] = []
         original_log = agent._log
@@ -172,7 +172,7 @@ class TestHookCallLogging:
 
         agent._log = _capture  # type: ignore[assignment]
         try:
-            await agent.arun(context=ctx)
+            await agent.arun(llm=llm, context=ctx)
         finally:
             agent._log = original_log  # type: ignore[assignment]
 
@@ -203,8 +203,8 @@ class TestYieldsInObservation:
                 # observation() via the _run_observe_think_act observe phase.
                 yield ThinkUnit("plan_unit")
 
-        agent = Agent(llm=llm)
-        await agent.arun(context=_ctx())
+        agent = Agent()
+        await agent.arun(llm=llm, context=_ctx())
 
         # observation was invoked, ctx.observation set
         assert agent._current_context.observation == "computed-observation"
@@ -247,8 +247,8 @@ class TestYieldsInObservation:
         ctx = _ctx()
         ctx.tools.add(FunctionToolSpec.from_raw(snapshot_tool))
 
-        agent = Agent(llm=llm)
-        await agent.arun(context=ctx)  # must NOT raise RecursionError
+        agent = Agent()
+        await agent.arun(llm=llm, context=ctx)  # must NOT raise RecursionError
 
         # The hook's ActionCall executed exactly once (the bug would have
         # either recursed forever or, with a guard, fired zero times).
@@ -277,8 +277,8 @@ class TestYieldsInBeforeAction:
             async def on_agent(self, ctx):
                 yield ThinkUnit("plan_unit")
 
-        agent = Agent(llm=llm)
-        await agent.arun(context=_ctx())
+        agent = Agent()
+        await agent.arun(llm=llm, context=_ctx())
 
         # before_action invoked at least once
         assert len(seen_decisions) >= 1
@@ -317,8 +317,8 @@ class TestYieldsInBeforeAction:
         ctx = _ctx()
         ctx.tools.add(FunctionToolSpec.from_raw(audit_tool))
 
-        agent = Agent(llm=llm)
-        await agent.arun(context=ctx)  # must NOT raise RecursionError
+        agent = Agent()
+        await agent.arun(llm=llm, context=ctx)  # must NOT raise RecursionError
 
         # Tool fires exactly once — once per before_action invocation, and
         # before_action runs once per action phase. With the bug it would
@@ -355,7 +355,7 @@ class TestWorkerHookGeneratorForm:
                 snap = yield ActionCall("snapshot_tool")
                 yield RETURN(snap[0].result if snap else None)
 
-        worker = GenObservationWorker(llm=llm)
+        worker = GenObservationWorker()
 
         class Agent(AmphibiousAutoma[CognitiveContext]):
             recovery_unit = think_unit(worker, max_attempts=1)
@@ -371,8 +371,8 @@ class TestWorkerHookGeneratorForm:
         ctx = _ctx()
         ctx.tools.add(FunctionToolSpec.from_raw(snapshot_tool))
 
-        agent = Agent(llm=llm)
-        await agent.arun(context=ctx)  # must NOT raise TypeError
+        agent = Agent()
+        await agent.arun(llm=llm, context=ctx)  # must NOT raise TypeError
 
         # Worker-level generator returned "worker-snap" → no delegation.
         assert call_count == 1
@@ -395,7 +395,7 @@ class TestWorkerHookGeneratorForm:
                 if False:
                     yield
 
-        worker = GenObservationWorker(llm=llm)
+        worker = GenObservationWorker()
 
         class Agent(AmphibiousAutoma[CognitiveContext]):
             recovery_unit = think_unit(worker, max_attempts=1)
@@ -408,8 +408,8 @@ class TestWorkerHookGeneratorForm:
             async def on_agent(self, ctx):
                 yield ThinkUnit("recovery_unit")
 
-        agent = Agent(llm=llm)
-        await agent.arun(context=_ctx())
+        agent = Agent()
+        await agent.arun(llm=llm, context=_ctx())
 
         assert agent_fallback_ran is True
         assert agent._current_context.observation == "agent-fallback"
@@ -450,8 +450,8 @@ class TestYieldsInAfterAction:
         ctx = _ctx()
         ctx.tools.add(FunctionToolSpec.from_raw(followup_tool))
 
-        agent = Agent(llm=llm)
-        await agent.arun(context=ctx)  # must NOT raise RecursionError
+        agent = Agent()
+        await agent.arun(llm=llm, context=ctx)  # must NOT raise RecursionError
 
         assert call_count == 1
 
@@ -469,7 +469,7 @@ class TestGeneratorVsCoroutineForms:
             async def on_agent(self, ctx):
                 yield ThinkUnit("plan_unit")
 
-        await Agent(llm=llm).arun(context=_ctx())  # no exception → pass
+        await Agent().arun(llm=llm, context=_ctx())  # no exception → pass
 
     @pytest.mark.asyncio
     async def test_on_agent_generator_form_with_thinkcall(self):
@@ -483,7 +483,7 @@ class TestGeneratorVsCoroutineForms:
             async def on_agent(self, ctx) -> AsyncGenerator[Any, Any]:
                 yield ThinkUnit("main_think")
 
-        await Agent(llm=llm).arun(context=_ctx())  # no exception → pass
+        await Agent().arun(llm=llm, context=_ctx())  # no exception → pass
 
     @pytest.mark.asyncio
     async def test_amphibious_template_must_be_async_gen(self):

@@ -101,7 +101,7 @@ class TestThinkAgentFactory:
                     yield
 
         assert isinstance(A.x, ThinkAgentDescriptor)
-        a = A(llm=_DummyLLM())
+        a = A()
         assert a.x is A.x  # __get__ returns self
 
 
@@ -153,7 +153,7 @@ class TestThinkAgentDispatch:
                 result = yield ThinkAgent("do_thing", goal="hello")
                 yield RETURN(result)
 
-        out = await A(llm=_DummyLLM()).arun(goal="run")
+        out = await A().arun(llm=_DummyLLM(), goal="run")
         assert mock_runtime["invocations"] == [
             mock_runtime["invocations"][0]
         ]  # exactly one invocation
@@ -168,7 +168,7 @@ class TestThinkAgentDispatch:
             async def on_agent(self, ctx) -> AsyncGenerator[Any, Any]:
                 yield ThinkAgent("do_thing", goal="x")
 
-        await A(llm=_DummyLLM()).arun(goal="run")
+        await A().arun(llm=_DummyLLM(), goal="run")
         descriptor = mock_runtime["invocations"][0]["descriptor"]
         assert isinstance(descriptor, ThinkAgentDescriptor)
         assert descriptor is A.do_thing
@@ -183,7 +183,7 @@ class TestThinkAgentDispatch:
                 yield ThinkAgent("do_thing", goal="step2")
                 yield ThinkAgent("do_thing", goal="step3")
 
-        await A(llm=_DummyLLM()).arun(goal="run")
+        await A().arun(llm=_DummyLLM(), goal="run")
         goals = [inv["goal"] for inv in mock_runtime["invocations"]]
         assert goals == ["step1", "step2", "step3"]
 
@@ -194,7 +194,7 @@ class TestThinkAgentDispatch:
                 yield ThinkAgent("nonexistent")
 
         with pytest.raises(AttributeError, match="does not match any"):
-            await A(llm=_DummyLLM()).arun(goal="run")
+            await A().arun(llm=_DummyLLM(), goal="run")
 
     @pytest.mark.asyncio
     async def test_think_agent_outside_on_agent_raises_runtime_error(self, mock_runtime):
@@ -207,7 +207,7 @@ class TestThinkAgentDispatch:
                 yield ThinkAgent("do_thing", goal="x")
 
         with pytest.raises(RuntimeError, match="only valid inside"):
-            await A(llm=_DummyLLM()).arun(goal="run")
+            await A().arun(llm=_DummyLLM(), goal="run")
 
 
 # ---------------------------------------------------------------------------

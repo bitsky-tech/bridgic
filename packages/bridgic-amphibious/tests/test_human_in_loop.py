@@ -114,7 +114,7 @@ class TestHumanCallInWorkflow:
                 resp = yield HumanCall(prompt="Confirm the plan?")
                 captured.append(("response", resp))
 
-        await Agent(llm=MockLLM([])).arun(context=_make_ctx())
+        await Agent().arun(llm=MockLLM([]), context=_make_ctx())
 
         assert captured == ["Confirm the plan?", ("response", "approved")]
 
@@ -142,7 +142,7 @@ class TestHumanCallInWorkflow:
                 assert a == "feishu-reply"
                 assert b == "terminal-reply"
 
-        await Agent(llm=MockLLM([])).arun(context=_make_ctx())
+        await Agent().arun(llm=MockLLM([]), context=_make_ctx())
 
         assert feishu_seen == ["Q1"]
         assert terminal_seen == ["Q2"]
@@ -166,7 +166,7 @@ class TestHumanCallInWorkflow:
                 yield HumanCall(prompt="ambiguous")
 
         with pytest.raises(RuntimeError, match="ambiguous"):
-            await Agent(llm=MockLLM([])).arun(context=_make_ctx())
+            await Agent().arun(llm=MockLLM([]), context=_make_ctx())
 
     @pytest.mark.asyncio
     async def test_human_call_unknown_channel_raises(self):
@@ -181,7 +181,7 @@ class TestHumanCallInWorkflow:
                 yield HumanCall(channel="nonexistent", prompt="?")
 
         with pytest.raises(RuntimeError, match="Unknown human channel"):
-            await Agent(llm=MockLLM([])).arun(context=_make_ctx())
+            await Agent().arun(llm=MockLLM([]), context=_make_ctx())
 
     @pytest.mark.asyncio
     async def test_human_call_interleaved_with_actioncalls(self):
@@ -209,7 +209,7 @@ class TestHumanCallInWorkflow:
                     r2 = yield ActionCall("book_flight", flight_number="CA123")
                     trace.append(("action", r2[0].tool_name))
 
-        await Agent(llm=MockLLM([])).arun(context=_make_ctx())
+        await Agent().arun(llm=MockLLM([]), context=_make_ctx())
 
         assert trace == [
             ("action", "search_flights"),
@@ -267,8 +267,7 @@ class TestRequestHumanTool:
             async def on_agent(self, ctx) -> AsyncGenerator[Any, Any]:
                 yield ThinkUnit("plan")
 
-        await Agent(llm=llm).arun(
-            goal="Trigger request_human via tool",
+        await Agent().arun(llm=llm, goal="Trigger request_human via tool",
             tools=[request_human_tool, *get_travel_planning_tools()],
         )
 
@@ -304,7 +303,7 @@ class TestChannelOverride:
                 resp = yield HumanCall(prompt="hi")
                 captured.append(("got", resp))
 
-        await Custom(llm=MockLLM([])).arun(context=_make_ctx())
+        await Custom().arun(llm=MockLLM([]), context=_make_ctx())
 
         assert captured == [("stdin", "hi"), ("got", "custom:hi")]
 
@@ -330,7 +329,7 @@ class TestChannelOverride:
                 resp = yield HumanCall(prompt="who answers?")
                 captured.append(resp)
 
-        await Child(llm=MockLLM([])).arun(context=_make_ctx())
+        await Child().arun(llm=MockLLM([]), context=_make_ctx())
 
         assert captured == ["who answers?", "from-child"]
 
@@ -370,11 +369,11 @@ class TestContextVarConcurrency:
                 r = yield HumanCall(prompt="B?")
                 results_b.append(r)
 
-        agent_a = AgentA(llm=MockLLM([]))
-        agent_b = AgentB(llm=MockLLM([]))
+        agent_a = AgentA()
+        agent_b = AgentB()
         await asyncio.gather(
-            agent_a.arun(context=_make_ctx()),
-            agent_b.arun(context=_make_ctx()),
+            agent_a.arun(llm=MockLLM([]), context=_make_ctx()),
+            agent_b.arun(llm=MockLLM([]), context=_make_ctx()),
         )
 
         assert results_a == ["from-A"]
@@ -399,12 +398,12 @@ class TestContextVarConcurrency:
 
         llm_1 = MockLLM([_make_finish_step()])
         llm_2 = MockLLM([_make_finish_step()])
-        agent_1 = AgentWithTool(name="agent-1", llm=llm_1)
-        agent_2 = AgentWithTool(name="agent-2", llm=llm_2)
+        agent_1 = AgentWithTool(name="agent-1")
+        agent_2 = AgentWithTool(name="agent-2")
 
         await asyncio.gather(
-            agent_1.arun(context=_make_ctx()),
-            agent_2.arun(context=_make_ctx()),
+            agent_1.arun(llm=llm_1, context=_make_ctx()),
+            agent_2.arun(llm=llm_2, context=_make_ctx()),
         )
 
         assert tool_results["agent-1"] == "reply-from-agent-1"
@@ -423,7 +422,7 @@ class TestContextVarConcurrency:
             async def on_agent(self, ctx) -> AsyncGenerator[Any, Any]:
                 yield ThinkUnit("plan")
 
-        await Agent(llm=llm).arun(context=_make_ctx())
+        await Agent().arun(llm=llm, context=_make_ctx())
 
         assert current_agent.get(None) is None
 
@@ -445,8 +444,8 @@ class TestBuiltinToolInjection:
             async def on_agent(self, ctx) -> AsyncGenerator[Any, Any]:
                 yield ThinkUnit("plan")
 
-        agent = Agent(llm=llm)
-        await agent.arun(goal="Test builtin injection")
+        agent = Agent()
+        await agent.arun(llm=llm, goal="Test builtin injection")
 
         tool_names = [t.tool_name for t in agent._current_context.tools.get_all()]
         assert "request_human" in tool_names
@@ -461,8 +460,8 @@ class TestBuiltinToolInjection:
             async def on_agent(self, ctx) -> AsyncGenerator[Any, Any]:
                 yield ThinkUnit("plan")
 
-        agent = Agent(llm=llm)
-        await agent.arun(goal="Test dedupe", tools=[request_human_tool])
+        agent = Agent()
+        await agent.arun(llm=llm, goal="Test dedupe", tools=[request_human_tool])
 
         tool_names = [t.tool_name for t in agent._current_context.tools.get_all()]
         assert tool_names.count("request_human") == 1
@@ -522,10 +521,8 @@ class TestBuiltinToolInjection:
             ]:
                 yield ActionCall("always_fails")
 
-        await Agent(llm=llm).arun(
-            goal="Trigger full fallback path",
+        await Agent().arun(llm=llm, goal="Trigger full fallback path",
             tools=[always_fails_tool],
-            max_consecutive_fallbacks=1,
-        )
+            max_consecutive_fallbacks=1,)
 
         assert captured == ["help?"]

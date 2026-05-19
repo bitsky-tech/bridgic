@@ -115,9 +115,9 @@ class TestRunMethod:
             async def on_agent(self, ctx):
                 yield ThinkUnit("plan")
 
-        agent = Agent(llm=llm)
+        agent = Agent()
         ctx = _make_ctx()
-        await agent.arun(context=ctx)
+        await agent.arun(llm=llm, context=ctx)
 
         steps = agent._current_context.cognitive_history.get_all()
         assert len(steps) == 1
@@ -133,9 +133,9 @@ class TestRunMethod:
             async def on_agent(self, ctx):
                 yield ThinkUnit("step")
 
-        agent = Agent(llm=llm)
+        agent = Agent()
         ctx = _make_ctx()
-        await agent.arun(context=ctx)
+        await agent.arun(llm=llm, context=ctx)
 
         steps = agent._current_context.cognitive_history.get_all()
         # LLM signals finish=True on step 2, so 2 steps total
@@ -162,9 +162,9 @@ class TestRunMethod:
             async def on_agent(self, ctx):
                 yield ThinkUnit("step")
 
-        agent = Agent(llm=llm)
+        agent = Agent()
         ctx = _make_ctx()
-        await agent.arun(context=ctx)
+        await agent.arun(llm=llm, context=ctx)
 
         steps = agent._current_context.cognitive_history.get_all()
         assert len(steps) == 2
@@ -182,9 +182,9 @@ class TestRunMethod:
             async def on_agent(self, ctx):
                 yield ThinkUnit("step")
 
-        agent = Agent(llm=llm)
+        agent = Agent()
         ctx = _make_ctx()
-        await agent.arun(context=ctx)
+        await agent.arun(llm=llm, context=ctx)
 
         # Should complete successfully with filtered tools
         steps = agent._current_context.cognitive_history.get_all()
@@ -208,10 +208,10 @@ class TestRunMethod:
             async def on_agent(self, ctx):
                 yield ThinkUnit("step")
 
-        agent = Agent(llm=llm)
+        agent = Agent()
         ctx = _make_ctx()
         # Should not raise
-        await agent.arun(context=ctx)
+        await agent.arun(llm=llm, context=ctx)
         assert isinstance(agent._current_context, CognitiveContext)
 
     @pytest.mark.asyncio
@@ -225,7 +225,7 @@ class TestRunMethod:
                 if False:
                     yield
 
-        agent = Agent(llm=llm)
+        agent = Agent()
         with pytest.raises(RuntimeError, match="no active context"):
             await agent._run_think_unit(worker)
 
@@ -248,9 +248,9 @@ class TestAmphibiousAutomaMisc:
                 assert self.llm is not None
                 yield ThinkUnit("step")
 
-        agent = Agent(llm=llm)
+        agent = Agent()
         ctx = _make_ctx()
-        await agent.arun(context=ctx)
+        await agent.arun(llm=llm, context=ctx)
 
     @pytest.mark.asyncio
     async def test_arun_auto_create_context(self):
@@ -264,8 +264,9 @@ class TestAmphibiousAutomaMisc:
                 assert ctx.goal == "Test goal"
                 yield ThinkUnit("step")
 
-        agent = Agent(llm=llm)
+        agent = Agent()
         await agent.arun(
+            llm=llm,
             goal="Test goal",
             tools=get_travel_planning_tools(),
         )
@@ -273,15 +274,50 @@ class TestAmphibiousAutomaMisc:
         assert len(agent._current_context.cognitive_history.get_all()) == 1
 
     @pytest.mark.asyncio
-    async def test_arun_requires_llm(self):
-        """arun() raises if no LLM is provided."""
+    async def test_arun_succeeds_without_llm_when_no_llm_primitive_yielded(self):
+        """arun() does NOT fail eagerly when llm is missing — the LLM is
+        an optional dependency consumed only by LLMCall / ThinkUnit's
+        CognitiveWorker path. A no-op on_agent (or one that only uses
+        ThinkAgent) is valid without an LLM."""
         class Agent(AmphibiousAutoma[CognitiveContext]):
             async def on_agent(self, ctx):
                 if False:
                     yield
 
         agent = Agent()
-        with pytest.raises(RuntimeError, match="must be initialized with an LLM"):
+        await agent.arun(goal="Test")  # no raise
+
+    @pytest.mark.asyncio
+    async def test_llmcall_without_llm_raises_at_use_site(self):
+        """Yielding LLMCall when no LLM was provided surfaces a clear
+        error at the dispatcher use-point, not eagerly at arun().
+
+        ``LLMCall`` is scope-restricted to ``on_workflow`` / hooks /
+        ``CognitiveWorker.thinking()`` — never directly inside
+        ``on_agent`` — so this test exercises the on_workflow path."""
+        from bridgic.amphibious import LLMCall
+
+        class Agent(AmphibiousAutoma[CognitiveContext]):
+            async def on_workflow(self, ctx):
+                yield LLMCall.chat("hi")
+
+        agent = Agent()
+        with pytest.raises(RuntimeError, match="LLMCall.*requires self._llm"):
+            await agent.arun(goal="Test")
+
+    @pytest.mark.asyncio
+    async def test_thinkunit_cognitive_worker_without_llm_raises_at_use_site(self):
+        """ThinkUnit driving a CognitiveWorker requires an LLM; if neither
+        the worker nor the agent has one, raise a clear error before OTC
+        starts (instead of crashing later with AttributeError)."""
+        class Agent(AmphibiousAutoma[CognitiveContext]):
+            planner = think_unit(CognitiveWorker.inline("Plan it"))
+
+            async def on_agent(self, ctx):
+                yield ThinkUnit("planner")
+
+        agent = Agent()
+        with pytest.raises(RuntimeError, match="CognitiveWorker.*has no LLM"):
             await agent.arun(goal="Test")
 
     @pytest.mark.asyncio
@@ -297,9 +333,9 @@ class TestAmphibiousAutomaMisc:
                 yield ThinkUnit("planner")
                 yield ThinkUnit("executor")
 
-        agent = Agent(llm=llm)
+        agent = Agent()
         ctx = _make_ctx()
-        await agent.arun(context=ctx)
+        await agent.arun(llm=llm, context=ctx)
 
         steps = agent._current_context.cognitive_history.get_all()
         assert len(steps) == 2
@@ -314,8 +350,8 @@ class TestAmphibiousAutomaMisc:
 class TestAgentTrace:
 
     @pytest.mark.asyncio
-    async def test_trace_step_has_observation_field(self):
-        """Trace steps should have the observation field (None when no observation provided)."""
+    async def test_trace_step_has_observation_field(self, tmp_path):
+        """Trace history entries should have the observation field (None when no observation provided)."""
         llm = MockLLM([_make_search_step()])
         class Agent(AmphibiousAutoma[CognitiveContext]):
             plan = think_unit(CognitiveWorker.inline("Plan"))
@@ -323,21 +359,21 @@ class TestAgentTrace:
             async def on_agent(self, ctx):
                 yield ThinkUnit("plan")
 
-        agent = Agent(llm=llm)
+        agent = Agent()
         ctx = _make_ctx()
-        await agent.arun(context=ctx, trace_running=True)
+        await agent.arun(llm=llm, context=ctx, workdir=tmp_path, trace=True)
 
         trace = agent._agent_trace.build()
-        assert len(trace["steps"]) == 1
-        step: TraceStep = trace["steps"][0]
+        assert len(trace["history"]) == 1
+        step: TraceStep = trace["history"][0]
         # observation field exists on the model
         assert "observation" in TraceStep.model_fields
         # Default CognitiveContext has no observation() override, so it's None
         assert step.observation is None
 
     @pytest.mark.asyncio
-    async def test_trace_records_observation_when_provided(self):
-        """Trace steps should record observation text when the agent provides one."""
+    async def test_trace_records_observation_when_provided(self, tmp_path):
+        """Trace history should record observation text when the agent provides one."""
         llm = MockLLM([_make_search_step()])
         class Agent(AmphibiousAutoma[CognitiveContext]):
             plan = think_unit(CognitiveWorker.inline("Plan"))
@@ -348,18 +384,18 @@ class TestAgentTrace:
             async def on_agent(self, ctx):
                 yield ThinkUnit("plan")
 
-        agent = Agent(llm=llm)
+        agent = Agent()
         ctx = _make_ctx()
-        await agent.arun(context=ctx, trace_running=True)
+        await agent.arun(llm=llm, context=ctx, workdir=tmp_path, trace=True)
 
         trace = agent._agent_trace.build()
-        step: TraceStep = trace["steps"][0]
+        step: TraceStep = trace["history"][0]
         assert step.observation is not None
         assert "login form" in step.observation
         assert step.observation_hash is not None
 
     @pytest.mark.asyncio
-    async def test_trace_tool_call_success_error(self):
+    async def test_trace_tool_call_success_error(self, tmp_path):
         """RecordedToolCall should carry success and error fields."""
         llm = MockLLM([_make_search_step()])
         class Agent(AmphibiousAutoma[CognitiveContext]):
@@ -368,25 +404,26 @@ class TestAgentTrace:
             async def on_agent(self, ctx):
                 yield ThinkUnit("plan")
 
-        agent = Agent(llm=llm)
+        agent = Agent()
         ctx = _make_ctx()
-        await agent.arun(context=ctx, trace_running=True)
+        await agent.arun(llm=llm, context=ctx, workdir=tmp_path, trace=True)
 
         trace = agent._agent_trace.build()
-        step: TraceStep = trace["steps"][0]
+        step: TraceStep = trace["history"][0]
         assert len(step.tool_calls) == 1
         tc: RecordedToolCall = step.tool_calls[0]
         assert tc.success is True
         assert tc.error is None
 
     @pytest.mark.asyncio
-    async def test_trace_no_finished_field(self):
+    async def test_trace_no_finished_field(self, tmp_path):
         """TraceStep should not have a 'finished' field."""
         assert "finished" not in TraceStep.model_fields
 
     @pytest.mark.asyncio
-    async def test_trace_save_load_roundtrip(self):
-        """save() then load() should produce equivalent data."""
+    async def test_trace_save_load_roundtrip(self, tmp_path):
+        """save() then load() should produce equivalent data with the
+        unified ``goal`` / ``metadata`` / ``history`` shape."""
         llm = MockLLM([_make_search_step()])
         class Agent(AmphibiousAutoma[CognitiveContext]):
             plan = think_unit(CognitiveWorker.inline("Plan"))
@@ -394,9 +431,9 @@ class TestAgentTrace:
             async def on_agent(self, ctx):
                 yield ThinkUnit("plan")
 
-        agent = Agent(llm=llm)
+        agent = Agent()
         ctx = _make_ctx()
-        await agent.arun(context=ctx, trace_running=True)
+        await agent.arun(llm=llm, context=ctx, workdir=tmp_path, trace=True)
 
         with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f:
             path = f.name
@@ -405,11 +442,12 @@ class TestAgentTrace:
             agent._agent_trace.save(path)
             loaded = AgentTrace.load(path)
 
-            assert "steps" in loaded
+            assert "goal" in loaded
             assert "metadata" in loaded
-            assert len(loaded["steps"]) == 1
+            assert "history" in loaded
+            assert len(loaded["history"]) == 1
 
-            step = loaded["steps"][0]
+            step = loaded["history"][0]
             assert "observation" in step
             assert "finished" not in step
             assert len(step["tool_calls"]) == 1
@@ -420,8 +458,8 @@ class TestAgentTrace:
             os.unlink(path)
 
     @pytest.mark.asyncio
-    async def test_trace_records_all_steps(self):
-        """All steps are recorded in the flat trace."""
+    async def test_trace_records_all_steps(self, tmp_path):
+        """All steps are recorded into the flat ``history`` list."""
         llm = MockLLM([_make_search_step()])
         class Agent(AmphibiousAutoma[CognitiveContext]):
             plan = think_unit(CognitiveWorker.inline("Plan"))
@@ -429,12 +467,12 @@ class TestAgentTrace:
             async def on_agent(self, ctx):
                 yield ThinkUnit("plan")
 
-        agent = Agent(llm=llm)
+        agent = Agent()
         ctx = _make_ctx()
-        await agent.arun(context=ctx, trace_running=True)
+        await agent.arun(llm=llm, context=ctx, workdir=tmp_path, trace=True)
 
         trace = agent._agent_trace.build()
-        assert len(trace["steps"]) == 1
-        step: TraceStep = trace["steps"][0]
+        assert len(trace["history"]) == 1
+        step: TraceStep = trace["history"][0]
         assert "observation" in TraceStep.model_fields
         assert "finished" not in TraceStep.model_fields

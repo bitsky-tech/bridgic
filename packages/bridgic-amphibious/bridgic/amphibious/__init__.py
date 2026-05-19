@@ -18,7 +18,7 @@ Layers:
 ...     async def on_agent(self, ctx):
 ...         yield ThinkUnit("main_think")
 ...
->>> answer = await MyAgent(llm=llm).arun(goal="Complete the task")
+>>> answer = await MyAgent().arun(llm=llm, goal="Complete the task")
 """
 from ._context import (
     # Abstraction layer

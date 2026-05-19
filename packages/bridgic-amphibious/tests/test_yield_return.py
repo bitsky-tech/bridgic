@@ -118,8 +118,8 @@ class TestReturnPrimitive:
             async def on_agent(self, ctx) -> AsyncGenerator[Any, Any]:
                 yield RETURN("from-on-agent")
 
-        agent = Agent(llm=MockLLM([]))
-        await agent.arun(context=_ctx())
+        agent = Agent()
+        await agent.arun(llm=MockLLM([]), context=_ctx())
 
         assert agent.final_answer == "from-on-agent"
 

@@ -1,3 +1,4 @@
+import hashlib
 import asyncio
 import inspect
 import json
@@ -17,6 +18,7 @@ from pydantic import BaseModel
 from bridgic.core.automa import GraphAutoma, worker
 from bridgic.core.automa._automa import RunningOptions
 from bridgic.core.automa.args import ArgsMappingRule, InOrder
+from bridgic.core.model import BaseLlm
 from bridgic.core.model.types import Message, Role, ToolCall
 from bridgic.core.model.protocols import StructuredOutput, ToolSelection
 from bridgic.core.agentic import ConcurrentAutoma
@@ -24,20 +26,11 @@ from bridgic.core.agentic.tool_specs import ToolSpec, FunctionToolSpec
 from bridgic.core.utils._console import printer
 from bridgic.amphibious._context import CognitiveContext, CognitiveTools, CognitiveSkills, CognitiveHistory, Exposure, LayeredExposure
 from bridgic.amphibious._cognitive_worker import CognitiveWorker, WorkerRunner, _DELEGATE
-from bridgic.amphibious._think_unit import (
-    ThinkUnitDescriptor,
-    _ThinkUnitRuntime,
-    think_unit,
-)
-from bridgic.amphibious._run_dir import (
-    ensure_run_dir,
-    make_run_id,
-    serialize_ctx,
-)
+from bridgic.amphibious._think_unit import ThinkUnitDescriptor, _ThinkUnitRuntime
+from bridgic.amphibious._think_agent import ThinkAgentDescriptor, _ThinkAgentRuntime
+from bridgic.amphibious._run_dir import ensure_run_dir, make_run_id
 from bridgic.amphibious.builtin_tools import ALL_BUILTIN_TOOLS, current_agent
-from bridgic.amphibious.builtin_tools.human.request_human import (
-    build_request_human_tool,
-)
+from bridgic.amphibious.builtin_tools.human.request_human import build_request_human_tool
 from bridgic.amphibious._type import (
     RunMode,
     Step,
@@ -56,11 +49,6 @@ from bridgic.amphibious._type import (
     StepOutputType,
     TraceStep,
     RecordedToolCall,
-    observation_fingerprint,
-)
-from bridgic.amphibious._think_agent import (
-    ThinkAgentDescriptor,
-    _ThinkAgentRuntime,
 )
 
 
@@ -79,24 +67,118 @@ _BUILTIN_TOOLS: Tuple[ToolSpec, ...] = ALL_BUILTIN_TOOLS
 # AgentTrace — flat execution path recorder
 ################################################################################################################
 
+def observation_fingerprint(obs: Any) -> Optional[str]:
+    """Compute a stable hash fingerprint of an observation value.
+
+    Used for divergence detection during replay. Returns None for
+    None observations.
+    """
+    if obs is None:
+        return None
+    try:
+        serialized = json.dumps(obs, sort_keys=True, default=str)
+    except (TypeError, ValueError):
+        serialized = str(obs)
+    return hashlib.sha256(serialized.encode()).hexdigest()[:16]
+
 
 class AgentTrace:
-    """Flat trace recorder that captures each observe-think-act cycle.
+    """Unified trace recorder for one ``arun`` invocation.
 
-    ``record_step()`` appends step data to the execution path.
-    ``build()`` returns the collected steps as a structured dict.
-    ``save()`` / ``load()`` provide JSON serialization.
+    Owns ALL workdir persistence: when constructed with a non-``None``
+    ``workdir``, every lifecycle event and step record triggers an
+    incremental write of ``<workdir>/trace.json``. This is the single
+    artifact for a run (replacing the legacy ``meta.json`` +
+    ``ctx_initial.json`` + ``ctx_final.json`` + ``trace.json`` quartet).
+
+    Trace data layout (``build()`` and the on-disk JSON share it)::
+
+        {
+            "goal":     "<the original arun goal>",
+            "metadata": {agent_class, agent_name, context_class, mode,
+                         run_id, start_time, end_time, spent_tokens,
+                         spent_time, cost_time, ...},
+            "history":  [TraceStep, ...],  # one entry per yield primitive
+        }
+
+    Semantic split from ``CognitiveContext.cognitive_history``: the
+    context history is summarised for the agent's own consumption
+    (prompts), while the trace history is the detailed audit log of
+    every step's outcome.
     """
 
-    def __init__(self):
+    def __init__(self, workdir: Optional[Path] = None):
+        self._workdir = workdir
+        self._goal: Optional[str] = None
+        self._metadata: Dict[str, Any] = {}
         self._steps: List[dict] = []
 
-    def record_step(self, step_data: dict) -> None:
-        """Append a trace step to the execution path."""
-        self._steps.append(step_data)
+    # ------------------------------------------------------------------
+    # Lifecycle — called by ``AmphibiousAutoma.arun``
+    # ------------------------------------------------------------------
 
-    def build(self, metadata: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-        """Return collected trace data as a structured dict."""
+    def begin_run(
+        self,
+        *,
+        goal: str,
+        agent_class: str,
+        agent_name: Optional[str],
+        context_class: Optional[str],
+        mode: str,
+        run_id: Optional[str],
+        max_consecutive_fallbacks: int,
+        start_time: float,
+    ) -> None:
+        """Record run start; persist."""
+        self._goal = goal
+        self._metadata.update({
+            "agent_class": agent_class,
+            "agent_name": agent_name,
+            "context_class": context_class,
+            "mode": mode,
+            "run_id": run_id,
+            "max_consecutive_fallbacks": max_consecutive_fallbacks,
+            "start_time": start_time,
+            "start_time_iso": time.strftime(
+                "%Y-%m-%dT%H:%M:%S", time.localtime(start_time)
+            ),
+        })
+        self._persist()
+
+    def end_run(
+        self,
+        *,
+        end_time: float,
+        spent_tokens: int,
+        spent_time: float,
+    ) -> None:
+        """Record run end; persist."""
+        self._metadata.update({
+            "end_time": end_time,
+            "end_time_iso": time.strftime(
+                "%Y-%m-%dT%H:%M:%S", time.localtime(end_time)
+            ),
+            "spent_tokens": spent_tokens,
+            "spent_time": spent_time,
+            "cost_time": round(spent_time, 3),
+        })
+        self._persist()
+
+    # ------------------------------------------------------------------
+    # Step recording — called by ``_record_*_trace`` in the dispatcher
+    # ------------------------------------------------------------------
+
+    def record_step(self, step_data: dict) -> None:
+        """Append a step record; persist incrementally."""
+        self._steps.append(step_data)
+        self._persist()
+
+    # ------------------------------------------------------------------
+    # Snapshot / serialization
+    # ------------------------------------------------------------------
+
+    def build(self) -> Dict[str, Any]:
+        """Return the unified trace dict; pure (no IO)."""
         steps = [
             TraceStep(
                 name=s["name"],
@@ -114,24 +196,49 @@ class AgentTrace:
             )
             for s in self._steps
         ]
-
         return {
-            "steps": steps,
-            "metadata": metadata or {},
+            "goal": self._goal,
+            "metadata": dict(self._metadata),
+            "history": steps,
         }
 
-    def save(self, path: str, metadata: Optional[Dict[str, Any]] = None) -> None:
-        """Serialize the trace to a JSON file."""
-        trace_data = self.build(metadata=metadata)
-        serializable = self._to_serializable(trace_data)
-        with open(path, 'w', encoding='utf-8') as f:
-            json.dump(serializable, f, indent=2, ensure_ascii=False, default=str)
+    def save(self, path: str) -> None:
+        """Explicit one-shot write to ``path``.
+
+        Equivalent to what ``_persist()`` writes to ``workdir/trace.json``,
+        but writable anywhere; useful for tests and ad-hoc snapshotting.
+        """
+        data = self._to_serializable(self.build())
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False, default=str)
 
     @staticmethod
     def load(path: str) -> Dict[str, Any]:
         """Deserialize a trace from a JSON file."""
-        with open(path, 'r', encoding='utf-8') as f:
+        with open(path, "r", encoding="utf-8") as f:
             return json.load(f)
+
+    # ------------------------------------------------------------------
+    # Internals
+    # ------------------------------------------------------------------
+
+    def _persist(self) -> None:
+        """Best-effort write to ``<workdir>/trace.json``.
+
+        No-op when ``workdir`` is ``None`` (in-memory only). Wrapped in a
+        try/except so an artifact-write failure can never mask the run's
+        primary control flow.
+        """
+        if self._workdir is None:
+            return
+        try:
+            data = self._to_serializable(self.build())
+            (self._workdir / "trace.json").write_text(
+                json.dumps(data, indent=2, ensure_ascii=False, default=str),
+                encoding="utf-8",
+            )
+        except Exception:
+            pass
 
     def _to_serializable(self, data: Any) -> Any:
         """Recursively convert Pydantic models and enums to plain dicts/values."""
@@ -526,7 +633,7 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
     ...     async def on_agent(self, ctx: CognitiveContext):
     ...         yield ThinkUnit("main_think")
     ...
-    >>> answer = await MyAgent(llm=llm).arun(goal="Complete the task", tools=[...])
+    >>> answer = await MyAgent().arun(llm=llm, goal="Complete the task", tools=[...])
     """
 
     ############################################################################
@@ -645,16 +752,15 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         name: Optional[str] = None,
         thread_pool: Optional[ThreadPoolExecutor] = None,
         running_options: Optional[RunningOptions] = None,
-        llm: Optional[Any] = None,
         verbose: bool = False,
         verbose_hook_calls: bool = False,
     ):
         super().__init__(name=name, thread_pool=thread_pool, running_options=running_options)
 
         # User-facing state
-        self._llm = llm
+        self._llm = None
         self._current_context: Optional[CognitiveContextT] = None
-        self.run_mode: Optional[RunMode] = None
+        self._run_mode: Optional[RunMode] = None
         self._verbose = verbose
         self._verbose_hook_calls = verbose_hook_calls
 
@@ -673,7 +779,8 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
 
     @property
     def llm(self) -> Optional[Any]:
-        """Access the agent's default LLM."""
+        """LLM of the active or most recent ``arun`` (``None`` before
+        the first run and after ``arun`` clears it in ``finally``)."""
         return self._llm
 
     @property
@@ -947,7 +1054,9 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
                 )
 
             # Handle the mode switch.
-            return await self._enter_agent(self.on_agent(ctx), ctx, item=item)
+            result = await self._enter_agent(self.on_agent(ctx), ctx, item=item)
+            self._record_enter_agent(item, result)
+            return result
 
         if isinstance(item, HumanCall):
             # Scope validation
@@ -963,6 +1072,7 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
             
             # Handle the human call and return the response.
             response = await self._run_human_call(item.prompt, channel=item.channel)
+            self._record_human_call(item, response)
             return response
 
         if isinstance(item, LLMCall):
@@ -976,8 +1086,9 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
                     "thinking() method."
                 )
             
-            # Handle the LLM call and return the response. 
+            # Handle the LLM call and return the response.
             result = await self._run_llm_call(item)
+            self._record_llm_call(item, result)
             return result
 
         if isinstance(item, ThinkUnit):
@@ -1015,7 +1126,9 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
                 )
             
             # Run the delegated agent and return its final answer.
-            return await self._run_think_agent(item, ctx)
+            result = await self._run_think_agent(item, ctx)
+            self._record_think_agent(item, result)
+            return result
 
         if isinstance(item, ActionCall):
             # Scope validation: ActionCall is an atomic step and must be handled by on_workflow or a hook, never on_agent.
@@ -1037,6 +1150,10 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
                 if obs is not None:
                     ctx.observation = obs
                 action_result = await self._run_action_call(decision, ctx, _worker=None)
+
+            self._record_action_call(
+                None, ctx.observation, decision, action_result, ctx,
+            )
 
             inner = getattr(action_result, "result", None)
             if isinstance(inner, ActionResult):
@@ -1091,7 +1208,7 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
                 snapshot_kwargs["skills"] = filtered_skills
 
         # 2. AMPHIFLOW path: hand off to the state machine, return None.
-        if self.run_mode is RunMode.AMPHIFLOW:
+        if self._run_mode is RunMode.AMPHIFLOW:
             fsm = self._amphi
             assert fsm is not None, (
                 "AMPHIFLOW run_mode but ``self._amphi`` is None — "
@@ -1169,7 +1286,7 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         if self._llm is None:
             raise RuntimeError(
                 f"LLMCall(protocol={item.protocol!r}) requires self._llm, "
-                "but no LLM was passed to the AmphibiousAutoma constructor."
+                "but no LLM was passed to arun(llm=...)."
             )
 
         messages: List[Message] = []
@@ -1229,19 +1346,12 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         single ``await worker.run(self, ctx)`` (it owns its own loop, so
         the per-yield overlays are ignored).
         """
-        context = self._current_context
-        if context is None:
-            raise RuntimeError(
-                "Cannot call _run_think_unit(): no active context. "
-                "_run_think_unit() must be called within an on_agent() method."
-            )
-
-        ################################################################
-        # External WorkerRunner path — bypass OTC entirely.
-        ################################################################
+        ########################
+        # External WorkerRunner.
+        ########################
         if not isinstance(worker, CognitiveWorker):
             if isinstance(worker, WorkerRunner):
-                await worker.run(self, context)
+                await worker.run(self, self._current_context)
                 return
             raise TypeError(
                 f"_run_think_unit() expects a CognitiveWorker or a WorkerRunner; "
@@ -1250,16 +1360,26 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
 
         worker_label = worker.__class__.__name__
 
-        ################################################################
-        # Setup CognitiveWorker runtime environment.
-        # Done once per ``_run_think_unit`` call (not per cycle) — all
-        # cycles share the same filtered tools / skills and the same
-        # injected LLM / verbose flag.
-        ################################################################
+        ########################
+        # Setup runtime env.
+        ########################
+        # Context
+        context = self._current_context
+        if context is None:
+            raise RuntimeError(
+                "Cannot call _run_think_unit(): no active context. "
+                "_run_think_unit() must be called within an on_agent() method."
+            )
 
         # LLM
         if worker._llm is None and self._llm is not None:
             worker.set_llm(self._llm)
+        if worker._llm is None:
+            raise RuntimeError(
+                f"ThinkUnit's CognitiveWorker ({worker_label}) has no LLM. "
+                "Either pass llm=... to arun(), or set llm on the "
+                "CognitiveWorker template itself."
+            )
 
         # verbose
         injected_verbose = False
@@ -1277,9 +1397,7 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
                     filtered_tools.add(tool)
             context.tools = filtered_tools
 
-        # skills filter (all bindings declared up-front so the ``finally``
-        # block can read them unconditionally regardless of whether
-        # filtering ran).
+        # skills filter
         original_skills: Optional[CognitiveSkills] = None
         filtered_skills: Optional[CognitiveSkills] = None
         filtered_to_orig: Dict[int, int] = {}
@@ -1301,13 +1419,9 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         # spent-tokens delta tracker
         tokens_before = worker.spent_tokens
 
-        ################################################################
-        # OTC cycle closure — single point that captures one
-        # observe→think→act sweep against the now-prepared ``worker`` /
-        # ``context``. Called from the loop below, plus from the RETRY
-        # branch of on_error.
-        ################################################################
-
+        ########################
+        # OTC cycle closure
+        ########################
         async def _run_observe_think_act() -> bool:
             # 1. Observe (worker → agent fallback)
             obs = await self._invoke_template(worker.observation(context), context)
@@ -1337,19 +1451,13 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
                 self._log("Act", f"{worker_label}:\n{formatted}", color="purple")
 
             # Trace + auto-captured final answer
-            self._record_trace_step(worker, obs, decision, action_result, context)
+            self._record_action_call(worker, obs, decision, action_result, context)
             if decision.finish and decision.step_content:
                 self._final_answer = decision.step_content
 
             return decision.finish
 
-        ################################################################
         # Run loop with on_error handling, then restore environment.
-        # The loop covers both single-shot (max_attempts=1, until=None)
-        # and looping (max_attempts>1 or until set) cases uniformly —
-        # range(max_attempts) iterates once for the single-shot default.
-        ################################################################
-
         try:
             for _ in range(max_attempts):
                 try:
@@ -1432,12 +1540,9 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         the hook-scope ActionCall path, where re-entering the hook chain
         would recurse into the generator that yielded the call.
         """
-        ################################################################
         # Parsing closures — turn a thinking decision into either a
         # matched (ToolCall, ToolSpec) list (tool-call form) or a raw
         # BaseModel (custom-output form).
-        ################################################################
-
         def _parse_decision(
             decision: Any,
         ) -> Tuple[bool, Optional[List[StepToolCall]], Any]:
@@ -1524,12 +1629,9 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
                 return True, calls, _match_tool_calls(tool_calls)
             return False, None, output
 
-        ################################################################
         # Execution closure — dispatch to action_tool_call (tool-call
         # form) or action_custom_output (custom-output form) and build
         # the resulting Step.
-        ################################################################
-
         async def _execute(
             decision_result: Any,
             *,
@@ -1564,19 +1666,10 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
             ctx.add_info(result)
             return result
 
-        ################################################################
         # Parse
-        ################################################################
-
         is_tool_call_form, calls, decision_result = _parse_decision(decision)
 
-        ################################################################
-        # before_action — worker → agent delegation. ``None`` from either
-        # level is treated as no-op (worker-None ≡ _DELEGATE → fall through
-        # to agent; agent-None → keep original decision_result), so
-        # AI-generated ``pass`` stubs behave like no override.
-        ################################################################
-
+        # Before_action hooks — skipped entirely when with_hooks=False.
         if with_hooks:
             original_decision_result = decision_result
             if _worker is not None:
@@ -1596,19 +1689,13 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
                 )
                 decision_result = original_decision_result if agent_ret is None else agent_ret
 
-        ################################################################
         # Execute
-        ################################################################
-
         result = await _execute(
             decision_result,
             is_tool_call_form=is_tool_call_form, calls=calls,
         )
 
-        ################################################################
-        # after_action — skipped entirely when with_hooks=False.
-        ################################################################
-
+        # After_action hooks — skipped entirely when with_hooks=False.
         if with_hooks:
             if _worker is not None:
                 delegate = await self._invoke_template(
@@ -1679,23 +1766,6 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
     # Internal helpers — logging, trace recording, override detection.
     ############################################################################
 
-    def _log_call(self, scope: str, stage: str, message: str, *, color: str = "white") -> None:
-        """Scope-aware ``_log`` for primitive dispatch.
-
-        Hook-scope Calls (yielded from a generator-form ``observation`` /
-        ``before_action`` / ``after_action``) are internal side-effects,
-        not workflow narrative. Their dispatch logs are suppressed by
-        default so the visible log stays focused on the workflow. Set
-        ``verbose_hook_calls=True`` on the constructor to surface them
-        for debugging.
-
-        Workflow-scope Calls always log (subject to the usual
-        ``self._verbose`` gate enforced by ``_log``).
-        """
-        if scope == "hook" and not self._verbose_hook_calls:
-            return
-        self._log(stage, message, color=color)
-
     def _log(self, stage: str, message: str, data: Any = None, color: str = "white"):
         """Log formatted message with timestamp and caller location.
 
@@ -1725,14 +1795,24 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         printer.print(line, color=color)
         if data is not None:
             printer.print(str(data), color="gray")
-    
-    def _record_trace_step(self, worker: Optional[CognitiveWorker], obs: str, decision: Any, action_result: Step, context: Any) -> None:
-        """Record a trace step to the workflow builder (if capture is active).
 
+    def _record_action_call(
+        self,
+        worker: Optional[CognitiveWorker],
+        obs: Any,
+        decision: Any,
+        action_result: Step,
+        context: Any,
+    ) -> None:
+        """Record an act-phase step.
+
+        Called both from worker OTC (per cycle, ``worker`` supplied) and
+        from the dispatcher (per ``yield ActionCall``, ``worker=None``).
         Detects the output type from the action_result:
-        - Tool calls (ActionResult with results) → TOOL_CALLS
-        - Structured BaseModel output → STRUCTURED
-        - Everything else (content only, no action) → CONTENT_ONLY
+
+        * tool calls (ActionResult with results) → ``TOOL_CALLS``
+        * structured BaseModel output → ``STRUCTURED``
+        * everything else (content only) → ``CONTENT_ONLY``
         """
         if self._agent_trace is None:
             return
@@ -1745,7 +1825,6 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         if action_result is not None and isinstance(action_result, Step):
             result_obj = action_result.result
             if isinstance(result_obj, ActionResult):
-                # Tool call output
                 output_type = StepOutputType.TOOL_CALLS
                 for r in result_obj.results:
                     tool_calls.append({
@@ -1756,20 +1835,17 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
                         "error": r.error,
                     })
             elif result_obj is not None and isinstance(result_obj, BaseModel):
-                # Structured BaseModel output
                 output_type = StepOutputType.STRUCTURED
                 structured_output = result_obj.model_dump()
                 structured_output_class = (
                     f"{result_obj.__class__.__module__}.{result_obj.__class__.__qualname__}"
                 )
             elif result_obj is not None:
-                # Non-BaseModel custom output — store as structured with no class
                 output_type = StepOutputType.STRUCTURED
                 try:
                     structured_output = {"__value__": result_obj}
                 except Exception:
                     structured_output = {"__value__": str(result_obj)}
-            # else: result_obj is None → CONTENT_ONLY (default)
 
         self._agent_trace.record_step({
             "name": worker.__class__.__name__ if worker is not None else "workflow",
@@ -1782,21 +1858,77 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
             "structured_output_class": structured_output_class,
         })
 
-    def _record_think_agent_trace(
-        self,
-        item: "ThinkAgent",
-        result: Any,
-    ) -> None:
+    def _record_human_call(self, item: "HumanCall", response: str) -> None:
+        """Record a ``HUMAN_CALL`` trace step.
+
+        The prompt sits in the ``observation`` slot (closest analog);
+        the response and channel land in ``structured_output``.
+        """
+        if self._agent_trace is None:
+            return
+
+        response_text = "" if response is None else str(response)
+        response_preview = (
+            (response_text[:1000] + "...")
+            if len(response_text) > 1000 else response_text
+        )
+
+        self._agent_trace.record_step({
+            "name": "human_call",
+            "step_content": f"HumanCall(channel={item.channel or 'default'})",
+            "tool_calls": [],
+            "observation": item.prompt or None,
+            "observation_hash": observation_fingerprint(item.prompt),
+            "output_type": StepOutputType.HUMAN_CALL.value,
+            "structured_output": {
+                "channel": item.channel,
+                "response": response_preview,
+            },
+            "structured_output_class": None,
+        })
+
+    def _record_llm_call(self, item: LLMCall, result: Any) -> None:
+        """Record an ``LLM_CALL`` trace step.
+
+        The prompt sits in the ``observation`` slot; the result is
+        serialised into ``structured_output``. ``llm_call_protocol`` on
+        the top-level step records which LLM contract was invoked.
+        """
+        if self._agent_trace is None:
+            return
+
+        try:
+            if isinstance(result, BaseModel):
+                serialized = result.model_dump()
+                cls_name = (
+                    f"{result.__class__.__module__}.{result.__class__.__qualname__}"
+                )
+            else:
+                serialized = {"__value__": result}
+                cls_name = type(result).__qualname__
+        except Exception:
+            serialized = {"__value__": str(result)}
+            cls_name = type(result).__qualname__
+
+        self._agent_trace.record_step({
+            "name": "llm_call",
+            "step_content": f"LLMCall({item.protocol})",
+            "tool_calls": [],
+            "observation": item.prompt or None,
+            "observation_hash": observation_fingerprint(item.prompt),
+            "output_type": StepOutputType.LLM_CALL.value,
+            "structured_output": serialized,
+            "structured_output_class": cls_name,
+            "llm_call_protocol": item.protocol,
+        })
+
+    def _record_think_agent(self, item: "ThinkAgent", result: Any) -> None:
         """Record a ``THINK_AGENT`` trace step.
 
-        Called by ``_dispatch_step`` after an external agent runtime
-        returns. The tool calls the external agent issued via MCP are
-        recorded into ``ctx.cognitive_history`` (because they route
-        through ``_action``), but they do not show up in trace.json
-        without this entry — the trace would otherwise look empty when
-        the whole arun was a single ThinkAgent. Worth recording at
-        least the ThinkAgent yield itself so trace.json reflects the
-        run shape.
+        The MCP-bridged tool calls fired *inside* the external agent
+        each generate their own ``_record_action_call`` entries via the
+        ``_dispatch_project_tool`` → ``_run_action_call`` path. This
+        record is the outer envelope marking the yield itself.
         """
         if self._agent_trace is None:
             return
@@ -1828,42 +1960,37 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
             "think_agent_name": item.name,
         })
 
-    def _record_llm_call_trace(self, item: LLMCall, result: Any) -> None:
-        """Record an ``LLM_CALL`` trace step.
+    def _record_enter_agent(self, item: "EnterAgent", result: Any) -> None:
+        """Record an ``ENTER_AGENT`` scope-switch marker.
 
-        LLMCall does not produce a tool-call result, observation, or
-        worker, so it cannot be folded into ``_record_trace_step`` without
-        forcing fake objects through that signature. The recorded step
-        carries: the protocol name, the prompt as the "observation"
-        slot (it is the closest analog), and the result serialized into
-        ``structured_output``.
+        Minimal marker — the actual steps that ran inside the agent
+        scope each produced their own records (ThinkUnit cycles,
+        ThinkAgent yields, etc.). This step exists so the trace
+        timeline reflects "we entered agent mode here with this goal
+        and exited with this final answer".
         """
         if self._agent_trace is None:
             return
 
-        try:
-            if isinstance(result, BaseModel):
-                serialized = result.model_dump()
-                cls_name = (
-                    f"{result.__class__.__module__}.{result.__class__.__qualname__}"
-                )
-            else:
-                serialized = {"__value__": result}
-                cls_name = type(result).__qualname__
-        except Exception:
-            serialized = {"__value__": str(result)}
-            cls_name = type(result).__qualname__
+        result_text: Optional[str]
+        if result is None:
+            result_text = None
+        else:
+            text = str(result)
+            result_text = (text[:1000] + "...") if len(text) > 1000 else text
 
         self._agent_trace.record_step({
-            "name": "llm_call",
-            "step_content": f"LLMCall({item.protocol})",
+            "name": "enter_agent",
+            "step_content": f"EnterAgent(goal={item.goal!r})",
             "tool_calls": [],
-            "observation": item.prompt or None,
-            "observation_hash": observation_fingerprint(item.prompt),
-            "output_type": StepOutputType.LLM_CALL.value,
-            "structured_output": serialized,
-            "structured_output_class": cls_name,
-            "llm_call_protocol": item.protocol,
+            "observation": None,
+            "observation_hash": None,
+            "output_type": StepOutputType.ENTER_AGENT.value,
+            "structured_output": {
+                "goal": item.goal,
+                "result": result_text,
+            },
+            "structured_output_class": None,
         })
 
     def _has_workflow(self) -> bool:
@@ -2329,15 +2456,16 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         if return_value is not None:
             self._final_answer = str(return_value)
         return self._final_answer or ctx.summary()
-
+    
     async def arun(
         self,
         *,
+        llm: Optional[BaseLlm] = None,
         context: Optional[CognitiveContextT] = None,
-        workdir: Optional[Union[Path, str]] = None,
-        trace_running: bool = False,
         mode: Optional[RunMode] = RunMode.AUTO,
         max_consecutive_fallbacks: int = 1,
+        trace: bool = False,
+        workdir: Optional[Union[Path, str]] = None,
         builtin_tools: Optional[Iterable[str]] = None,
         **kwargs
     ) -> str:
@@ -2350,13 +2478,17 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         ``mode=RunMode.AUTO`` (default) picks AMPHIFLOW / WORKFLOW / AGENT
         from which template methods the subclass overrides.
 
-        Setting ``workdir`` creates ``<workdir>/runs/<run_id>/`` and
-        writes ``meta.json`` / ``ctx_initial.json`` / ``ctx_final.json``
-        / ``trace.json``; ThinkAgent delegate workdirs land at
-        ``<run>/delegates/<n>/``. ``workdir`` also implicitly activates
-        ``AgentTrace`` capture — ``trace_running`` only controls whether
-        the in-memory ``AgentTrace`` survives on ``self._agent_trace``
-        after the run.
+        ``trace`` and ``workdir`` are orthogonal:
+
+        * ``trace=True`` activates an in-memory ``AgentTrace`` (survives
+          on ``self._agent_trace`` after the run for inspection).
+        * ``workdir=path`` materialises ``<workdir>/runs/<run_id>/`` so
+          ThinkAgent delegate subdirs (``delegates/<n>/...``) have a
+          home — independent of whether the trace is active.
+        * Both set ⇒ ``AgentTrace`` also incrementally persists
+          ``<run>/trace.json`` (goal + metadata + history).
+        * ``trace=False, workdir=path`` ⇒ run dir exists for delegate
+          artifacts, no ``trace.json`` is written.
 
         ``builtin_tools`` filters which built-in tools to inject. ``None``
         (default) defers to the class-level ``builtin_tools`` attribute;
@@ -2366,26 +2498,11 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         ``max_consecutive_fallbacks`` (AMPHIFLOW only) is the workflow
         step-failure threshold before switching to full agent mode.
         """
-        def _build_trace(automa: "AmphibiousAutoma") -> Dict[str, Any]:
-            """Build a trace dict from the workflow builder of the last run."""
-            import time as _time
-            metadata = {
-                "automa_class": f"{automa.__class__.__module__}.{automa.__class__.__qualname__}",
-                "context_class": (
-                    f"{automa._context_class.__module__}.{automa._context_class.__qualname__}"
-                    if automa._context_class else None
-                ),
-                "timestamp": _time.time(),
-                "spent_tokens": automa.spent_tokens,
-                "spent_time": automa.spent_time,
-            }
-            return automa._agent_trace.build(metadata=metadata)
-
         async def _run_and_report(context: CognitiveContextT) -> str:
             """Run the agent, measure time, and log summary."""
             start_time = time.time()
             result = await GraphAutoma.arun(
-                self, resolved_mode,
+                self, self._run_mode,
                 max_consecutive_fallbacks=max_consecutive_fallbacks,
             )
             self.spent_time = time.time() - start_time
@@ -2407,37 +2524,29 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         ########################
         # Pre-initialize status
         ########################
-        self.spent_tokens = 0
-        self.spent_time = 0.0
+        self._llm = llm
         self._final_answer = None
         self._read_tracker = {}
         self._current_run_dir = None
-
-        resolved_mode = self._resolve_mode(mode if mode is not None else RunMode.AUTO)
-        if self._llm is None and resolved_mode in (RunMode.AGENT, RunMode.AMPHIFLOW):
-            raise RuntimeError(
-                f"AmphibiousAutoma must be initialized with an LLM for "
-                f"{resolved_mode.value} mode."
-            )
-        # Publish the resolved mode so ``_dispatch_step`` /
-        # ``_enter_agent`` can discriminate FSM-mode (AMPHIFLOW main
-        # loop) from inline-mode dispatch. Cleared in the finally
-        # block below.
-        self.run_mode = resolved_mode
+        self._agent_trace = None
+        self._run_mode = self._resolve_mode(mode if mode is not None else RunMode.AUTO)
+        self.spent_tokens = 0
+        self.spent_time = 0.0
 
         ########################
-        # Run dir + trace activation
+        # Run-dir + trace activation — orthogonal axes.
+        #   trace=True  → AgentTrace is created (in-memory recorder).
+        #   workdir set → <workdir>/runs/<run_id>/ is materialised so
+        #                  ThinkAgent delegate subdirs have a home.
+        #   Both set    → AgentTrace also persists to that run dir.
         ########################
         run_id: Optional[str] = None
         if workdir is not None:
-            workdir_path = Path(workdir).expanduser().resolve()
             run_id = make_run_id()
-            self._current_run_dir = ensure_run_dir(workdir_path, run_id)
+            self._current_run_dir = ensure_run_dir(Path(workdir).expanduser().resolve(), run_id)
 
-        if self._current_run_dir is not None or trace_running:
-            self._agent_trace = AgentTrace()
-        else:
-            self._agent_trace = None
+        if trace:
+            self._agent_trace = AgentTrace(workdir=self._current_run_dir)
 
         ########################
         # Initialize context
@@ -2474,10 +2583,6 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
                 attr.add(item)
 
         # Inject built-in tools (e.g. request_human, bash, read_file, ...)
-        # so on_agent execution can trigger framework-level capabilities
-        # autonomously. The ``builtin_tools`` arun kwarg takes priority over
-        # the class-level ``builtin_tools`` attribute, which itself defaults
-        # to ``None`` meaning "inject all".
         allowed_builtins = self._resolve_builtin_filter(builtin_tools)
         valid_builtin_names = {t.tool_name for t in _BUILTIN_TOOLS}
         if allowed_builtins is not None:
@@ -2509,75 +2614,38 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         self._current_context = context
 
         ########################
-        # Run-dir initial artifacts (meta.json + ctx_initial.json)
-        ########################
-        if self._current_run_dir is not None:
-            run_start_time = time.time()
-            meta = {
-                "agent_class": f"{type(self).__module__}.{type(self).__qualname__}",
-                "agent_name": self.name,
-                "context_class": (
-                    f"{self._context_class.__module__}.{self._context_class.__qualname__}"
-                    if self._context_class else None
-                ),
-                "mode": resolved_mode.value,
-                "max_consecutive_fallbacks": max_consecutive_fallbacks,
-                "run_id": run_id,
-                "start_time": run_start_time,
-                "start_time_iso": time.strftime(
-                    "%Y-%m-%dT%H:%M:%S", time.localtime(run_start_time)
-                ),
-            }
-            (self._current_run_dir / "meta.json").write_text(
-                json.dumps(meta, indent=2, ensure_ascii=False, default=str),
-                encoding="utf-8",
-            )
-            (self._current_run_dir / "ctx_initial.json").write_text(
-                serialize_ctx(context),
-                encoding="utf-8",
-            )
-
-        ########################
         # Run the amphibious automa
         ########################
         token = current_agent.set(self)
         try:
-            result = await _run_and_report(context=context)
-            if trace_running and self._agent_trace:
-                _build_trace(self)
-            return result
+            # Trace lifecycle — begin
+            if self._agent_trace is not None:
+                self._agent_trace.begin_run(
+                    goal=getattr(context, "goal", "") or "",
+                    agent_class=f"{type(self).__module__}.{type(self).__qualname__}",
+                    agent_name=self.name,
+                    context_class=(
+                        f"{self._context_class.__module__}.{self._context_class.__qualname__}"
+                        if self._context_class else None
+                    ),
+                    mode=self._run_mode.value,
+                    run_id=run_id,
+                    max_consecutive_fallbacks=max_consecutive_fallbacks,
+                    start_time=time.time(),
+                )
+            return await _run_and_report(context=context)
         finally:
-            # Persist final artifacts before clearing the run-dir handle.
-            # Best-effort — never let an artifact-write error mask the
-            # primary control-flow exception (if any).
-            if self._current_run_dir is not None:
-                run_dir = self._current_run_dir
+            # Trace lifecycle — end.
+            if self._agent_trace is not None:
                 try:
-                    (run_dir / "ctx_final.json").write_text(
-                        serialize_ctx(context),
-                        encoding="utf-8",
+                    self._agent_trace.end_run(
+                        end_time=time.time(),
+                        spent_tokens=self.spent_tokens,
+                        spent_time=self.spent_time,
                     )
                 except Exception:
                     pass
-                if self._agent_trace is not None:
-                    try:
-                        trace_metadata = {
-                            "agent_class": f"{type(self).__module__}.{type(self).__qualname__}",
-                            "context_class": (
-                                f"{self._context_class.__module__}.{self._context_class.__qualname__}"
-                                if self._context_class else None
-                            ),
-                            "run_id": run_id,
-                            "end_time": time.time(),
-                            "spent_tokens": self.spent_tokens,
-                            "spent_time": self.spent_time,
-                        }
-                        self._agent_trace.save(
-                            str(run_dir / "trace.json"),
-                            metadata=trace_metadata,
-                        )
-                    except Exception:
-                        pass
-                self._current_run_dir = None
-            self.run_mode = None
+            self._current_run_dir = None
+            self._run_mode = None
+            self._llm = None
             current_agent.reset(token)

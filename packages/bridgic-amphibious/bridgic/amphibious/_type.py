@@ -536,14 +536,17 @@ class ToolResult:
 class StepOutputType(str, Enum):
     """Discriminator for the kind of output a trace step produced.
 
-    Used by: _amphibious_automa.py (AgentTrace, _record_trace_step,
-    _record_llm_call_trace, _record_think_agent_trace)
+    One value per ``_record_<primitive>`` family on ``AmphibiousAutoma``
+    (used by: _amphibious_automa.py — AgentTrace + the ``_record_*``
+    methods).
     """
     TOOL_CALLS = "tool_calls"
     STRUCTURED = "structured"
     CONTENT_ONLY = "content_only"
     LLM_CALL = "llm_call"
     THINK_AGENT = "think_agent"
+    HUMAN_CALL = "human_call"
+    ENTER_AGENT = "enter_agent"
 
 
 class RecordedToolCall(BaseModel):
@@ -578,21 +581,3 @@ class TraceStep(BaseModel):
     llm_call_protocol: Optional[str] = None  # set when output_type == LLM_CALL
     think_agent_name: Optional[str] = None   # set when output_type == THINK_AGENT
 
-
-################################################################################################################
-# Utility functions  (used by: _amphibious_automa.py)
-################################################################################################################
-
-def observation_fingerprint(obs: Any) -> Optional[str]:
-    """Compute a stable hash fingerprint of an observation value.
-
-    Used for divergence detection during replay. Returns None for
-    None observations.
-    """
-    if obs is None:
-        return None
-    try:
-        serialized = json.dumps(obs, sort_keys=True, default=str)
-    except (TypeError, ValueError):
-        serialized = str(obs)
-    return hashlib.sha256(serialized.encode()).hexdigest()[:16]

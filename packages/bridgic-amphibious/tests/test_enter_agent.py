@@ -88,7 +88,7 @@ class TestEnterAgentDelegation:
                 yield EnterAgent(goal="sub-goal-2")
 
         llm = MockLLM([_finish(), _finish()])
-        await Agent(llm=llm).arun(context=_ctx())
+        await Agent().arun(llm=llm, context=_ctx())
 
         # on_agent runs once for each EnterAgent, with the snapshotted goal.
         assert on_agent_invocations == ["sub-goal-1", "sub-goal-2"]
@@ -113,7 +113,7 @@ class TestEnterAgentDelegation:
                 observed_goals.append(("after-call", ctx.goal))
 
         llm = MockLLM([_finish()])
-        await Agent(llm=llm).arun(context=_ctx())
+        await Agent().arun(llm=llm, context=_ctx())
 
         assert observed_goals == [
             ("before-call", "parent goal"),
@@ -151,7 +151,7 @@ class TestEnterAgentDelegation:
                 yield EnterAgent(goal="A")
                 yield EnterAgent(goal="B")
 
-        await Agent(llm=llm).arun(context=_ctx())
+        await Agent().arun(llm=llm, context=_ctx())
 
         # Two EnterAgent yields × one ThinkUnit each → at least 2 think cycles
         assert llm.call_count >= 2
@@ -202,7 +202,7 @@ class TestEnterAgentToolScoping:
                 yield EnterAgent(goal="scoped", tools=["request_human"])
 
         llm = MockLLM([_finish()])
-        await Agent(llm=llm).arun(context=_ctx())
+        await Agent().arun(llm=llm, context=_ctx())
 
         # The sub-agent saw only the filtered tool name.
         assert seen_tool_names == [["request_human"]]
@@ -237,7 +237,7 @@ class TestEnterAgentInWorkflowMode:
                 yield EnterAgent(goal="forced-workflow-sub")
 
         llm = MockLLM([_finish()])
-        await Agent(llm=llm).arun(context=_ctx(), mode=RunMode.WORKFLOW)
+        await Agent().arun(llm=llm, context=_ctx(), mode=RunMode.WORKFLOW)
 
         # on_agent ran once with the snapshotted sub-goal.
         assert on_agent_invocations == ["forced-workflow-sub"]
@@ -259,5 +259,5 @@ class TestEnterAgentInWorkflowMode:
                 yield EnterAgent(goal="A")
 
         llm = MockLLM([_finish()])
-        await Agent(llm=llm).arun(context=_ctx(), mode=RunMode.WORKFLOW)
+        await Agent().arun(llm=llm, context=_ctx(), mode=RunMode.WORKFLOW)
         assert llm.call_count >= 1

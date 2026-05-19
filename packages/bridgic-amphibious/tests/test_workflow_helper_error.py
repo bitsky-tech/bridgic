@@ -106,9 +106,9 @@ class TestWorkflowGeneratorError:
                 raise RuntimeError("simulated helper failure")
                 yield  # pragma: no cover
 
-        agent = Agent(llm=llm)
+        agent = Agent()
         # arun should not raise — fallback handles it.
-        await agent.arun(goal="Trigger amphiflow fallback")
+        await agent.arun(llm=llm, goal="Trigger amphiflow fallback")
 
         assert len(on_agent_calls) == 1, (
             f"on_agent should have been invoked exactly once for the fallback, "
@@ -133,7 +133,7 @@ class TestWorkflowGeneratorError:
                 raise KeyError("missing key")
                 yield  # pragma: no cover
 
-        agent = Agent(llm=_MockLLM([]))
+        agent = Agent()
 
         with pytest.raises(
             RuntimeError,

@@ -341,8 +341,8 @@ class MyAgent(AmphibiousAutoma[MyContext]):
 ### Execution Tracing
 
 ```python
-agent = MyAgent(llm=my_llm)
-await agent.arun(goal="...", tools=[...], trace_running=True)
+agent = MyAgent()
+await agent.arun(llm=my_llm, goal="...", tools=[...], trace=True)
 
 # Access trace data
 trace = agent._agent_trace.build()

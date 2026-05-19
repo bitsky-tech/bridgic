@@ -477,21 +477,20 @@ class _ThinkAgentRuntime:
         tool_name: str,
         args: Dict[str, Any],
     ) -> Any:
-        """Route a claude-originated tool call through agent._action().
+        """Route a claude-originated tool call through ``agent._run_action_call``.
 
-        This is the architectural payoff: every external-agent tool call
-        is processed by the same pipeline that workflow-side ``yield
-        ActionCall`` uses, so observation / before_action / after_action
-        hooks all fire and the call lands in ``ctx.cognitive_history``
-        automatically.
+        Every external-agent tool call is processed by the same pipeline
+        as workflow-side ``yield ActionCall``, so observation /
+        before_action / after_action hooks all fire and the call lands
+        in ``ctx.cognitive_history`` automatically.
         """
         action_call = ActionCall(
             tool_name=tool_name,
             description=f"[think_agent] {tool_name}",
             **args,
         )
-        # Mirror the workflow-scope ActionCall semantics in _dispatch_step:
-        # run observation, then _action (which itself runs before/after_action).
+        # Mirror workflow-scope ActionCall semantics: observation, then
+        # _run_action_call (which itself drives before/after_action).
         try:
             obs = await agent._invoke_template(agent.observation(ctx), ctx)
             if obs is not None:
@@ -499,7 +498,9 @@ class _ThinkAgentRuntime:
         except Exception:
             pass
 
-        step = await agent._action(action_call.decision, ctx, _worker=None)
+        step = await agent._run_action_call(
+            action_call.decision, ctx, _worker=None,
+        )
         return _extract_tool_result(step)
 
 

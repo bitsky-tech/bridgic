@@ -135,7 +135,7 @@ class TestChannelDispatchBehavior:
         class Agent(AmphibiousAutoma[CognitiveContext]):
             pass
 
-        agent = Agent(llm=MockLLM())
+        agent = Agent()
         captured: list = []
 
         def fake_input(prompt):
@@ -406,7 +406,7 @@ class TestDynamicRequestHumanSpecInjection:
                 return "s"
 
         agent = TwoChannelAgent()
-        await agent.arun(goal="x")
+        await agent.arun(llm=MockLLM(), goal="x")
 
         spec = agent.captured_specs["request_human"]
         enum = spec.tool_parameters["properties"]["channel"]["enum"]
@@ -549,8 +549,8 @@ class TestDynamicRequestHumanSpecInjection:
             async def on_agent(self, ctx):
                 yield ThinkUnit("worker")
 
-        agent = _AgentClass(llm=MockLLM())
-        await agent.arun(goal="test", mode=RunMode.AGENT)
+        agent = _AgentClass()
+        await agent.arun(llm=MockLLM(), goal="test", mode=RunMode.AGENT)
 
         assert captured["enum"] == ["feishu", "slack"]
         assert "feishu" in captured["desc"] and "slack" in captured["desc"]
@@ -584,5 +584,5 @@ class TestDynamicRequestHumanSpecInjection:
             async def on_agent(self, ctx):
                 yield ThinkUnit("worker")
 
-        agent = _AgentClass(llm=MockLLM())
-        await agent.arun(goal="test", mode=RunMode.AGENT)
+        agent = _AgentClass()
+        await agent.arun(llm=MockLLM(), goal="test", mode=RunMode.AGENT)

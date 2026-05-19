@@ -115,11 +115,9 @@ class TestLLMCallFallback:
                 post_fallback_steps.append("after-fallback")
 
         # threshold=2 means first failure triggers step-level (not full).
-        await Agent(llm=llm).arun(
-            goal="trigger LLMCall step-level fallback",
+        await Agent().arun(llm=llm, goal="trigger LLMCall step-level fallback",
             mode=RunMode.AMPHIFLOW,
-            max_consecutive_fallbacks=2,
-        )
+            max_consecutive_fallbacks=2,)
 
         assert len(agent_invocations) == 1, (
             "on_agent should have been invoked exactly once for step-level fallback"
@@ -153,11 +151,9 @@ class TestLLMCallFallback:
                 # Should not be reached: threshold=1 → first failure = full fallback.
                 post_fallback_steps.append("UNREACHABLE")
 
-        await Agent(llm=llm).arun(
-            goal="trigger LLMCall full fallback",
+        await Agent().arun(llm=llm, goal="trigger LLMCall full fallback",
             mode=RunMode.AMPHIFLOW,
-            max_consecutive_fallbacks=1,
-        )
+            max_consecutive_fallbacks=1,)
 
         assert len(agent_invocations) == 1
         assert post_fallback_steps == [], (
@@ -197,11 +193,9 @@ class TestHumanCallFallback:
                 yield HumanCall(prompt="confirm?")
                 post_fallback_steps.append("after-fallback")
 
-        await Agent(llm=llm).arun(
-            goal="trigger HumanCall step-level fallback",
+        await Agent().arun(llm=llm, goal="trigger HumanCall step-level fallback",
             mode=RunMode.AMPHIFLOW,
-            max_consecutive_fallbacks=2,
-        )
+            max_consecutive_fallbacks=2,)
 
         assert len(agent_invocations) == 1
         assert "[Workflow fallback]" in agent_invocations[0]
@@ -232,11 +226,9 @@ class TestHumanCallFallback:
                 yield HumanCall(prompt="confirm?")
                 post_fallback_steps.append("UNREACHABLE")
 
-        await Agent(llm=llm).arun(
-            goal="trigger HumanCall full fallback",
+        await Agent().arun(llm=llm, goal="trigger HumanCall full fallback",
             mode=RunMode.AMPHIFLOW,
-            max_consecutive_fallbacks=1,
-        )
+            max_consecutive_fallbacks=1,)
 
         assert len(agent_invocations) == 1
         assert post_fallback_steps == []
@@ -300,11 +292,9 @@ class TestFallbackCounterReset:
                 r4 = yield LLMCall.chat("c4")  # chat 4 succeeds
                 results.append(("r4", r4))
 
-        await Agent(llm=llm).arun(
-            goal="counter-reset test",
+        await Agent().arun(llm=llm, goal="counter-reset test",
             mode=RunMode.AMPHIFLOW,
-            max_consecutive_fallbacks=2,
-        )
+            max_consecutive_fallbacks=2,)
 
         # Two step-level fallbacks should have happened (not one full fallback).
         assert len(agent_invocations) == 2, (
@@ -364,8 +354,7 @@ class TestSlotMechanism:
                 data = yield ActionCall("always_fails")
                 captured.append(data)
 
-        await Agent(llm=llm).arun(
-            goal="test slot recovery",
+        await Agent().arun(llm=llm, goal="test slot recovery",
             tools=[FunctionToolSpec.from_raw(always_fails)],
             mode=RunMode.AMPHIFLOW,
             max_consecutive_fallbacks=2,
@@ -404,8 +393,7 @@ class TestSlotMechanism:
                 data = yield ActionCall("always_fails", arg1="x")
                 captured.append(data)
 
-        await Agent(llm=llm).arun(
-            goal="default slot test",
+        await Agent().arun(llm=llm, goal="default slot test",
             tools=[FunctionToolSpec.from_raw(always_fails)],
             mode=RunMode.AMPHIFLOW,
             max_consecutive_fallbacks=2,
@@ -454,11 +442,9 @@ class TestSlotMechanism:
                 feedback = yield HumanCall(prompt="confirm?")
                 captured.append(feedback)
 
-        await Agent(llm=llm).arun(
-            goal="human resolve test",
+        await Agent().arun(llm=llm, goal="human resolve test",
             mode=RunMode.AMPHIFLOW,
-            max_consecutive_fallbacks=2,
-        )
+            max_consecutive_fallbacks=2,)
 
         assert captured == ["yes please"]
 
@@ -516,8 +502,7 @@ class TestSlotMechanism:
                 # After workflow resumes, the fallback tool should be GONE.
                 captured.append([t.tool_name for t in ctx.tools.get_all()])
 
-        await Agent(llm=llm).arun(
-            goal="tool scope test",
+        await Agent().arun(llm=llm, goal="tool scope test",
             tools=[
                 FunctionToolSpec.from_raw(always_fails),
                 FunctionToolSpec.from_raw(real_user_tool),

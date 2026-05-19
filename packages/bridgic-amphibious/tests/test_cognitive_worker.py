@@ -284,7 +284,7 @@ class TestCognitiveWorker:
             ),
             ThinkDecision(step_content="All done", output=[]),
         ])
-        worker = _SimpleWorker(llm=llm)
+        worker = _SimpleWorker()
 
         class SimpleAgent(AmphibiousAutoma[TravelCtx]):
             step = think_unit(worker)
@@ -293,8 +293,8 @@ class TestCognitiveWorker:
                 yield ThinkUnit("step")  # search_flights
                 yield ThinkUnit("step")  # no tools
 
-        agent = SimpleAgent(llm=llm)
-        await agent.arun(goal="Plan a trip to Tokyo")
+        agent = SimpleAgent()
+        await agent.arun(llm=llm, goal="Plan a trip to Tokyo")
 
         assert len(agent._current_context.cognitive_history) == 2
         # Step 1: search_flights was executed
@@ -323,7 +323,7 @@ class TestCognitiveWorker:
                 ),
             ],
         )
-        worker = _ActionPipelineWorker(llm=llm)
+        worker = _ActionPipelineWorker()
 
         class PipelineAgent(AmphibiousAutoma[TravelCtx]):
             step = think_unit(worker)
@@ -331,8 +331,8 @@ class TestCognitiveWorker:
             async def on_agent(self, ctx):
                 yield ThinkUnit("step")
 
-        agent = PipelineAgent(llm=llm)
-        await agent.arun(goal="test")
+        agent = PipelineAgent()
+        await agent.arun(llm=llm, goal="test")
 
         last_step = agent._current_context.cognitive_history[-1]
         # before_action filtered out book_flight
@@ -493,7 +493,7 @@ class TestCognitiveWorker:
                 ]
             )],
         )
-        worker = EnhancementWorker(llm=llm)
+        worker = EnhancementWorker()
 
         class EnhancementAgent(AmphibiousAutoma[TravelCtx]):
             step = think_unit(worker)
@@ -504,8 +504,8 @@ class TestCognitiveWorker:
             async def on_agent(self, ctx):
                 yield ThinkUnit("step")
 
-        agent = EnhancementAgent(llm=llm)
-        await agent.arun(goal="test")
+        agent = EnhancementAgent()
+        await agent.arun(llm=llm, goal="test")
 
         # Check that agent-level observation was used (worker delegates via _DELEGATE)
         user_msg = llm.captured_messages[-1]
@@ -566,8 +566,8 @@ class TestCognitiveWorker:
             async def on_agent(self, ctx):
                 yield ThinkUnit("step")
 
-        agent = SimpleAgent(llm=llm)
-        await agent.arun(goal="test")
+        agent = SimpleAgent()
+        await agent.arun(llm=llm, goal="test")
         assert len(agent._current_context.cognitive_history) == 1
         assert agent._current_context.cognitive_history[0].content == "Search flights"
 
@@ -744,7 +744,7 @@ class TestOutputType:
         expected_output = _PlanResult(phases=[
             _PlanPhase(sub_goal="Step A", skill_name="skill-a"),
         ])
-        worker = _PlannerWorker(llm=MockLLM())
+        worker = _PlannerWorker()
         decision_model = worker._ThinkDecisionModel
         decision_instance = decision_model(
             step_content="Planning complete", output=expected_output, finish=False
@@ -771,7 +771,7 @@ class TestOutputType:
             _PlanPhase(sub_goal="Phase 1", skill_name="skill-1"),
         ])
 
-        planner_worker = _PlannerWorker(llm=MockLLM())
+        planner_worker = _PlannerWorker()
 
         class _TrackingAgent(AmphibiousAutoma[CognitiveContext]):
             plan = think_unit(planner_worker)
@@ -786,8 +786,8 @@ class TestOutputType:
             step_content="Done", output=expected_output, finish=False
         )
 
-        agent = _TrackingAgent(llm=llm)
-        await agent.arun(goal="Test output_schema")
+        agent = _TrackingAgent()
+        await agent.arun(llm=llm, goal="Test output_schema")
 
         # The typed output is stored as the step result in history
         last_step = agent._current_context.cognitive_history[-1]
@@ -810,11 +810,12 @@ class TestOutputType:
                 dm = w._ThinkDecisionModel
                 return dm(step_content="", output=_PlanResult(phases=[]), finish=False)
 
-        worker = _PlannerWorker(llm=_CapturingLLM())
+        worker = _PlannerWorker()
         worker_ref.append(worker)
         ctx = CognitiveContext(goal="Test")
         ctx.observation = None
 
+        worker.set_llm(_CapturingLLM())
         await worker.arun(context=ctx)
 
         assert len(captured_constraint) == 1
@@ -854,8 +855,8 @@ class TestFinishSignal:
             async def on_agent(self, ctx):
                 yield ThinkUnit("step")
 
-        agent = _SimpleAgent(llm=_FinishLLM())
-        await agent.arun(goal="Test finish signal")
+        agent = _SimpleAgent()
+        await agent.arun(llm=_FinishLLM(), goal="Test finish signal")
 
         assert call_idx[0] == 2, f"Expected 2 LLM calls, got {call_idx[0]}"
 
@@ -877,8 +878,8 @@ class TestFinishSignal:
             async def on_agent(self, ctx):
                 yield ThinkUnit("step")
 
-        agent = _LoopAgent(llm=_NeverFinishLLM())
-        await agent.arun(goal="Test no finish")
+        agent = _LoopAgent()
+        await agent.arun(llm=_NeverFinishLLM(), goal="Test no finish")
 
         assert call_idx[0] == 3, f"Expected 3 LLM calls, got {call_idx[0]}"
 
@@ -901,7 +902,7 @@ class TestActionDefensive:
                 if False:
                     yield
 
-        agent = _SchemaAgent(llm=MockLLM())
+        agent = _SchemaAgent()
         ctx = CognitiveContext(goal="Test")
         agent._current_context = ctx
 

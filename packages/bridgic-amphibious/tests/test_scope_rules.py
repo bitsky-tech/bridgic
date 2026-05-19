@@ -85,7 +85,7 @@ class TestEnterAgentScope:
                 yield EnterAgent(goal="sub")
 
         # Should not raise.
-        await Agent(llm=_DummyLLM()).arun(context=_ctx())
+        await Agent().arun(llm=_DummyLLM(), context=_ctx())
 
     @pytest.mark.asyncio
     async def test_enter_agent_in_on_agent_raises(self):
@@ -96,7 +96,7 @@ class TestEnterAgentScope:
                 yield EnterAgent(goal="re-enter")
 
         with pytest.raises(RuntimeError, match="only valid inside on_workflow"):
-            await Agent(llm=_DummyLLM()).arun(context=_ctx())
+            await Agent().arun(llm=_DummyLLM(), context=_ctx())
 
     @pytest.mark.asyncio
     async def test_enter_agent_in_hook_scope_raises(self):
@@ -107,7 +107,7 @@ class TestEnterAgentScope:
                 if False:
                     yield
 
-        agent = Agent(llm=_DummyLLM())
+        agent = Agent()
         agent._current_context = _ctx()
         with pytest.raises(RuntimeError, match="only valid inside on_workflow"):
             await agent._dispatch_step(
@@ -131,7 +131,7 @@ class TestThinkUnitScope:
         class Agent(AmphibiousAutoma[CognitiveContext]):
             think_unit_a = think_unit(CognitiveWorker.inline("a"), max_attempts=1)
 
-        agent = Agent(llm=_DummyLLM())
+        agent = Agent()
         agent._current_context = _ctx()
         with pytest.raises(RuntimeError, match="only valid inside on_agent"):
             await agent._dispatch_step(
@@ -147,7 +147,7 @@ class TestThinkUnitScope:
         class Agent(AmphibiousAutoma[CognitiveContext]):
             think_unit_a = think_unit(CognitiveWorker.inline("a"), max_attempts=1)
 
-        agent = Agent(llm=_DummyLLM())
+        agent = Agent()
         agent._current_context = _ctx()
         with pytest.raises(RuntimeError, match="only valid inside on_agent"):
             await agent._dispatch_step(
@@ -169,7 +169,7 @@ class TestActionCallScope:
         class Agent(AmphibiousAutoma[CognitiveContext]):
             pass
 
-        agent = Agent(llm=_DummyLLM())
+        agent = Agent()
         agent._current_context = _ctx()
         with pytest.raises(RuntimeError, match="not allowed inside on_agent"):
             await agent._dispatch_step(
@@ -188,7 +188,7 @@ class TestHumanCallScope:
             async def feed(self, prompt: str) -> str:
                 return "ok"
 
-        agent = Agent(llm=_DummyLLM())
+        agent = Agent()
         agent._current_context = _ctx()
         with pytest.raises(RuntimeError, match="not allowed inside on_agent"):
             await agent._dispatch_step(
@@ -205,7 +205,7 @@ class TestHumanCallScope:
             async def feed(self, prompt: str) -> str:
                 return "ok"
 
-        agent = Agent(llm=_DummyLLM())
+        agent = Agent()
         agent._current_context = _ctx()
         outcome = await agent._dispatch_step(
             HumanCall(prompt="confirm"),
@@ -222,7 +222,7 @@ class TestLLMCallScope:
         class Agent(AmphibiousAutoma[CognitiveContext]):
             pass
 
-        agent = Agent(llm=_DummyLLM())
+        agent = Agent()
         agent._current_context = _ctx()
         with pytest.raises(RuntimeError, match="not allowed inside on_agent"):
             await agent._dispatch_step(

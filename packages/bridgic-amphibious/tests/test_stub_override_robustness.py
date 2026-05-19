@@ -136,7 +136,7 @@ class TestTemplateFormValidation:
                 if False:  # pragma: no cover
                     yield
 
-        agent = _NoOpAgent(llm=_SeqLLM([]))
+        agent = _NoOpAgent()
         assert agent._has_workflow() is True
 
 
@@ -164,7 +164,7 @@ class TestWorkerHookStubs:
             async def before_action(self, decision_result, context):
                 pass  # legacy "delegate" form
 
-        worker = StubWorker(llm=llm)
+        worker = StubWorker()
 
         class StubAgent(AmphibiousAutoma[_TravelCtx]):
             main_step = think_unit(worker, max_attempts=1)
@@ -177,8 +177,8 @@ class TestWorkerHookStubs:
             async def on_agent(self, ctx) -> AsyncGenerator[Any, Any]:
                 yield ThinkUnit("main_step")
 
-        agent = StubAgent(llm=llm)
-        await agent.arun(goal="Trigger before_action delegation")
+        agent = StubAgent()
+        await agent.arun(llm=llm, goal="Trigger before_action delegation")
 
         # Agent-level before_action ran exactly once with the original tool list.
         assert len(agent_before_calls) == 1
@@ -206,7 +206,7 @@ class TestWorkerHookStubs:
             async def after_action(self, step_result, ctx):
                 pass  # legacy "delegate" form
 
-        worker = StubWorker(llm=llm)
+        worker = StubWorker()
 
         class StubAgent(AmphibiousAutoma[_TravelCtx]):
             main_step = think_unit(worker, max_attempts=1)
@@ -219,8 +219,8 @@ class TestWorkerHookStubs:
             async def on_agent(self, ctx) -> AsyncGenerator[Any, Any]:
                 yield ThinkUnit("main_step")
 
-        agent = StubAgent(llm=llm)
-        await agent.arun(goal="Trigger after_action delegation")
+        agent = StubAgent()
+        await agent.arun(llm=llm, goal="Trigger after_action delegation")
 
         assert len(agent_after_calls) == 1, (
             "Agent-level after_action should run when worker returns None"
@@ -239,7 +239,7 @@ class TestWorkerHookStubs:
             async def observation(self, context):
                 pass  # legacy "delegate" form
 
-        worker = StubWorker(llm=llm)
+        worker = StubWorker()
 
         class StubAgent(AmphibiousAutoma[_TravelCtx]):
             main_step = think_unit(worker, max_attempts=1)
@@ -251,8 +251,8 @@ class TestWorkerHookStubs:
             async def on_agent(self, ctx) -> AsyncGenerator[Any, Any]:
                 yield ThinkUnit("main_step")
 
-        agent = StubAgent(llm=llm)
-        await agent.arun(goal="Trigger observation delegation")
+        agent = StubAgent()
+        await agent.arun(llm=llm, goal="Trigger observation delegation")
 
         assert agent._current_context.observation == "agent-level observation"
 
@@ -274,7 +274,7 @@ class TestWorkerHookStubs:
             async def observation(self, context):
                 pass  # worker coroutine stub — None
 
-        worker = StubWorker(llm=llm)
+        worker = StubWorker()
 
         class StubAgent(AmphibiousAutoma[_TravelCtx]):
             main_step = think_unit(worker, max_attempts=1)
@@ -289,8 +289,8 @@ class TestWorkerHookStubs:
                 ctx.observation = "from-after-action"
                 yield ThinkUnit("main_step")
 
-        agent = StubAgent(llm=llm)
-        await agent.arun(goal="Both-None observation must preserve prior value")
+        agent = StubAgent()
+        await agent.arun(llm=llm, goal="Both-None observation must preserve prior value")
         assert agent._current_context.observation == "from-after-action"
 
     @pytest.mark.asyncio
@@ -310,7 +310,7 @@ class TestWorkerHookStubs:
             async def observation(self, context):
                 pass
 
-        worker = StubWorker(llm=llm)
+        worker = StubWorker()
 
         # NOTE: no observation override on the agent — exercises the default
         # stub method baked into AmphibiousAutoma.
@@ -321,8 +321,8 @@ class TestWorkerHookStubs:
                 ctx.observation = "from-after-action"
                 yield ThinkUnit("main_step")
 
-        agent = StubAgent(llm=llm)
-        await agent.arun(goal="Default observation stub must preserve")
+        agent = StubAgent()
+        await agent.arun(llm=llm, goal="Default observation stub must preserve")
         assert agent._current_context.observation == "from-after-action"
 
 
@@ -354,7 +354,7 @@ class TestActionCustomOutputStub:
             async def thinking(self):
                 return "Produce a plan."
 
-        worker = _PlanWorker(llm=_SeqLLM([]))
+        worker = _PlanWorker()
         decision_model = worker._ThinkDecisionModel
         decision = decision_model(
             step_content="Planning complete",
@@ -374,8 +374,8 @@ class TestActionCustomOutputStub:
             async def on_agent(self, ctx) -> AsyncGenerator[Any, Any]:
                 yield ThinkUnit("main_step")
 
-        agent = StubAgent(llm=llm)
-        await agent.arun(goal="Trigger action_custom_output passthrough")
+        agent = StubAgent()
+        await agent.arun(llm=llm, goal="Trigger action_custom_output passthrough")
 
         # The typed _PlanOutput survives the None-returning hook and lands as result.
         last_step = agent._current_context.cognitive_history[-1]

@@ -1,15 +1,11 @@
-"""Tests for the ``arun(workdir=...)`` parameter and per-run artifacts.
+"""Tests for ``arun(trace=..., workdir=...)`` and per-run artifacts.
 
-When ``arun(workdir=...)`` is set, the framework creates one
-``<workdir>/runs/<run_id>/`` directory per run and writes:
+``trace`` and ``workdir`` are orthogonal:
 
-* ``meta.json``        — run metadata (agent class, mode, timing).
-* ``ctx_initial.json`` — context snapshot at arun entry.
-* ``ctx_final.json``   — context snapshot at arun exit (success or failure).
-* ``trace.json``       — AgentTrace dump (workdir auto-activates trace
-                         capture, regardless of ``trace_running``).
-* ``delegates/<n>/``   — populated by ``_ThinkAgentRuntime`` when
-                         ``ThinkAgent`` fires; tested via mock here.
+* ``trace=True``  ⇒ in-memory ``AgentTrace`` is created (recording).
+* ``workdir=path`` ⇒ ``<workdir>/runs/<run_id>/`` is materialised so
+                    ``ThinkAgent`` delegates have a home.
+* Both           ⇒ ``AgentTrace`` also persists ``<run>/trace.json``.
 """
 
 import json
@@ -72,8 +68,9 @@ class TestArunWithoutWorkdir:
 
 
 class TestArunWithWorkdir:
-    """``workdir=...`` → ``<workdir>/runs/<id>/`` is materialised with
-    ``meta.json`` + ``ctx_initial.json`` + ``ctx_final.json`` + ``trace.json``."""
+    """``workdir=path`` alone materialises ``<workdir>/runs/<id>/`` so
+    delegates have a home — but does NOT write ``trace.json`` unless
+    ``trace=True`` is also set."""
 
     @pytest.mark.asyncio
     async def test_workdir_creates_run_subdirectory(self, tmp_path):
@@ -86,29 +83,49 @@ class TestArunWithWorkdir:
         assert run_dirs[0].name.count("-") >= 1
 
     @pytest.mark.asyncio
-    async def test_run_directory_contains_all_artifacts(self, tmp_path):
+    async def test_workdir_alone_does_not_write_trace_json(self, tmp_path):
+        """``workdir`` without ``trace=True`` → run dir exists (for
+        delegate artifacts) but no ``trace.json`` is written."""
         await _WorkflowAgent().arun(goal="hello", workdir=tmp_path)
         run_dir = next((tmp_path / "runs").iterdir())
         files = {p.name for p in run_dir.iterdir() if p.is_file()}
-        assert {"meta.json", "ctx_initial.json", "ctx_final.json", "trace.json"} <= files
+        assert files == set()  # empty: no delegates fired, no trace
 
     @pytest.mark.asyncio
-    async def test_meta_json_has_expected_fields(self, tmp_path):
-        await _WorkflowAgent().arun(goal="hello", workdir=tmp_path)
+    async def test_run_directory_contains_only_trace_json(self, tmp_path):
+        """trace=True + workdir → single unified ``trace.json`` artifact
+        (no legacy meta / ctx_initial / ctx_final)."""
+        await _WorkflowAgent().arun(goal="hello", trace=True, workdir=tmp_path)
         run_dir = next((tmp_path / "runs").iterdir())
-        meta = json.loads((run_dir / "meta.json").read_text())
+        files = {p.name for p in run_dir.iterdir() if p.is_file()}
+        assert files == {"trace.json"}
+
+    @pytest.mark.asyncio
+    async def test_trace_metadata_has_expected_fields(self, tmp_path):
+        """Metadata previously split across ``meta.json`` is now part of
+        ``trace.json``'s ``metadata`` block."""
+        await _WorkflowAgent().arun(goal="hello", trace=True, workdir=tmp_path)
+        run_dir = next((tmp_path / "runs").iterdir())
+        trace = json.loads((run_dir / "trace.json").read_text())
+        meta = trace["metadata"]
         assert "agent_class" in meta
         assert "mode" in meta
         assert "run_id" in meta
         assert "start_time" in meta
+        assert "end_time" in meta
+        assert "spent_time" in meta
+        assert "cost_time" in meta
         assert meta["mode"] == "workflow"
 
     @pytest.mark.asyncio
-    async def test_ctx_initial_captures_goal(self, tmp_path):
-        await _WorkflowAgent().arun(goal="hello-goal", workdir=tmp_path)
+    async def test_trace_captures_goal(self, tmp_path):
+        """The original arun goal lands in the top-level ``goal`` field."""
+        await _WorkflowAgent().arun(
+            goal="hello-goal", trace=True, workdir=tmp_path,
+        )
         run_dir = next((tmp_path / "runs").iterdir())
-        ctx_init = json.loads((run_dir / "ctx_initial.json").read_text())
-        assert ctx_init["goal"] == "hello-goal"
+        trace = json.loads((run_dir / "trace.json").read_text())
+        assert trace["goal"] == "hello-goal"
 
     @pytest.mark.asyncio
     async def test_workdir_accepts_string_path(self, tmp_path):
@@ -123,18 +140,12 @@ class TestArunWithWorkdir:
         assert agent._current_run_dir is None
 
     @pytest.mark.asyncio
-    async def test_workdir_implies_trace_capture(self, tmp_path):
-        """``trace_running`` defaults to ``False`` but workdir alone should
-        still capture and write ``trace.json``."""
-        await _WorkflowAgent().arun(goal="x", workdir=tmp_path)
+    async def test_trace_json_has_unified_shape(self, tmp_path):
+        """Unified shape: goal + metadata + history at top level."""
+        await _WorkflowAgent().arun(goal="x", trace=True, workdir=tmp_path)
         run_dir = next((tmp_path / "runs").iterdir())
         trace = json.loads((run_dir / "trace.json").read_text())
-        # Trace JSON is at minimum a dict with ``steps`` / ``metadata`` keys.
-        assert "steps" in trace
-        assert "metadata" in trace
-        assert trace["metadata"].get("run_id") == json.loads(
-            (run_dir / "meta.json").read_text()
-        )["run_id"]
+        assert set(trace.keys()) == {"goal", "metadata", "history"}
 
 
 # ---------------------------------------------------------------------------
@@ -143,29 +154,41 @@ class TestArunWithWorkdir:
 
 
 class TestTraceActivation:
+    """``trace`` activates ``AgentTrace``; ``workdir`` only controls
+    persistence destination. Four combos make up the truth table."""
 
     @pytest.mark.asyncio
-    async def test_no_workdir_no_trace_running_leaves_trace_none(self):
+    async def test_neither_flag_leaves_trace_none(self):
+        """trace=False, workdir=None → no AgentTrace at all."""
         agent = _WorkflowAgent()
         await agent.arun(goal="x")
         assert agent._agent_trace is None
 
     @pytest.mark.asyncio
-    async def test_workdir_keeps_trace_object_alive_after_run(self, tmp_path):
-        """Workdir activates capture; the in-memory trace also persists
-        on ``self._agent_trace`` because the framework only resets it
-        between arun calls, not at the end of the current one."""
+    async def test_workdir_alone_does_not_activate_trace(self, tmp_path):
+        """trace=False, workdir=path → run dir exists (for delegates),
+        but no AgentTrace is created."""
         agent = _WorkflowAgent()
         await agent.arun(goal="x", workdir=tmp_path)
+        assert agent._agent_trace is None
+        assert agent._current_run_dir is None  # reset in finally
+
+    @pytest.mark.asyncio
+    async def test_trace_alone_keeps_in_memory_trace(self):
+        """trace=True, workdir=None → AgentTrace in memory, no disk."""
+        agent = _WorkflowAgent()
+        await agent.arun(goal="x", trace=True)
         assert agent._agent_trace is not None
 
     @pytest.mark.asyncio
-    async def test_trace_running_only_keeps_in_memory_trace(self):
-        """No workdir + ``trace_running=True`` → trace captured in memory,
-        no files written (because no run-dir)."""
+    async def test_trace_plus_workdir_persists_and_keeps_object(self, tmp_path):
+        """trace=True + workdir=path → AgentTrace persists to disk and
+        survives on ``self._agent_trace`` for post-run inspection."""
         agent = _WorkflowAgent()
-        await agent.arun(goal="x", trace_running=True)
+        await agent.arun(goal="x", trace=True, workdir=tmp_path)
         assert agent._agent_trace is not None
+        run_dir = next((tmp_path / "runs").iterdir())
+        assert (run_dir / "trace.json").is_file()
 
 
 # ---------------------------------------------------------------------------
@@ -197,7 +220,7 @@ class TestThinkAgentDelegateUnderRunDir:
             async def on_agent(self, ctx) -> AsyncGenerator[Any, Any]:
                 yield ThinkAgent("do_thing", goal="x")
 
-        await A(llm=_DummyLLM()).arun(goal="x", workdir=tmp_path)
+        await A().arun(llm=_DummyLLM(), goal="x", workdir=tmp_path)
 
         # The mocked runtime resolved exactly one delegate dir, which
         # must sit at ``<arun-run-dir>/delegates/001/``.
@@ -218,7 +241,7 @@ class TestThinkAgentDelegateUnderRunDir:
                 yield ThinkAgent("do_thing", goal="b")
                 yield ThinkAgent("do_thing", goal="c")
 
-        await A(llm=_DummyLLM()).arun(goal="x", workdir=tmp_path)
+        await A().arun(llm=_DummyLLM(), goal="x", workdir=tmp_path)
         names = [d.name for d in mock_runtime]
         assert names == ["001", "002", "003"]
 
@@ -240,7 +263,7 @@ class TestThinkAgentTraceRecording:
             async def on_agent(self, ctx) -> AsyncGenerator[Any, Any]:
                 yield ThinkAgent("do_thing", goal="the-goal")
 
-        await A(llm=_DummyLLM()).arun(goal="x", workdir=tmp_path)
+        await A().arun(llm=_DummyLLM(), goal="x", workdir=tmp_path)
         run_dir = next((tmp_path / "runs").iterdir())
         trace = json.loads((run_dir / "trace.json").read_text())
         think_agent_steps = [s for s in trace["steps"] if s.get("name") == "think_agent"]
@@ -261,7 +284,7 @@ class TestThinkAgentTraceRecording:
                 yield ThinkAgent("do_thing", goal="g1")
                 yield ThinkAgent("do_thing", goal="g2")
 
-        await A(llm=_DummyLLM()).arun(goal="x", workdir=tmp_path)
+        await A().arun(llm=_DummyLLM(), goal="x", workdir=tmp_path)
         run_dir = next((tmp_path / "runs").iterdir())
         trace = json.loads((run_dir / "trace.json").read_text())
         think_agent_steps = [s for s in trace["steps"] if s.get("name") == "think_agent"]

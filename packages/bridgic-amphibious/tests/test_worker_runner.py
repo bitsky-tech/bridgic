@@ -125,7 +125,7 @@ class TestThinkUnitWithWorkerRunner:
                 yield ThinkUnit("external")
                 yield ThinkUnit("external")
 
-        await Agent(llm=_DummyLLM()).arun(context=CognitiveContext(goal="Q3 test"))
+        await Agent().arun(llm=_DummyLLM(), context=CognitiveContext(goal="Q3 test"))
 
         assert runner.invocations == 3
 
@@ -140,9 +140,9 @@ class TestThinkUnitWithWorkerRunner:
             async def on_agent(self, ctx) -> AsyncGenerator[Any, Any]:
                 yield ThinkUnit("external")
 
-        agent = Agent(llm=_DummyLLM())
+        agent = Agent()
         ctx = CognitiveContext(goal="hello-runner")
-        await agent.arun(context=ctx)
+        await agent.arun(llm=_DummyLLM(), context=ctx)
 
         # The runner saw the active goal at dispatch time.
         assert recorder.observed_goals == ["hello-runner"]
@@ -166,7 +166,7 @@ class TestThinkUnitWithWorkerRunner:
             async def on_agent(self, ctx) -> AsyncGenerator[Any, Any]:
                 yield ThinkUnit("external")
 
-        await Agent(llm=_DummyLLM()).arun(context=CognitiveContext(goal="overlay-ignore"))
+        await Agent().arun(llm=_DummyLLM(), context=CognitiveContext(goal="overlay-ignore"))
 
         # WorkerRunner is invoked exactly once per ThinkUnit — overlays ignored.
         assert runner.invocations == 1
@@ -185,4 +185,4 @@ class TestRunDispatchType:
                 yield ThinkUnit("bad")
 
         with pytest.raises(TypeError, match="CognitiveWorker or a WorkerRunner"):
-            await Agent(llm=_DummyLLM()).arun(context=CognitiveContext(goal="bad-arg"))
+            await Agent().arun(llm=_DummyLLM(), context=CognitiveContext(goal="bad-arg"))

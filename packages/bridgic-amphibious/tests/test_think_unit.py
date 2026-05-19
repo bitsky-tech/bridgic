@@ -80,7 +80,7 @@ class TestThinkUnitResolution:
         assert isinstance(cls_descriptor, ThinkUnitDescriptor)
 
         # Instance-level access — same descriptor (no _BoundThinkUnit wrapping)
-        agent = Agent(llm=MockLLM([_finish()]))
+        agent = Agent()
         instance_descriptor = agent.main_think
         assert instance_descriptor is cls_descriptor
 
@@ -110,7 +110,7 @@ class TestThinkUnitDispatch:
             async def on_agent(self, ctx) -> AsyncGenerator[Any, Any]:
                 yield ThinkUnit("main_think")
 
-        await Agent(llm=llm).arun(context=_ctx())
+        await Agent().arun(llm=llm, context=_ctx())
 
         assert llm.call_count == 1
 
@@ -129,7 +129,7 @@ class TestThinkUnitDispatch:
                 # short-circuits after 1 cycle anyway. Verify call doesn't error.
                 yield ThinkUnit("main_think", max_attempts=3)
 
-        await Agent(llm=llm).arun(context=_ctx())
+        await Agent().arun(llm=llm, context=_ctx())
 
         # Two ThinkUnit yields, each runs at least one cycle → 2+ astructured_output calls.
         assert llm.call_count >= 2
@@ -142,7 +142,7 @@ class TestThinkUnitDispatch:
                 yield ThinkUnit("does_not_exist")
 
         with pytest.raises(AttributeError, match="does_not_exist"):
-            await Agent(llm=MockLLM([])).arun(context=_ctx())
+            await Agent().arun(llm=MockLLM([]), context=_ctx())
 
     @pytest.mark.asyncio
     async def test_non_descriptor_name_raises_attribute_error(self):
@@ -155,7 +155,7 @@ class TestThinkUnitDispatch:
                 yield ThinkUnit("some_var")
 
         with pytest.raises(AttributeError, match="some_var"):
-            await Agent(llm=MockLLM([])).arun(context=_ctx())
+            await Agent().arun(llm=MockLLM([]), context=_ctx())
 
     @pytest.mark.asyncio
     async def test_until_callback_overrides_descriptor_default(self):
@@ -177,7 +177,7 @@ class TestThinkUnitDispatch:
             async def on_agent(self, ctx) -> AsyncGenerator[Any, Any]:
                 yield ThinkUnit("looped", until=my_condition)
 
-        await Agent(llm=llm).arun(context=_ctx())
+        await Agent().arun(llm=llm, context=_ctx())
 
         # Worker hits finish=True on first cycle, so the until callback is
         # never even consulted — but the agent finished cleanly under
@@ -198,7 +198,7 @@ class TestThinkUnitDispatch:
                 yield ThinkUnit("inline_think")
 
         with pytest.raises(RuntimeError, match="only valid inside on_agent"):
-            await Agent(llm=llm).arun(context=_ctx())
+            await Agent().arun(llm=llm, context=_ctx())
 
     @pytest.mark.asyncio
     async def test_think_call_in_on_agent_allowed(self):
@@ -211,7 +211,7 @@ class TestThinkUnitDispatch:
             async def on_agent(self, ctx) -> AsyncGenerator[Any, Any]:
                 yield ThinkUnit("inline_think")
 
-        await Agent(llm=llm).arun(context=_ctx())
+        await Agent().arun(llm=llm, context=_ctx())
         assert llm.call_count == 1
 
     @pytest.mark.asyncio
@@ -230,5 +230,5 @@ class TestThinkUnitDispatch:
             ]:
                 yield EnterAgent(goal="sub-task")
 
-        await Agent(llm=llm).arun(context=_ctx())
+        await Agent().arun(llm=llm, context=_ctx())
         assert llm.call_count == 1

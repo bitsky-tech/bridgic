@@ -236,7 +236,7 @@ class TestLLMCallDispatchChat:
                 text = yield LLMCall.chat("What is 2+2?")
                 captured.append(text)
 
-        await Agent(llm=llm).arun(context=_make_ctx())
+        await Agent().arun(llm=llm, context=_make_ctx())
 
         assert captured == ["4"]
 
@@ -254,7 +254,7 @@ class TestLLMCallDispatchChat:
             ]:
                 yield LLMCall.chat("now", history=history)
 
-        await Agent(llm=llm).arun(context=_make_ctx())
+        await Agent().arun(llm=llm, context=_make_ctx())
 
         msgs = llm.last_chat_messages
         assert msgs is not None
@@ -278,7 +278,7 @@ class TestLLMCallDispatchChat:
                 v = yield LLMCall.chat("x")
                 captured.append(v)
 
-        await Agent(llm=llm).arun(context=_make_ctx())
+        await Agent().arun(llm=llm, context=_make_ctx())
 
         assert len(captured) == 1
         assert isinstance(captured[0], str)
@@ -308,7 +308,7 @@ class TestLLMCallDispatchStructured:
                 )
                 captured.append(v)
 
-        await Agent(llm=llm).arun(context=_make_ctx())
+        await Agent().arun(llm=llm, context=_make_ctx())
 
         assert captured == [instance]
 
@@ -324,7 +324,7 @@ class TestLLMCallDispatchStructured:
             ]:
                 yield LLMCall.structure_output("x", constraint=constraint)
 
-        await Agent(llm=llm).arun(context=_make_ctx())
+        await Agent().arun(llm=llm, context=_make_ctx())
 
         assert llm.last_structured_constraint is constraint
 
@@ -342,7 +342,7 @@ class TestLLMCallDispatchStructured:
 
         # Pure WORKFLOW mode (no on_agent) → will_fallback=False → raise.
         with pytest.raises(TypeError, match="StructuredOutput"):
-            await Agent(llm=llm).arun(context=_make_ctx())
+            await Agent().arun(llm=llm, context=_make_ctx())
 
 
 # ---------------------------------------------------------------------------
@@ -369,7 +369,7 @@ class TestLLMCallDispatchToolSelector:
                 v = yield LLMCall.tool_selector("pick", tools=tools)
                 captured.append(v)
 
-        await Agent(llm=llm).arun(context=_make_ctx())
+        await Agent().arun(llm=llm, context=_make_ctx())
 
         assert len(captured) == 1
         result = captured[0]
@@ -389,7 +389,7 @@ class TestLLMCallDispatchToolSelector:
                 yield LLMCall.tool_selector("x", tools=tools)
 
         with pytest.raises(TypeError, match="ToolSelection"):
-            await Agent(llm=llm).arun(context=_make_ctx())
+            await Agent().arun(llm=llm, context=_make_ctx())
 
 
 # ---------------------------------------------------------------------------
@@ -417,7 +417,7 @@ class TestLLMCallSendRoundTrip:
                 b = yield LLMCall.chat("q2")
                 captured.append(b)
 
-        await Agent(llm=llm).arun(context=_make_ctx())
+        await Agent().arun(llm=llm, context=_make_ctx())
 
         assert captured == ["first", "second"]
 
@@ -432,7 +432,7 @@ class TestLLMCallSendRoundTrip:
             ]:
                 yield LLMCall.chat("last")
 
-        await Agent(llm=llm).arun(context=_make_ctx())  # no exception → pass
+        await Agent().arun(llm=llm, context=_make_ctx())  # no exception → pass
 
 
 # ---------------------------------------------------------------------------
@@ -475,7 +475,7 @@ class TestLLMCallErrorPaths:
             ]:
                 yield LLMCall.chat("doomed")
 
-        await Agent(llm=llm).arun(context=_make_ctx())
+        await Agent().arun(llm=llm, context=_make_ctx())
 
         assert len(on_agent_calls) == 1
 
@@ -491,7 +491,7 @@ class TestLLMCallErrorPaths:
                 yield LLMCall.chat("doomed")
 
         with pytest.raises(RuntimeError, match="provider down"):
-            await Agent(llm=llm).arun(context=_make_ctx())
+            await Agent().arun(llm=llm, context=_make_ctx())
 
 
 # ---------------------------------------------------------------------------
@@ -511,8 +511,8 @@ class TestLLMCallTrace:
             ]:
                 yield LLMCall.chat("captured prompt")
 
-        agent = Agent(llm=llm)
-        await agent.arun(context=_make_ctx(), trace_running=True)
+        agent = Agent()
+        await agent.arun(llm=llm, context=_make_ctx(), trace_running=True)
 
         assert agent._agent_trace is not None
         trace = agent._agent_trace.build()
