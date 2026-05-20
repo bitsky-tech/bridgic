@@ -25,8 +25,8 @@ Layout:
 * ``AgentResult`` — the outcome of one ``run``.
 * ``BaseAgent`` — abstract base; one required override (``run``), one
   provided helper (``_run_subprocess``).
-* ``ClaudeCodeAgent`` — the concrete ``claude code`` implementation
-  shipped with the framework.
+* ``ClaudeCodeAgent`` / ``CodexAgent`` — the concrete CLI drivers
+  shipped with the framework (``claude code`` / OpenAI ``codex``).
 
 ``fastmcp`` / ``uvicorn`` are not imported here — ``BaseAgent`` only
 deals with the subprocess; the in-process MCP host lives on the
@@ -191,10 +191,15 @@ class BaseAgent:
             env=env,
         )
 
-        # Push the initial prompt payload (if any) onto stdin.
-        if stdin_payload is not None and proc.stdin is not None:
-            proc.stdin.write(stdin_payload)
-            await proc.stdin.drain()
+        # Push the initial prompt payload (if any) onto stdin, then
+        # close it so the child sees EOF. A one-shot CLI that reads its
+        # prompt from stdin (``codex exec -``) blocks until EOF; claude's
+        # stream-json ``-p`` mode is already one-shot, so EOF is benign.
+        if proc.stdin is not None:
+            if stdin_payload is not None:
+                proc.stdin.write(stdin_payload)
+                await proc.stdin.drain()
+            proc.stdin.close()
 
         # Drain stdout / stderr concurrently — content discarded.
         stdout_task = asyncio.create_task(_consume_stream(proc.stdout))
@@ -345,6 +350,93 @@ class ClaudeCodeAgent(BaseAgent):
 
 
 ################################################################################################################
+# CodexAgent — concrete OpenAI ``codex`` CLI driver
+################################################################################################################
+
+
+class CodexAgent(BaseAgent):
+    """``codex exec`` driver — the OpenAI Codex CLI ``BaseAgent``.
+
+    Runs the Codex CLI in its headless ``codex exec`` mode, feeding the
+    assembled prompt on stdin. The bridged project tools reach Codex
+    through the in-process MCP host: ``AgentWorker`` puts the host's
+    streamable-HTTP URL in ``request.mcp_servers``, and this driver
+    wires it in with a ``-c mcp_servers.<name>.url=<url>`` config
+    override — so ``~/.codex/config.toml`` is never written to.
+
+    ``--ignore-user-config`` isolates the run: the delegation sees
+    exactly the bridged MCP server and nothing else, keeping the
+    ``expose_tools`` filter authoritative. Authentication is untouched
+    — it still resolves from the default ``~/.codex`` (the ChatGPT
+    login or ``OPENAI_API_KEY``).
+
+    Constructor params are codex-specific static config:
+
+    * ``bin`` — the ``codex`` binary (path or name on ``PATH``).
+    * ``sandbox_mode`` — Codex ``--sandbox`` policy: ``read-only`` /
+      ``workspace-write`` (default) / ``danger-full-access``. Governs
+      Codex's own shell + file edits; the bridged MCP tools run in the
+      parent process and are unaffected.
+    * ``completion_timeout`` — seconds to wait before force-terminating.
+
+    Approvals are forced off (``--ask-for-approval never``) — ``codex
+    exec`` is non-interactive, so there is no one to answer a prompt.
+
+    >>> agent = CodexAgent(sandbox_mode="danger-full-access")
+    >>> reviewer = think_agent(AgentWorker(agent))
+    """
+
+    def __init__(
+        self,
+        *,
+        bin: str = "codex",
+        sandbox_mode: str = "workspace-write",
+        completion_timeout: float = 180.0,
+    ) -> None:
+        self.bin = bin
+        self.sandbox_mode = sandbox_mode
+        self.completion_timeout = completion_timeout
+
+    async def run(self, request: AgentRequest) -> AgentResult:
+        """Build the ``codex exec`` invocation and drive it."""
+        ########################
+        # 1. Assemble argv
+        ########################
+        argv = [
+            self.bin, "exec",
+            "--cd", str(request.cwd),
+            "--skip-git-repo-check",        # request.cwd is an ephemeral tempdir
+            "--sandbox", self.sandbox_mode,
+            "--ask-for-approval", "never",  # codex exec is non-interactive
+            "--ignore-user-config",         # isolate; auth still uses ~/.codex
+        ]
+        # Wire each bridged MCP server in as a streamable-HTTP server via
+        # a ``-c`` config override, so ``~/.codex/config.toml`` stays
+        # untouched. Codex has no per-tool allow-list flag (claude's
+        # ``--allowedTools``) — ``--ignore-user-config`` plus this single
+        # injected server already scope Codex to the bridged tools.
+        for name, spec in request.mcp_servers.items():
+            url = spec.get("url")
+            if url:
+                argv += ["-c", f"mcp_servers.{name}.url={url}"]
+        argv.append("-")  # read the prompt from stdin
+
+        ########################
+        # 2. Spawn + wait
+        ########################
+        output, exit_code, completion = await self._run_subprocess(
+            argv,
+            stdin_payload=request.message.encode("utf-8"),
+            cwd=request.cwd,
+            timeout=self.completion_timeout,
+            done_signal=request.done_signal,
+        )
+        return AgentResult(
+            output=output, exit_code=exit_code, completion=completion,
+        )
+
+
+################################################################################################################
 # Module-level helpers
 ################################################################################################################
 
@@ -368,4 +460,5 @@ __all__ = [
     "AgentResult",
     "BaseAgent",
     "ClaudeCodeAgent",
+    "CodexAgent",
 ]

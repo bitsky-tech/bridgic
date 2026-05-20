@@ -11,8 +11,8 @@ Layers:
   anchored on a ``BaseLlm``. Cognitive policies (acquiring / rehearsal /
   reflection) enable multi-round thinking. Symmetric peer: ``AgentWorker``,
   one external-agent delegation, anchored on a ``BaseAgent`` (the external
-  coding-agent abstraction; ``ClaudeCodeAgent`` is the shipped driver for
-  ``claude code``).
+  coding-agent abstraction; ``ClaudeCodeAgent`` and ``CodexAgent`` are the
+  shipped drivers).
 * **Orchestration** — ``AmphibiousAutoma`` + yield primitives (``ThinkUnit``,
   ``ThinkAgent``, ``EnterAgent``, ``ActionCall``, ``HumanCall``, ``LLMCall``,
   ``RETURN``) + ``think_unit`` / ``think_agent`` descriptors.
@@ -51,8 +51,9 @@ from ._agent_worker import (
 from .temp._base_agent import (
     # External coding-agent abstraction (the BASE of AgentWorker)
     BaseAgent,
-    # Concrete ``claude code`` driver
+    # Concrete CLI drivers shipped with the framework
     ClaudeCodeAgent,
+    CodexAgent,
     # Request / result value objects for BaseAgent.run
     AgentRequest,
     AgentResult,
@@ -132,6 +133,7 @@ __all__ = [
     "AgentWorker",
     "BaseAgent",
     "ClaudeCodeAgent",
+    "CodexAgent",
     "AgentRequest",
     "AgentResult",
 
