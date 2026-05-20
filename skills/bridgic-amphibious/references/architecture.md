@@ -11,6 +11,7 @@
 - [Cognitive Policies](#cognitive-policies)
 - [Memory Architecture (CognitiveHistory)](#memory-architecture-cognitivehistory)
 - [Think Unit Descriptor Pattern](#think-unit-descriptor-pattern)
+- [External Agent Delegation (ThinkAgent)](#external-agent-delegation-thinkagent)
 - [Phase Annotation (snapshot)](#phase-annotation-snapshot)
 - [Built-in Tools Subsystem](#built-in-tools-subsystem)
 - [Human-in-the-Loop](#human-in-the-loop)
@@ -21,16 +22,20 @@
 
 ```
 Layer 4: AmphibiousAutoma (Orchestration)
-  ├─ on_agent()         → LLM-driven async generator yielding ThinkUnit / RETURN
+  ├─ on_agent()         → LLM-driven async generator yielding ThinkUnit /
+  │                        ThinkAgent / RETURN
   ├─ on_workflow()      → Deterministic async generator yielding atomic Calls /
   │                        EnterAgent / RETURN
   ├─ _drive_amphiflow() → Peer state machine driving on_workflow + on_agent
   ├─ _invoke_template() → Single-generator driver (AGENT / WORKFLOW / hooks)
   └─ _dispatch_call()   → Per-yield handler with scope validation
 
-Layer 3: CognitiveWorker (Think Unit)
-  └─ thinking()         → LLM decision logic
-  └─ Policies           → acquiring, rehearsal, reflection
+Layer 3: CognitiveWorker / AgentWorker (Think Units — peers)
+  ├─ CognitiveWorker    → in-process LLM cycle, anchored on a BaseLlm
+  │   ├─ thinking()     → LLM decision logic
+  │   └─ Policies       → acquiring, rehearsal, reflection
+  └─ AgentWorker        → one delegated cycle to an external coding
+                          agent, anchored on a BaseAgent (ClaudeCodeAgent, …)
 
 Layer 2: CognitiveContext (State Management)
   ├─ goal, tools, skills, history
@@ -79,11 +84,11 @@ Each think unit execution follows:
 
 A coroutine-form `on_workflow` (`async def on_workflow(self, ctx): pass` — produces a coroutine, not an async generator) is treated as a stub under `AUTO`. This shields users from AI-generated stub `on_workflow` methods that would otherwise force `AMPHIFLOW`. To run a real coroutine workflow, force `mode=RunMode.WORKFLOW` or `RunMode.AMPHIFLOW`; the dispatcher handles both forms in those paths (`_drive_amphiflow` short-circuits to `await workflow_obj` when the workflow is a coroutine).
 
-LLM requirement: `AGENT` and `AMPHIFLOW` require an LLM at `arun()` time; pure `WORKFLOW` does not.
+LLM requirement: an LLM is needed wherever a `CognitiveWorker` runs (any `ThinkUnit`, plus `AMPHIFLOW` step-fallback) or an `LLMCall` fires — i.e. typical `AGENT` / `AMPHIFLOW` runs. Pure `WORKFLOW` and pure `ThinkAgent` flows need none.
 
 ## Yield Primitive Categories
 
-The dispatcher's `_dispatch_call` recognizes six yield types in three categories. Scope validation happens at dispatch time — mismatches raise `RuntimeError`.
+The dispatcher's `_dispatch_call` recognizes seven yield types in three categories. Scope validation happens at dispatch time — mismatches raise `RuntimeError`.
 
 | Category | Primitive | Allowed scopes |
 |----------|-----------|----------------|
@@ -91,10 +96,11 @@ The dispatcher's `_dispatch_call` recognizes six yield types in three categories
 |  | `HumanCall` (HITL via `@human_channel`) | `workflow`, `hook` |
 |  | `LLMCall` (chat / structure_output / tool_selector) | `workflow`, `hook` |
 | **Mode-switch** (state-machine transition) | `EnterAgent` (suspend workflow → run on_agent) | `workflow` only |
-| **Cognitive composition** (inside on_agent) | `ThinkUnit` (named class-level descriptor) | `agent` only |
+| **Cognitive composition** (inside on_agent) | `ThinkUnit` (in-process CognitiveWorker cycle) | `agent` only |
+|  | `ThinkAgent` (delegated AgentWorker cycle) | `agent` only |
 | **Control flow** | `RETURN` (PEP 525 return-value workaround) | any |
 
-The asymmetry — atomic Calls forbidden in `agent` scope — is intentional: `on_agent` is reserved for orchestrating cognitive steps via `ThinkUnit`. Tool / human / LLM operations the agent needs to perform happen *inside* a `ThinkUnit` (the worker's tool-selection phase), not by yielding from `on_agent` directly. There's no "switch back to workflow" yield; agent-generator exhaustion is the implicit signal.
+The asymmetry — atomic Calls forbidden in `agent` scope — is intentional: `on_agent` is reserved for orchestrating cognitive steps via `ThinkUnit` / `ThinkAgent`. Tool / human / LLM operations the agent needs to perform happen *inside* a `ThinkUnit` (the worker's tool-selection phase), not by yielding from `on_agent` directly. There's no "switch back to workflow" yield; agent-generator exhaustion is the implicit signal.
 
 ## Peer State-Machine Dispatcher
 
@@ -286,6 +292,37 @@ Think units use Python descriptors for class-level declaration:
 2. On instance access (`self.main_think`), returns `_BoundThinkUnit` (used internally — direct `await self.main_think` still works)
 3. Canonical orchestration is `yield ThinkUnit("main_think")` from inside `on_agent` — this routes through the dispatcher, supports per-yield overrides (`until=`, `max_attempts=`, `tools=`, `skills=`), and returns the worker's typed output
 4. Fresh worker clone per execution (state isolation)
+
+## External Agent Delegation (ThinkAgent)
+
+`ThinkAgent` is the cognitive-composition peer of `ThinkUnit`: where `ThinkUnit` drives an in-process `CognitiveWorker` (one LLM observe-think-act cycle), `ThinkAgent` drives an `AgentWorker` that hands the sub-goal to an **external** coding-agent CLI (`claude code` or OpenAI `codex`; add others by subclassing `BaseAgent`).
+
+### Layer split
+
+```
+ThinkAgent (yield primitive)
+    │  resolved by AmphibiousAutoma._run_think_agent
+    v
+AgentWorker  ── context organization: MCP-ify ctx.tools, assemble the
+    │            message via thinking(), pack an AgentRequest
+    v
+BaseAgent    ── CLI mechanics: argv, subprocess, completion detection
+    │            (ClaudeCodeAgent / CodexAgent ship with the framework)
+    v
+external coding-agent CLI subprocess
+```
+
+`AgentWorker` : `BaseAgent` mirrors `CognitiveWorker` : `BaseLlm` — the worker organizes context and never embeds CLI internals; the base type executes.
+
+### MCP bridge
+
+The parent's project tools (`ctx.tools`, minus the framework built-ins) are exposed to the external agent through an **in-process FastMCP host** booted for the delegation. The external agent discovers and calls them as `mcp__<server>__<tool>`; a synthetic `agent_done` MCP tool is the completion signal. The host is torn down when the delegation ends.
+
+### Decision channel
+
+`AgentWorker` does **not** execute the external agent's tool calls — it only *produces* decisions, exactly like `CognitiveWorker`. Each MCP tool call is surfaced onto a per-delegation `asyncio.Queue` as a `(decision, future)` pair. `_run_think_agent` runs a consumer task — alive only for this one delegation — that pulls each decision, runs it through `_run_action_call` (so `before_action` / `after_action` hooks fire and the call is recorded in the `AgentTrace`), and resolves the future with the result. `AmphibiousAutoma` remains the only component that *acts*; the worker only thinks.
+
+The `yield ThinkAgent` result is the string the external agent passed to `agent_done(result=...)` (the `AgentResult.output`), or `None` if it exited without signalling.
 
 ## Phase Annotation (snapshot)
 

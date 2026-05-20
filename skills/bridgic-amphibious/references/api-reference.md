@@ -6,7 +6,9 @@
 - [CLI Scaffolding](#cli-scaffolding)
 - [AmphibiousAutoma](#amphibiousautoma)
 - [CognitiveWorker](#cognitiveworker)
+- [AgentWorker & BaseAgent](#agentworker--baseagent)
 - [think_unit](#think_unit)
+- [think_agent](#think_agent)
 - [Yield Primitives](#yield-primitives)
 - [Human-in-the-Loop](#human-in-the-loop)
 - [Built-in Tools](#built-in-tools)
@@ -20,7 +22,7 @@
 
 ## LLM Setup
 
-Amphibious agents accept a `BaseLlm` instance from one of the bridgic LLM provider packages. The LLM is required for `AGENT` and `AMPHIFLOW` modes; pure `WORKFLOW` mode (where `on_workflow` is the only overridden template method) can run without one. Install one of the provider packages:
+`arun(llm=...)` accepts a `BaseLlm` instance from one of the bridgic LLM provider packages. The LLM is required for `AGENT` and `AMPHIFLOW` modes; pure `WORKFLOW` mode (where `on_workflow` is the only overridden template method) — and a pure `ThinkAgent` flow, where an external agent does the reasoning — can run without one. Install one of the provider packages:
 
 ```python
 # OpenAI (GPT-4, GPT-4o, etc.)
@@ -63,14 +65,17 @@ Configuration class parameters (shared across providers): `model`, `temperature`
 ```python
 from bridgic.amphibious import (
     # Orchestration
-    AmphibiousAutoma, think_unit, AgentTrace, ThinkUnitDescriptor,
-    # Worker
+    AmphibiousAutoma, AgentTrace,
+    think_unit, ThinkUnitDescriptor,
+    think_agent, ThinkAgentDescriptor,
+    # Worker — in-process (CognitiveWorker) + external-agent (AgentWorker)
     CognitiveWorker, _DELEGATE,
+    AgentWorker, BaseAgent, ClaudeCodeAgent, AgentRequest, AgentResult,
     # Context
     CognitiveContext, CognitiveHistory, CognitiveTools, CognitiveSkills,
     Context, Exposure, LayeredExposure, EntireExposure,
     # Yield primitives
-    ActionCall, HumanCall, LLMCall, EnterAgent, ThinkUnit, RETURN,
+    ActionCall, HumanCall, LLMCall, EnterAgent, ThinkUnit, ThinkAgent, RETURN,
     # Human channel registry
     human_channel,
     # Data models
@@ -124,15 +129,16 @@ Base class for dual-mode agents. Subclass with a generic `CognitiveContext` type
 
 ```python
 AmphibiousAutoma(
-    llm: Optional[BaseLlm] = None,    # Optional. Required for AGENT/AMPHIFLOW modes
-    name: str = None,                  # Optional agent name
-    verbose: bool = False,             # Enable execution logging
-    verbose_hook_calls: bool = False,  # Surface dispatch logs for Calls yielded from
-                                       # observation / before_action / after_action hooks.
-                                       # Suppressed by default — hook-yielded Calls are
-                                       # internal side-effects, not workflow narrative.
+    name: str = None,             # Optional agent name
+    verbose: bool = False,        # Enable execution logging
+    verbose_hook: bool = False,   # Surface dispatch logs for Calls yielded from
+                                  # observation / before_action / after_action hooks.
+                                  # Suppressed by default — hook-yielded Calls are
+                                  # internal side-effects, not workflow narrative.
 )
 ```
+
+The LLM is **not** a constructor argument — it is bound per run via `arun(llm=...)`.
 
 ### Class Attributes (Override in Subclasses)
 
@@ -144,22 +150,31 @@ AmphibiousAutoma(
 
 ```python
 await agent.arun(
-    # Context: either pre-built or auto-created
-    context: CognitiveContextT = None,  # Pre-built context
-    goal: str = "",                      # Auto-create: goal
-    tools: List[ToolSpec] = [],          # Auto-create: tools
-    skills: List[Skill] = [],            # Auto-create: skills
-    cognitive_history: CognitiveHistory = None,  # Auto-create: custom history
+    *,  # all arguments are keyword-only
+
+    # LLM — required for AGENT / AMPHIFLOW; a pure ThinkAgent or WORKFLOW run needs none
+    llm: Optional[BaseLlm] = None,
+
+    # Context: pass a pre-built one, OR pass goal= / tools= / skills= /
+    # cognitive_history= (forwarded via **kwargs) to have one auto-created.
+    context: CognitiveContextT = None,
 
     # Execution control
     mode: RunMode = RunMode.AUTO,
-    trace_running: bool = False,
-    max_consecutive_fallbacks: int = 1,
-    builtin_tools: Optional[Iterable[str]] = None,  # Override class-level builtin_tools filter
+    max_consecutive_fallbacks: int = 1,          # AMPHIFLOW step-failure threshold
+
+    # Tracing / run artifacts (orthogonal — see below)
+    trace: bool = False,                         # activate the in-memory AgentTrace
+    workdir: Optional[Union[Path, str]] = None,  # materialise <workdir>/runs/<run_id>/
+
+    builtin_tools: Optional[Iterable[str]] = None,  # override class-level builtin_tools filter
+    **kwargs,                                    # goal=, tools=, skills=, cognitive_history=
 ) -> str
 ```
 
 **Return value**: by default returns `ctx.summary()` — a textual recap of the post-run context. If a `RETURN(value)` yield ran from a top-level template body OR a finishing think step set `self._final_answer`, that value is returned instead (`str(value)`).
+
+**Tracing**: `trace` and `workdir` are orthogonal. `trace=True` activates an in-memory `AgentTrace`, kept on `self._agent_trace` after the run. `workdir=path` materialises a `<workdir>/runs/<run_id>/` run directory. With **both** set, the `AgentTrace` incrementally persists `<run>/trace.json` — the run directory's single artifact. With `trace=False, workdir=path`, the run directory is created but stays empty.
 
 ### Properties
 
@@ -167,9 +182,7 @@ await agent.arun(
 |----------|------|-------------|
 | `context` | `CognitiveContextT` | Current context after `arun()` |
 | `final_answer` | `Optional[str]` | Auto-captured from a finishing step's `step_content`, or set explicitly by yielding `RETURN(value)` from a top-level template body |
-| `llm` | `Optional[BaseLlm]` | The agent's LLM (`None` is allowed for pure WORKFLOW mode) |
-| `spent_tokens` | `int` | Token usage for last `arun()` |
-| `spent_time` | `float` | Time in seconds for last `arun()` |
+| `llm` | `Optional[BaseLlm]` | The LLM bound by the last `arun(llm=...)` (`None` for a pure WORKFLOW / ThinkAgent run) |
 
 ### Template Methods (Override in Subclasses)
 
@@ -282,6 +295,110 @@ output_schema: Optional[Type[BaseModel]] = None
 # yield ThinkUnit("name") returns the typed instance.
 ```
 
+## AgentWorker & BaseAgent
+
+The external-agent peer of `CognitiveWorker`. Where `CognitiveWorker` runs one in-process observe-think-act cycle anchored on a `BaseLlm`, `AgentWorker` runs one **delegated** cycle anchored on a `BaseAgent` — an external coding-agent CLI. Both are concrete classes; both expose the same `thinking` / `observation` / `before_action` / `after_action` template surface.
+
+### AgentWorker
+
+```python
+class AgentWorker(GraphAutoma):
+    def __init__(
+        self,
+        agent: BaseAgent,                       # the external coding-agent driver
+        *,
+        verbose: Optional[bool] = None,         # None = inherit from AmphibiousAutoma
+        verbose_prompt: Optional[bool] = None,  # log the assembled message per delegation
+    )
+```
+
+`AgentWorker` organizes context only: it MCP-ifies `ctx.tools` (boots an in-process FastMCP host), assembles the message via `thinking()`, packs an `AgentRequest`, and calls `self._agent.run(request)`. It never embeds CLI argv — that is the `BaseAgent`'s job. There are no `goal` / `tools` / `skills` knobs: those ride on the `context` the framework passes in. `AgentWorker(agent)` works out of the box; subclass only to customize.
+
+Template methods (override in a subclass):
+
+```python
+async def thinking(self, context) -> str: ...     # assemble the message (default already works)
+async def observation(self, context) -> Any: ...   # _DELEGATE / value, same contract as CognitiveWorker
+async def before_action(self, decision_result, context) -> Any: ...
+async def after_action(self, step_result, ctx) -> Any: ...
+```
+
+### BaseAgent
+
+Abstract driver for one external coding-agent CLI — the anchor type of `AgentWorker`, exactly as `BaseLlm` anchors `CognitiveWorker`. One required override (`run`), one provided helper (`_run_subprocess`).
+
+```python
+class BaseAgent:
+    async def run(self, request: AgentRequest) -> AgentResult: ...   # subclasses MUST override
+
+    async def _run_subprocess(
+        self, argv: List[str], *,
+        stdin_payload: Optional[bytes] = None,
+        cwd: Optional[Path] = None,
+        env: Optional[Dict[str, str]] = None,
+        timeout: float = 180.0,
+        done_signal: Optional[asyncio.Future] = None,
+    ) -> Tuple[Optional[str], Optional[int], str]: ...               # provided helper
+```
+
+Subclass per CLI (`ClaudeCodeAgent`, `CodexAgent`, …). A subclass owns exactly two things: how to spawn its CLI, and how to detect completion + extract the result. `_run_subprocess` handles the generic spawn / drain / wait mechanics (races `done_signal` vs process exit vs `timeout`).
+
+### ClaudeCodeAgent
+
+The shipped `claude code` driver — `claude -p` with stream-json I/O.
+
+```python
+class ClaudeCodeAgent(BaseAgent):
+    def __init__(
+        self,
+        *,
+        bin: str = "claude",                  # the claude binary (path or name on PATH)
+        allowed_builtin_tools: Optional[List[str]] = None,  # claude's own tools to permit;
+                                              # default: Read / Write / Edit / Bash / Glob / Grep
+        permission_mode: str = "bypassPermissions",
+        completion_timeout: float = 180.0,    # seconds before the subprocess is force-terminated
+    )
+```
+
+`ClaudeCodeAgent` spawns the `claude` CLI (`bin`) as a subprocess — it must be installed, on `PATH`, and authenticated. The tool allow-list it passes to the CLI combines `allowed_builtin_tools` with the MCP-bridged tools from the `AgentRequest`.
+
+### CodexAgent
+
+The shipped OpenAI Codex driver — runs the Codex CLI's headless `codex exec` mode.
+
+```python
+class CodexAgent(BaseAgent):
+    def __init__(
+        self,
+        *,
+        bin: str = "codex",                     # the codex binary (path or name on PATH)
+        sandbox_mode: str = "workspace-write",  # read-only | workspace-write | danger-full-access
+        completion_timeout: float = 180.0,      # seconds before the subprocess is force-terminated
+    )
+```
+
+`CodexAgent` spawns the `codex` CLI as a subprocess — it must be installed, on `PATH`, and authenticated (ChatGPT login or `OPENAI_API_KEY`). The bridged MCP host is wired in with a `-c mcp_servers.<name>.url=<url>` config override; `--ignore-user-config` isolates the run so the delegation sees only the bridged server (auth still resolves from the default `~/.codex`). `sandbox_mode` governs Codex's own shell + file edits; approvals are forced off (`codex exec` is non-interactive). Codex has no per-tool allow-list flag, so `AgentRequest.allowed_tools` is unused.
+
+### AgentRequest / AgentResult
+
+```python
+@dataclass
+class AgentRequest:
+    message: str                            # the full prompt handed to the external agent
+    cwd: Path                               # subprocess working directory (ephemeral tempdir)
+    mcp_servers: Dict[str, Dict[str, Any]]  # MCP servers to wire into the CLI
+    allowed_tools: List[str] = []           # MCP-bridged tool names + the agent_done signal
+    done_signal: Optional[asyncio.Future] = None  # resolves when the agent calls agent_done
+
+@dataclass
+class AgentResult:
+    output: Optional[str]    # the agent_done(result=...) string, or None if it exited unsignalled
+    exit_code: Optional[int]
+    completion: str          # "agent_done" | "process_exit" | "timeout"
+```
+
+`AgentWorker` assembles the `AgentRequest`; `BaseAgent.run` consumes it and returns an `AgentResult` — mirroring the `messages` + `constraint` → response pair `CognitiveWorker` hands to `BaseLlm.astructured_output`.
+
 ## think_unit
 
 ```python
@@ -316,6 +433,34 @@ class MyAgent(AmphibiousAutoma[CognitiveContext]):
 
 Each yielded `ThinkUnit("name")` overlays the descriptor's defaults; `None` means "use the descriptor's value for this field".
 
+## think_agent
+
+```python
+think_agent(
+    worker: AgentWorker,
+    *,
+    expose_tools: Optional[List[str]] = None,  # project-tool name filter
+                                               # (None = expose every non-builtin tool)
+) -> ThinkAgentDescriptor
+```
+
+The external-agent peer of `think_unit`. Use as a class variable; reference by name in `on_agent` via `yield ThinkAgent("name")`. The `AgentWorker` carries all delegate-level config (which `BaseAgent` to drive); `expose_tools` selects which project tools from `ctx.tools` are exposed to the external agent over the MCP bridge.
+
+```python
+from bridgic.amphibious import AgentWorker, ClaudeCodeAgent, think_agent, ThinkAgent
+
+class MyAutoma(AmphibiousAutoma[CognitiveContext]):
+    reviewer = think_agent(
+        AgentWorker(ClaudeCodeAgent(allowed_builtin_tools=["Read", "Grep"])),
+        expose_tools=["record_finding"],
+    )
+
+    async def on_agent(self, ctx):
+        result = yield ThinkAgent("reviewer", goal="Review the diff.")
+```
+
+Each yielded `ThinkAgent(...)` overlays the descriptor's defaults (`goal`, `expose_tools`); `None` means "use the descriptor's value". The `AgentWorker` is cloned per invocation for state isolation.
+
 ## Yield Primitives
 
 Template methods (`on_agent`, `on_workflow`, hooks) are async generators. The dispatcher routes each yielded value by type, validates the scope, executes the call, and sends a result back via `asend()`. Mismatches raise `RuntimeError` at dispatch time.
@@ -327,6 +472,7 @@ Template methods (`on_agent`, `on_workflow`, hooks) are async generators. The di
 | `LLMCall` | atomic Call | `on_workflow`, hooks | protocol-specific |
 | `EnterAgent` | mode-switch | `on_workflow` only | `None` |
 | `ThinkUnit` | cognitive composition | `on_agent` only | worker output (or `None`) |
+| `ThinkAgent` | cognitive composition | `on_agent` only | external agent's result `str` (or `None`) |
 | `RETURN` | control flow | any | (closes generator; value flows out) |
 
 ### ActionCall — Deterministic tool execution
@@ -447,6 +593,30 @@ class ThinkUnit:
 Resolves `name` via `getattr(type(self), name)` and expects a `ThinkUnitDescriptor`. Each non-`None` field overrides the descriptor's default for this single yield. The result returned via `asend()` is the worker's typed output (or `None` if the worker has no `output_schema`).
 
 Only valid inside `on_agent` (`scope='agent'`). For a direct LLM invocation outside the cognitive loop, use `LLMCall` from `on_workflow`.
+
+### ThinkAgent — Delegate a sub-goal to an external agent
+
+```python
+from bridgic.amphibious import ThinkAgent
+
+# In on_agent():
+result = yield ThinkAgent("reviewer")
+result = yield ThinkAgent("reviewer", goal="Review the diff", expose_tools=["record_finding"])
+```
+
+```python
+@dataclass(frozen=True)
+class ThinkAgent:
+    name: str
+    goal: Optional[str] = None
+    expose_tools: Optional[List[str]] = None
+```
+
+Resolves `name` via `getattr(type(self), name)` and expects a `ThinkAgentDescriptor`. The dispatcher clones the descriptor's `AgentWorker`, overlays `goal` / `expose_tools` onto `ctx` for the delegation, and drives one external-agent cycle. Every tool call the external agent makes over the MCP bridge is surfaced back as a decision and executed through `_run_action_call` — the parent's `before_action` / `after_action` hooks fire and the call lands in the trace.
+
+The `asend()` result is the string the external agent passed to `agent_done(result=...)`, or `None` if it exited without signalling.
+
+Only valid inside `on_agent` (`scope='agent'`) — same as `ThinkUnit`. Unlike `ThinkUnit`, there are no `until=` / `max_attempts=` knobs: one `ThinkAgent` yield is exactly one delegated cycle. See [think_agent](#think_agent) for the descriptor and [AgentWorker & BaseAgent](#agentworker--baseagent) for the worker surface.
 
 ### RETURN — Communicate a return value
 
@@ -879,15 +1049,20 @@ tool_spec = FunctionToolSpec.from_raw(my_tool)
 
 ```python
 # Enable tracing
-result = await agent.arun(..., trace_running=True)
+result = await agent.arun(..., trace=True)
+# With workdir set too, the trace also persists to <workdir>/runs/<run_id>/trace.json
+result = await agent.arun(..., trace=True, workdir="./.bridgic")
 
-# Access trace
+# Access the trace (kept on the agent after the run)
 trace = agent._agent_trace.build()
-# Returns: {"phases": [...], "orphan_steps": [...], "metadata": {...}}
-# phases: steps grouped by self.snapshot() blocks (empty if no phase annotations)
-# orphan_steps: steps outside any phase annotation
+# Returns a flat unified dict:
+#   {"goal": str, "metadata": {...}, "history": [TraceStep, ...]}
+# history: every recorded step in order — ThinkUnit, ThinkAgent, ActionCall,
+#          HumanCall, LLMCall — each a TraceStep.
 
 # Save / Load
 agent._agent_trace.save("trace.json")
 loaded = AgentTrace.load("trace.json")  # Returns plain dict
 ```
+
+Each `TraceStep` carries `name`, `step_content`, `tool_calls` (`List[RecordedToolCall]`), `observation`, `output_type` (`StepOutputType`), `structured_output`, and `think_agent_name` (set on `ThinkAgent` steps).

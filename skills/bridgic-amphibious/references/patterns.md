@@ -10,6 +10,7 @@
 - [LLMCall in Workflow](#llmcall-in-workflow)
 - [RETURN — explicit return values](#return--explicit-return-values)
 - [Custom Worker](#custom-worker)
+- [Think Agent (External Agent Delegation)](#think-agent-external-agent-delegation)
 - [Structured Output (output_schema)](#structured-output-output_schema)
 - [Custom Context](#custom-context)
 - [Phase Annotation](#phase-annotation)
@@ -50,8 +51,9 @@ class WeatherAgent(AmphibiousAutoma[CognitiveContext]):
         yield ThinkUnit("planner")
 
 # 3. Run
-agent = WeatherAgent(llm=llm, verbose=True)
+agent = WeatherAgent(verbose=True)
 summary = await agent.arun(
+    llm=llm,
     goal="Check the weather in Tokyo and London.",
     tools=[get_weather_tool],
 )
@@ -109,7 +111,7 @@ class CodeAgent(AmphibiousAutoma[CognitiveContext]):
 
 # All seven built-ins are present. Anything you pass in tools=[...] is added
 # on top, deduped by name.
-await CodeAgent(llm=llm).arun(goal="What does this repo do?")
+await CodeAgent().arun(llm=llm, goal="What does this repo do?")
 ```
 
 ### Calling built-ins from on_workflow
@@ -232,8 +234,8 @@ class AutonomousAgent(AmphibiousAutoma[CognitiveContext]):
     async def on_agent(self, ctx):
         yield ThinkUnit("worker")
 
-agent = AutonomousAgent(llm=llm)
-await agent.arun(goal="Plan a trip", tools=[search_tool])
+agent = AutonomousAgent()
+await agent.arun(llm=llm, goal="Plan a trip", tools=[search_tool])
 ```
 
 ### Custom UI Integration via @human_channel
@@ -329,8 +331,9 @@ class FormFiller(AmphibiousAutoma[CognitiveContext]):
 # Whatever the LLM passes to that tool is asend()'d back to the workflow
 # generator.  Each successful ActionCall resets the consecutive-failure
 # counter; reaching max_consecutive_fallbacks triggers full fallback.
-agent = FormFiller(llm=llm, verbose=True)
+agent = FormFiller(verbose=True)
 result = await agent.arun(
+    llm=llm,
     goal="Fill and submit the form",
     tools=[fill_field_tool, click_button_tool, solve_captcha_tool],
     mode=RunMode.AMPHIFLOW,
@@ -444,6 +447,65 @@ class TravelPlanner(AmphibiousAutoma[CognitiveContext]):
         yield ThinkUnit("analyzer")
         yield ThinkUnit("planner")
 ```
+
+## Think Agent (External Agent Delegation)
+
+`think_agent` wraps an `AgentWorker` — the external-agent peer of `think_unit`. It delegates a sub-goal to an out-of-process coding-agent CLI — `claude code` (`ClaudeCodeAgent`) or OpenAI `codex` (`CodexAgent`) — instead of an in-process LLM cycle. Project tools reach the external agent through an in-process MCP bridge, so its tool calls still flow through the parent's hooks and trace.
+
+### Default — claude code as the think agent
+
+```python
+from bridgic.amphibious import (
+    AmphibiousAutoma, CognitiveContext, AgentWorker, ClaudeCodeAgent,
+    ThinkAgent, think_agent, RETURN,
+)
+from bridgic.core.agentic.tool_specs import FunctionToolSpec
+
+async def record_finding(text: str) -> str:
+    """Record one review finding."""
+    return f"recorded: {text}"
+
+class Reviewer(AmphibiousAutoma[CognitiveContext]):
+    # ClaudeCodeAgent (a BaseAgent) is the shipped claude-code driver.
+    reviewer = think_agent(
+        AgentWorker(ClaudeCodeAgent(
+            allowed_builtin_tools=["Read", "Grep"],   # claude's own tools
+            completion_timeout=300.0,
+        )),
+        expose_tools=["record_finding"],              # project tools sent over MCP
+    )
+
+    async def on_agent(self, ctx):
+        # yield ThinkAgent returns the string the external agent passed
+        # to its `agent_done` completion signal.
+        summary = yield ThinkAgent("reviewer", goal="Review ./src and record findings.")
+        yield RETURN(summary)
+
+# A pure ThinkAgent flow needs no `llm` — the external agent is the brain.
+agent = Reviewer()
+result = await agent.arun(tools=[FunctionToolSpec.from_raw(record_finding)])
+```
+
+`CodexAgent` (OpenAI codex) is a drop-in alternative — `AgentWorker(CodexAgent())` in place of `AgentWorker(ClaudeCodeAgent(...))`; the rest of the pattern is identical.
+
+### Custom AgentWorker — reshape the prompt
+
+Subclass `AgentWorker` and override `thinking()` to restructure the message handed to the external agent (the `AgentWorker` analog of `CognitiveWorker.thinking()`):
+
+```python
+class StrictReviewer(AgentWorker):
+    async def thinking(self, context) -> str:
+        base = await super().thinking(context)
+        return base + "\n\nBe extremely thorough. Flag every TODO."
+
+class Reviewer(AmphibiousAutoma[CognitiveContext]):
+    reviewer = think_agent(StrictReviewer(ClaudeCodeAgent()))
+
+    async def on_agent(self, ctx):
+        yield ThinkAgent("reviewer", goal="Audit the module.")
+```
+
+CLI-level knobs (which binary, the sandbox / permission policy, the completion timeout) live on the `BaseAgent` subclass; cognitive customization (`thinking` / `observation` / `before_action` / `after_action`) lives on the `AgentWorker` — the same split as `BaseLlm` vs `CognitiveWorker`.
 
 ## Structured Output (output_schema)
 
@@ -699,8 +761,9 @@ fundamental_skill = Skill(
     content="## Procedure\n1. Get financials\n2. Evaluate P/E ratio\n...",
 )
 
-agent = MyAgent(llm=llm)
+agent = MyAgent()
 result = await agent.arun(
+    llm=llm,
     goal="Analyze AAPL stock",
     tools=[get_financials_tool],
     skills=[fundamental_skill],
@@ -727,8 +790,9 @@ history = CognitiveHistory(
     compress_threshold=3,
 )
 
-agent = MyAgent(llm=llm)
+agent = MyAgent()
 result = await agent.arun(
+    llm=llm,
     goal="Long running task",
     tools=[...],
     cognitive_history=history,
@@ -786,25 +850,23 @@ class MultiPhaseAgent(AmphibiousAutoma[CognitiveContext]):
 ## Execution Tracing
 
 ```python
-agent = MyAgent(llm=llm, verbose=True)
+agent = MyAgent(verbose=True)
 result = await agent.arun(
+    llm=llm,
     goal="...",
     tools=[...],
-    trace_running=True,
+    trace=True,                 # activate the in-memory AgentTrace
+    workdir="./.bridgic",       # optional: also persist <workdir>/runs/<run_id>/trace.json
 )
 
-# Access trace
+# Access the trace — a flat unified dict, kept on the agent after the run.
 trace = agent._agent_trace.build()
-# trace["phases"]: steps grouped by self.snapshot() blocks
-# trace["orphan_steps"]: steps outside any phase annotation
+# {"goal": str, "metadata": {...}, "history": [TraceStep, ...]}
 
-for step in trace["orphan_steps"]:
-    content = step.step_content if hasattr(step, "step_content") else step.get("step_content", "")
-    print(f"  {content[:80]}")
-    tool_calls = step.tool_calls if hasattr(step, "tool_calls") else step.get("tool_calls", [])
-    for tc in tool_calls:
-        name = tc.tool_name if hasattr(tc, "tool_name") else tc.get("tool_name", "?")
-        print(f"    -> {name}")
+for step in trace["history"]:
+    print(f"  {step.step_content[:80]}")
+    for tc in step.tool_calls:          # List[RecordedToolCall]
+        print(f"    -> {tc.tool_name}")
 
 # Save / Load
 agent._agent_trace.save("trace.json")

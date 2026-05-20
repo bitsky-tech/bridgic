@@ -1,6 +1,6 @@
 ---
 name: bridgic-amphibious
-description: "Build agents with the Bridgic Amphibious dual-mode framework — combining LLM-driven (agent) and deterministic (workflow) execution with peer state-machine dispatch, slot-based step-level fallback, human-in-the-loop, and a built-in tool surface (shell, filesystem, search, HITL) auto-injected into every agent. Use when: (1) writing code that imports from bridgic.amphibious, (2) creating AmphibiousAutoma subclasses, (3) defining CognitiveWorker think units and yielding ThinkUnit / EnterAgent / ActionCall / HumanCall / LLMCall / RETURN, (4) implementing on_agent/on_workflow methods, (5) working with CognitiveContext, Exposure system, or cognitive policies, (6) adding human-in-the-loop interactions (HumanCall, request_human, request_human_tool), (7) using or filtering the auto-injected built-in tools (bash, read_file/write_file/edit_file, glob, grep, request_human) via the builtin_tools class attribute or arun kwarg, (8) scaffolding a new amphibious project via CLI, (9) any task involving the bridgic-amphibious framework."
+description: "Build agents with the Bridgic Amphibious dual-mode framework — combining LLM-driven (agent) and deterministic (workflow) execution with peer state-machine dispatch, slot-based step-level fallback, human-in-the-loop, a built-in tool surface (shell, filesystem, search, HITL) auto-injected into every agent, and delegation of sub-goals to external coding agents (claude code, etc.) as think-agent units. Use when: (1) writing code that imports from bridgic.amphibious, (2) creating AmphibiousAutoma subclasses, (3) defining CognitiveWorker think units (think_unit / ThinkUnit) and AgentWorker think agents (think_agent / ThinkAgent), yielding ThinkUnit / ThinkAgent / EnterAgent / ActionCall / HumanCall / LLMCall / RETURN, (4) implementing on_agent/on_workflow methods, (5) working with CognitiveContext, Exposure system, or cognitive policies, (6) adding human-in-the-loop interactions (HumanCall, request_human, request_human_tool), (7) using or filtering the auto-injected built-in tools (bash, read_file/write_file/edit_file, glob, grep, request_human) via the builtin_tools class attribute or arun kwarg, (8) scaffolding a new amphibious project via CLI, (9) any task involving the bridgic-amphibious framework."
 ---
 
 # Bridgic Amphibious
@@ -15,7 +15,7 @@ A bridgic-amphibious project requires the following packages:
 |---------|-------------|
 | `bridgic-core` | Core framework (Worker, Automa, GraphAutoma) |
 | `bridgic-amphibious` | Dual-mode agent framework |
-| `bridgic-llms-openai` | LLM provider (only required for `AGENT` / `AMPHIFLOW` modes) |
+| `bridgic-llms-openai` | LLM provider (omit for pure `WORKFLOW` / `ThinkAgent` projects) |
 | `python-dotenv` | `.env` file loading |
 
 Before using this package, you need to install the dependencies by using the provided install script:
@@ -28,7 +28,7 @@ The script checks uv availability, initializes a uv project if needed, installs 
 
 ## LLM Setup
 
-Amphibious agents accept a `BaseLlm` instance with `astructure_output` protocol from a bridgic LLM provider package. The LLM is required for `AGENT` and `AMPHIFLOW` modes; pure `WORKFLOW` mode can run without one.
+Pass a `BaseLlm` instance (with the `astructured_output` protocol, from a bridgic LLM provider package) to `arun(llm=...)`. An LLM is required for any run that uses a `CognitiveWorker` (`ThinkUnit`) or `LLMCall` — i.e. typical `AGENT` and `AMPHIFLOW` runs. Pure `WORKFLOW` and pure `ThinkAgent` flows need none.
 
 ```python
 from bridgic.llms.openai import OpenAILlm, OpenAIConfiguration
@@ -64,8 +64,9 @@ class WeatherAgent(AmphibiousAutoma[CognitiveContext]):
     async def on_agent(self, ctx: CognitiveContext):
         yield ThinkUnit("planner")
 
-agent = WeatherAgent(llm=llm, verbose=True)
+agent = WeatherAgent(verbose=True)
 summary = await agent.arun(
+    llm=llm,
     goal="Check the weather in Tokyo and London.",
     tools=[FunctionToolSpec.from_raw(get_weather)],
 )
@@ -87,12 +88,12 @@ Creates a single `amphi.py` in the target directory (default: cwd). The template
 
 ## Core Concepts
 
-**Agent = Think Units + Yield Primitives.** Agents are defined by declaring `CognitiveWorker` think units (registered as class-level `think_unit(...)` descriptors) and orchestrating them in `on_agent()` / `on_workflow()` as async generators that yield framework primitives.
+**Agent = Think Units + Yield Primitives.** Agents are defined by declaring `CognitiveWorker` think units (`think_unit(...)`) and/or `AgentWorker` think agents (`think_agent(...)`) as class-level descriptors, and orchestrating them in `on_agent()` / `on_workflow()` as async generators that yield framework primitives.
 
 **Four-layer architecture:**
 1. `Exposure` — data visibility abstraction (LayeredExposure / EntireExposure)
 2. `CognitiveContext` — state container (goal, tools, skills, history)
-3. `CognitiveWorker` — pure thinking unit (observe-think-act)
+3. `CognitiveWorker` / `AgentWorker` — peer thinking units: in-process LLM observe-think-act cycle / external coding-agent delegation
 4. `AmphibiousAutoma` — orchestration engine (mode routing, dispatcher, lifecycle)
 
 **OTC Cycle (inside one think unit):** Observe -> Think -> Act, with hook points at each phase.
@@ -103,7 +104,7 @@ Creates a single `amphi.py` in the target directory (default: cwd). The template
 
 ## Yield Primitives
 
-Template methods are async generators. Each yielded value tells the dispatcher what to do; the dispatcher returns the result via `asend()`. Six primitives, four scopes — mismatches raise `RuntimeError` at dispatch time.
+Template methods are async generators. Each yielded value tells the dispatcher what to do; the dispatcher returns the result via `asend()`. Seven primitives, four scopes — mismatches raise `RuntimeError` at dispatch time.
 
 | Primitive | Category | Allowed in | Returns to generator |
 |-----------|----------|------------|----------------------|
@@ -112,6 +113,7 @@ Template methods are async generators. Each yielded value tells the dispatcher w
 | `LLMCall.chat(...)` / `.structure_output(...)` / `.tool_selector(...)` | atomic Call (LLM) | `on_workflow`, hooks | protocol-specific |
 | `EnterAgent(goal=, tools=, skills=, history=)` | mode-switch | `on_workflow` only | `None` |
 | `ThinkUnit("name", until=, max_attempts=, tools=, skills=)` | cognitive composition | `on_agent` only | worker output (or `None`) |
+| `ThinkAgent("name", goal=, expose_tools=)` | cognitive composition | `on_agent` only | external agent's result `str` (or `None`) |
 | `RETURN(value)` | control flow | any scope | (closes generator; value flows to caller) |
 
 `ActionCall` / `HumanCall` / `LLMCall` are forbidden inside `on_agent` — the agent body is reserved for orchestrating cognitive steps via `ThinkUnit`. If the LLM needs to invoke a tool or ask a human, that happens *inside* a `ThinkUnit` (the worker's tool-selection phase), not by yielding from `on_agent` directly.
@@ -163,8 +165,8 @@ class MyHybrid(AmphibiousAutoma[CognitiveContext]):
         # Explicit handoff for an open-ended sub-task.
         yield EnterAgent(goal="Solve the captcha", tools=["solve_captcha"])
 
-await MyHybrid(llm=llm).arun(
-    goal="...", tools=[...],
+await MyHybrid().arun(
+    llm=llm, goal="...", tools=[...],
     mode=RunMode.AMPHIFLOW, max_consecutive_fallbacks=2,
 )
 ```
@@ -225,7 +227,7 @@ class MyAgent(AmphibiousAutoma[CognitiveContext]):
 # per agent class from the @human_channel registry, so the LLM sees the
 # real channel names (description + enum-constrained `channel` param)
 # without you having to spell them out in the system_prompt.
-await MyAgent(llm=llm).arun(goal="...", tools=[my_tool])
+await MyAgent().arun(llm=llm, goal="...", tools=[my_tool])
 ```
 
 ### Custom Pydantic Output
@@ -257,6 +259,34 @@ async def on_agent(self, ctx):
     async with self.snapshot(goal="Writing phase"):
         yield ThinkUnit("writer")
 ```
+
+### External Agent (ThinkAgent)
+
+`think_agent` declares an `AgentWorker` think agent — the external-agent peer of `think_unit`. Instead of an in-process LLM cycle, it hands a sub-goal to an out-of-process coding-agent CLI (claude code, etc.). The external agent reaches the parent's project tools through an in-process MCP bridge, so every tool call it makes still flows through the parent's `before_action` / `after_action` hooks and the trace.
+
+```python
+from bridgic.amphibious import (
+    AgentWorker, ClaudeCodeAgent, ThinkAgent, think_agent, RETURN,
+)
+
+class Planner(AmphibiousAutoma[CognitiveContext]):
+    # AgentWorker is anchored on a BaseAgent the way CognitiveWorker is
+    # anchored on a BaseLlm. ClaudeCodeAgent / CodexAgent are the drivers.
+    planner = think_agent(
+        AgentWorker(ClaudeCodeAgent(completion_timeout=300.0)),
+    )
+
+    async def on_agent(self, ctx):
+        # yield ThinkAgent returns the string the external agent passed
+        # to its `agent_done` completion signal.
+        summary = yield ThinkAgent("planner", goal="Draft a 4-step plan.")
+        yield RETURN(summary)
+
+# A pure ThinkAgent flow needs no `llm` — the external agent reasons.
+await Planner().arun()
+```
+
+CLI-level knobs live on the `BaseAgent`; `expose_tools` filters which project tools reach the external agent. Two `BaseAgent` drivers ship with the framework — `ClaudeCodeAgent` (claude code) and `CodexAgent` (OpenAI codex); each spawns its CLI as a subprocess, which must be installed, on `PATH`, and authenticated. For the full surface see [references/api-reference.md](references/api-reference.md#agentworker--baseagent).
 
 ## Built-in Tools
 
