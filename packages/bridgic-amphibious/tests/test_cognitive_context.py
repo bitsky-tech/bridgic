@@ -40,7 +40,6 @@ class TestCognitiveContext:
         assert "Plan a trip to Tokyo" in result
         assert "Available Tools" in result
         assert "Available Skills" not in result
-        assert "Available Skills" not in result
 
         # --- format_summary(exclude=...) ---
         result = ctx.format_summary(exclude=["tools"])

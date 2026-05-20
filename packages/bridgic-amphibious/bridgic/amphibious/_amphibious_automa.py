@@ -26,9 +26,10 @@ from bridgic.core.agentic import ConcurrentAutoma
 from bridgic.core.agentic.tool_specs import ToolSpec, FunctionToolSpec
 from bridgic.core.utils._console import printer
 from bridgic.amphibious._context import CognitiveContext, CognitiveTools, CognitiveSkills, CognitiveHistory, Exposure, LayeredExposure
-from bridgic.amphibious._cognitive_worker import CognitiveWorker, WorkerRunner, _DELEGATE
-from bridgic.amphibious._think_unit import ThinkUnitDescriptor, _ThinkUnitRuntime
-from bridgic.amphibious._think_agent import ThinkAgentDescriptor, _ThinkAgentRuntime
+from bridgic.amphibious._cognitive_worker import CognitiveWorker, _DELEGATE
+from bridgic.amphibious._agent_worker import AgentWorker
+from bridgic.amphibious._think_unit import ThinkUnitDescriptor
+from bridgic.amphibious._think_agent import ThinkAgentDescriptor
 from bridgic.amphibious._run_dir import ensure_run_dir, make_run_id
 from bridgic.amphibious.builtin_tools import ALL_BUILTIN_TOOLS, current_agent
 from bridgic.amphibious.builtin_tools.human.request_human import build_request_human_tool
@@ -62,6 +63,11 @@ CognitiveContextT = TypeVar("CognitiveContextT", bound=CognitiveContext)
 
 # Built-in tools auto-injected into every AmphibiousAutoma agent's tool set.
 _BUILTIN_TOOLS: Tuple[ToolSpec, ...] = ALL_BUILTIN_TOOLS
+
+# Sentinel put on a ThinkAgent delegation's decision channel to tell the
+# per-delegation consumer task (``_run_think_agent._execute_decisions``)
+# that the worker has finished and no more decisions will arrive.
+_DELEGATION_DONE: Any = object()
 
 
 ################################################################################################################
@@ -111,9 +117,10 @@ class AgentTrace:
 
     Owns ALL workdir persistence: when constructed with a non-``None``
     ``workdir``, every lifecycle event and step record triggers an
-    incremental write of ``<workdir>/trace.json``. This is the single
-    artifact for a run (replacing the legacy ``meta.json`` +
-    ``ctx_initial.json`` + ``ctx_final.json`` + ``trace.json`` quartet).
+    incremental write of ``<workdir>/trace.json``. That one file is the
+    single artifact for a run — it replaced an earlier multi-file layout
+    (separate ``meta.json`` + ``ctx_initial.json`` + ``ctx_final.json``
+    + a steps file).
 
     Trace data layout (``build()`` and the on-disk JSON share it)::
 
@@ -1124,16 +1131,8 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
                     "use LLMCall for a direct LLM invocation outside the "
                     "cognitive loop, or EnterAgent to enter an on_agent flow."
                 )
-            descriptor = getattr(type(self), item.name, None)
-            if not isinstance(descriptor, ThinkUnitDescriptor):
-                raise AttributeError(
-                    f"ThinkUnit(name={item.name!r}) does not match any "
-                    f"think_unit declaration on {type(self).__name__}."
-                )
-            
-            # Run the think unit
-            runtime = _ThinkUnitRuntime(descriptor, item)
-            return await runtime.run(self, ctx)
+            # Run ThinkUnit
+            return await self._run_think_unit(item, ctx)
 
         if isinstance(item, ThinkAgent):
             # Scope validation: ThinkAgent is a cognitive step that delegates to an external agent runtime.
@@ -1410,206 +1409,59 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
 
     async def _run_think_unit(
         self,
-        worker: CognitiveWorker,
-        *,
-        _name: Optional[str] = None,
-        until: Optional[Union[Callable[..., bool], Callable[..., Awaitable[bool]]]] = None,
-        max_attempts: int = 1,
-        tools: Optional[List[str]] = None,
-        skills: Optional[List[str]] = None,
-        on_error: ErrorStrategy = ErrorStrategy.RAISE,
-        max_retries: int = 0,
+        item: ThinkUnit,
+        ctx: CognitiveContextT,
     ) -> None:
-        """Drive one ``CognitiveWorker`` through its observe-think-act cycle.
+        """Drive one ``ThinkUnit`` yield through its observe-think-act cycle.
 
-        Two paths by worker type: a ``CognitiveWorker`` goes through the
-        framework's OTC cycle (one cycle per attempt, ``until`` /
-        ``max_attempts`` control the loop); a ``WorkerRunner`` gets a
-        single ``await worker.run(self, ctx)`` (it owns its own loop, so
-        the per-yield overlays are ignored).
+        Resolves the descriptor from ``item.name``, clones the
+        ``CognitiveWorker`` template (state isolation), resolves
+        per-yield overlays against descriptor defaults, sets up the
+        runtime env (LLM injection, verbose, tools / skills filters),
+        and runs the OTC loop.
 
-        ``_name`` (when provided by ``_ThinkUnitRuntime``) is used as
-        the ``[Think] <name>`` header label and triggers ``_log_depth``
-        bump so per-cycle arrows nest underneath.
+        Emits the ``[Think] <name>`` header + bumps ``_log_depth`` so
+        per-cycle arrows nest underneath. Mirrors ``_run_think_agent``
+        in shape.
         """
-        async def _run_think_unit_body(
-            worker: CognitiveWorker,
-            worker_label: str,
-            *,
-            until: Optional[Union[Callable[..., bool], Callable[..., Awaitable[bool]]]] = None,
-            max_attempts: int = 1,
-            tools: Optional[List[str]] = None,
-            skills: Optional[List[str]] = None,
-            on_error: ErrorStrategy = ErrorStrategy.RAISE,
-            max_retries: int = 0,
-        ) -> None:
-            """OTC body — the actual CognitiveWorker observe-think-act loop.
-            Split out from ``_run_think_unit`` so the existing tool/skill
-            restoration ``try / finally`` keeps its shape; ``_run_think_unit``
-            wraps it with the ``[Think]`` header + depth bump.
-            """
+        ########################
+        # Resolve descriptor + overlays
+        ########################
+        descriptor = getattr(type(self), item.name, None)
+        if not isinstance(descriptor, ThinkUnitDescriptor):
+            raise AttributeError(
+                f"ThinkUnit(name={item.name!r}) does not match any "
+                f"think_unit declaration on {type(self).__name__}."
+            )
 
-            ########################
-            # Setup runtime env.
-            ########################
-            # Context
-            context = self._current_context
-            if context is None:
-                raise RuntimeError(
-                    "Cannot call _run_think_unit(): no active context. "
-                    "_run_think_unit() must be called within an on_agent() method."
-                )
+        until = item.until if item.until is not None else descriptor._until
+        max_attempts: int = (
+            item.max_attempts if item.max_attempts is not None
+            else descriptor._max_attempts
+        )
+        tools: Optional[List[str]] = (
+            item.tools if item.tools is not None else descriptor._tools
+        )
+        skills: Optional[List[str]] = (
+            item.skills if item.skills is not None else descriptor._skills
+        )
+        # on_error / max_retries are descriptor-only (no per-yield overlay).
+        on_error: ErrorStrategy = descriptor._on_error
+        max_retries: int = descriptor._max_retries
 
-            # LLM
-            if worker._llm is None and self._llm is not None:
-                worker.set_llm(self._llm)
-            if worker._llm is None:
-                raise RuntimeError(
-                    f"ThinkUnit's CognitiveWorker ({worker_label}) has no LLM. "
-                    "Either pass llm=... to arun(), or set llm on the "
-                    "CognitiveWorker template itself."
-                )
+        ########################
+        # Clone worker (state isolation)
+        ########################
+        worker = ThinkUnitDescriptor._clone_worker(descriptor._worker_template)
+        worker_label = worker.__class__.__name__
 
-            # verbose
-            injected_verbose = False
-            if worker._verbose is None:
-                worker._verbose = self._verbose
-                injected_verbose = True
-
-            # tools filter
-            original_tools: Optional[CognitiveTools] = None
-            if tools is not None:
-                original_tools = context.tools
-                filtered_tools = CognitiveTools()
-                for tool in original_tools.get_all():
-                    if tool.tool_name in tools:
-                        filtered_tools.add(tool)
-                context.tools = filtered_tools
-
-            # skills filter
-            original_skills: Optional[CognitiveSkills] = None
-            filtered_skills: Optional[CognitiveSkills] = None
-            filtered_to_orig: Dict[int, int] = {}
-            if skills is not None:
-                original_skills = context.skills
-                filtered_skills = CognitiveSkills()
-                orig_to_filtered: Dict[int, int] = {}
-                for orig_idx, skill in enumerate(original_skills.get_all()):
-                    if skill.name in skills:
-                        new_idx = len(filtered_skills)
-                        filtered_skills.add(skill)
-                        orig_to_filtered[orig_idx] = new_idx
-                        filtered_to_orig[new_idx] = orig_idx
-                for orig_idx, detail in original_skills._revealed.items():
-                    if orig_idx in orig_to_filtered:
-                        filtered_skills._revealed[orig_to_filtered[orig_idx]] = detail
-                context.skills = filtered_skills
-
-            # spent-tokens delta tracker
-            tokens_before = worker.spent_tokens
-
-            ########################
-            # OTC cycle closure
-            ########################
-            async def _run_observe_think_act(cycle: int) -> bool:
-                # 1. Observe (worker → agent fallback)
-                obs = await self._invoke_template(worker.observation(context), context)
-                if obs is _DELEGATE or obs is None:
-                    obs = await self._invoke_template(self.observation(context), context)
-                if obs is not None:
-                    context.observation = obs
-
-                # 2. Think
-                decision = await worker.arun(context=context)
-                self._record_think_unit(worker, obs, decision, cycle=cycle)
-
-                # 3. Act — top_level=False so the act phase nests under
-                # the surrounding [Think] header (one ``-> result:`` arrow
-                # per tool call, not a new [Action Execution] section).
-                action_result = (
-                    await self._run_action_call(
-                        decision, context, _worker=worker, top_level=False,
-                    )
-                    if decision is not None else None
-                )
-
-                # Auto-captured final answer
-                if decision.finish and decision.step_content:
-                    self._final_answer = decision.step_content
-
-                return decision.finish
-
-            # Run loop with on_error handling, then restore environment.
-            try:
-                for cycle_idx in range(max_attempts):
-                    cycle_num = cycle_idx + 1
-                    try:
-                        finished = await _run_observe_think_act(cycle_num)
-                    except Exception as e:
-                        if on_error == ErrorStrategy.RAISE:
-                            raise RuntimeError(
-                                f"Worker '{worker_label}' failed during "
-                                f"observe-think-act cycle: {e}"
-                            ) from e
-                        elif on_error == ErrorStrategy.IGNORE:
-                            finished = False
-                        elif on_error == ErrorStrategy.RETRY:
-                            finished = False
-                            for attempt in range(max_retries + 1):
-                                try:
-                                    finished = await _run_observe_think_act(cycle_num)
-                                    break
-                                except Exception as retry_e:
-                                    if attempt == max_retries:
-                                        raise RuntimeError(
-                                            f"Worker '{worker_label}' failed after "
-                                            f"{max_retries + 1} retries: {retry_e}"
-                                        ) from retry_e
-                    else:
-                        if finished:
-                            break
-                        if until is not None:
-                            cond_result = until(context)
-                            if inspect.iscoroutine(cond_result):
-                                cond_result = await cond_result
-                            if cond_result:
-                                break
-            finally:
-                self.spent_tokens += worker.spent_tokens - tokens_before
-                if injected_verbose:
-                    worker._verbose = None
-                if original_tools is not None:
-                    context.tools = original_tools
-                if original_skills is not None:
-                    if filtered_skills is not None:
-                        for filtered_idx, detail in filtered_skills._revealed.items():
-                            orig_idx = filtered_to_orig.get(filtered_idx)
-                            if orig_idx is not None:
-                                original_skills._revealed[orig_idx] = detail
-                    context.skills = original_skills
-        
-        # Emit the [Think] header and bump depth here so dispatcher
-        # stays log-free. ``_name`` is None only when invoked directly
-        # by callers that don't want an envelope.
-        if _name is not None:
-            self._log("Think", _name, color="cyan")
-            self._log_depth += 1
+        ########################
+        # [Think] header + depth bump
+        ########################
+        self._log("Think", item.name, color="cyan")
+        self._log_depth += 1
         try:
-            ########################
-            # External WorkerRunner.
-            ########################
-            if not isinstance(worker, CognitiveWorker):
-                if isinstance(worker, WorkerRunner):
-                    await worker.run(self, self._current_context)
-                    return
-                raise TypeError(
-                    f"_run_think_unit() expects a CognitiveWorker or a WorkerRunner; "
-                    f"got {type(worker).__name__}."
-                )
-
-            worker_label = worker.__class__.__name__
-
-            return await _run_think_unit_body(
+            await self._run_think_unit_body(
                 worker, worker_label,
                 until=until,
                 max_attempts=max_attempts,
@@ -1619,19 +1471,201 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
                 max_retries=max_retries,
             )
         finally:
-            if _name is not None:
-                self._log_depth -= 1
+            self._log_depth -= 1
+
+    async def _run_think_unit_body(
+        self,
+        worker: CognitiveWorker,
+        worker_label: str,
+        *,
+        until: Optional[Union[Callable[..., bool], Callable[..., Awaitable[bool]]]] = None,
+        max_attempts: int = 1,
+        tools: Optional[List[str]] = None,
+        skills: Optional[List[str]] = None,
+        on_error: ErrorStrategy = ErrorStrategy.RAISE,
+        max_retries: int = 0,
+    ) -> None:
+        """OTC body — the actual ``CognitiveWorker`` observe-think-act loop.
+
+        Split out from ``_run_think_unit`` so the tool / skill
+        restoration ``try / finally`` keeps its shape; the outer method
+        wraps it with descriptor resolution + ``[Think]`` header.
+        """
+        ########################
+        # Setup runtime env.
+        ########################
+        # Context
+        context = self._current_context
+        if context is None:
+            raise RuntimeError(
+                "Cannot call _run_think_unit(): no active context. "
+                "_run_think_unit() must be called within an on_agent() method."
+            )
+
+        # LLM
+        if worker._llm is None and self._llm is not None:
+            worker.set_llm(self._llm)
+        if worker._llm is None:
+            raise RuntimeError(
+                f"ThinkUnit's CognitiveWorker ({worker_label}) has no LLM. "
+                "Either pass llm=... to arun(), or set llm on the "
+                "CognitiveWorker template itself."
+            )
+
+        # verbose
+        injected_verbose = False
+        if worker._verbose is None:
+            worker._verbose = self._verbose
+            injected_verbose = True
+
+        # tools filter
+        original_tools: Optional[CognitiveTools] = None
+        if tools is not None:
+            original_tools = context.tools
+            filtered_tools = CognitiveTools()
+            for tool in original_tools.get_all():
+                if tool.tool_name in tools:
+                    filtered_tools.add(tool)
+            context.tools = filtered_tools
+
+        # skills filter
+        original_skills: Optional[CognitiveSkills] = None
+        filtered_skills: Optional[CognitiveSkills] = None
+        filtered_to_orig: Dict[int, int] = {}
+        if skills is not None:
+            original_skills = context.skills
+            filtered_skills = CognitiveSkills()
+            orig_to_filtered: Dict[int, int] = {}
+            for orig_idx, skill in enumerate(original_skills.get_all()):
+                if skill.name in skills:
+                    new_idx = len(filtered_skills)
+                    filtered_skills.add(skill)
+                    orig_to_filtered[orig_idx] = new_idx
+                    filtered_to_orig[new_idx] = orig_idx
+            for orig_idx, detail in original_skills._revealed.items():
+                if orig_idx in orig_to_filtered:
+                    filtered_skills._revealed[orig_to_filtered[orig_idx]] = detail
+            context.skills = filtered_skills
+
+        # spent-tokens delta tracker
+        tokens_before = worker.spent_tokens
+
+        ########################
+        # OTC cycle closure
+        ########################
+        async def _run_observe_think_act(cycle: int) -> bool:
+            # 1. Observe (worker → agent fallback)
+            obs = await self._invoke_template(worker.observation(context), context)
+            if obs is _DELEGATE or obs is None:
+                obs = await self._invoke_template(self.observation(context), context)
+            if obs is not None:
+                context.observation = obs
+
+            # 2. Think
+            decision = await worker.arun(context=context)
+            self._record_think_unit(worker, obs, decision, cycle=cycle)
+
+            # 3. Act — top_level=False so the act phase nests under
+            # the surrounding [Think] header (one ``-> result:`` arrow
+            # per tool call, not a new [Action Execution] section).
+            # ``worker.arun`` always returns a decision, so no None
+            # guard is needed (a None would already have crashed
+            # ``_record_think_unit`` above).
+            await self._run_action_call(
+                decision, context, _worker=worker, top_level=False,
+            )
+
+            # Auto-captured final answer
+            if decision.finish and decision.step_content:
+                self._final_answer = decision.step_content
+
+            return decision.finish
+
+        # Run loop with on_error handling, then restore environment.
+        try:
+            for cycle_idx in range(max_attempts):
+                cycle_num = cycle_idx + 1
+                try:
+                    finished = await _run_observe_think_act(cycle_num)
+                except Exception as e:
+                    if on_error == ErrorStrategy.RAISE:
+                        raise RuntimeError(
+                            f"Worker '{worker_label}' failed during "
+                            f"observe-think-act cycle: {e}"
+                        ) from e
+                    elif on_error == ErrorStrategy.IGNORE:
+                        finished = False
+                    elif on_error == ErrorStrategy.RETRY:
+                        finished = False
+                        for attempt in range(max_retries + 1):
+                            try:
+                                finished = await _run_observe_think_act(cycle_num)
+                                break
+                            except Exception as retry_e:
+                                if attempt == max_retries:
+                                    raise RuntimeError(
+                                        f"Worker '{worker_label}' failed after "
+                                        f"{max_retries + 1} retries: {retry_e}"
+                                    ) from retry_e
+                else:
+                    if finished:
+                        break
+                    if until is not None:
+                        cond_result = until(context)
+                        if inspect.iscoroutine(cond_result):
+                            cond_result = await cond_result
+                        if cond_result:
+                            break
+        finally:
+            self.spent_tokens += worker.spent_tokens - tokens_before
+            if injected_verbose:
+                worker._verbose = None
+            if original_tools is not None:
+                context.tools = original_tools
+            if original_skills is not None:
+                if filtered_skills is not None:
+                    for filtered_idx, detail in filtered_skills._revealed.items():
+                        orig_idx = filtered_to_orig.get(filtered_idx)
+                        if orig_idx is not None:
+                            original_skills._revealed[orig_idx] = detail
+                context.skills = original_skills
 
     async def _run_think_agent(
         self,
         item: ThinkAgent,
         ctx: CognitiveContextT,
     ) -> Any:
-        """Run one ThinkAgent yield and emit ``[ThinkAgent]`` header +
-        ``-> final:`` arrow. The MCP-bridged inner ActionCalls nest
-        underneath as ``-> result:`` arrows (via _record_action_call
-        called inside _run_action_call with top_level=False).
+        """Drive one ``ThinkAgent`` yield through one delegated cycle.
+
+        Resolves the descriptor from ``item.name``, clones the
+        ``AgentWorker`` template (state isolation), wraps the body in
+        a context ``snapshot(...)`` that overlays per-yield ``goal`` /
+        ``expose_tools`` onto ``ctx.goal`` / ``ctx.tools``, runs the
+        observation phase (worker → agent fallback), then drives the
+        worker.
+
+        **Decision channel.** The worker does NOT execute the external
+        agent's tool calls — it only *produces* decisions, exactly like
+        ``CognitiveWorker``. Each MCP tool call the external agent makes
+        is surfaced onto a per-delegation ``asyncio.Queue`` as a
+        ``(decision, future)`` pair; a consumer task — owned here, alive
+        only for this one delegation — pulls each, runs it through
+        ``_run_action_call`` (so ``before_action`` / ``after_action``
+        hooks fire and ``_record_action_call`` lands it in the trace),
+        and resolves the future. ``AmphibiousAutoma`` is the only place
+        that *acts*.
+
+        Per-yield knobs flow through ``ctx`` exactly the way
+        ``CognitiveWorker`` reads its inputs — no worker-side slots,
+        no second protocol. ``AgentWorker.thinking()`` reads
+        ``context.goal`` directly.
+
+        Mirrors ``_run_think_unit`` in shape — the two cognitive-
+        composition drivers share the same skeleton.
         """
+        ########################
+        # Resolve descriptor + per-yield overlays
+        ########################
         descriptor = getattr(type(self), item.name, None)
         if not isinstance(descriptor, ThinkAgentDescriptor):
             raise AttributeError(
@@ -1639,6 +1673,62 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
                 f"think_agent declaration on {type(self).__name__}."
             )
 
+        expose_tools_filter: Optional[List[str]] = (
+            item.expose_tools if item.expose_tools is not None
+            else descriptor._expose_tools
+        )
+
+        ########################
+        # Build snapshot fields for the ``ctx`` overlay
+        ########################
+        # ``yield ThinkAgent(goal=...)`` lands on ``ctx.goal`` for the
+        # duration of this delegation; ``expose_tools`` filters
+        # ``ctx.tools`` down to the whitelisted set (mirrors
+        # ``_run_think_unit_body``'s ``tools`` filter).
+        snapshot_fields: Dict[str, Any] = {}
+        if item.goal is not None:
+            snapshot_fields["goal"] = item.goal
+        if expose_tools_filter is not None:
+            filter_set = set(expose_tools_filter)
+            filtered_tools = CognitiveTools()
+            for tool in ctx.tools.get_all():
+                if tool.tool_name in filter_set:
+                    filtered_tools.add(tool)
+            snapshot_fields["tools"] = filtered_tools
+
+        ########################
+        # Clone worker (state isolation) + wire the decision channel
+        ########################
+        worker = ThinkAgentDescriptor._clone_worker(descriptor._worker_template)
+        decision_channel: asyncio.Queue = asyncio.Queue()
+        worker._decision_channel = decision_channel
+
+        async def _execute_decisions() -> None:
+            """Per-delegation consumer: pull the decisions the worker
+            surfaces from the external agent's MCP tool calls, run each
+            through ``_run_action_call``, resolve the result future.
+
+            Lives only for this one delegation — it ends as soon as the
+            ``_DELEGATION_DONE`` sentinel arrives (put in the ``finally``
+            below, after the worker has finished and the channel is
+            drained).
+            """
+            while True:
+                msg = await decision_channel.get()
+                if msg is _DELEGATION_DONE:
+                    return
+                decision, result_future = msg
+                try:
+                    step = await self._run_action_call(
+                        decision, ctx, _worker=worker, top_level=False,
+                    )
+                    result_future.set_result(step)
+                except Exception as exc:  # surface to the worker's await
+                    result_future.set_exception(exc)
+
+        ########################
+        # [ThinkAgent] header + depth bump
+        ########################
         self._log(
             "ThinkAgent",
             f"{item.name}  goal={_brief(item.goal or '')}",
@@ -1646,12 +1736,84 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         )
         self._log_depth += 1
         try:
-            runtime = _ThinkAgentRuntime(descriptor, item)
-            result_value = await runtime.run(self, ctx)
-            self._record_think_agent(item, result_value)
-            return result_value
+            ########################
+            # Drive within the snapshot, alongside the consumer
+            ########################
+            consumer = asyncio.create_task(_execute_decisions())
+            try:
+                if snapshot_fields:
+                    async with self.snapshot(**snapshot_fields):
+                        result = await self._run_think_agent_body(worker)
+                else:
+                    result = await self._run_think_agent_body(worker)
+            finally:
+                # Worker is done → no more decisions can arrive (the
+                # external agent blocks on each call's result, so the
+                # channel is already drained). Signal the consumer to
+                # stop and join it.
+                await decision_channel.put(_DELEGATION_DONE)
+                await consumer
+
+            # ``result`` is an ``AgentResult`` — captured from
+            # ``worker.arun``'s return value, mirroring how
+            # ``CognitiveWorker.arun`` hands its decision back. The
+            # worker keeps no result slot of its own.
+            self._record_think_agent(item, result, worker)
+            return result.output
         finally:
             self._log_depth -= 1
+
+    async def _run_think_agent_body(
+        self,
+        worker: AgentWorker,
+    ) -> Any:
+        """Delegate body — observation + ``AgentWorker.arun``.
+
+        Split out from ``_run_think_agent`` so the verbose-injection +
+        token-tracking ``try / finally`` keeps its shape; the outer
+        method handles descriptor resolution, the ``ctx`` snapshot,
+        header / depth orchestration, and the ``_record_think_agent``
+        envelope.
+
+        Tests that want to bypass the actual MCP host + subprocess can
+        patch this method — by the time it runs, ``ctx.goal`` /
+        ``ctx.tools`` already reflect the per-yield overlay so
+        introspection works.
+
+        Returns the ``AgentResult`` from ``worker.arun`` — the parent
+        unwraps ``.output`` for the ``yield ThinkAgent`` asend value and
+        folds the whole result into the trace envelope.
+        """
+        context = self._current_context
+        if context is None:
+            raise RuntimeError(
+                "Cannot call _run_think_agent(): no active context. "
+                "_run_think_agent() must be called within an on_agent() method."
+            )
+
+        # verbose
+        injected_verbose = False
+        if worker._verbose is None:
+            worker._verbose = self._verbose
+            injected_verbose = True
+
+        try:
+            ########################
+            # Observe (worker → agent fallback)
+            ########################
+            obs = await self._invoke_template(worker.observation(context), context)
+            if obs is _DELEGATE or obs is None:
+                obs = await self._invoke_template(self.observation(context), context)
+            if obs is not None:
+                context.observation = obs
+
+            ########################
+            # Drive the worker — return value is the AgentResult
+            ########################
+            return await worker.arun(context=context)
+        finally:
+            if injected_verbose:
+                worker._verbose = None
 
     async def _run_action_call(
         self,
@@ -2232,20 +2394,54 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
 
         self._log("result", _brief(result), color="white")
 
-    def _record_think_agent(self, item: "ThinkAgent", result: Any) -> None:
+    def _record_think_agent(
+        self,
+        item: "ThinkAgent",
+        result: Any,
+        worker: AgentWorker,
+    ) -> None:
         """Record a ``THINK_AGENT`` trace step.
 
         The MCP-bridged tool calls fired *inside* the external agent
         each generate their own ``_record_action_call`` entries via the
-        ``_dispatch_project_tool`` → ``_run_action_call`` path. This
+        decision-channel path (``AgentWorker._emit_decision`` →
+        ``_run_think_agent``'s consumer → ``_run_action_call``). This
         record is the outer envelope marking the yield itself.
-        """
-        result_preview = _brief(result) if result is not None else ""
 
-        goal_preview = item.goal or ""
+        ``result`` is the ``AgentResult`` returned by ``worker.arun`` —
+        its ``output`` / ``exit_code`` / ``completion`` plus the worker
+        / agent class identities are folded into ``structured_output``
+        so the unified ``AgentTrace`` is the single source of truth for
+        delegate runs. (The worker keeps no result slot — the outcome
+        flows through the return value, mirroring ``CognitiveWorker``.)
+        """
+        output = getattr(result, "output", None)
+        result_preview = _brief(output) if output is not None else ""
+
+        # Record the yield-supplied goal verbatim. The "resolved goal"
+        # — whatever was actually in ``ctx.goal`` during the
+        # delegation — is already captured by ``AgentTrace``'s
+        # top-level ``goal`` field (the original arun goal) plus any
+        # ``EnterAgent`` step in scope. No need to duplicate here.
+        goal = item.goal
         step_content = f"ThinkAgent({item.name!r})"
-        if goal_preview:
-            step_content += f": {_brief(goal_preview, n=200)}"
+        if goal:
+            step_content += f": {_brief(goal, n=200)}"
+
+        structured: Dict[str, Any] = {
+            "goal": goal,
+            "result": result_preview or None,
+            "exit_code": getattr(result, "exit_code", None),
+            "completion_signal": getattr(result, "completion", None),
+            "worker_class": (
+                f"{type(worker).__module__}.{type(worker).__qualname__}"
+            ),
+        }
+        base_agent = getattr(worker, "_agent", None)
+        if base_agent is not None:
+            structured["agent_class"] = (
+                f"{type(base_agent).__module__}.{type(base_agent).__qualname__}"
+            )
 
         if self._agent_trace is not None:
             self._agent_trace.record_step({
@@ -2255,10 +2451,7 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
                 "observation": None,
                 "observation_hash": None,
                 "output_type": StepOutputType.THINK_AGENT.value,
-                "structured_output": {
-                    "goal": item.goal,
-                    "result": result_preview or None,
-                },
+                "structured_output": structured,
                 "structured_output_class": None,
                 "think_agent_name": item.name,
             })
@@ -2630,7 +2823,7 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
                     if fsm.scope == "agent":
                         # TODO: introduce a symmetric agent → workflow switch primitive.
                         #
-                        # Today the handoff is asymmetric: workflow → agentis explicit (the user yields ``EnterAgent``, and
+                        # Today the handoff is asymmetric: workflow → agent is explicit (the user yields ``EnterAgent``, and
                         # ``_enter_agent`` performs the switch), but agent → workflow is implicit — an on_agent run
                         # is bounded by a snapshot scope (a "sub-task"), and "returning to workflow" is signalled by the
                         # generator naturally exhausting. There is no agent-side primitive that mirrors ``EnterAgent``;
@@ -2782,13 +2975,13 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
 
         * ``trace=True`` activates an in-memory ``AgentTrace`` (survives
           on ``self._agent_trace`` after the run for inspection).
-        * ``workdir=path`` materialises ``<workdir>/runs/<run_id>/`` so
-          ThinkAgent delegate subdirs (``delegates/<n>/...``) have a
-          home — independent of whether the trace is active.
-        * Both set ⇒ ``AgentTrace`` also incrementally persists
-          ``<run>/trace.json`` (goal + metadata + history).
-        * ``trace=False, workdir=path`` ⇒ run dir exists for delegate
-          artifacts, no ``trace.json`` is written.
+        * ``workdir=path`` materialises ``<workdir>/runs/<run_id>/`` —
+          the run directory — independent of whether the trace is active.
+        * Both set ⇒ ``AgentTrace`` incrementally persists the single
+          ``<run>/trace.json`` (goal + metadata + history) — the run
+          directory's only artifact.
+        * ``trace=False, workdir=path`` ⇒ the run dir is created but
+          empty (nothing writes ``trace.json``).
 
         ``builtin_tools`` filters which built-in tools to inject. ``None``
         (default) defers to the class-level ``builtin_tools`` attribute;
@@ -2838,9 +3031,8 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         ########################
         # Run-dir + trace activation — orthogonal axes.
         #   trace=True  → AgentTrace is created (in-memory recorder).
-        #   workdir set → <workdir>/runs/<run_id>/ is materialised so
-        #                  ThinkAgent delegate subdirs have a home.
-        #   Both set    → AgentTrace also persists to that run dir.
+        #   workdir set → <workdir>/runs/<run_id>/ is materialised.
+        #   Both set    → AgentTrace also persists trace.json there.
         ########################
         run_id: Optional[str] = None
         if workdir is not None:

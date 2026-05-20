@@ -7,8 +7,12 @@ Layers:
   / ``Context``: field-level data management with progressive disclosure.
 * **Context impl** — ``Step``, ``Skill``, ``CognitiveTools``,
   ``CognitiveSkills``, ``CognitiveHistory``, ``CognitiveContext``.
-* **Worker** — ``CognitiveWorker``: one observe-think-act cycle. Cognitive
-  policies (acquiring / rehearsal / reflection) enable multi-round thinking.
+* **Worker** — ``CognitiveWorker``: one in-process observe-think-act cycle,
+  anchored on a ``BaseLlm``. Cognitive policies (acquiring / rehearsal /
+  reflection) enable multi-round thinking. Symmetric peer: ``AgentWorker``,
+  one external-agent delegation, anchored on a ``BaseAgent`` (the external
+  coding-agent abstraction; ``ClaudeCodeAgent`` is the shipped driver for
+  ``claude code``).
 * **Orchestration** — ``AmphibiousAutoma`` + yield primitives (``ThinkUnit``,
   ``ThinkAgent``, ``EnterAgent``, ``ActionCall``, ``HumanCall``, ``LLMCall``,
   ``RETURN``) + ``think_unit`` / ``think_agent`` descriptors.
@@ -35,12 +39,23 @@ from ._context import (
     CognitiveContext,
 )
 from ._cognitive_worker import (
-    # Worker
+    # In-process worker (LLM-driven OTC cycle)
     CognitiveWorker,
-    # Worker runner protocol (external worker plug-in slot)
-    WorkerRunner,
     # Sentinel
     _DELEGATE,
+)
+from ._agent_worker import (
+    # External-agent worker (delegates one cycle to an external agent)
+    AgentWorker,
+)
+from .temp._base_agent import (
+    # External coding-agent abstraction (the BASE of AgentWorker)
+    BaseAgent,
+    # Concrete ``claude code`` driver
+    ClaudeCodeAgent,
+    # Request / result value objects for BaseAgent.run
+    AgentRequest,
+    AgentResult,
 )
 from ._amphibious_automa import (
     # Orchestration
@@ -50,7 +65,7 @@ from ._amphibious_automa import (
     human_channel,
 )
 from ._think_unit import (
-    # Think unit (in-process CognitiveWorker / WorkerRunner)
+    # Think unit (in-process CognitiveWorker)
     think_unit,
     ThinkUnitDescriptor,
 )
@@ -114,7 +129,11 @@ __all__ = [
     # Implementation layer - Worker
     "CognitiveWorker",
     "_DELEGATE",
-    "WorkerRunner",
+    "AgentWorker",
+    "BaseAgent",
+    "ClaudeCodeAgent",
+    "AgentRequest",
+    "AgentResult",
 
     # Orchestration layer
     "AmphibiousAutoma",

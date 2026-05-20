@@ -512,11 +512,11 @@ class TestLLMCallTrace:
                 yield LLMCall.chat("captured prompt")
 
         agent = Agent()
-        await agent.arun(llm=llm, context=_make_ctx(), trace_running=True)
+        await agent.arun(llm=llm, context=_make_ctx(), trace=True)
 
         assert agent._agent_trace is not None
         trace = agent._agent_trace.build()
-        steps = trace["steps"]
+        steps = trace["history"]
         llm_steps = [s for s in steps if s.output_type == StepOutputType.LLM_CALL]
         assert len(llm_steps) == 1
         recorded = llm_steps[0]

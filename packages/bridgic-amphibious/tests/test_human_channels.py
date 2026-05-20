@@ -14,7 +14,10 @@ from typing import Any, AsyncGenerator, List, Union
 import pytest
 
 from bridgic.amphibious import (
+    AgentResult,
+    AgentWorker,
     AmphibiousAutoma,
+    BaseAgent,
     CognitiveContext,
     ActionCall,
     HumanCall,
@@ -22,10 +25,20 @@ from bridgic.amphibious import (
     LLMCall,
     RETURN,
     RunMode,
+    ThinkAgent,
     ThinkUnit,
     human_channel,
+    think_agent,
     think_unit,
 )
+
+
+class _NoopAgent(BaseAgent):
+    """A ``BaseAgent`` stub for probe workers — ``run()`` never spawns a
+    subprocess; the worker's overridden ``thinking()`` does the probe."""
+
+    async def run(self, request) -> AgentResult:
+        return AgentResult(output=None, exit_code=0, completion="agent_done")
 
 
 def _ctx() -> CognitiveContext:
@@ -505,24 +518,31 @@ class TestDynamicRequestHumanSpecInjection:
         assert spec2.tool_parameters["properties"]["channel"]["enum"] == ["a", "b"]
 
     @pytest.mark.asyncio
-    async def test_end_to_end_on_agent_thinkunit_routes_through_injected_spec(self):
-        """End-to-end: ``on_agent`` → ``ThinkUnit`` → ``WorkerRunner``
+    async def test_end_to_end_on_agent_thinkagent_routes_through_injected_spec(self):
+        """End-to-end: ``on_agent`` → ``ThinkAgent`` → ``AgentWorker``
         finds the injected ``request_human`` spec in ``ctx.tools``, and
         invoking its underlying function with ``channel="feishu"`` reaches
         the feishu handler — not slack — proving the inject + dispatch
         chain is correct in the actual agent reasoning path.
+
+        Uses ``AgentWorker.thinking()`` as a convenient probe — the
+        method runs once per delegation, has the running ``context`` in
+        scope, and the framework hosts the MCP bridge around it. The
+        worker's ``BaseAgent`` is a no-op (no subprocess), so the probe
+        in ``thinking()`` runs and the delegation finishes immediately.
         """
         captured: dict = {}
 
-        class _Probe:
-            """WorkerRunner Protocol: pulls the injected request_human
-            spec out of ``ctx.tools`` and exercises its underlying func
-            the same way the LLM tool-call wrapper would.
-            """
+        class _Probe(AgentWorker):
+            def __init__(self):
+                super().__init__(_NoopAgent())
 
-            async def run(self, agent, ctx) -> None:
+            def _clone(self):
+                return _Probe()
+
+            async def thinking(self, context):
                 spec = next(
-                    t for t in ctx.tools.get_all() if t.tool_name == "request_human"
+                    t for t in context.tools.get_all() if t.tool_name == "request_human"
                 )
                 captured["enum"] = spec.tool_parameters["properties"]["channel"][
                     "enum"
@@ -534,9 +554,10 @@ class TestDynamicRequestHumanSpecInjection:
                 captured["slack_response"] = await spec._func(
                     prompt="ping", channel="slack"
                 )
+                return ""
 
         class _AgentClass(AmphibiousAutoma[CognitiveContext]):
-            worker = think_unit(_Probe())
+            worker = think_agent(_Probe())
 
             @human_channel("feishu")
             async def via_feishu(self, prompt: str) -> str:
@@ -547,10 +568,10 @@ class TestDynamicRequestHumanSpecInjection:
                 return f"slack-answer-to-{prompt}"
 
             async def on_agent(self, ctx):
-                yield ThinkUnit("worker")
+                yield ThinkAgent("worker")
 
         agent = _AgentClass()
-        await agent.arun(llm=MockLLM(), goal="test", mode=RunMode.AGENT)
+        await agent.arun(goal="test", mode=RunMode.AGENT)
 
         assert captured["enum"] == ["feishu", "slack"]
         assert "feishu" in captured["desc"] and "slack" in captured["desc"]
@@ -566,23 +587,30 @@ class TestDynamicRequestHumanSpecInjection:
         guard still fires — proving the runtime safety net is in place.
         """
 
-        class _Probe:
-            async def run(self, agent, ctx) -> None:
+        class _Probe(AgentWorker):
+            def __init__(self):
+                super().__init__(_NoopAgent())
+
+            def _clone(self):
+                return _Probe()
+
+            async def thinking(self, context):
                 spec = next(
-                    t for t in ctx.tools.get_all() if t.tool_name == "request_human"
+                    t for t in context.tools.get_all() if t.tool_name == "request_human"
                 )
                 with pytest.raises(RuntimeError, match="Unknown human channel"):
                     await spec._func(prompt="ping", channel="not_registered")
+                return ""
 
         class _AgentClass(AmphibiousAutoma[CognitiveContext]):
-            worker = think_unit(_Probe())
+            worker = think_agent(_Probe())
 
             @human_channel("feishu")
             async def via_feishu(self, prompt: str) -> str:
                 return "f"
 
             async def on_agent(self, ctx):
-                yield ThinkUnit("worker")
+                yield ThinkAgent("worker")
 
         agent = _AgentClass()
-        await agent.arun(llm=MockLLM(), goal="test", mode=RunMode.AGENT)
+        await agent.arun(goal="test", mode=RunMode.AGENT)

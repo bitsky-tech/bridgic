@@ -4,8 +4,13 @@
 
 * ``trace=True``  ⇒ in-memory ``AgentTrace`` is created (recording).
 * ``workdir=path`` ⇒ ``<workdir>/runs/<run_id>/`` is materialised so
-                    ``ThinkAgent`` delegates have a home.
+                    the run dir exists (currently used only as the
+                    ``AgentTrace`` persistence target).
 * Both           ⇒ ``AgentTrace`` also persists ``<run>/trace.json``.
+
+ThinkAgent delegate state lives entirely in-memory now (no per-delegate
+artifact directory); the trace step records the delegate outcome
+metadata inside the unified ``AgentTrace`` instead.
 """
 
 import json
@@ -15,13 +20,16 @@ from typing import Any, AsyncGenerator, List
 import pytest
 
 from bridgic.amphibious import (
+    AgentRequest,
+    AgentResult,
+    AgentWorker,
     AmphibiousAutoma,
+    BaseAgent,
     CognitiveContext,
     RETURN,
     ThinkAgent,
     think_agent,
 )
-from bridgic.amphibious._think_agent import _ThinkAgentRuntime
 
 
 class _DummyLLM:
@@ -149,7 +157,7 @@ class TestArunWithWorkdir:
 
 
 # ---------------------------------------------------------------------------
-# Trace activation interaction with trace_running
+# Trace activation — the trace / workdir flags
 # ---------------------------------------------------------------------------
 
 
@@ -192,63 +200,39 @@ class TestTraceActivation:
 
 
 # ---------------------------------------------------------------------------
-# ThinkAgent delegate placement under arun run-dir
+# ThinkAgent trace recording — trace.json contains a step per yield
 # ---------------------------------------------------------------------------
+
+
+class _NoopAgent(BaseAgent):
+    """A ``BaseAgent`` stub — ``run()`` never spawns a subprocess."""
+
+    async def run(self, request: AgentRequest) -> AgentResult:  # pragma: no cover
+        return AgentResult(output="ok", exit_code=0, completion="agent_done")
+
+
+def _noop_worker() -> AgentWorker:
+    """A default AgentWorker whose body is patched out in these tests."""
+    return AgentWorker(_NoopAgent())
 
 
 @pytest.fixture
-def mock_runtime(monkeypatch):
-    """Replace ``_ThinkAgentRuntime.run`` with a stub that records the
-    delegate workdir it would have used (via ``_resolve_delegate_workdir``)."""
-    captured: List[Path] = []
+def mock_run_body(monkeypatch):
+    """Stub out ``_run_think_agent_body`` so no subprocess is spawned.
 
-    async def fake_run(self_runtime, agent, ctx):
-        captured.append(self_runtime._resolve_delegate_workdir(agent))
-        return "ok"
+    Stashes a deterministic ``AgentResult`` on the worker so the
+    ``_record_think_agent`` envelope writes a complete trace step.
+    """
+    captured: dict = {"workers": []}
 
-    monkeypatch.setattr(_ThinkAgentRuntime, "run", fake_run)
+    async def fake_body(self_agent, worker):
+        captured["workers"].append(worker)
+        # The body returns an AgentResult — the parent unwraps .output
+        # and folds exit_code / completion into the trace step.
+        return AgentResult(output="ok", exit_code=0, completion="agent_done")
+
+    monkeypatch.setattr(AmphibiousAutoma, "_run_think_agent_body", fake_body)
     return captured
-
-
-class TestThinkAgentDelegateUnderRunDir:
-
-    @pytest.mark.asyncio
-    async def test_delegate_workdir_lives_under_arun_run_dir(self, tmp_path, mock_runtime):
-        class A(AmphibiousAutoma[CognitiveContext]):
-            do_thing = think_agent()
-
-            async def on_agent(self, ctx) -> AsyncGenerator[Any, Any]:
-                yield ThinkAgent("do_thing", goal="x")
-
-        await A().arun(llm=_DummyLLM(), goal="x", workdir=tmp_path)
-
-        # The mocked runtime resolved exactly one delegate dir, which
-        # must sit at ``<arun-run-dir>/delegates/001/``.
-        assert len(mock_runtime) == 1
-        delegate_dir = mock_runtime[0]
-        run_dir = next((tmp_path / "runs").iterdir())
-        assert delegate_dir.parent.parent == run_dir
-        assert delegate_dir.parent.name == "delegates"
-        assert delegate_dir.name == "001"
-
-    @pytest.mark.asyncio
-    async def test_multiple_delegates_get_sequential_subdirs(self, tmp_path, mock_runtime):
-        class A(AmphibiousAutoma[CognitiveContext]):
-            do_thing = think_agent()
-
-            async def on_agent(self, ctx) -> AsyncGenerator[Any, Any]:
-                yield ThinkAgent("do_thing", goal="a")
-                yield ThinkAgent("do_thing", goal="b")
-                yield ThinkAgent("do_thing", goal="c")
-
-        await A().arun(llm=_DummyLLM(), goal="x", workdir=tmp_path)
-        names = [d.name for d in mock_runtime]
-        assert names == ["001", "002", "003"]
-
-
-# ---------------------------------------------------------------------------
-# ThinkAgent trace recording — trace.json contains a step per yield
-# ---------------------------------------------------------------------------
 
 
 class TestThinkAgentTraceRecording:
@@ -256,37 +240,47 @@ class TestThinkAgentTraceRecording:
     a ``THINK_AGENT`` step so ``trace.json`` reflects what happened."""
 
     @pytest.mark.asyncio
-    async def test_trace_contains_think_agent_step(self, tmp_path, mock_runtime):
+    async def test_trace_contains_think_agent_step(
+        self, tmp_path, mock_run_body,
+    ):
         class A(AmphibiousAutoma[CognitiveContext]):
-            do_thing = think_agent()
+            do_thing = think_agent(_noop_worker())
 
             async def on_agent(self, ctx) -> AsyncGenerator[Any, Any]:
                 yield ThinkAgent("do_thing", goal="the-goal")
 
-        await A().arun(llm=_DummyLLM(), goal="x", workdir=tmp_path)
+        await A().arun(goal="x", trace=True, workdir=tmp_path)
         run_dir = next((tmp_path / "runs").iterdir())
         trace = json.loads((run_dir / "trace.json").read_text())
-        think_agent_steps = [s for s in trace["steps"] if s.get("name") == "think_agent"]
+        think_agent_steps = [
+            s for s in trace["history"] if s.get("name") == "think_agent"
+        ]
         assert len(think_agent_steps) == 1
         step = think_agent_steps[0]
         assert step["output_type"] == "think_agent"
         assert step["think_agent_name"] == "do_thing"
         assert step["structured_output"]["goal"] == "the-goal"
-        # The mocked runtime returned ``"ok"`` from ``fake_run`` above.
         assert step["structured_output"]["result"] == "ok"
+        # Worker outcome metadata folded into the trace step.
+        assert step["structured_output"]["exit_code"] == 0
+        assert step["structured_output"]["completion_signal"] == "agent_done"
 
     @pytest.mark.asyncio
-    async def test_trace_records_one_step_per_yield(self, tmp_path, mock_runtime):
+    async def test_trace_records_one_step_per_yield(
+        self, tmp_path, mock_run_body,
+    ):
         class A(AmphibiousAutoma[CognitiveContext]):
-            do_thing = think_agent()
+            do_thing = think_agent(_noop_worker())
 
             async def on_agent(self, ctx) -> AsyncGenerator[Any, Any]:
                 yield ThinkAgent("do_thing", goal="g1")
                 yield ThinkAgent("do_thing", goal="g2")
 
-        await A().arun(llm=_DummyLLM(), goal="x", workdir=tmp_path)
+        await A().arun(goal="x", trace=True, workdir=tmp_path)
         run_dir = next((tmp_path / "runs").iterdir())
         trace = json.loads((run_dir / "trace.json").read_text())
-        think_agent_steps = [s for s in trace["steps"] if s.get("name") == "think_agent"]
+        think_agent_steps = [
+            s for s in trace["history"] if s.get("name") == "think_agent"
+        ]
         goals = [s["structured_output"]["goal"] for s in think_agent_steps]
         assert goals == ["g1", "g2"]

@@ -1,13 +1,14 @@
-"""In-process FastMCP HTTP host used by the ThinkAgent runtime.
+"""In-process FastMCP HTTP host — the MCP bridge for ``AgentWorker``.
 
 Exposes a set of callables as MCP tools over HTTP. Runs in the **same
 asyncio event loop** as the parent ``AmphibiousAutoma`` (mounted via
 ``uvicorn.Server.serve()`` as a task) so tool handlers have full closure
-access to the agent's ``self`` and ``ctx``. The ``agent_done`` completion
-signal is owned by the host as a first-class future.
+access to the running state. The ``agent_done`` completion signal is
+owned by the host as a first-class future.
 
-This module is itself imported lazily from ``_think_agent.py`` (only on
-the first ``ThinkAgent`` dispatch).
+This module is imported by ``_agent_worker.py``: ``AgentWorker._run_think``
+boots one ``MCPHost`` per delegation to expose the project tools to the
+external agent CLI.
 
 NOTE: ``from __future__ import annotations`` is intentionally NOT used
 here. ``_build_handler`` materialises a function via ``exec`` and needs
@@ -148,6 +149,7 @@ class MCPHost:
                 "The host will resume the parent automa with the value you pass."
             ),
         )
+        
         async def agent_done(result: str) -> str:
             on_agent_done(result)
             return "Acknowledged. Goal recorded as complete; you may finish now."

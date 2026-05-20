@@ -226,8 +226,12 @@ class TestRunMethod:
                     yield
 
         agent = Agent()
+        # ``_run_think_unit_body`` is the inner method that owns the
+        # "no active context" guard (the outer ``_run_think_unit`` is
+        # only ever reached from inside ``arun``, where the context is
+        # already set).
         with pytest.raises(RuntimeError, match="no active context"):
-            await agent._run_think_unit(worker)
+            await agent._run_think_unit_body(worker, "test")
 
 
 # ---------------------------------------------------------------------------

@@ -219,12 +219,20 @@ class ActionCall:
 
     Each instance wraps exactly one tool call.
 
+    The ``**kwargs`` constructor is the ergonomic form for hand-written
+    workflow code, but it cannot express a tool whose own parameter is
+    named ``tool_name`` or ``description`` — those names are claimed by
+    the signature. When the tool arguments come from an external source
+    (e.g. an MCP-bridged call, where the agent may pick any parameter
+    names), use the collision-free ``ActionCall.from_tool_args(...)``.
+
     Used by: _amphibious_automa.py (state-machine driver)
 
     Usage::
         yield ActionCall("navigate_to", url="http://example.com")
         yield ActionCall("click_element_by_ref", description="Click submit", ref="e42")
         result = yield ActionCall("fill_field", name="user", value="john")
+        ActionCall.from_tool_args("save", {"description": "draft"})  # collision-free
     """
     tool_name: str
     description: str
@@ -237,6 +245,33 @@ class ActionCall:
         *,
         description: str = "",
         **tool_args: Any,
+    ) -> None:
+        self._populate(tool_name, description, tool_args)
+
+    @classmethod
+    def from_tool_args(
+        cls,
+        tool_name: str,
+        tool_args: Dict[str, Any],
+        *,
+        description: str = "",
+    ) -> "ActionCall":
+        """Build an ``ActionCall`` from an explicit tool-arguments dict.
+
+        Collision-free alternative to the ``**kwargs`` constructor: the
+        tool arguments arrive as a single dict, so the tool may use ANY
+        parameter names — including ``tool_name`` / ``description``,
+        which the ``**kwargs`` form cannot represent.
+        """
+        obj = cls.__new__(cls)
+        obj._populate(tool_name, description, dict(tool_args))
+        return obj
+
+    def _populate(
+        self,
+        tool_name: str,
+        description: str,
+        tool_args: Dict[str, Any],
     ) -> None:
         self.tool_name = tool_name
         self.description = description
@@ -399,10 +434,11 @@ class ThinkUnit:
     """Yielded inside ``on_agent`` to invoke a class-level ``think_unit``.
 
     The dispatcher resolves ``name`` against the class and runs the
-    associated ``ThinkUnitDescriptor`` via ``_ThinkUnitRuntime``. Fields
-    beyond ``name`` overlay the descriptor's defaults (``None`` =
-    descriptor value). The ``asend()`` result is the worker's typed
-    output (or ``None`` if there is no ``output_schema``).
+    associated ``ThinkUnitDescriptor`` through
+    ``AmphibiousAutoma._run_think_unit``. Fields beyond ``name`` overlay
+    the descriptor's defaults (``None`` = descriptor value). The
+    ``asend()`` result is the worker's typed output (or ``None`` if
+    there is no ``output_schema``).
 
     >>> result = yield ThinkUnit("main_think")
     >>> result = yield ThinkUnit("exec_think", until=lambda c: c.done, max_attempts=20)
@@ -418,19 +454,30 @@ class ThinkUnit:
 class ThinkAgent:
     """Yielded to invoke a class-level ``think_agent`` declaration by name.
 
-    Unlike ``ThinkUnit`` (one in-process OTC cycle), ``ThinkAgent`` hands
-    the sub-goal off to an **external** agent runtime (currently
-    ``claude code``). The external agent is bound to the parent's task
-    tools via an in-process MCP server, so every tool call routes back
-    through ``_run_action_call`` and the parent's hooks fire normally.
+    Unlike ``ThinkUnit`` (one in-process OTC cycle driven by a
+    ``CognitiveWorker``), ``ThinkAgent`` drives an ``AgentWorker`` that
+    hands the sub-goal off to an **external** agent (today: ``claude
+    code``; add others by subclassing ``BaseAgent``). The external
+    agent is bound to the parent's task tools via an in-process MCP
+    server, so every tool call it makes is surfaced back as a decision
+    and executed by ``_run_action_call`` — the parent's hooks fire
+    normally.
 
     Fields beyond ``name`` overlay the descriptor's defaults (``None`` =
-    descriptor value). The ``asend()`` result is the string the external
-    agent passed to ``agent_done(result=...)``, or the last chunk of
-    assistant text if the agent exited without signalling.
+    descriptor value). CLI-level knobs (``allowed_builtin_tools`` /
+    ``permission_mode`` / ``completion_timeout`` / …) live on the
+    ``BaseAgent`` the ``AgentWorker`` wraps — analogous to how LLM /
+    cognitive-policy knobs live on ``CognitiveWorker``, not on
+    ``ThinkUnit``.
+
+    The ``asend()`` result is the string the external agent passed to
+    ``agent_done(result=...)``, or ``None`` if the agent exited
+    without signalling.
 
     >>> class MyAutoma(AmphibiousAutoma[MyContext]):
-    ...     write_article = think_agent()
+    ...     write_article = think_agent(
+    ...         AgentWorker(ClaudeCodeAgent(allowed_builtin_tools=["Write"])),
+    ...     )
     ...     async def on_agent(self, ctx):
     ...         result = yield ThinkAgent("write_article", goal="Write the article.")
     ...         yield RETURN(result)
@@ -438,8 +485,6 @@ class ThinkAgent:
     name: str
     goal: Optional[str] = None
     expose_tools: Optional[List[str]] = None
-    allowed_builtin_tools: Optional[List[str]] = None
-    permission_mode: Optional[str] = None
 
 
 @dataclass(frozen=True)

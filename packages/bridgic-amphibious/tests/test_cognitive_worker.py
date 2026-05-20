@@ -3,7 +3,7 @@ import os
 import types
 import pytest
 from unittest.mock import MagicMock
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, List, Optional
 
 from bridgic.amphibious import (
     CognitiveContext,
@@ -35,8 +35,8 @@ SKILLS_DIR = os.path.join(os.path.dirname(__file__), "skills")
 def _tr(**kwargs):
     """Create a simple namespace mock for intermediate (non-final) thinking rounds.
 
-    Simulates the dynamic _ThinkResultModel in tests: has step_content, output,
-    finish, and optionally details_needed / rehearsal / reflection attributes.
+    Simulates the dynamic ThinkModel in tests: has step_content, output,
+    finish, details, and optionally rehearsal / reflection attributes.
     MockLLM returns this directly, bypassing schema validation.
     """
     defaults = {"step_content": "", "output": [], "finish": False, "details": []}
@@ -916,56 +916,3 @@ class TestActionDefensive:
         last_step = ctx.cognitive_history._items[-1]
         assert last_step.content == "done"
         assert last_step.result.value == "result"
-
-
-class TestSkillRevealPersistence:
-    """Tests that skill _revealed state persists across until() iterations via write-back."""
-
-    @pytest.mark.asyncio
-    async def test_revealed_state_persists_across_iterations(self):
-        """Skills revealed in iteration N are available in iteration N+1 via index remapping."""
-        from bridgic.amphibious import CognitiveSkills
-
-        ctx = _make_context()  # already loads skills from SKILLS_DIR
-
-        # Pre-reveal skill[0] on original_skills
-        ctx.get_details("skills", 0)
-        assert 0 in ctx.skills._revealed
-
-        # Simulate what _run() does when tools filter is active:
-        # create filtered_skills with only skill[0], copy reveals, then write back.
-        original_skills = ctx.skills
-        filtered_skills = CognitiveSkills()
-        orig_to_filtered: Dict[int, int] = {}
-        filtered_to_orig: Dict[int, int] = {}
-
-        for orig_idx, skill in enumerate(original_skills.get_all()):
-            new_idx = len(filtered_skills)
-            filtered_skills.add(skill)
-            orig_to_filtered[orig_idx] = new_idx
-            filtered_to_orig[new_idx] = orig_idx
-
-        # Forward-copy reveals
-        for orig_idx, detail in original_skills._revealed.items():
-            if orig_idx in orig_to_filtered:
-                filtered_skills._revealed[orig_to_filtered[orig_idx]] = detail
-
-        ctx.skills = filtered_skills
-
-        # Inside iteration: skill[0] should be visible as revealed in filtered
-        assert 0 in ctx.skills._revealed
-
-        # Simulate revealing skill[1] inside the iteration
-        ctx.get_details("skills", 1)
-        assert 1 in ctx.skills._revealed
-
-        # Write back: both 0 and 1 should propagate to original
-        for filtered_idx, detail in filtered_skills._revealed.items():
-            orig_idx = filtered_to_orig.get(filtered_idx)
-            if orig_idx is not None:
-                original_skills._revealed[orig_idx] = detail
-        ctx.skills = original_skills
-
-        # After write-back: both 0 and 1 in original_skills._revealed
-        assert 0 in ctx.skills._revealed
-        assert 1 in ctx.skills._revealed

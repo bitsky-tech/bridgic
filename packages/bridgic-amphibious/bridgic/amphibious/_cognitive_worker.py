@@ -1,26 +1,15 @@
 """
-Cognitive workers — the "think" units of the amphibious agent framework.
+CognitiveWorker — the in-process "think" unit of the amphibious framework.
 
-This module hosts the two worker shapes the framework recognizes:
+Each ``arun`` call performs exactly the thinking phase: observation is
+injected by ``AmphibiousAutoma._run_think_unit`` before calling, and
+action is executed by ``AmphibiousAutoma._run_action_call`` after.
+Multi-round thinking is driven by the cognitive policies (acquiring /
+rehearsal / reflection).
 
-* ``CognitiveWorker`` — the default observe-think-act unit (each ``arun``
-  call performs exactly the thinking phase; observation is injected by
-  ``AmphibiousAutoma._run_think_unit`` before calling, and action is
-  executed by ``AmphibiousAutoma._run_action_call`` after). Multi-round
-  thinking is driven by the cognitive policies (acquiring / rehearsal
-  / reflection).
-
-* ``WorkerRunner`` — the minimal alternative Protocol for plugging in an
-  external worker implementation (e.g. an external agent runtime that
-  already has its own internal loop, like the one ``ThinkAgent`` uses to
-  drive Claude Code). A class satisfying this Protocol gets a single
-  ``run(agent, ctx)`` callback per invocation, takes full responsibility
-  for completing the sub-task, and mutates ``ctx.cognitive_history``
-  directly when it wants framework-level visibility.
-
-The dispatcher distinguishes the two by ``isinstance(worker,
-CognitiveWorker)``; everything else that satisfies the ``WorkerRunner``
-Protocol goes down the single-shot ``run(agent, ctx)`` path.
+For *external*-agent delegation (out-of-process CLI), see the symmetric
+``AgentWorker`` in ``_agent_worker.py`` — same template-method surface,
+different "think" implementation (subprocess + MCP bridge).
 """
 
 import time
@@ -32,11 +21,9 @@ from typing import (
     Dict,
     List,
     Optional,
-    Protocol,
     Tuple,
     Type,
     Union,
-    runtime_checkable,
 )
 
 from pydantic import BaseModel, Field, create_model
@@ -249,9 +236,10 @@ class CognitiveWorker(GraphAutoma):
         """
         Thinking phase: decide what to do next (thinking + tool selection in one call).
 
-        Reads observation from context.observation (set by AmphibiousAutoma.run() before
-        calling arun). Returns the decision directly; AmphibiousAutoma.run() reads the
-        arun() return value (no side-channel via _last_decision).
+        Reads observation from ``context.observation`` (set by
+        ``AmphibiousAutoma._run_think_unit`` before calling ``arun``).
+        Returns the decision directly as the ``arun()`` return value —
+        the driver captures it from there and runs the act phase.
         """
         if not isinstance(context, CognitiveContext):
             raise TypeError(
@@ -808,45 +796,4 @@ class CognitiveWorker(GraphAutoma):
         return result
 
 
-#############################################################################
-# WorkerRunner Protocol — plug-in slot for external worker implementations
-#############################################################################
-
-
-@runtime_checkable
-class WorkerRunner(Protocol):
-    """Minimal runtime interface for an external worker implementation.
-
-    Plug in via ``think_unit(...)``. The dispatcher detects that the
-    worker is NOT a ``CognitiveWorker`` and skips the OTC cycle, calling
-    ``run(agent, ctx)`` directly. The runner manages its own loop and
-    tool exposure — overlays (``until`` / ``max_attempts`` / ``tools`` /
-    ``skills``) are ignored on this path.
-
-    Note: ``CognitiveWorker`` does NOT satisfy ``WorkerRunner`` — the
-    two paths stay distinct so the ``isinstance`` check is unambiguous.
-
-    >>> class ClaudeCodeWorker:
-    ...     async def run(self, agent, ctx):
-    ...         # subprocess out to claude, write history into ctx.
-    ...         ...
-    >>> class MyAgent(AmphibiousAutoma[CognitiveContext]):
-    ...     external_think = think_unit(ClaudeCodeWorker())
-    ...     async def on_agent(self, ctx):
-    ...         yield ThinkUnit("external_think")
-    """
-
-    async def run(
-        self,
-        agent: "AmphibiousAutoma",
-        ctx: "CognitiveContext",
-    ) -> None:
-        """Execute the worker's own loop against ``ctx``.
-
-        The runner is expected to ``ctx.add_info(Step(...))`` for any
-        history it wants the framework to see.
-        """
-        ...
-
-
-__all__ = ["CognitiveWorker", "WorkerRunner"]
+__all__ = ["CognitiveWorker"]
