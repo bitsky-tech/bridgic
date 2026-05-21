@@ -379,8 +379,10 @@ class CodexAgent(BaseAgent):
       parent process and are unaffected.
     * ``completion_timeout`` — seconds to wait before force-terminating.
 
-    Approvals are forced off (``--ask-for-approval never``) — ``codex
-    exec`` is non-interactive, so there is no one to answer a prompt.
+    ``codex exec`` is non-interactive; approvals are disabled at the
+    config level (``approval_policy=never`` + per-server
+    ``default_tools_approval_mode=auto``) since there is no one to
+    answer a prompt. ``sandbox_mode`` is the remaining safety knob.
 
     >>> agent = CodexAgent(sandbox_mode="danger-full-access")
     >>> reviewer = think_agent(AgentWorker(agent))
@@ -405,20 +407,25 @@ class CodexAgent(BaseAgent):
         argv = [
             self.bin, "exec",
             "--cd", str(request.cwd),
-            "--skip-git-repo-check",        # request.cwd is an ephemeral tempdir
+            "--skip-git-repo-check",  # request.cwd is an ephemeral tempdir
+            "--ephemeral",            # one-shot delegation — no persisted session
             "--sandbox", self.sandbox_mode,
-            "--ask-for-approval", "never",  # codex exec is non-interactive
-            "--ignore-user-config",         # isolate; auth still uses ~/.codex
+            "--ignore-user-config",   # isolate; auth still uses ~/.codex
+            # codex exec is non-interactive — it cannot answer an approval
+            # prompt, so disable approvals at the config level.
+            "-c", "approval_policy=never",
         ]
         # Wire each bridged MCP server in as a streamable-HTTP server via
-        # a ``-c`` config override, so ``~/.codex/config.toml`` stays
-        # untouched. Codex has no per-tool allow-list flag (claude's
-        # ``--allowedTools``) — ``--ignore-user-config`` plus this single
-        # injected server already scope Codex to the bridged tools.
+        # ``-c`` config overrides (``~/.codex/config.toml`` stays clean).
+        # ``default_tools_approval_mode=auto`` lets the bridged tools run
+        # without a per-call approval prompt.
         for name, spec in request.mcp_servers.items():
             url = spec.get("url")
             if url:
-                argv += ["-c", f"mcp_servers.{name}.url={url}"]
+                argv += [
+                    "-c", f"mcp_servers.{name}.url={url}",
+                    "-c", f"mcp_servers.{name}.default_tools_approval_mode=auto",
+                ]
         argv.append("-")  # read the prompt from stdin
 
         ########################
