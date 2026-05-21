@@ -377,7 +377,7 @@ class CodexAgent(BaseAgent):
     )
 ```
 
-`CodexAgent` spawns the `codex` CLI as a subprocess — it must be installed, on `PATH`, and authenticated (ChatGPT login or `OPENAI_API_KEY`). The bridged MCP host is wired in with a `-c mcp_servers.<name>.url=<url>` config override; `--ignore-user-config` isolates the run so the delegation sees only the bridged server (auth still resolves from the default `~/.codex`). `sandbox_mode` governs Codex's own shell + file edits; approvals are forced off (`codex exec` is non-interactive). Codex has no per-tool allow-list flag, so `AgentRequest.allowed_tools` is unused.
+`CodexAgent` spawns the `codex` CLI as a subprocess — it must be installed, on `PATH`, and authenticated (ChatGPT login or `OPENAI_API_KEY`). The bridged MCP server is wired in with `-c mcp_servers.<name>.url=<url>` config overrides; `--ignore-user-config` isolates the run so the delegation sees only the bridged server (auth still resolves from the default `~/.codex`). Because `codex exec` is non-interactive, approvals are disabled at the config level (`-c approval_policy=never`, plus per-server `-c default_tools_approval_mode=auto`). `sandbox_mode` governs Codex's own shell + file edits; Codex has no per-tool allow-list flag, so `AgentRequest.allowed_tools` is unused.
 
 ### AgentRequest / AgentResult
 
