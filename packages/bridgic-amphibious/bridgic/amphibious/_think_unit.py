@@ -75,21 +75,21 @@ class ThinkUnitDescriptor:
     def _clone_worker(template: CognitiveWorker) -> CognitiveWorker:
         """Clone a worker from its template for state isolation.
 
-        Copies configuration (policies, output_schema, verbose settings)
-        but creates a fresh instance with clean runtime state (tokens,
-        time, GraphAutoma execution state). LLM is left as None — the
-        agent injects it via ``set_llm()`` at runtime.
+        Copies configuration (prompt, output_schema, verbose settings) but
+        creates a fresh instance with clean runtime state (tokens, time,
+        GraphAutoma execution state). LLM is left as None — the agent
+        injects it via ``set_llm()`` at runtime.
 
         Mirrors ``ThinkAgentDescriptor._clone_worker``.
         """
-        return type(template)(
+        clone = type(template)(
             llm=None,
-            enable_rehearsal=template.enable_rehearsal,
-            enable_reflection=template.enable_reflection,
             verbose=template._verbose,
             verbose_prompt=template._verbose_prompt,
             output_schema=template.output_schema,
         )
+        clone.prompt = template.prompt
+        return clone
 
 
 def think_unit(

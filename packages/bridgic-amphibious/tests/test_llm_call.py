@@ -45,14 +45,6 @@ class MyResponseSchema(BaseModel):
     confidence: float
 
 
-ThinkDecision = CognitiveWorker._create_think_model(
-    enable_rehearsal=False,
-    enable_reflection=False,
-    enable_acquiring=False,
-    output_schema=None,
-)
-
-
 class FullProtocolLLM:
     """Mock LLM that supports all three protocols, scriptable per protocol."""
 
@@ -92,12 +84,8 @@ class FullProtocolLLM:
         return resp
 
     async def astructured_output(self, messages, constraint, **kwargs):
-        # ``astructured_output`` is invoked from two places: explicit
-        # LLMCall.structure_output (scripted via ``structured_responses``)
-        # and CognitiveWorker think-step calls inside on_agent fallback
-        # (scripted via ``finish_steps``). We try ``structured_responses``
-        # first so the explicit-LLMCall tests stay deterministic, and
-        # fall through to ``finish_steps`` for the fallback path.
+        # ``astructured_output`` is invoked only by explicit
+        # LLMCall.structure_output (scripted via ``structured_responses``).
         self.last_structured_messages = list(messages)
         self.last_structured_constraint = constraint
         if self.structured_responses:
@@ -106,22 +94,28 @@ class FullProtocolLLM:
             ]
             self._structured_idx += 1
             return resp
+        raise RuntimeError("no structured responses configured")
+
+    async def aselect_tool(self, messages, tools, **kwargs):
+        # ``aselect_tool`` is invoked from two places: explicit
+        # LLMCall.tool_selector (scripted via ``tool_selector_responses``)
+        # and the default CognitiveWorker think-step inside an on_agent
+        # fallback (scripted via ``finish_steps`` — each is a
+        # ``(tool_calls, content)`` pair; an empty list finishes the
+        # worker). Explicit tool_selector responses take priority.
+        self.last_tool_selector_messages = list(messages)
+        self.last_tool_selector_tools = list(tools)
+        if self.tool_selector_responses:
+            resp = self.tool_selector_responses[
+                self._tool_selector_idx % len(self.tool_selector_responses)
+            ]
+            self._tool_selector_idx += 1
+            return resp
         if self.finish_steps:
             resp = self.finish_steps[self._finish_idx % len(self.finish_steps)]
             self._finish_idx += 1
             return resp
-        raise RuntimeError("no structured responses configured")
-
-    async def aselect_tool(self, messages, tools, **kwargs):
-        self.last_tool_selector_messages = list(messages)
-        self.last_tool_selector_tools = list(tools)
-        if not self.tool_selector_responses:
-            raise RuntimeError("no tool_selector responses configured")
-        resp = self.tool_selector_responses[
-            self._tool_selector_idx % len(self.tool_selector_responses)
-        ]
-        self._tool_selector_idx += 1
-        return resp
+        raise RuntimeError("no tool_selector responses configured")
 
     # Sync counterparts required by the runtime-checkable
     # StructuredOutput / ToolSelection protocols (isinstance() checks
@@ -167,8 +161,9 @@ def _make_ctx() -> CognitiveContext:
     return CognitiveContext(goal="LLMCall test")
 
 
-def _finish_decision() -> ThinkDecision:
-    return ThinkDecision(step_content="Done", output=[], finish=True)
+def _finish_decision():
+    """Scripted ``aselect_tool`` reply with no tool calls → worker finishes."""
+    return ([], "Done")
 
 
 # ---------------------------------------------------------------------------

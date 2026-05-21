@@ -8,11 +8,10 @@ Layers:
 * **Context impl** — ``Step``, ``Skill``, ``CognitiveTools``,
   ``CognitiveSkills``, ``CognitiveHistory``, ``CognitiveContext``.
 * **Worker** — ``CognitiveWorker``: one in-process observe-think-act cycle,
-  anchored on a ``BaseLlm``. Cognitive policies (acquiring / rehearsal /
-  reflection) enable multi-round thinking. Symmetric peer: ``AgentWorker``,
-  one external-agent delegation, anchored on a ``BaseAgent`` (the external
-  coding-agent abstraction; ``ClaudeCodeAgent`` and ``CodexAgent`` are the
-  shipped drivers).
+  anchored on a ``BaseLlm`` — its ``thinking`` template method talks to the
+  LLM. Symmetric peer: ``AgentWorker``, one external-agent delegation,
+  anchored on a ``BaseAgent`` (the external coding-agent abstraction;
+  ``ClaudeCodeAgent`` and ``CodexAgent`` are the shipped drivers).
 * **Orchestration** — ``AmphibiousAutoma`` + yield primitives (``ThinkUnit``,
   ``ThinkAgent``, ``EnterAgent``, ``ActionCall``, ``HumanCall``, ``LLMCall``,
   ``RETURN``) + ``think_unit`` / ``think_agent`` descriptors.
@@ -89,7 +88,6 @@ from .builtin_tools import (
 from ._type import (
     # Worker data structures
     RunMode,
-    DetailRequest,
     ToolArgument,
     StepToolCall,
     # Yield primitives (scope rules — see AmphibiousAutoma docstring)
@@ -147,7 +145,6 @@ __all__ = [
 
     # Worker data structures
     "RunMode",
-    "DetailRequest",
     "ToolArgument",
     "StepToolCall",
     # Yield primitives

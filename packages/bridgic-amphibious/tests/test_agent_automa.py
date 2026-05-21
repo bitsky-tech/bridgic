@@ -22,39 +22,34 @@ from bridgic.amphibious import (
 )
 from .tools import get_travel_planning_tools
 
-# Default decision model for mock LLM responses (no policies, no output_schema)
-ThinkDecision = CognitiveWorker._create_think_model(
-    enable_rehearsal=False,
-    enable_reflection=False,
-    enable_acquiring=False,
-    output_schema=None,
-)
-
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _tr(**kwargs):
-    """Create a ThinkDecision instance for mock LLM responses."""
-    return ThinkDecision(**kwargs)
-
 
 class MockLLM:
-    """Returns a fixed sequence of responses."""
+    """Drives the new CognitiveWorker's native function-calling path.
+
+    Each scripted response is a ``(tool_calls, content)`` pair returned by
+    ``aselect_tool``. ``finish`` is derived by the framework: an empty
+    ``tool_calls`` list means the worker is done.
+    """
 
     def __init__(self, responses: List[Any]):
         self._responses = list(responses)
         self._idx = 0
 
-    async def astructured_output(self, messages, constraint, **kwargs):
+    async def aselect_tool(self, messages, tools, **kwargs):
         resp = self._responses[self._idx % len(self._responses)]
         self._idx += 1
         return resp
 
     async def achat(self, messages, **kwargs): ...
+    async def astructured_output(self, messages, constraint, **kwargs): ...
     async def astream(self, messages, **kwargs): ...
     def chat(self, messages, **kwargs): ...
+    def select_tool(self, messages, tools, **kwargs): ...
+    def structured_output(self, messages, constraint, **kwargs): ...
     def stream(self, messages, **kwargs): ...
 
 
@@ -66,36 +61,41 @@ def _make_ctx() -> CognitiveContext:
 
 
 def _make_search_step():
-    return _tr(
-        step_content="Search for flights",
-        output=[
-            StepToolCall(
-                tool="search_flights",
-                tool_arguments=[
-                    ToolArgument(name="origin", value="Beijing"),
-                    ToolArgument(name="destination", value="Tokyo"),
-                    ToolArgument(name="date", value="2024-06-01"),
-                ],
-            )
-        ],
-        finish=False,
+    """Scripted reply: one ``search_flights`` tool call (worker continues)."""
+    return (
+        [{
+            "name": "search_flights",
+            "arguments": {
+                "origin": "Beijing",
+                "destination": "Tokyo",
+                "date": "2024-06-01",
+            },
+        }],
+        "Search for flights",
     )
 
 
 def _make_hotel_step(finish=True):
-    return _tr(
-        step_content="Search for hotels",
-        output=[
-            StepToolCall(
-                tool="search_hotels",
-                tool_arguments=[
-                    ToolArgument(name="city", value="Tokyo"),
-                    ToolArgument(name="check_in", value="2024-06-01"),
-                    ToolArgument(name="check_out", value="2024-06-05"),
-                ],
-            )
-        ],
-        finish=finish,
+    """Scripted reply.
+
+    ``finish=True``  → no tool calls (worker finishes after this cycle).
+    ``finish=False`` → one ``search_hotels`` tool call (worker continues).
+
+    The new worker derives ``finish`` from the absence of tool calls, so a
+    finishing reply cannot also carry a tool call.
+    """
+    if finish:
+        return ([], "Search for hotels")
+    return (
+        [{
+            "name": "search_hotels",
+            "arguments": {
+                "city": "Tokyo",
+                "check_in": "2024-06-01",
+                "check_out": "2024-06-05",
+            },
+        }],
+        "Search for hotels",
     )
 
 
@@ -194,11 +194,16 @@ class TestRunMethod:
     async def test_run_error_strategy_ignore(self):
         """_run(on_error=IGNORE) silently ignores errors."""
         class FailLLM:
+            async def aselect_tool(self, messages, tools, **kwargs):
+                raise RuntimeError("LLM failed")
             async def astructured_output(self, messages, constraint, **kwargs):
                 raise RuntimeError("LLM failed")
-            async def achat(self, messages, **kwargs): ...
+            async def achat(self, messages, **kwargs):
+                raise RuntimeError("LLM failed")
             async def astream(self, messages, **kwargs): ...
             def chat(self, messages, **kwargs): ...
+            def select_tool(self, messages, tools, **kwargs): ...
+            def structured_output(self, messages, constraint, **kwargs): ...
             def stream(self, messages, **kwargs): ...
 
         llm = FailLLM()
@@ -327,7 +332,7 @@ class TestAmphibiousAutomaMisc:
     @pytest.mark.asyncio
     async def test_multiple_workers_in_on_agent(self):
         """on_agent() can orchestrate multiple workers sequentially."""
-        llm = MockLLM([_make_search_step(), _make_hotel_step()])
+        llm = MockLLM([_make_search_step(), _make_hotel_step(finish=False)])
 
         class Agent(AmphibiousAutoma[CognitiveContext]):
             planner = think_unit(CognitiveWorker.inline("Plan"))

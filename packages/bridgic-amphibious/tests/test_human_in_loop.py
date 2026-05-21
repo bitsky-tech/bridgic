@@ -25,8 +25,6 @@ from bridgic.amphibious import (
     HumanCall,
     EnterAgent,
     LLMCall,
-    StepToolCall,
-    ToolArgument,
     human_channel,
     ThinkUnit,
     think_unit,
@@ -40,29 +38,28 @@ from .tools import get_travel_planning_tools
 # Helpers
 # ---------------------------------------------------------------------------
 
-ThinkDecision = CognitiveWorker._create_think_model(
-    enable_rehearsal=False,
-    enable_reflection=False,
-    enable_acquiring=False,
-    output_schema=None,
-)
-
-
 class MockLLM:
-    """Returns a fixed sequence of structured-output responses."""
+    """Drives the new CognitiveWorker's native function-calling path.
+
+    Each scripted response is a ``(tool_calls, content)`` pair returned by
+    ``aselect_tool``; an empty ``tool_calls`` list makes the worker finish.
+    """
 
     def __init__(self, responses: List[Any]):
         self._responses = list(responses)
         self._idx = 0
 
-    async def astructured_output(self, messages, constraint, **kwargs):
+    async def aselect_tool(self, messages, tools, **kwargs):
         resp = self._responses[self._idx % len(self._responses)]
         self._idx += 1
         return resp
 
     async def achat(self, messages, **kwargs): ...
+    async def astructured_output(self, messages, constraint, **kwargs): ...
     async def astream(self, messages, **kwargs): ...
     def chat(self, messages, **kwargs): ...
+    def select_tool(self, messages, tools, **kwargs): ...
+    def structured_output(self, messages, constraint, **kwargs): ...
     def stream(self, messages, **kwargs): ...
 
 
@@ -74,20 +71,13 @@ def _make_ctx() -> CognitiveContext:
 
 
 def _make_finish_step():
-    return ThinkDecision(
-        step_content="Done",
-        output=[
-            StepToolCall(
-                tool="search_flights",
-                tool_arguments=[
-                    ToolArgument(name="origin", value="Beijing"),
-                    ToolArgument(name="destination", value="Tokyo"),
-                    ToolArgument(name="date", value="2024-06-01"),
-                ],
-            )
-        ],
-        finish=True,
-    )
+    """Scripted ``aselect_tool`` reply with no tool calls → worker finishes."""
+    return ([], "Done")
+
+
+def _tool_call_step(tool: str, content: str, **arguments):
+    """Scripted ``aselect_tool`` reply with one tool call (worker continues)."""
+    return ([{"name": tool, "arguments": arguments}], content)
 
 
 # ---------------------------------------------------------------------------
@@ -241,17 +231,8 @@ class TestRequestHumanTool:
         """LLM-invoked request_human routes via the @human_channel registry."""
         seen_prompts: List[str] = []
 
-        request_step = ThinkDecision(
-            step_content="Need confirmation",
-            output=[
-                StepToolCall(
-                    tool="request_human",
-                    tool_arguments=[
-                        ToolArgument(name="prompt", value="Proceed?"),
-                    ],
-                )
-            ],
-            finish=False,
+        request_step = _tool_call_step(
+            "request_human", "Need confirmation", prompt="Proceed?"
         )
         finish_step = _make_finish_step()
         llm = MockLLM([request_step, finish_step])
@@ -490,17 +471,10 @@ class TestBuiltinToolInjection:
 
         always_fails_tool = FunctionToolSpec.from_raw(always_fails)
 
-        request_step = ThinkDecision(
-            step_content="Ask for rescue",
-            output=[
-                StepToolCall(
-                    tool="request_human",
-                    tool_arguments=[ToolArgument(name="prompt", value="help?")],
-                )
-            ],
-            finish=False,
+        request_step = _tool_call_step(
+            "request_human", "Ask for rescue", prompt="help?"
         )
-        finish_step = ThinkDecision(step_content="Got help", output=[], finish=True)
+        finish_step = ([], "Got help")
         llm = MockLLM([request_step, finish_step])
 
         captured = []

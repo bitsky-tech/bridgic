@@ -29,28 +29,29 @@ from bridgic.amphibious import (
     CognitiveWorker,
     HumanCall,
     RunMode,
-    StepToolCall,
-    ToolArgument,
     ThinkUnit,
     think_unit,
 )
 from .tools import get_travel_planning_tools
 
 
-ThinkDecision = CognitiveWorker._create_think_model(
-    enable_rehearsal=False,
-    enable_reflection=False,
-    enable_acquiring=False,
-    output_schema=None,
-)
-
-
 class _SeqLLM:
-    """Returns a fixed sequence of structured-output responses."""
+    """Drives the new CognitiveWorker.
+
+    ``aselect_tool`` returns scripted ``(tool_calls, content)`` pairs for
+    the default native-function-calling think-step; ``astructured_output``
+    returns scripted instances for ``output_schema`` workers. The same
+    response list is shared — each test configures only the path it needs.
+    """
 
     def __init__(self, responses: List[Any]):
         self._responses = list(responses)
         self._idx = 0
+
+    async def aselect_tool(self, messages, tools, **kwargs):
+        resp = self._responses[self._idx % len(self._responses)]
+        self._idx += 1
+        return resp
 
     async def astructured_output(self, messages, constraint, **kwargs):
         resp = self._responses[self._idx % len(self._responses)]
@@ -60,6 +61,8 @@ class _SeqLLM:
     async def achat(self, messages, **kwargs): return MagicMock()
     async def astream(self, messages, **kwargs): return MagicMock()
     def chat(self, messages, **kwargs): return MagicMock()
+    def select_tool(self, messages, tools, **kwargs): return MagicMock()
+    def structured_output(self, messages, constraint, **kwargs): return MagicMock()
     def stream(self, messages, **kwargs): return MagicMock()
 
 
@@ -69,20 +72,26 @@ class _TravelCtx(CognitiveContext):
             self.tools.add(t)
 
 
-def _search_decision(finish: bool = False) -> ThinkDecision:
-    return ThinkDecision(
-        step_content="Search for flights",
-        output=[
-            StepToolCall(
-                tool="search_flights",
-                tool_arguments=[
-                    ToolArgument(name="origin", value="Beijing"),
-                    ToolArgument(name="destination", value="Tokyo"),
-                    ToolArgument(name="date", value="2024-06-01"),
-                ],
-            )
-        ],
-        finish=finish,
+def _search_decision(finish: bool = False):
+    """Scripted ``aselect_tool`` reply.
+
+    ``finish=False`` → one ``search_flights`` tool call (worker continues).
+    ``finish=True``  → no tool calls (worker finishes after this cycle).
+
+    The new worker derives ``finish`` from the absence of tool calls.
+    """
+    if finish:
+        return ([], "Search for flights")
+    return (
+        [{
+            "name": "search_flights",
+            "arguments": {
+                "origin": "Beijing",
+                "destination": "Tokyo",
+                "date": "2024-06-01",
+            },
+        }],
+        "Search for flights",
     )
 
 
@@ -155,12 +164,11 @@ class TestWorkerHookStubs:
         """Worker ``before_action`` returning None must chain to agent-level hook."""
 
         agent_before_calls = []
-        llm = _SeqLLM([_search_decision(finish=True)])
+        llm = _SeqLLM([_search_decision()])
 
         class StubWorker(CognitiveWorker):
-            async def thinking(self):
-                return "Plan ONE step"
-
+            # Default thinking() (native function-calling) drives the
+            # think-step; this worker only stubs the before_action hook.
             async def before_action(self, decision_result, context):
                 pass  # legacy "delegate" form
 
@@ -197,12 +205,11 @@ class TestWorkerHookStubs:
         """Worker ``after_action`` returning None must still chain to agent-level."""
 
         agent_after_calls = []
-        llm = _SeqLLM([_search_decision(finish=True)])
+        llm = _SeqLLM([_search_decision()])
 
         class StubWorker(CognitiveWorker):
-            async def thinking(self):
-                return "Plan ONE step"
-
+            # Default thinking() (native function-calling) drives the
+            # think-step; this worker only stubs the after_action hook.
             async def after_action(self, step_result, ctx):
                 pass  # legacy "delegate" form
 
@@ -230,12 +237,11 @@ class TestWorkerHookStubs:
     async def test_worker_observation_pass_falls_back_to_agent(self):
         """Worker-level ``observation`` returning None must delegate to agent-level."""
 
-        llm = _SeqLLM([_search_decision(finish=True)])
+        llm = _SeqLLM([_search_decision()])
 
         class StubWorker(CognitiveWorker):
-            async def thinking(self):
-                return "Plan ONE step"
-
+            # Default thinking() (native function-calling) drives the
+            # think-step; this worker only stubs the observation hook.
             async def observation(self, context):
                 pass  # legacy "delegate" form
 
@@ -265,12 +271,11 @@ class TestWorkerHookStubs:
         forcing the user to write a passthrough ``observation`` override
         solely to defeat overwrites.
         """
-        llm = _SeqLLM([_search_decision(finish=True)])
+        llm = _SeqLLM([_search_decision()])
 
         class StubWorker(CognitiveWorker):
-            async def thinking(self):
-                return "Plan ONE step"
-
+            # Default thinking() (native function-calling) drives the
+            # think-step; this worker only stubs the observation hook.
             async def observation(self, context):
                 pass  # worker coroutine stub — None
 
@@ -301,12 +306,11 @@ class TestWorkerHookStubs:
         stub; without the "None preserves prior" contract, every workflow
         yield would silently null out any state written by ``after_action``.
         """
-        llm = _SeqLLM([_search_decision(finish=True)])
+        llm = _SeqLLM([_search_decision()])
 
         class StubWorker(CognitiveWorker):
-            async def thinking(self):
-                return "Plan ONE step"
-
+            # Default thinking() (native function-calling) drives the
+            # think-step; this worker only stubs the observation hook.
             async def observation(self, context):
                 pass
 
@@ -349,20 +353,15 @@ class TestActionCustomOutputStub:
         expected = _PlanOutput(note="should be preserved")
 
         class _PlanWorker(CognitiveWorker):
+            # An output_schema worker goes through the structured-output
+            # path: the LLM emits the schema directly via astructured_output.
             output_schema = _PlanOutput
 
-            async def thinking(self):
-                return "Produce a plan."
-
         worker = _PlanWorker()
-        decision_model = worker._ThinkDecisionModel
-        decision = decision_model(
-            step_content="Planning complete",
-            output=expected,
-            finish=True,
-        )
 
-        llm = _SeqLLM([decision])
+        # The structured-output LLM returns the typed _PlanOutput instance;
+        # the framework wraps it in a TypedThinkDecision(finish=True).
+        llm = _SeqLLM([expected])
         worker.set_llm(llm)
 
         class StubAgent(AmphibiousAutoma[CognitiveContext]):

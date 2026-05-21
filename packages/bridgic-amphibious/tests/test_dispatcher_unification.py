@@ -30,20 +30,21 @@ from bridgic.core.agentic.tool_specs import FunctionToolSpec
 from bridgic.core.model.types import Message, Response, Role
 
 
-ThinkDecision = CognitiveWorker._create_think_model(
-    enable_rehearsal=False,
-    enable_reflection=False,
-    enable_acquiring=False,
-    output_schema=None,
-)
-
-
 class MockLLM:
-    def __init__(self, chat_responses=None, structured_responses=None):
+    """Drives the new CognitiveWorker's native function-calling path.
+
+    ``aselect_tool`` (think-step with tools) yields scripted
+    ``(tool_calls, content)`` pairs; ``achat`` (LLMCall.chat / think-step
+    without tools) yields scripted ``Response`` objects.
+    """
+
+    def __init__(self, chat_responses=None, structured_responses=None, tool_responses=None):
         self.chat_responses = list(chat_responses or [])
         self.structured_responses = list(structured_responses or [])
+        self.tool_responses = list(tool_responses or [])
         self._chat_idx = 0
         self._struct_idx = 0
+        self._tool_idx = 0
 
     async def achat(self, messages, **kwargs):
         resp = self.chat_responses[self._chat_idx % len(self.chat_responses)]
@@ -53,6 +54,15 @@ class MockLLM:
     async def astructured_output(self, messages, constraint, **kwargs):
         resp = self.structured_responses[self._struct_idx % len(self.structured_responses)]
         self._struct_idx += 1
+        return resp
+
+    async def aselect_tool(self, messages, tools, **kwargs):
+        # Default to an immediate finish (no tool calls) when nothing is
+        # scripted — most dispatcher tests only need the worker to finish.
+        if not self.tool_responses:
+            return [], "Done"
+        resp = self.tool_responses[self._tool_idx % len(self.tool_responses)]
+        self._tool_idx += 1
         return resp
 
     async def astream(self, messages, **kwargs): ...
@@ -71,7 +81,8 @@ def _txt(text: str) -> Response:
 
 
 def _finish_step():
-    return ThinkDecision(step_content="Done", output=[], finish=True)
+    """Scripted ``aselect_tool`` reply with no tool calls → worker finishes."""
+    return [], "Done"
 
 
 # ---------------------------------------------------------------------------
@@ -147,7 +158,7 @@ class TestYieldsInObservation:
         """observation generator can yield LLMCall and RETURN(value)."""
         llm = MockLLM(
             chat_responses=[_txt("computed-observation")],
-            structured_responses=[_finish_step()],
+            tool_responses=[_finish_step()],
         )
 
         class Agent(AmphibiousAutoma[CognitiveContext]):
@@ -184,7 +195,7 @@ class TestYieldsInObservation:
         before/after_action wrap, no trace step) while workflow-scope
         keeps the full OTC wrap.
         """
-        llm = MockLLM(structured_responses=[_finish_step()])
+        llm = MockLLM(tool_responses=[_finish_step()])
         call_count = 0
 
         async def snapshot_tool() -> str:
@@ -221,7 +232,7 @@ class TestYieldsInBeforeAction:
     @pytest.mark.asyncio
     async def test_before_action_yields_return_overrides_decision(self):
         """before_action generator yields RETURN(modified) to override the decision."""
-        llm = MockLLM(structured_responses=[_finish_step()])
+        llm = MockLLM(tool_responses=[_finish_step()])
         seen_decisions: List[Any] = []
 
         class Agent(AmphibiousAutoma[CognitiveContext]):
@@ -252,7 +263,7 @@ class TestYieldsInBeforeAction:
         dispatched with ``scope="hook"`` and must NOT re-enter the
         before_action chain.
         """
-        llm = MockLLM(structured_responses=[_finish_step()])
+        llm = MockLLM(tool_responses=[_finish_step()])
         call_count = 0
 
         async def audit_tool() -> str:
@@ -297,7 +308,7 @@ class TestWorkerHookGeneratorForm:
         """Worker-level observation as a generator yielding ActionCall +
         RETURN(value) sets ctx.observation and short-circuits the
         agent-level fallback."""
-        llm = MockLLM(structured_responses=[_finish_step()])
+        llm = MockLLM(tool_responses=[_finish_step()])
         agent_fallback_ran = False
         call_count = 0
 
@@ -307,9 +318,9 @@ class TestWorkerHookGeneratorForm:
             return "worker-snap"
 
         class GenObservationWorker(CognitiveWorker):
-            async def thinking(self):
-                return "Plan ONE step"
-
+            # Default thinking() (native function-calling) is fine — the
+            # scripted MockLLM makes it finish immediately. This worker
+            # only customises the observation hook.
             async def observation(self, context) -> AsyncGenerator[Any, Any]:
                 snap = yield ActionCall("snapshot_tool")
                 yield RETURN(snap[0].result if snap else None)
@@ -342,13 +353,13 @@ class TestWorkerHookGeneratorForm:
     async def test_worker_observation_generator_no_return_delegates(self):
         """Worker generator that exhausts without RETURN → returns None
         → treated as _DELEGATE → agent-level observation runs."""
-        llm = MockLLM(structured_responses=[_finish_step()])
+        llm = MockLLM(tool_responses=[_finish_step()])
         agent_fallback_ran = False
 
         class GenObservationWorker(CognitiveWorker):
-            async def thinking(self):
-                return "Plan ONE step"
-
+            # Default thinking() (native function-calling) is fine — the
+            # scripted MockLLM makes it finish immediately. This worker
+            # only customises the observation hook.
             async def observation(self, context) -> AsyncGenerator[Any, Any]:
                 # Generator with no yields/RETURN — exhausts immediately.
                 if False:
@@ -386,7 +397,7 @@ class TestYieldsInAfterAction:
         from after_action is dispatched with ``scope="hook"`` and must
         NOT re-enter the after_action chain.
         """
-        llm = MockLLM(structured_responses=[_finish_step()])
+        llm = MockLLM(tool_responses=[_finish_step()])
         call_count = 0
 
         async def followup_tool() -> str:
@@ -420,7 +431,7 @@ class TestGeneratorVsCoroutineForms:
     @pytest.mark.asyncio
     async def test_on_agent_coroutine_form(self):
         """on_agent as a plain coroutine (legacy) — _run-driven worker."""
-        llm = MockLLM(structured_responses=[_finish_step()])
+        llm = MockLLM(tool_responses=[_finish_step()])
 
         class Agent(AmphibiousAutoma[CognitiveContext]):
             plan_unit = think_unit(CognitiveWorker.inline("plan"))
@@ -433,7 +444,7 @@ class TestGeneratorVsCoroutineForms:
     @pytest.mark.asyncio
     async def test_on_agent_generator_form_with_thinkcall(self):
         """on_agent as a generator yielding ThinkUnit."""
-        llm = MockLLM(structured_responses=[_finish_step()])
+        llm = MockLLM(tool_responses=[_finish_step()])
         from bridgic.amphibious import ThinkUnit
 
         class Agent(AmphibiousAutoma[CognitiveContext]):

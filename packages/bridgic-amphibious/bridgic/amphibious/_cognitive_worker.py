@@ -4,19 +4,20 @@ CognitiveWorker — the in-process "think" unit of the amphibious framework.
 Each ``arun`` call performs exactly the thinking phase: observation is
 injected by ``AmphibiousAutoma._run_think_unit`` before calling, and
 action is executed by ``AmphibiousAutoma._run_action_call`` after.
-Multi-round thinking is driven by the cognitive policies (acquiring /
-rehearsal / reflection).
+
+The thinking phase is the single template method
+:meth:`CognitiveWorker.thinking`: it talks to the LLM and returns a
+``(content, tool_calls)`` pair, which the framework parses into a decision.
+The default ``thinking`` uses native function-calling; overriding it is
+essentially "write your own LLM call" — the framework only supplies the
+hooks and wires the result into the amphibious orchestration.
 
 For *external*-agent delegation (out-of-process CLI), see the symmetric
-``AgentWorker`` in ``_agent_worker.py`` — same template-method surface,
-different "think" implementation (subprocess + MCP bridge).
+``AgentWorker`` in ``_agent_worker.py``.
 """
 
 import time
-import json
 from typing import (
-    TYPE_CHECKING,
-    Annotated,
     Any,
     Dict,
     List,
@@ -26,26 +27,21 @@ from typing import (
     Union,
 )
 
-from pydantic import BaseModel, Field, create_model
-from pydantic.functional_validators import BeforeValidator
+from pydantic import BaseModel
 
 from bridgic.core.model import BaseLlm
 from bridgic.core.model.protocols import PydanticModel
 from bridgic.core.model.types import Message
 from bridgic.core.automa import GraphAutoma, worker
 from bridgic.core.automa.interaction import InteractionFeedback
-from bridgic.core.agentic.tool_specs import ToolSpec
 from bridgic.core.utils._console import printer
 from bridgic.amphibious._context import CognitiveContext
 from bridgic.amphibious._type import (
-    DetailRequest,
     StepToolCall,
-    _ThinkBase,
-    _coerce_none_to_list,
+    ThinkDecision,
+    ToolArgument,
+    TypedThinkDecision,
 )
-
-if TYPE_CHECKING:
-    from bridgic.amphibious._amphibious_automa import AmphibiousAutoma
 
 
 #############################################################################
@@ -54,58 +50,62 @@ if TYPE_CHECKING:
 
 _DELEGATE = object()  # Worker returns this to delegate observation to Agent
 
+
+def _tool_call_name(call: Any) -> str:
+    """Read a tool call's name — accepts an object (``.name``) or a dict."""
+    return call["name"] if isinstance(call, dict) else call.name
+
+
+def _tool_call_args(call: Any) -> Dict[str, Any]:
+    """Read a tool call's arguments — accepts an object (``.arguments``) or a dict."""
+    args = call.get("arguments") if isinstance(call, dict) else call.arguments
+    return args or {}
+
+
 #############################################################################
 # CognitiveWorker
 #############################################################################
 
 class CognitiveWorker(GraphAutoma):
-    """Cognitive worker — one thinking cycle, owns "what to think and how".
+    """Cognitive worker — one observe-think-act cycle.
 
-    Observation and action execution are handled by ``AmphibiousAutoma``
-    as shared infrastructure. Subclass and override template methods
-    (``thinking`` is required; ``build_messages`` / ``observation`` /
-    ``before_action`` / ``after_action`` are optional) to customize.
+    Observation and action execution are handled by ``AmphibiousAutoma`` as
+    shared infrastructure. The worker owns one thing: the **thinking** step,
+    the :meth:`thinking` template method.
 
-    Constructor params: ``llm`` (may be ``None`` if the agent injects
-    via ``set_llm()``), ``enable_rehearsal`` / ``enable_reflection``
-    (cognitive policies), ``verbose`` / ``verbose_prompt`` (logging).
+    The common case needs no subclass — give a prompt and use the default
+    thinking (native function-calling):
 
-    Class attribute ``output_schema``: if set, the worker produces a
-    typed Pydantic instance directly (output_schema is the LLM
-    constraint); the action phase is skipped and ``await ThinkUnit``
-    returns the typed instance. Policy rounds still run.
+    >>> worker = CognitiveWorker.inline("Plan ONE next step.", llm=llm)
 
-    >>> class ReactWorker(CognitiveWorker):
-    ...     async def thinking(self):
-    ...         return "Plan ONE immediate next step with appropriate tools."
-    ...
-    >>> class PlannerWorker(CognitiveWorker):
-    ...     output_schema = PlanningResult  # skip tool loop, return typed instance
-    ...     async def thinking(self):
-    ...         return "Analyze the goal and produce a phased execution plan."
+    Override :meth:`thinking` to take full control of the LLM interaction —
+    a different protocol, plain-text tool-call parsing for a model without
+    native function-calling, multiple calls, etc. Optional hooks
+    ``observation`` / ``before_action`` / ``after_action`` refine the cycle
+    further.
+
+    Class attribute ``output_schema``: if set, the worker produces a typed
+    Pydantic instance via structured output instead.
     """
-
-    # Class-level cache: (enable_rehearsal, enable_reflection, enable_acquiring, output_schema) → model
-    _think_model_cache: Dict[Tuple, Type[BaseModel]] = {}
 
     # Subclasses set this to a Pydantic model to produce typed output directly
     output_schema: Optional[Type[BaseModel]] = None
 
+    # Instruction text the DEFAULT thinking() prepends to the system message.
+    # Set it on a subclass (``class X(CognitiveWorker): prompt = "..."``) or
+    # via ``CognitiveWorker.inline()``. Ignored when thinking() is overridden.
+    prompt: str = ""
+
     def __init__(
         self,
         llm: Optional[BaseLlm] = None,
-        enable_rehearsal: bool = False,
-        enable_reflection: bool = False,
         verbose: Optional[bool] = None,
         verbose_prompt: Optional[bool] = None,
         output_schema: Optional[Type[BaseModel]] = None,
     ):
         super().__init__()
-        self._llm = llm
 
-        # Policy flags
-        self.enable_rehearsal = enable_rehearsal
-        self.enable_reflection = enable_reflection
+        self._llm = llm
 
         # Instance-level output_schema overrides the class attribute when provided
         if output_schema is not None:
@@ -120,112 +120,8 @@ class CognitiveWorker(GraphAutoma):
         self.spent_time = 0
 
     def set_llm(self, llm: BaseLlm) -> None:
-        """
-        Set the LLM used for thinking and tool selection.
-
-        Parameters
-        ----------
-        llm : BaseLlm
-            LLM instance to use. Replaces any previously set LLM.
-        """
+        """Set the LLM used for thinking. Replaces any previously set LLM."""
         self._llm = llm
-
-    @classmethod
-    def _create_think_model(
-        cls,
-        enable_rehearsal: bool = False,
-        enable_reflection: bool = False,
-        enable_acquiring: bool = True,
-        output_schema: Optional[Type[BaseModel]] = None,
-    ) -> Type[BaseModel]:
-        """
-        Unified factory for all ThinkModel variants.
-
-        Builds and caches a Pydantic model with _ThinkBase as its base, adding
-        fields dynamically:
-        - output: List[StepToolCall] when output_schema is None, else Optional[output_schema]
-        - details: only when enable_acquiring=True
-        - rehearsal: only when enable_rehearsal=True
-        - reflection: only when enable_reflection=True
-
-        All variants are cached by (enable_rehearsal, enable_reflection,
-        enable_acquiring, output_schema).
-        """
-        key = (enable_rehearsal, enable_reflection, enable_acquiring, output_schema)
-        if key in cls._think_model_cache:
-            return cls._think_model_cache[key]
-
-        extra_fields: Dict[str, Any] = {}
-
-        # output field — type depends on output_schema
-        if output_schema is None:
-            extra_fields['output'] = (
-                Annotated[List[StepToolCall], BeforeValidator(_coerce_none_to_list)],
-                Field(
-                    default_factory=list,
-                    description="Tool calls to execute as [{tool, tool_arguments: [{name: 'param_name', value: 'param_value'}]}]"
-                )
-            )
-        else:
-            extra_fields['output'] = (
-                Optional[output_schema],
-                Field(default=None, description="Structured result matching the required output schema.")
-            )
-
-        # Information that can be requested for progressive disclosure to assist in decision-making.
-        if enable_acquiring:
-            extra_fields['details'] = (
-                Annotated[List[DetailRequest], BeforeValidator(_coerce_none_to_list)],
-                Field(
-                    default_factory=list,
-                    description="Request details before deciding. Example: [{field: 'cognitive_history', index: 0}]"
-                )
-            )
-
-        # Can predict what will happen after the operation and assist in decision-making.
-        if enable_rehearsal:
-            extra_fields['rehearsal'] = (
-                Optional[str],
-                Field(
-                    default=None,
-                    description="(Optional) Predict what will happen if you execute the planned tools. What results will they return? Any potential issues?"
-                )
-            )
-
-        # Can reflect on the current situation to assist in decision-making.
-        if enable_reflection:
-            extra_fields['reflection'] = (
-                Optional[str],
-                Field(
-                    default=None,
-                    description="(Optional) Assess information quality. Is it sufficient? Any contradictions or gaps?"
-                )
-            )
-
-        model = create_model('ThinkModel', __base__=_ThinkBase, **extra_fields)
-        cls._think_model_cache[key] = model
-        return model
-
-    @property
-    def _ThinkResultModel(self) -> Type[BaseModel]:
-        """Model for normal rounds: acquiring open, all enabled policies active."""
-        return self._create_think_model(
-            enable_rehearsal=self.enable_rehearsal,
-            enable_reflection=self.enable_reflection,
-            enable_acquiring=True,
-            output_schema=None,
-        )
-
-    @property
-    def _ThinkDecisionModel(self) -> Type[BaseModel]:
-        """Model for forced-decision rounds: all policy operators closed."""
-        return self._create_think_model(
-            enable_rehearsal=False,
-            enable_reflection=False,
-            enable_acquiring=False,
-            output_schema=self.output_schema,
-        )
-
 
     ############################################################################
     # Core methods
@@ -233,13 +129,16 @@ class CognitiveWorker(GraphAutoma):
 
     @worker(is_start=True, is_output=True)
     async def _thinking(self, context: CognitiveContext) -> Any:
-        """
-        Thinking phase: decide what to do next (thinking + tool selection in one call).
+        """Framework entry for the thinking phase — orchestrates :meth:`thinking`.
 
-        Reads observation from ``context.observation`` (set by
-        ``AmphibiousAutoma._run_think_unit`` before calling ``arun``).
-        Returns the decision directly as the ``arun()`` return value —
-        the driver captures it from there and runs the act phase.
+        Validates the context / LLM, calls the overridable :meth:`thinking`
+        method to interact with the LLM, then *parses* its ``(content,
+        tool_calls)`` result into the framework's decision shape. That
+        decision becomes the ``arun()`` return value — the driver captures
+        it and runs the act phase.
+
+        The seam: ``thinking`` owns *talking to the model*, the framework
+        owns *turning the reply into a decision*.
         """
         if not isinstance(context, CognitiveContext):
             raise TypeError(
@@ -252,94 +151,101 @@ class CognitiveWorker(GraphAutoma):
                 "or use set_llm() before running."
             )
 
-        observation = context.observation
-        return await self._run_thinking(observation, context)
+        # Typed-output workers (output_schema) are a separate structured
+        # mode — making it model-agnostic is a planned follow-up.
+        if self.output_schema is not None:
+            return await self._think_typed_output(context)
 
-    async def _run_thinking(self, observation: Optional[str], context: CognitiveContext) -> Any:
-        """Thinking phase with cognitive policies support. Returns the final decision."""
+        content, tool_calls = await self.thinking(context)
+        return self._assemble_decision(content, tool_calls)
 
-        ###############################
-        # Call the LLM to get the decision
-        ###############################
+    async def _think_typed_output(self, context: CognitiveContext) -> TypedThinkDecision:
+        """Structured-output path for ``output_schema`` workers.
 
-        # Get the custom thinking prompt from the worker's thinking() method.
-        think_prompt = await self.thinking()
+        The LLM emits the worker's ``output_schema`` directly; the result is
+        wrapped in a ``TypedThinkDecision``. Kept on ``astructured_output``
+        for now — unifying it with the native :meth:`thinking` path is a
+        planned follow-up.
+        """
+        messages = self._build_messages(context)
+        self._log_prompt("Think", messages)
+        result = await self._llm.astructured_output(
+            messages=messages,
+            constraint=PydanticModel(model=self.output_schema),
+        )
+        return TypedThinkDecision(finish=True, output=result)
 
-        # Accumulated policy outputs injected into subsequent rounds' prompts
-        policy_context = []
+    def _assemble_decision(self, content: Optional[str], tool_calls: List[Any]) -> ThinkDecision:
+        """Parse a ``(content, tool_calls)`` result into a ``ThinkDecision``.
 
-        # Per-operator open flags — each fires at most once then closes
-        # acquiring is a built-in framework capability, disabled when output_schema is set
-        acquiring_open = (self.output_schema is None)
-        rehearsal_open = self.enable_rehearsal
-        reflection_open = self.enable_reflection
+        Framework-internal — turns the ``thinking()`` reply into the shape
+        the act phase consumes (``step_content`` / ``finish`` / ``output``):
 
-        while True:
-            # Build messages
-            messages = await self._build_messages(
-                think_prompt=think_prompt,
-                context=context,
-                observation=observation,
-                policy_context=policy_context,
-                acquiring_open=acquiring_open,
-                rehearsal_open=rehearsal_open,
-                reflection_open=reflection_open,
+        - text reply   -> ``step_content``
+        - tool calls   -> ``output`` (``List[StepToolCall]``)
+        - no tool call -> ``finish=True``
+
+        Tool-call items may be objects (``.name`` / ``.arguments``) or
+        dicts — so an overridden ``thinking`` can return either form
+        without importing framework types.
+        """
+        output = [
+            StepToolCall(
+                tool=_tool_call_name(call),
+                tool_arguments=[
+                    ToolArgument(name=str(name), value=value)
+                    for name, value in _tool_call_args(call).items()
+                ],
             )
-            # Build model from current per-operator state
-            model = self._create_think_model(
-                enable_rehearsal=rehearsal_open,
-                enable_reflection=reflection_open,
-                enable_acquiring=acquiring_open,
-                output_schema=self.output_schema,
-            )
-            # LLM call
-            think_result = await self._llm.astructured_output(
-                messages=messages,
-                constraint=PydanticModel(model=model)
-            )
-            self._log_prompt("Think", messages)
+            for call in tool_calls
+        ]
+        return ThinkDecision(
+            step_content=content or "",
+            finish=(len(tool_calls) == 0),
+            output=output,
+        )
 
-            ###############################
-            # Analyze the LLM response and decide what to do next
-            ###############################
-
-            re_think = False  # Whether any operator was activated this round
-
-            # Operator 1: acquiring — fetch external details (one-shot, only when non-empty)
-            if acquiring_open:
-                reqs = getattr(think_result, 'details', None) or []
-                if reqs:
-                    for req in reqs:
-                        context.get_details(req.field, req.index)
-                    acquiring_open = False  # close — never fires again
-                    re_think = True
-
-            # Operator 2: rehearsal — inject prediction into next round (one-shot, only when filled)
-            if rehearsal_open:
-                rehearsal_val = getattr(think_result, 'rehearsal', None)
-                if rehearsal_val is not None:
-                    policy_context.append(f"## Mental Simulation (Rehearsal):\n{rehearsal_val}")
-                    rehearsal_open = False  # close
-                    re_think = True
-
-            # Operator 3: reflection — inject quality assessment into next round (one-shot, only when filled)
-            if reflection_open:
-                reflection_val = getattr(think_result, 'reflection', None)
-                if reflection_val is not None:
-                    policy_context.append(f"## Information Assessment (Reflection):\n{reflection_val}")
-                    reflection_open = False  # close
-                    re_think = True
-
-            if re_think:
-                continue  # Re-think with narrowed model + accumulated context
-
-            break  # No operator activated — LLM gave a direct decision
-
-        return think_result
+    @staticmethod
+    def _extract_chat_content(response: Any) -> str:
+        """Pull plain text out of a ``BaseLlm.achat`` response."""
+        message = getattr(response, "message", None)
+        content = getattr(message, "content", None) if message is not None else None
+        return content or ""
 
     ############################################################################
     # Internal helpers
     ############################################################################
+
+    def _build_messages(self, context: CognitiveContext) -> List[Message]:
+        """Assemble the default messages — the worker's ``prompt`` + the context.
+
+        Deliberately adds NO framework-authored instruction or framing text:
+        the system message is exactly ``self.prompt``, the user message is
+        the context summary. To put anything else in the prompt, write it
+        into ``prompt`` or override :meth:`thinking`. Tools are not listed
+        here — they reach the LLM through native function-calling.
+        """
+        summary_dict = context.summary()
+
+        # `tools` is excluded — tools reach the LLM via native function-
+        # calling, so repeating them as prompt text would be redundant.
+        context_parts = [
+            summary_dict[f]
+            for f in summary_dict
+            if f != 'tools' and summary_dict.get(f)
+        ]
+        if context.observation is not None:
+            context_parts.append(f"Observation:\n{context.observation}")
+        context_text = "\n\n".join(context_parts)
+
+        messages: List[Message] = []
+        if self.prompt.strip():
+            messages.append(Message.from_text(text=self.prompt.strip(), role="system"))
+        if context_text:
+            messages.append(Message.from_text(text=context_text, role="user"))
+
+        self.spent_tokens += sum(self._count_tokens(m.content) for m in messages)
+        return messages
 
     def _log_prompt(self, stage: str, messages: List[Message]):
         """Log prompts with timestamp and caller location if verbose_prompt is enabled."""
@@ -368,286 +274,12 @@ class CognitiveWorker(GraphAutoma):
             printer.print(msg.content, color="gray")
         printer.print(f"[{ts}] [{stage}] ({filename}:{lineno}) Total: {total_tokens} tokens (cumulative: {self.spent_tokens})", color="yellow")
 
-    @staticmethod
-    def _generate_schema_example(schema: dict, defs: dict = None) -> Any:
-        """
-        Recursively build a compact example value from a JSON Schema node.
-
-        Handles $ref, anyOf (Optional), object, array, scalar types, enum, and const.
-        Arrays are represented as a single-element list to keep examples concise.
-        """
-        if defs is None:
-            defs = schema.get('$defs', {})
-
-        # Resolve $ref
-        if '$ref' in schema:
-            ref_name = schema['$ref'].split('/')[-1]
-            return CognitiveWorker._generate_schema_example(defs.get(ref_name, {}), defs)
-
-        # anyOf / oneOf — covers Optional[X] (anyOf: [{type: X}, {type: null}])
-        if 'anyOf' in schema:
-            non_null = [s for s in schema['anyOf'] if s.get('type') != 'null']
-            if non_null:
-                return CognitiveWorker._generate_schema_example(non_null[0], defs)
-            return None
-
-        # allOf — usually single-item wrapper
-        if 'allOf' in schema:
-            if len(schema['allOf']) == 1:
-                return CognitiveWorker._generate_schema_example(schema['allOf'][0], defs)
-            return {}
-
-        # Enum — use first value
-        if 'enum' in schema:
-            return schema['enum'][0]
-
-        # Const
-        if 'const' in schema:
-            return schema['const']
-
-        schema_type = schema.get('type')
-
-        if schema_type == 'object':
-            props = schema.get('properties', {})
-            result = {}
-            for name, prop_schema in props.items():
-                if 'default' in prop_schema:
-                    result[name] = prop_schema['default']
-                else:
-                    result[name] = CognitiveWorker._generate_schema_example(prop_schema, defs)
-            return result
-
-        if schema_type == 'array':
-            items = schema.get('items', {})
-            item_example = CognitiveWorker._generate_schema_example(items, defs)
-            return [item_example]
-
-        if schema_type == 'string':
-            return "..."
-        if schema_type == 'integer':
-            return schema.get('default', 0)
-        if schema_type == 'number':
-            return schema.get('default', 0.0)
-        if schema_type == 'boolean':
-            return schema.get('default', False)
-
-        return None
-
-    @staticmethod
-    def _build_schema_example_prompt(model: Type[BaseModel]) -> str:
-        """
-        Build a compact inline example from a Pydantic model.
-
-        Replaces the old full JSON Schema dump with a concise representative example,
-        which is more token-efficient and equally effective for guiding the LLM.
-
-        Example output for ``PlanningResult``:
-            {"phases": [{"sub_goal": "...", "skill_name": "...", "max_steps": 20}]}
-        """
-        schema = model.model_json_schema()
-        example = CognitiveWorker._generate_schema_example(schema)
-        return json.dumps(example, ensure_ascii=False)
-
-    def _output_fields_prompt(self, acquiring_open: bool, rehearsal_open: bool, reflection_open: bool) -> str:
-        """Base fields: step_content, output, finish. Always present."""
-        parts = []
-
-        # Base fields
-        parts.append(
-            "# Output Fields\n"
-            "- **step_content**: Your analysis and reasoning for this step\n"
-            "- **finish**: Set True when the sub-task is fully complete (default: False)"
-        )
-
-        # Cognitive operators
-        if acquiring_open:
-            parts.append(
-                "- **details**: Available fields: **skills**, **cognitive_history**. "
-                "example: [{field: 'skills', index: 0}, ...]"
-            )
-        if rehearsal_open:
-            parts.append("- **rehearsal**: string describing your simulation and predictions")
-        if reflection_open:
-            parts.append("- **reflection**: string describing your assessment conclusions")
-
-        # Output schema
-        if self.output_schema is not None:
-            parts.append(
-                "- **output**: Structured result — example: "
-                f"{self._build_schema_example_prompt(self.output_schema)}"
-            )
-        else:
-            parts.append(
-                "- **output**: Tool calls to execute: "
-                "[{tool, tool_arguments: [{name: 'param', value: 'value'}]}]\n"
-            )
-        return "\n".join(parts)
-
-    @staticmethod
-    def _acquiring_prompt() -> str:
-        """Acquiring operator: when/why to use + details field format."""
-        return (
-            "# Context Acquiring\n"
-            "If the context contains progressively disclosed information (e.g. skills, history steps) "
-            "and you want to inspect the details, use the **details** field to request them. "
-            "The framework will expand these items in the next round. "
-            "Batch all requests in a single output. "
-            "When using this field, leave step_content and output empty.\n\n"
-            "## Field format:\n"
-            "- **details**: [{field: \"skills\", index: 0}, ...]\n"
-            "  Available fields: **skills** (view a skill's full workflow), "
-            "**cognitive_history** (view the full result of a previous step)"
-        )
-
-    @staticmethod
-    def _rehearsal_prompt() -> str:
-        """Rehearsal operator: when/why to use + rehearsal field format."""
-        return (
-            "# Pre-Action Rehearsal (optional)\n"
-            "To ensure the next action is accurate, you may mentally simulate it first: "
-            "which tools you plan to call, what they are expected to return, and whether any issues may arise. "
-            "When using this field, leave step_content and output empty; "
-            "the framework will ask for an actual decision in the next round.\n\n"
-            "## Field format:\n"
-            "- **rehearsal**: \"(string describing your simulation and predictions)\""
-        )
-
-    @staticmethod
-    def _reflection_prompt() -> str:
-        """Reflection operator: when/why to use + reflection field format."""
-        return (
-            "# Pre-Action Reflection (optional)\n"
-            "Before committing to a decision, evaluate whether the current information is "
-            "sufficient and self-consistent. "
-            "If you have doubts, fill the **reflection** field and leave step_content and output empty; "
-            "the framework will ask for an actual decision in the next round.\n\n"
-            "## Field format:\n"
-            "- **reflection**: \"(string describing your assessment conclusions)\""
-        )
-
-    def _build_output_instructions(
-        self,
-        acquiring_open: bool,
-        rehearsal_open: bool,
-        reflection_open: bool,
-    ) -> str:
-        parts = []
-        if acquiring_open:
-            parts.append(self._acquiring_prompt())
-        if rehearsal_open:
-            parts.append(self._rehearsal_prompt())
-        if reflection_open:
-            parts.append(self._reflection_prompt())
-        parts.append(self._output_fields_prompt(acquiring_open, rehearsal_open, reflection_open))
-        return "\n\n".join(parts)
-
-    async def _build_messages(
-        self,
-        think_prompt: str,
-        context: CognitiveContext,
-        observation: Optional[str] = None,
-        policy_context: List[str] = None,
-        acquiring_open: bool = True,
-        rehearsal_open: bool = False,
-        reflection_open: bool = False,
-    ) -> List[Message]:
-        """Build messages for the thinking phase (thinking + tool selection in one call).
-
-        Parameters
-        ----------
-        think_prompt : str
-            The thinking prompt from the thinking() method.
-        context : CognitiveContext
-            The cognitive context.
-        observation : Optional[str]
-            Custom observation from user-overridden observation() method.
-        policy_context : List[str]
-            Policy outputs from previous rounds (rehearsal, reflection).
-        acquiring_open : bool
-            Whether the acquiring operator can still fire this round.
-        rehearsal_open : bool
-            Whether the rehearsal operator can still fire this round.
-        reflection_open : bool
-            Whether the reflection operator can still fire this round.
-        """
-        def _format_tools_details(tool_specs: List[ToolSpec]) -> str:
-            """Format tool specs into detailed description string."""
-            lines = []
-            for tool in tool_specs:
-                tool_lines = [f"• {tool.tool_name}: {tool.tool_description}"]
-
-                if tool.tool_parameters:
-                    props = tool.tool_parameters.get('properties', {})
-                    required = tool.tool_parameters.get('required', [])
-
-                    if props:
-                        for name, info in props.items():
-                            param_type = info.get('type', 'any')
-                            param_desc = info.get('description', '')
-                            is_required = name in required
-
-                            req_mark = " [required]" if is_required else " [optional]"
-                            param_line = f"  - {name} ({param_type}){req_mark}"
-                            if param_desc:
-                                param_line += f": {param_desc}"
-                            tool_lines.append(param_line)
-
-                lines.extend(tool_lines)
-
-            return "\n".join(lines)
-
-        # Cache the full summary dict once — both the capabilities block
-        # below and the context-info block that follows derive from it.
-        # Without caching, format_summary() would trigger a second summary()
-        # traversal over every Exposure field on the context.
-        summary_dict = context.summary()
-
-        # 1. Build tool details and skills summary
-        capabilities_parts = []
-        _, tool_specs = context.get_field('tools')
-        if tool_specs:
-            tools_details = _format_tools_details(tool_specs)
-            capabilities_parts.append(f"# Available Tools (with parameters):\n{tools_details}")
-        if len(context.skills) > 0:
-            skills_summary = summary_dict.get('skills')
-            if skills_summary:
-                capabilities_parts.append(f"# {skills_summary}")
-        capabilities_description = "\n\n".join(capabilities_parts)
-
-        # 2. Build context info about current status (reuse cached summary_dict)
-        context_info = "\n".join(
-            summary_dict[f]
-            for f in summary_dict
-            if f not in ('tools', 'skills') and summary_dict.get(f)
-        )
-        if observation is not None:
-            context_info += f"\n\nObservation:\n{observation}"
-        user_prompt_context = f"Based on the context below, decide your next action.\n\n{context_info}"
-
-        # 3. Build output instructions dynamically based on per-operator state
-        output_instructions = self._build_output_instructions(
-            acquiring_open=acquiring_open,
-            rehearsal_open=rehearsal_open,
-            reflection_open=reflection_open,
-        )
-
-        # Call template method to assemble final messages
-        messages = await self.build_messages(
-            think_prompt=think_prompt.strip(),
-            tools_description=capabilities_description,
-            output_instructions=output_instructions,
-            context_info=user_prompt_context
-        )
-
-        self.spent_tokens += sum(self._count_tokens(m.content) for m in messages)
-        return messages
-
     def _count_tokens(self, text: str) -> int:
-        """Estimate token count. Rough approximation: ~4 chars per token (typical for English/UTF-8)."""
+        """Estimate token count. Rough approximation: ~4 chars per token."""
         return (len(text) + 3) // 4
 
     ############################################################################
-    # Template methods (override by user to customize the behavior)
+    # Hooks (override to customize the cycle)
     ############################################################################
 
     async def observation(self, context: CognitiveContext) -> Any:
@@ -655,54 +287,61 @@ class CognitiveWorker(GraphAutoma):
 
         Both forms accepted: coroutine (``return _DELEGATE`` /
         ``return value``) or async-generator (yield side-effect calls,
-        then ``yield RETURN(value)``). ActionCall yielded here is a raw
-        tool execution and does NOT re-enter the OTC wrap.
+        then ``yield RETURN(value)``).
 
-        Returning ``_DELEGATE`` (or ``None``, treated identically) hands
-        off to ``AmphibiousAutoma.observation()``. Other values are used
-        as the observation directly.
+        Returning ``_DELEGATE`` (or ``None``) hands off to
+        ``AmphibiousAutoma.observation()``. Other values become the
+        observation directly.
 
         >>> async def observation(self, context):
         ...     return f"Current state: {context.goal}"
-        >>> async def observation(self, context):
-        ...     snap = yield ActionCall("snapshot_tool")
-        ...     yield RETURN(snap[0].result if snap else None)
         """
         return _DELEGATE
+    
+    async def thinking(self, context: CognitiveContext) -> Tuple[str, List[Any]]:
+        """Interact with the LLM and return ``(content, tool_calls)``.
 
-    async def thinking(self) -> str:
-        """Return the thinking prompt for the LLM. Must be implemented.
+        **This is the worker's one template method — the override point.**
 
-        >>> async def thinking(self):
-        ...     return "Plan ONE immediate next step."  # React-style
-        >>> async def thinking(self):
-        ...     return "Create a complete step-by-step plan."  # Plan-style
+        Returns a ``(content, tool_calls)`` pair:
+
+        - ``content``: the model's text — its reasoning / what it is doing.
+        - ``tool_calls``: the tool calls it wants to run — a list of items,
+          each an object with ``.name`` / ``.arguments`` *or* a
+          ``{"name": ..., "arguments": {...}}`` dict. An empty list means
+          "nothing more to do" (the framework then marks it finished).
+
+        ``thinking`` is purely about *talking to the model*. It does NOT
+        build the framework's decision object — the framework parses the
+        returned pair (see :meth:`_thinking`). Overriding it is essentially
+        "write your own LLM call": use ``self._llm`` and ``context``
+        however the model needs, and hand back ``(content, tool_calls)``.
+
+        The default implementation below uses native function-calling
+        (``aselect_tool``, or ``achat`` when there are no tools). It builds
+        the messages from ``self.prompt`` and the context alone — it injects
+        no instruction text of its own. Override it freely for a model that
+        needs something else.
+
+        >>> async def thinking(self, context):
+        ...     # custom model with no native function-calling
+        ...     resp = await self._llm.achat(messages=my_messages(context))
+        ...     return my_parser(self._extract_chat_content(resp))  # -> (content, tool_calls)
         """
-        raise NotImplementedError("thinking() must be implemented")
+        messages = self._build_messages(context)
+        self._log_prompt("Think", messages)
 
-    async def build_messages(
-        self,
-        think_prompt: str,
-        tools_description: str,
-        output_instructions: str,
-        context_info: str,
-    ) -> List[Message]:
-        """Assemble the final messages for the thinking phase.
+        _, tool_specs = context.get_field('tools')
+        tools = [spec.to_tool() for spec in tool_specs] if tool_specs else []
+        if tools:
+            tool_calls, content = await self._llm.aselect_tool(
+                messages=messages, tools=tools
+            )
+        else:
+            response = await self._llm.achat(messages=messages)
+            content, tool_calls = self._extract_chat_content(response), []
 
-        Default: one system message (``think_prompt`` + ``tools_description``
-        + ``output_instructions``) + one user message (``context_info``).
-        Override to reorder or restructure.
-        """
-        parts = [think_prompt]
-        if tools_description:
-            parts.append(tools_description)
-        parts.append(output_instructions)
-        system_content = "\n\n".join(parts)
-
-        return [
-            Message.from_text(text=system_content, role="system"),
-            Message.from_text(text=context_info, role="user"),
-        ]
+        return content, tool_calls
 
     async def before_action(
         self,
@@ -711,34 +350,18 @@ class CognitiveWorker(GraphAutoma):
     ) -> Any:
         """Worker-level before_action hook. Override to intercept tool calls.
 
-        Both forms accepted: coroutine or async-generator (yielding hook-
-        scope primitives). Return ``_DELEGATE`` / ``None`` to chain to
-        the agent-level hook; return any other value (or ``yield
-        RETURN(...)``) to override the decision.
-
-        >>> async def before_action(self, decision_result, context):
-        ...     return decision_result.filter(lambda x: x.tool_name not in ["delete", "drop"])
-        >>> async def before_action(self, decision_result, context):
-        ...     yield ActionCall("audit_tool", payload=str(decision_result))
-        ...     # No RETURN → delegate to agent-level.
+        Return ``_DELEGATE`` / ``None`` to chain to the agent-level hook;
+        return any other value (or ``yield RETURN(...)``) to override the
+        decision.
         """
         return _DELEGATE
 
     async def after_action(self, step_result: Any, ctx: "CognitiveContext") -> Any:
         """Worker-level after_action hook. Override for side-effects.
 
-        Both forms accepted. The return value is a control signal, not a
-        data channel: ``_DELEGATE`` / ``None`` chains to the agent-level
-        hook; any other value suppresses it. The returned value itself
-        is discarded — mutate ``ctx`` / ``step_result`` in place for any
-        change to survive.
-
-        >>> async def after_action(self, step_result, ctx):
-        ...     ctx.current_document = extract_document(step_result)
-        ...     return _DELEGATE
-        >>> async def after_action(self, step_result, ctx):
-        ...     yield ActionCall("refresh_index")
-        ...     # No RETURN → chain to agent-level.
+        The return value is a control signal: ``_DELEGATE`` / ``None``
+        chains to the agent-level hook; any other value suppresses it.
+        Mutate ``ctx`` / ``step_result`` in place for changes to survive.
         """
         return _DELEGATE
 
@@ -749,38 +372,29 @@ class CognitiveWorker(GraphAutoma):
     @classmethod
     def inline(
         cls,
-        thinking_prompt: str,
+        prompt: str,
         llm: Optional[BaseLlm] = None,
-        enable_rehearsal: bool = False,
-        enable_reflection: bool = False,
         verbose: Optional[bool] = None,
         verbose_prompt: Optional[bool] = None,
         output_schema: Optional[Type[BaseModel]] = None,
     ) -> "CognitiveWorker":
-        """Create a CognitiveWorker from a thinking prompt string.
+        """Create a worker that uses the default ``thinking`` with ``prompt``.
 
-        Convenience factory when you only need to customize ``thinking()``.
+        Convenience for the no-subclass case — equivalent to subclassing and
+        setting the ``prompt`` class attribute.
 
         >>> worker = CognitiveWorker.inline("Plan ONE immediate next step", llm=llm)
-        >>> planner = CognitiveWorker.inline(
-        ...     "Analyze the goal and produce a phased plan.",
-        ...     output_schema=PlanningResult,
-        ... )
         """
-        class _PromptWorker(cls):
-            async def thinking(self):
-                return thinking_prompt
-
-        return _PromptWorker(
+        worker = cls(
             llm=llm,
-            enable_rehearsal=enable_rehearsal,
-            enable_reflection=enable_reflection,
             verbose=verbose,
             verbose_prompt=verbose_prompt,
             output_schema=output_schema,
         )
+        worker.prompt = prompt
+        return worker
 
-    # Alias for inline() — preferred for readability in some contexts
+    # Alias for inline()
     from_prompt = inline
 
     async def arun(

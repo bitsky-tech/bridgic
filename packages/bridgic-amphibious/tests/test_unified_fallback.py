@@ -30,8 +30,6 @@ from bridgic.amphibious import (
     LLMCall,
     RETURN,
     RunMode,
-    StepToolCall,
-    ToolArgument,
     ThinkUnit,
     human_channel,
     think_unit,
@@ -39,19 +37,27 @@ from bridgic.amphibious import (
 from bridgic.core.agentic.tool_specs import FunctionToolSpec
 
 
-ThinkDecision = CognitiveWorker._create_think_model(
-    enable_rehearsal=False,
-    enable_reflection=False,
-    enable_acquiring=False,
-    output_schema=None,
-)
-
-
 def _finish_step():
-    return ThinkDecision(step_content="Recovered", output=[], finish=True)
+    """Scripted ``aselect_tool`` reply with no tool calls → worker finishes."""
+    return ([], "Recovered")
+
+
+def _tool_call_step(tool: str, content: str, **arguments):
+    """Scripted ``aselect_tool`` reply with one tool call (worker continues)."""
+    return ([{"name": tool, "arguments": arguments}], content)
 
 
 class _MockLLM:
+    """Drives the new CognitiveWorker (``aselect_tool``) and ``LLMCall.chat``
+    (``achat``).
+
+    ``structured_responses`` scripts the recoverer worker's native
+    function-calling think-step — each entry is a ``(tool_calls, content)``
+    pair, an empty list finishing the worker. ``achat`` raises when no
+    ``chat_responses`` are configured, which is how fallback tests trigger
+    an LLMCall failure.
+    """
+
     def __init__(self, structured_responses=None, chat_responses=None):
         self.structured_responses = list(structured_responses or [])
         self.chat_responses = list(chat_responses or [])
@@ -59,7 +65,7 @@ class _MockLLM:
         self._chat_idx = 0
         self.chat_call_count = 0
 
-    async def astructured_output(self, messages, constraint, **kwargs):
+    async def aselect_tool(self, messages, tools, **kwargs):
         resp = self.structured_responses[self._struct_idx % len(self.structured_responses)]
         self._struct_idx += 1
         return resp
@@ -72,8 +78,11 @@ class _MockLLM:
         self._chat_idx += 1
         return resp
 
+    async def astructured_output(self, messages, constraint, **kwargs): ...
     async def astream(self, messages, **kwargs): ...
     def chat(self, messages, **kwargs): ...
+    def select_tool(self, messages, tools, **kwargs): ...
+    def structured_output(self, messages, constraint, **kwargs): ...
     def stream(self, messages, **kwargs): ...
 
 
@@ -256,7 +265,8 @@ class TestFallbackCounterReset:
             def __init__(self):
                 self.chat_count = 0
 
-            async def astructured_output(self, messages, constraint, **kwargs):
+            async def aselect_tool(self, messages, tools, **kwargs):
+                # Recoverer worker think-step → finish immediately.
                 return _finish_step()
 
             async def achat(self, messages, **kwargs):
@@ -265,8 +275,11 @@ class TestFallbackCounterReset:
                     raise RuntimeError(f"fail on attempt {self.chat_count}")
                 return Response(message=Message.from_text(f"ok-{self.chat_count}", role=Role.AI))
 
+            async def astructured_output(self, messages, constraint, **kwargs): ...
             async def astream(self, messages, **kwargs): ...
             def chat(self, messages, **kwargs): ...
+            def select_tool(self, messages, tools, **kwargs): ...
+            def structured_output(self, messages, constraint, **kwargs): ...
             def stream(self, messages, **kwargs): ...
 
         llm = _AlternatingLLM()
@@ -329,15 +342,11 @@ class TestSlotMechanism:
 
         # Worker sees the resolve_step_fallback tool in its tools surface
         # and decides to call it. Then on next cycle, finishes.
-        recover_step = ThinkDecision(
-            step_content="Submitting recovered value",
-            output=[StepToolCall(
-                tool="resolve_step_fallback",
-                tool_arguments=[ToolArgument(name="result", value="recovered_data")],
-            )],
-            finish=False,
+        recover_step = _tool_call_step(
+            "resolve_step_fallback", "Submitting recovered value",
+            result="recovered_data",
         )
-        finish_step = ThinkDecision(step_content="Done", output=[], finish=True)
+        finish_step = _finish_step()
         llm = _MockLLM(structured_responses=[recover_step, finish_step])
 
         captured = []
@@ -376,7 +385,7 @@ class TestSlotMechanism:
         async def always_fails():
             raise RuntimeError("boom")
 
-        finish_step = ThinkDecision(step_content="Gave up", output=[], finish=True)
+        finish_step = ([], "Gave up")
         llm = _MockLLM(structured_responses=[finish_step])
 
         captured = []
@@ -413,15 +422,11 @@ class TestSlotMechanism:
     async def test_human_call_resolve_via_tool_flows_to_workflow(self):
         """HumanCall fallback: agent submits a response via resolve tool."""
 
-        recover_step = ThinkDecision(
-            step_content="Submitting human response",
-            output=[StepToolCall(
-                tool="resolve_step_fallback",
-                tool_arguments=[ToolArgument(name="response", value="yes please")],
-            )],
-            finish=False,
+        recover_step = _tool_call_step(
+            "resolve_step_fallback", "Submitting human response",
+            response="yes please",
         )
-        finish_step = ThinkDecision(step_content="Done", output=[], finish=True)
+        finish_step = _finish_step()
         llm = _MockLLM(structured_responses=[recover_step, finish_step])
 
         captured = []
@@ -463,23 +468,11 @@ class TestSlotMechanism:
 
         # Worker decision: call real_user_tool first (record what tools are
         # visible to the LLM), then resolve, then finish.
-        check_step = ThinkDecision(
-            step_content="Inspecting tools",
-            output=[StepToolCall(
-                tool="real_user_tool",
-                tool_arguments=[],
-            )],
-            finish=False,
+        check_step = _tool_call_step("real_user_tool", "Inspecting tools")
+        recover_step = _tool_call_step(
+            "resolve_step_fallback", "Submitting", result="recovered",
         )
-        recover_step = ThinkDecision(
-            step_content="Submitting",
-            output=[StepToolCall(
-                tool="resolve_step_fallback",
-                tool_arguments=[ToolArgument(name="result", value="recovered")],
-            )],
-            finish=False,
-        )
-        finish_step = ThinkDecision(step_content="Done", output=[], finish=True)
+        finish_step = _finish_step()
         llm = _MockLLM(structured_responses=[check_step, recover_step, finish_step])
 
         captured = []

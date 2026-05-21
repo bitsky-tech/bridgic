@@ -42,20 +42,18 @@ from bridgic.amphibious import (
 # ---------------------------------------------------------------------------
 
 
-ThinkDecision = CognitiveWorker._create_think_model(
-    enable_rehearsal=False,
-    enable_reflection=False,
-    enable_acquiring=False,
-    output_schema=None,
-)
-
-
 class _DummyLLM:
+    """Minimal LLM stub. ``aselect_tool`` returns no tool calls, so the
+    default CognitiveWorker.thinking() resolves to an immediate finish."""
+
+    async def aselect_tool(self, messages, tools, **kwargs):
+        return [], "done"
     async def achat(self, messages, **kwargs): ...
-    async def astructured_output(self, messages, constraint, **kwargs):
-        return ThinkDecision(step_content="done", output=[], finish=True)
+    async def astructured_output(self, messages, constraint, **kwargs): ...
     async def astream(self, messages, **kwargs): ...
     def chat(self, messages, **kwargs): ...
+    def select_tool(self, messages, tools, **kwargs): ...
+    def structured_output(self, messages, constraint, **kwargs): ...
     def stream(self, messages, **kwargs): ...
 
 

@@ -31,36 +31,38 @@ from bridgic.amphibious import (
 )
 
 
-ThinkDecision = CognitiveWorker._create_think_model(
-    enable_rehearsal=False,
-    enable_reflection=False,
-    enable_acquiring=False,
-    output_schema=None,
-)
-
-
 class MockLLM:
-    """Records every astructured_output call and returns scripted decisions."""
+    """Records every think-step LLM call and returns scripted decisions.
+
+    The new CognitiveWorker drives thinking through native function-calling,
+    so each scripted response is a ``(tool_calls, content)`` pair returned by
+    ``aselect_tool``; an empty ``tool_calls`` list makes the worker finish.
+    ``call_count`` tracks the worker's per-cycle LLM invocations.
+    """
 
     def __init__(self, responses):
         self._responses = list(responses)
         self._idx = 0
         self.call_count = 0
 
-    async def astructured_output(self, messages, constraint, **kwargs):
+    async def aselect_tool(self, messages, tools, **kwargs):
         self.call_count += 1
         resp = self._responses[self._idx % len(self._responses)]
         self._idx += 1
         return resp
 
     async def achat(self, messages, **kwargs): ...
+    async def astructured_output(self, messages, constraint, **kwargs): ...
     async def astream(self, messages, **kwargs): ...
     def chat(self, messages, **kwargs): ...
+    def select_tool(self, messages, tools, **kwargs): ...
+    def structured_output(self, messages, constraint, **kwargs): ...
     def stream(self, messages, **kwargs): ...
 
 
-def _finish() -> ThinkDecision:
-    return ThinkDecision(step_content="Done", output=[], finish=True)
+def _finish():
+    """Scripted ``aselect_tool`` reply with no tool calls → worker finishes."""
+    return [], "Done"
 
 
 def _ctx() -> CognitiveContext:

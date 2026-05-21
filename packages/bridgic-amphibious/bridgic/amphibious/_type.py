@@ -67,21 +67,6 @@ class RunMode(str, Enum):
     AMPHIFLOW = "amphiflow"
     AUTO = "auto"
 
-class DetailRequest(BaseModel):
-    """Request for detailed information about a specific item in a LayeredExposure field.
-
-    Used by: _cognitive_worker.py (acquiring policy)
-    """
-    model_config = ConfigDict(
-        extra="forbid",
-        json_schema_extra={
-            "required": ["field", "index"],
-            "additionalProperties": False,
-        }
-    )
-    field: str = Field(description="Name of the field to get details from (e.g., 'cognitive_history', 'skills')")
-    index: int = Field(description="0-based index of the item to get details for")
-
 
 class ToolArgument(BaseModel):
     """A single tool argument as name-value pair.
@@ -123,20 +108,14 @@ class StepToolCall(BaseModel):
 
 
 class _ThinkBase(BaseModel):
-    """Unified base for all dynamically-generated ThinkModel variants.
+    """Shared base for the worker's decision models.
 
-    Factory (_create_think_model) adds: output, details, rehearsal,
-    reflection — all optional and conditional on configuration.
+    Carries ``step_content`` + ``finish``; the concrete subclasses
+    ``ThinkDecision`` / ``TypedThinkDecision`` add an ``output`` field.
 
-    Used by: _cognitive_worker.py (_create_think_model)
+    Used by: _cognitive_worker.py (assembled decisions)
     """
-    model_config = ConfigDict(
-        extra="forbid",
-        json_schema_extra={
-            "required": ["step_content"],
-            "additionalProperties": False,
-        }
-    )
+    model_config = ConfigDict(extra="forbid")
 
     step_content: str = Field(
         default="",
@@ -144,7 +123,7 @@ class _ThinkBase(BaseModel):
     )
     finish: bool = Field(
         default=False,
-        description="Set True when your current sub-task is FULLY complete and no more steps are needed."
+        description="Set True when the sub-task is fully complete and no more steps are needed."
     )
 
     @field_validator('step_content', mode='before')
@@ -153,20 +132,34 @@ class _ThinkBase(BaseModel):
         return "" if v is None else str(v)
 
 
-def _coerce_none_to_list(v: Any) -> list:
-    """Coerce non-list values to empty list for field validation.
+class ThinkDecision(_ThinkBase):
+    """A worker decision in tool-calling form.
 
-    Some LLMs may place summary text or a dict in the ``output`` field
-    instead of a proper ``List[StepToolCall]``.  Rather than letting
-    Pydantic raise a ``ValidationError``, silently discard the invalid
-    value so the cycle can still finish gracefully (the content lives
-    in ``step_content`` anyway).
+    Assembled by ``CognitiveWorker._assemble_decision`` from the LLM's
+    ``(content, tool_calls)`` reply. The act phase routes on the ``output``
+    annotation — ``List[StepToolCall]`` here selects the tool-call path.
+
+    Used by: _cognitive_worker.py, _amphibious_automa.py (act routing)
     """
-    if v is None:
-        return []
-    if isinstance(v, list):
-        return v
-    return []
+    output: List[StepToolCall] = Field(
+        default_factory=list,
+        description="Tool calls to execute this step.",
+    )
+
+
+class TypedThinkDecision(_ThinkBase):
+    """A worker decision in typed-output form.
+
+    Wraps the structured result of an ``output_schema`` worker. The act
+    phase routes a non-``List[StepToolCall]`` ``output`` to the
+    custom-output path.
+
+    Used by: _cognitive_worker.py, _amphibious_automa.py (act routing)
+    """
+    output: Any = Field(
+        default=None,
+        description="The structured result produced by an output_schema worker.",
+    )
 
 
 ################################################################################################################
