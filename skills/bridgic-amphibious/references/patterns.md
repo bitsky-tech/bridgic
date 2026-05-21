@@ -14,7 +14,6 @@
 - [Structured Output (output_schema)](#structured-output-output_schema)
 - [Custom Context](#custom-context)
 - [Phase Annotation](#phase-annotation)
-- [Cognitive Policies](#cognitive-policies)
 - [OTC Hooks](#otc-hooks)
 - [Skills Usage](#skills-usage)
 - [Memory Configuration](#memory-configuration)
@@ -425,10 +424,15 @@ When yielded from a top-level `on_agent` / `on_workflow`, `RETURN(value)` writes
 
 ## Custom Worker
 
+A `CognitiveWorker` subclass owns one template method: `thinking(self, context)`.
+It talks to the LLM and returns a `(content, tool_calls)` pair. Setting the
+`prompt` class attribute and relying on the default `thinking()` covers the
+common case; override `thinking()` only to take full control of the LLM call.
+
 ```python
 class DestinationAnalyzer(CognitiveWorker):
-    async def thinking(self) -> str:
-        return "Analyze the destination and suggest a day-by-day plan."
+    # The default thinking() prepends this as the system instruction.
+    prompt = "Analyze the destination and suggest a day-by-day plan."
 
     async def observation(self, context: CognitiveContext):
         return (
@@ -446,6 +450,22 @@ class TravelPlanner(AmphibiousAutoma[CognitiveContext]):
     async def on_agent(self, ctx: CognitiveContext):
         yield ThinkUnit("analyzer")
         yield ThinkUnit("planner")
+```
+
+To take full control of the LLM interaction — a custom protocol, or a model
+without native function-calling — override `thinking()` and return your own
+`(content, tool_calls)` pair:
+
+```python
+class PlainTextWorker(CognitiveWorker):
+    prompt = "Decide the next step."
+
+    async def thinking(self, context):
+        # A model with no native function-calling: call it directly and
+        # parse tool calls out of the plain-text reply yourself.
+        resp = await self._llm.achat(messages=self._build_messages(context))
+        content = self._extract_chat_content(resp)
+        return my_parser(content)  # -> (content, [{"name": ..., "arguments": {...}}, ...])
 ```
 
 ## Think Agent (External Agent Delegation)
@@ -603,25 +623,6 @@ class ContentCreator(AmphibiousAutoma[CognitiveContext]):
             yield ThinkUnit("writer")
 ```
 
-## Cognitive Policies
-
-```python
-# Enable all three policies on a single worker
-class AnalystAgent(AmphibiousAutoma[CognitiveContext]):
-    analyst = think_unit(
-        CognitiveWorker.inline(
-            "Perform a comprehensive analysis.",
-            enable_rehearsal=True,    # Mental simulation
-            enable_reflection=True,   # Information assessment
-            # Acquiring is always active by default
-        ),
-        max_attempts=10,
-    )
-
-    async def on_agent(self, ctx: CognitiveContext):
-        yield ThinkUnit("analyst")
-```
-
 ## OTC Hooks
 
 OTC hooks split into two groups by how the framework invokes them:
@@ -633,8 +634,7 @@ OTC hooks split into two groups by how the framework invokes them:
 
 ```python
 class SecurityWorker(CognitiveWorker):
-    async def thinking(self) -> str:
-        return "Analyze the system for security issues."
+    prompt = "Analyze the system for security issues."
 
     async def observation(self, context: CognitiveContext):
         return f"Security policy: Read-only audit mode."
@@ -671,23 +671,34 @@ class BrowserAgent(AmphibiousAutoma[CognitiveContext]):
 
 Hook-scope semantics: the `yield ActionCall(...)` here is a raw tool execution. It does NOT re-enter `observation` / `before_action` / `after_action` (hooks are not OTC participants — only `on_workflow` is). The same generator form applies to `before_action` (e.g. yield an audit-log ActionCall before every tool dispatch) and `after_action` (e.g. yield a refresh ActionCall after each step). Exhausting the generator without `RETURN` is treated as no-op / passthrough; `RETURN(value)` becomes the hook's effective return value.
 
-### build_messages — Reshape LLM Messages
+### thinking — Take Over the LLM Call
+
+`thinking(self, context)` is the worker's single template method. Override it
+to control the LLM interaction directly — inject extra rules, use a different
+protocol, or parse a model that lacks native function-calling. It returns a
+`(content, tool_calls)` pair; the framework parses that into the decision.
 
 ```python
-from bridgic.core.model.types import Message
-
 class StrictWorker(CognitiveWorker):
-    async def thinking(self) -> str:
-        return "Perform a security audit."
+    prompt = "Perform a security audit."
 
-    async def build_messages(self, think_prompt, tools_description,
-                             output_instructions, context_info):
+    async def thinking(self, context):
+        # Reuse the default message assembly, then append extra rules to
+        # the system message before calling the LLM.
+        messages = self._build_messages(context)
         rules = "\n\nRULES:\n1. NEVER call delete_file.\n2. NEVER read .env files."
-        system = f"{think_prompt}{rules}\n\n{tools_description}\n\n{output_instructions}"
-        return [
-            Message.from_text(text=system, role="system"),
-            Message.from_text(text=context_info, role="user"),
-        ]
+        messages[0].content += rules
+
+        _, tool_specs = context.get_field("tools")
+        tools = [spec.to_tool() for spec in tool_specs] if tool_specs else []
+        if tools:
+            tool_calls, content = await self._llm.aselect_tool(
+                messages=messages, tools=tools,
+            )
+        else:
+            resp = await self._llm.achat(messages=messages)
+            content, tool_calls = self._extract_chat_content(resp), []
+        return content, tool_calls
 ```
 
 ### before_action — Filter Dangerous Calls

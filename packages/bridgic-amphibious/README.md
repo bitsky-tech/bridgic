@@ -105,13 +105,12 @@ The key insight: **Context sits on top as the global state**, and the **on_agent
 Controls how context data is disclosed to the LLM.
 
 - **`EntireExposure[T]`** — All data visible at once (used for tools)
-- **`LayeredExposure[T]`** — Progressive disclosure: summary first, details on demand (used for skills, history)
+- **`LayeredExposure[T]`** — Progressive disclosure: a summary tier plus on-demand detail tiers (used for skills, history)
 
 ```python
-# The LLM sees skill summaries initially
-# It can request details via the acquiring policy:
-#   details: [{field: "skills", index: 0}]
-# The framework then reveals the full skill content
+# A LayeredExposure field organizes its items into tiers: a compact
+# summary the LLM sees up front, and fuller detail revealed on demand
+# via Context.get_details(field, index).
 ```
 
 ### Layer 2: Context
@@ -129,27 +128,27 @@ Controls how context data is disclosed to the LLM.
 
 ### Layer 3: CognitiveWorker (Think Unit)
 
-A `CognitiveWorker` is a pure thinking unit — it only decides *what to do*, not *how to execute*.
+A `CognitiveWorker` is a pure thinking unit — it only decides *what to do*, not *how to execute*. Its one template method is `thinking(self, context)`: it talks to the LLM and returns a `(content, tool_calls)` pair, which the framework parses into a decision. A thinking step that returns no tool calls is "finished".
 
 ```python
+# The common case needs no subclass — give a prompt; the default
+# thinking() uses native function-calling.
+worker = CognitiveWorker.inline("Plan ONE immediate next step")
+
+# Override thinking() to take full control of the LLM interaction —
+# a custom protocol, a model without native function-calling, etc.
 class AnalysisWorker(CognitiveWorker):
-    async def thinking(self):
-        return "Analyze the current situation and decide the best next action."
+    prompt = "Analyze the current situation and decide the best next action."
+
+    async def thinking(self, context):
+        # Write your own LLM call; return (content, tool_calls).
+        resp = await self._llm.achat(messages=my_messages(context))
+        return self._extract_chat_content(resp), []
 
     async def observation(self, context):
         # Custom observation logic
         return f"Page title: {await get_page_title()}"
-
-# Or use the factory for simple cases:
-worker = CognitiveWorker.inline("Plan ONE immediate next step")
 ```
-
-**Cognitive Policies** enhance thinking with optional multi-round deliberation:
-- **Acquiring** (built-in) — request details from LayeredExposure fields before deciding
-- **Rehearsal** (opt-in) — mentally simulate the planned action before committing
-- **Reflection** (opt-in) — assess information quality and consistency
-
-Each policy fires **at most once** per cycle, then closes.
 
 **Structured Output**: Set `output_schema` to skip the tool-call loop entirely and produce a typed Pydantic instance:
 
@@ -362,7 +361,6 @@ agent._agent_trace.save("trace.json")
 | **on_workflow()** | Deterministic workflow as async generator |
 | **Exposure** | Data visibility abstraction (Entire vs. Layered) |
 | **CognitiveContext** | Agent state: goal, tools, skills, history |
-| **Cognitive Policies** | Acquiring, rehearsal, reflection — enhance thinking |
 | **AgentTrace** | Structured execution trace for inspection |
 | **ErrorStrategy** | RAISE, IGNORE, or RETRY on failures |
 | **ActionCall** | Yield in on_workflow() for deterministic tool execution |

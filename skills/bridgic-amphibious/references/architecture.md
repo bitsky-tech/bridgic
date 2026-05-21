@@ -8,7 +8,6 @@
 - [Peer State-Machine Dispatcher](#peer-state-machine-dispatcher)
 - [Workflow Fallback Mechanism](#workflow-fallback-mechanism)
 - [Data Exposure System](#data-exposure-system)
-- [Cognitive Policies](#cognitive-policies)
 - [Memory Architecture (CognitiveHistory)](#memory-architecture-cognitivehistory)
 - [Think Unit Descriptor Pattern](#think-unit-descriptor-pattern)
 - [External Agent Delegation (ThinkAgent)](#external-agent-delegation-thinkagent)
@@ -32,8 +31,8 @@ Layer 4: AmphibiousAutoma (Orchestration)
 
 Layer 3: CognitiveWorker / AgentWorker (Think Units — peers)
   ├─ CognitiveWorker    → in-process LLM cycle, anchored on a BaseLlm
-  │   ├─ thinking()     → LLM decision logic
-  │   └─ Policies       → acquiring, rehearsal, reflection
+  │   └─ thinking()     → single template method: talk to the LLM,
+  │                       return (content, tool_calls)
   └─ AgentWorker        → one delegated cycle to an external coding
                           agent, anchored on a BaseAgent (ClaudeCodeAgent, …)
 
@@ -56,9 +55,9 @@ Each think unit execution follows:
    - Result stored in `context.observation`
 
 2. **Think**: LLM decides next action
-   - `CognitiveWorker._thinking(context)` runs LLM
-   - Multi-round loop if cognitive policies fire
-   - Returns decision with `step_content`, `finish`, `output`
+   - `CognitiveWorker.thinking(context)` runs one LLM round, returning `(content, tool_calls)`
+   - The framework parses that pair into a decision with `step_content`, `finish`, `output`
+   - A thinking step with no tool calls is `finish=True`
 
 3. **Act**: Execute tools or produce structured output
    - `before_action()` hooks (worker → agent delegation)
@@ -209,7 +208,7 @@ All data visible at once. Used for tools.
 
 ### LayeredExposure[T]
 
-Progressive disclosure with details on demand.
+Progressive disclosure: a compact `summary()` tier plus fuller detail revealed on demand through `get_details(index)`.
 
 - Methods: `summary()` + `get_details(index)` + `reveal(index)`
 - Caching: `_revealed` dict stores cached details
@@ -223,42 +222,6 @@ Progressive disclosure with details on demand.
 - Hide a field from summary: `json_schema_extra={"display": False}`
 - Enable LLM propagation to an Exposure field: `json_schema_extra={"use_llm": True}`
 
-## Cognitive Policies
-
-Multi-round thinking within a single OTC cycle. Each policy fires **at most once**, then closes.
-
-### Acquiring (built-in, always active when no output_schema)
-
-LLM requests details from `LayeredExposure` fields (skills, cognitive_history).
-
-```
-LLM fills: details: [{field: "skills", index: 0}]
-→ Framework reveals full content
-→ Re-think with revealed data
-```
-
-### Rehearsal (opt-in: `enable_rehearsal=True`)
-
-LLM mentally simulates planned action.
-
-```
-LLM fills: rehearsal: "If I call search_tool, I expect..."
-→ Prediction injected as context
-→ Re-think with simulation
-```
-
-### Reflection (opt-in: `enable_reflection=True`)
-
-LLM assesses information quality.
-
-```
-LLM fills: reflection: "The data is inconsistent because..."
-→ Assessment injected as context
-→ Re-think with assessment
-```
-
-Policy execution order: **Acquiring → Rehearsal → Reflection**. After all active policies fire, LLM must commit to a final action.
-
 ## Memory Architecture (CognitiveHistory)
 
 Four-tier layered memory with automatic compression:
@@ -270,7 +233,7 @@ New step added
 [Working Memory]    ← latest N steps, full details shown
     │
     v (overflow)
-[Short-term Memory] ← next M steps, summaries only, queryable via Acquiring
+[Short-term Memory] ← next M steps, summaries only
     │
     v (overflow, triggers compression)
 [Long-term Pending] ← brief summaries, awaiting batch compression

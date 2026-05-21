@@ -81,7 +81,7 @@ from bridgic.amphibious import (
     # Data models
     Step, Skill, RunMode, ErrorStrategy,
     ActionResult, ActionStepResult, ToolResult,
-    WorkflowDecision, StepToolCall, ToolArgument, DetailRequest,
+    WorkflowDecision, StepToolCall, ToolArgument,
     # Trace
     TraceStep, RecordedToolCall, StepOutputType,
     # Built-in tool specs (auto-injected; importable for explicit reuse)
@@ -229,18 +229,20 @@ async with self.snapshot(goal="Sub-goal", **fields):
 ## CognitiveWorker
 
 ```python
-class CognitiveWorker:
+class CognitiveWorker(GraphAutoma):
 ```
 
-Pure thinking unit — decides *what to do*, never *how*.
+Pure thinking unit — decides *what to do*, never *how*. It owns exactly one
+template method, `thinking()`: it talks to the LLM and returns a
+`(content, tool_calls)` pair, which the framework parses into a decision.
+The common case needs no subclass — pass a prompt to `inline()` and rely on
+the default `thinking()`.
 
 ### Constructor
 
 ```python
 CognitiveWorker(
     llm: BaseLlm = None,
-    enable_rehearsal: bool = False,
-    enable_reflection: bool = False,
     verbose: bool = None,
     verbose_prompt: bool = None,
     output_schema: Type[BaseModel] = None,  # Typed output mode
@@ -250,12 +252,11 @@ CognitiveWorker(
 ### Factory Methods
 
 ```python
-# Quick creation from prompt string
+# Quick creation from a prompt string — equivalent to subclassing and
+# setting the `prompt` class attribute.
 worker = CognitiveWorker.inline(
     "Plan ONE immediate next step",
     llm=None,                          # Usually injected by agent
-    enable_rehearsal=False,
-    enable_reflection=False,
     output_schema=None,                # Set for typed output
     verbose=None,
     verbose_prompt=None,
@@ -268,8 +269,13 @@ worker = CognitiveWorker.from_prompt("...")
 ### Template Methods (Override in Subclasses)
 
 ```python
-# Required: Define thinking prompt
-async def thinking(self) -> str: ...
+# The single template method — talk to the LLM, return (content, tool_calls).
+# `content` is the model's text; `tool_calls` is a list of items, each an
+# object with .name / .arguments OR a {"name": ..., "arguments": {...}} dict.
+# An empty tool_calls list means "finished". The default implementation uses
+# native function-calling (aselect_tool, or achat when there are no tools);
+# overriding it is "write your own LLM call".
+async def thinking(self, context) -> Tuple[str, List]: ...
 
 # Optional hooks — observation / before_action / after_action accept
 # BOTH async-coroutine and async-generator forms (symmetric with the
@@ -280,19 +286,21 @@ async def thinking(self) -> str: ...
 #                   equivalent to returning None → treated as _DELEGATE
 #                   (chains to the agent-level hook).
 async def observation(self, context) -> Any: ...           # Return _DELEGATE / str / None, OR yield primitives
-async def build_messages(self, think_prompt, tools_description,
-                         output_instructions, context_info) -> List[Message]: ...
 async def before_action(self, decision_result, context) -> Any: ...
 async def after_action(self, step_result, ctx) -> Any: ...
 ```
 
-### Class Attribute
+### Class Attributes
 
 ```python
+prompt: str = ""
+# The system instruction the default thinking() prepends to the messages.
+# Set it on a subclass (`class X(CognitiveWorker): prompt = "..."`) or via
+# CognitiveWorker.inline(prompt). Ignored when thinking() is overridden.
+
 output_schema: Optional[Type[BaseModel]] = None
-# When set, worker produces a typed Pydantic instance.
-# Skips tool-call loop. Acquiring policy disabled.
-# yield ThinkUnit("name") returns the typed instance.
+# When set, worker produces a typed Pydantic instance via structured output.
+# Skips the tool-call path. yield ThinkUnit("name") returns the typed instance.
 ```
 
 ## AgentWorker & BaseAgent
