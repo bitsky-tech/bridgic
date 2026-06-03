@@ -14,7 +14,7 @@ description = "LiteLLM adapters for Bridgic, enabling connectivity with 100+ LLM
 readme = "README.md"
 requires-python = ">=3.9"
 authors = [
-    { name = "Tielei Zhang", email = "zhangtl04@gmail.com" },
+    { name = "RheagalFire", email = "arishalam121@gmail.com" },
 ]
 dependencies = [
     "bridgic-core>=0.3.0",
