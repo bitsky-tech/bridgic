@@ -1,5 +1,5 @@
-Bridgic LLMs Integration
-========================
+OpenAI-like LLM Integration
+===========================
 
 This package is a thin wrapper around the OpenAI API. It is designed to be used with model service that is compatible with the OpenAI API.
 
