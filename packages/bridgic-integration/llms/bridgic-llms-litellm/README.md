@@ -1,14 +1,17 @@
-# bridgic-llms-litellm
+LiteLLM Integration
+===================
 
 LiteLLM adapters for [Bridgic](https://github.com/bitsky-tech/bridgic), enabling connectivity with 100+ LLM providers through a single unified interface.
 
-## Installation
+Installation
+------------
 
 ```shell
 pip install bridgic-llms-litellm
 ```
 
-## Usage
+Usage
+-----
 
 ```python
 from bridgic.llms.litellm import LiteLLM

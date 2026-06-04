@@ -1,5 +1,5 @@
-Bridgic LLMs Integration
-========================
+vLLM Integration
+================
 
 This package integrates vLLM model services into the Bridgic framework, providing common calling interfaces for self-hosted LLM service, such as chat, stream, as well as with encapsulation of common seen high-level functionality.
 
