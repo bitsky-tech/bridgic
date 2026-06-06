@@ -3,10 +3,10 @@
 Layout (symmetric to ``_think_agent.py``):
 
 * ``ThinkUnitDescriptor`` — class-level marker holding a
-  ``CognitiveWorker`` template + descriptor-level overlays (``until``
-  / ``max_attempts`` / ``tools`` / ``skills`` / ``on_error`` /
-  ``max_retries``). Exposes a ``_clone_worker`` static helper for
-  state-isolated cloning per invocation.
+  ``CognitiveWorker`` template + descriptor-level orchestration knobs
+  (``until`` / ``max_attempts`` / ``on_error`` / ``max_retries``).
+  Exposes a ``_clone_worker`` static helper for state-isolated cloning
+  per invocation.
 * ``think_unit(worker, *, ...)`` — factory that wraps one
   ``CognitiveWorker`` instance into a descriptor.
 
@@ -17,7 +17,7 @@ the job of the dispatcher there.
 
 from __future__ import annotations
 
-from typing import Any, Awaitable, Callable, List, Optional, Union
+from typing import Any, Awaitable, Callable, Optional, Union
 
 from bridgic.amphibious._cognitive_worker import CognitiveWorker
 from bridgic.amphibious._type import ErrorStrategy
@@ -47,22 +47,18 @@ class ThinkUnitDescriptor:
         *,
         until: Optional[Union[Callable[..., bool], Callable[..., Awaitable[bool]]]] = None,
         max_attempts: int = 1,
-        tools: Optional[List[str]] = None,
-        skills: Optional[List[str]] = None,
         on_error: ErrorStrategy = ErrorStrategy.RAISE,
         max_retries: int = 0,
     ) -> None:
         if not isinstance(worker, CognitiveWorker):
             raise TypeError(
                 f"think_unit(worker, ...) requires a CognitiveWorker "
-                f"instance; got {type(worker).__name__}. Use "
-                "CognitiveWorker.inline(prompt) or subclass CognitiveWorker."
+                f"instance; got {type(worker).__name__}. Subclass "
+                "CognitiveWorker and implement thinking()."
             )
         self._worker_template: CognitiveWorker = worker
         self._until = until
         self._max_attempts = max_attempts
-        self._tools = tools
-        self._skills = skills
         self._on_error = on_error
         self._max_retries = max_retries
 
@@ -75,21 +71,15 @@ class ThinkUnitDescriptor:
     def _clone_worker(template: CognitiveWorker) -> CognitiveWorker:
         """Clone a worker from its template for state isolation.
 
-        Copies configuration (prompt, output_schema, verbose settings) but
-        creates a fresh instance with clean runtime state (tokens, time,
-        GraphAutoma execution state). LLM is left as None — the agent
-        injects it via ``set_llm()`` at runtime.
+        Delegates to ``template._clone()`` — each CognitiveWorker subclass
+        owns the contract of preserving its own config (since constructor
+        params vary per subclass, the framework can't copy them
+        generically). The default clone carries verbose and leaves the LLM
+        as None — the agent sets it at runtime.
 
         Mirrors ``ThinkAgentDescriptor._clone_worker``.
         """
-        clone = type(template)(
-            llm=None,
-            verbose=template._verbose,
-            verbose_prompt=template._verbose_prompt,
-            output_schema=template.output_schema,
-        )
-        clone.prompt = template.prompt
-        return clone
+        return template._clone()
 
 
 def think_unit(
@@ -97,36 +87,33 @@ def think_unit(
     *,
     until: Optional[Union[Callable[..., bool], Callable[..., Awaitable[bool]]]] = None,
     max_attempts: int = 1,
-    tools: Optional[List[str]] = None,
-    skills: Optional[List[str]] = None,
     on_error: ErrorStrategy = ErrorStrategy.RAISE,
     max_retries: int = 0,
 ) -> ThinkUnitDescriptor:
     """Declare a think unit, invoked via ``yield ThinkUnit(name)``.
 
     Wraps a ``CognitiveWorker`` (cloned per invocation for state
-    isolation). Descriptor-level overlays:
+    isolation). A think unit owns only the thinking-orchestration knobs —
+    the toolset comes from the contexts the worker's ``thinking()``
+    assembles, not from here:
 
     * ``until`` — loop condition (stop early when true).
     * ``max_attempts`` — OTC cycle cap (default 1).
-    * ``tools`` / ``skills`` — name-based filters scoped to this unit.
     * ``on_error`` — error policy (default RAISE).
     * ``max_retries`` — for the RETRY strategy.
 
-    >>> class MyAgent(AmphibiousAutoma[MyContext]):
-    ...     main_think = think_unit(
-    ...         CognitiveWorker.inline("Plan ONE immediate next step"),
-    ...         max_attempts=80,
-    ...     )
-    ...     async def on_agent(self, ctx):
+    >>> class MyThink(CognitiveWorker):
+    ...     async def thinking(self, ota_context, context=None):
+    ...         return await self._llm.aselect_tool(messages=[...], tools=[...])
+    >>> class MyAgent(AmphibiousAutoma[OTAContext, Context]):
+    ...     main_think = think_unit(MyThink(), max_attempts=80)
+    ...     async def on_agent(self, ota_ctx):
     ...         yield ThinkUnit("main_think")
     """
     return ThinkUnitDescriptor(
         worker,
         until=until,
         max_attempts=max_attempts,
-        tools=tools,
-        skills=skills,
         on_error=on_error,
         max_retries=max_retries,
     )

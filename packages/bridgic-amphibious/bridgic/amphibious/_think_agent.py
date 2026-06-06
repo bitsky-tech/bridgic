@@ -48,7 +48,7 @@ class ThinkAgentDescriptor:
         if not isinstance(worker, AgentWorker):
             raise TypeError(
                 f"think_agent(worker, ...) requires an AgentWorker instance; "
-                f"got {type(worker).__name__}. Use AgentWorker.inline(prompt) "
+                f"got {type(worker).__name__}. Use AgentWorker(ClaudeCodeAgent(...)) "
                 "or subclass AgentWorker."
             )
         self._worker_template: AgentWorker = worker
@@ -91,14 +91,14 @@ def think_agent(
     expose every non-builtin tool).
 
     >>> class ReviewerWorker(AgentWorker):
-    ...     async def thinking(self):
+    ...     async def thinking(self, ota_ctx, big_ctx=None):
     ...         return "Review the file and record findings."
     ...
-    >>> class MyAutoma(AmphibiousAutoma[ReviewContext]):
+    >>> class MyAutoma(AmphibiousAutoma[OTAContext, Context]):
     ...     reviewer = think_agent(
-    ...         ReviewerWorker(allowed_builtin_tools=["Read", "Grep"]),
+    ...         ReviewerWorker(ClaudeCodeAgent(allowed_builtin_tools=["Read", "Grep"])),
     ...     )
-    ...     async def on_agent(self, ctx):
+    ...     async def on_agent(self, ota_ctx):
     ...         result = yield ThinkAgent("reviewer")
     ...         yield RETURN(result)
     """

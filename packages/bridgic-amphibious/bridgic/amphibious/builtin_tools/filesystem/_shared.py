@@ -51,9 +51,7 @@ def track_read(abs_path: str) -> None:
     agent = current_agent.get(None)
     if agent is None:
         return
-    tracker = getattr(agent, "_read_tracker", None)
-    if tracker is None:
-        return
+    tracker = agent._read_tracker
     try:
         tracker[abs_path] = os.stat(abs_path).st_mtime
     except OSError:
@@ -76,9 +74,7 @@ def check_read_before_modify(abs_path: str) -> None:
     agent = current_agent.get(None)
     if agent is None:
         return
-    tracker = getattr(agent, "_read_tracker", None)
-    if tracker is None:
-        return
+    tracker = agent._read_tracker
     if abs_path not in tracker:
         raise RuntimeError(
             f"You must use the read_file tool to read {abs_path} "

@@ -18,6 +18,7 @@ chatty command does not blow up the LLM's context window.
 """
 
 import asyncio
+import os
 
 from bridgic.core.agentic.tool_specs import FunctionToolSpec
 
@@ -69,6 +70,8 @@ async def bash(
     ------
     ValueError
         ``command`` is empty or whitespace-only.
+    NotADirectoryError
+        ``cwd`` is set but does not exist or is not a directory.
     TimeoutError
         The command exceeded ``timeout`` and was killed.
     RuntimeError
@@ -81,6 +84,11 @@ async def bash(
 
     timeout_ms = max(1, min(int(timeout), MAX_TIMEOUT_MS))
     timeout_s = timeout_ms / 1000.0
+
+    if cwd and not os.path.isdir(cwd):
+        raise NotADirectoryError(
+            f"Working directory does not exist or is not a directory: {cwd}"
+        )
 
     proc = await asyncio.create_subprocess_shell(
         command,

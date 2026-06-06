@@ -51,7 +51,7 @@ async def grep(
         Maximum number of result lines to emit. ``0`` means use the
         default cap of 200.
     """
-    if not pattern:
+    if not pattern or not pattern.strip():
         raise ValueError("pattern is required")
 
     search_root = path or os.getcwd()

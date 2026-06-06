@@ -3,39 +3,33 @@ agent orchestration with automatic fallback between the two.
 
 Layers:
 
-* **Abstraction** — ``Exposure`` / ``LayeredExposure`` / ``EntireExposure``
-  / ``Context``: field-level data management with progressive disclosure.
-* **Context impl** — ``Step``, ``Skill``, ``CognitiveTools``,
-  ``CognitiveSkills``, ``CognitiveHistory``, ``CognitiveContext``.
+* **Context** — ``Context`` (free-form, big-loop) + ``OTAContext`` (small-loop,
+  framework-owned: the run's ``user_input`` + OTA round trace + tools). The
+  OTA context declares the tools it carries via ``OTAContext.tool`` (decorator
+  or call); nothing is auto-injected.
 * **Worker** — ``CognitiveWorker``: one in-process observe-think-act cycle,
-  anchored on a ``BaseLlm`` — its ``thinking`` template method talks to the
-  LLM. Symmetric peer: ``AgentWorker``, one external-agent delegation,
+  anchored on a ``BaseLlm``; subclass and implement its ``thinking`` template
+  method. Symmetric peer: ``AgentWorker``, one external-agent delegation,
   anchored on a ``BaseAgent`` (the external coding-agent abstraction;
   ``ClaudeCodeAgent`` and ``CodexAgent`` are the shipped drivers).
 * **Orchestration** — ``AmphibiousAutoma`` + yield primitives (``ThinkUnit``,
   ``ThinkAgent``, ``EnterAgent``, ``ActionCall``, ``HumanCall``, ``LLMCall``,
   ``RETURN``) + ``think_unit`` / ``think_agent`` descriptors.
 
->>> class MyAgent(AmphibiousAutoma[CognitiveContext]):
-...     main_think = think_unit(CognitiveWorker.inline("Execute step"), max_attempts=20)
-...     async def on_agent(self, ctx):
+>>> class MyThink(CognitiveWorker):
+...     async def thinking(self, ota_context, context=None):
+...         return await self._llm.aselect_tool(messages=[...], tools=[...])
+>>> class MyAgent(AmphibiousAutoma[OTAContext, Context]):
+...     main_think = think_unit(MyThink(), max_attempts=20)
+...     async def on_agent(self, ota_ctx):
 ...         yield ThinkUnit("main_think")
 ...
->>> answer = await MyAgent().arun(llm=llm, goal="Complete the task")
+>>> answer = await MyAgent().arun(llm=llm, user_input="Complete the task")
 """
 from ._context import (
-    # Abstraction layer
-    Exposure,
-    LayeredExposure,
-    EntireExposure,
+    # Base (free-form big-loop) + small-loop OTA context
     Context,
-    # Implementation layer - Context components
-    Step,
-    Skill,
-    CognitiveTools,
-    CognitiveSkills,
-    CognitiveHistory,
-    CognitiveContext,
+    OTAContext,
 )
 from ._cognitive_worker import (
     # In-process worker (LLM-driven OTC cycle)
@@ -86,12 +80,15 @@ from .builtin_tools import (
 )
 
 from ._type import (
+    # Context-layer models
+    Step,
     # Worker data structures
     RunMode,
     ToolArgument,
     StepToolCall,
+    # Small-loop round record (one OTA round)
+    OTARecord,
     # Yield primitives (scope rules — see AmphibiousAutoma docstring)
-    WorkflowDecision,
     ActionCall,
     HumanCall,
     LLMCall,
@@ -111,19 +108,11 @@ from ._type import (
 )
 
 __all__ = [
-    # Abstraction layer
-    "Exposure",
-    "LayeredExposure",
-    "EntireExposure",
+    # Context layer
     "Context",
-
-    # Implementation layer - Context components
+    "OTAContext",
     "Step",
-    "Skill",
-    "CognitiveTools",
-    "CognitiveSkills",
-    "CognitiveHistory",
-    "CognitiveContext",
+    "OTARecord",
 
     # Implementation layer - Worker
     "CognitiveWorker",
@@ -148,7 +137,6 @@ __all__ = [
     "ToolArgument",
     "StepToolCall",
     # Yield primitives
-    "WorkflowDecision",
     "ActionCall",
     "HumanCall",
     "LLMCall",

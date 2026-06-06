@@ -18,7 +18,7 @@ so ``inspect.signature(handler)`` sees the proper types.
 
 import asyncio
 import socket
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 from fastmcp import FastMCP
@@ -149,7 +149,6 @@ class MCPHost:
                 "The host will resume the parent automa with the value you pass."
             ),
         )
-        
         async def agent_done(result: str) -> str:
             on_agent_done(result)
             return "Acknowledged. Goal recorded as complete; you may finish now."

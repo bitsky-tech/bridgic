@@ -2,15 +2,16 @@ import hashlib
 import asyncio
 import inspect
 import json
+import textwrap
 import time
 from concurrent.futures import ThreadPoolExecutor
 import contextlib
 from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import (
-    Annotated,
-    Any, AsyncGenerator, Awaitable, Callable, ClassVar, Dict, FrozenSet, Generic, Iterable, List, Literal, Optional, Tuple, Type, TypeVar, Union,
+    Any, AsyncGenerator, Awaitable, Callable, ClassVar, Dict, Generic, List, Literal, Optional, Tuple, Type, TypeVar, Union,
     get_args, get_origin
 )
 
@@ -23,20 +24,24 @@ from bridgic.core.model import BaseLlm
 from bridgic.core.model.types import Message, Role, ToolCall
 from bridgic.core.model.protocols import StructuredOutput, ToolSelection
 from bridgic.core.agentic import ConcurrentAutoma
-from bridgic.core.agentic.tool_specs import ToolSpec, FunctionToolSpec
+from bridgic.core.agentic.tool_specs import ToolSpec
 from bridgic.core.utils._console import printer
-from bridgic.amphibious._context import CognitiveContext, CognitiveTools, CognitiveSkills, CognitiveHistory, Exposure, LayeredExposure
+from bridgic.amphibious._context import (
+    Context,
+    OTAContext,
+)
 from bridgic.amphibious._cognitive_worker import CognitiveWorker, _DELEGATE
 from bridgic.amphibious._agent_worker import AgentWorker
 from bridgic.amphibious._think_unit import ThinkUnitDescriptor
 from bridgic.amphibious._think_agent import ThinkAgentDescriptor
 from bridgic.amphibious._run_dir import ensure_run_dir, make_run_id
-from bridgic.amphibious.builtin_tools import ALL_BUILTIN_TOOLS, current_agent
-from bridgic.amphibious.builtin_tools.human.request_human import build_request_human_tool
+from bridgic.amphibious.builtin_tools import current_agent
 from bridgic.amphibious._type import (
     RunMode,
     Step,
     StepToolCall,
+    ToolArgument,
+    ThinkResult,
     ActionCall,
     HumanCall,
     EnterAgent,
@@ -58,11 +63,9 @@ from bridgic.amphibious._type import (
 # Module-level type names + constants
 ################################################################################################################
 
-# Generic type for the agent's cognitive context, allowing users to define their own context classes.
-CognitiveContextT = TypeVar("CognitiveContextT", bound=CognitiveContext)
-
-# Built-in tools auto-injected into every AmphibiousAutoma agent's tool set.
-_BUILTIN_TOOLS: Tuple[ToolSpec, ...] = ALL_BUILTIN_TOOLS
+# Two-loop generics — the small-loop (OTA) context and the loop context.
+OTAContextT = TypeVar("OTAContextT", bound=OTAContext)
+ContextT = TypeVar("ContextT", bound=Context)
 
 # Sentinel put on a ThinkAgent delegation's decision channel to tell the
 # per-delegation consumer task (``_run_think_agent._execute_decisions``)
@@ -80,6 +83,10 @@ _LOG_BRIEF_CHARS: int = 2000
 # Arrow sub-phase lines lead with a same-width spacer so ``->`` aligns
 # under the header's ``[Label]`` column.
 _LOG_TS_PREFIX_WIDTH: int = 15
+
+# Fixed terminal width for wrapping log lines — typical modern setups are
+# wider, but this keeps things readable when piped to a narrower view.
+_LOG_TERMINAL_WIDTH: int = 120
 
 
 def _brief(value: Any, n: int = _LOG_BRIEF_CHARS) -> str:
@@ -132,10 +139,9 @@ class AgentTrace:
             "history":  [TraceStep, ...],  # one entry per yield primitive
         }
 
-    Semantic split from ``CognitiveContext.cognitive_history``: the
-    context history is summarised for the agent's own consumption
-    (prompts), while the trace history is the detailed audit log of
-    every step's outcome.
+    Semantic split from ``OTAContext.ota_record``: the small-loop round trace
+    is summarised for the agent's own consumption (prompts), while this
+    trace history is the detailed audit log of every step's outcome.
     """
 
     def __init__(self, workdir: Optional[Path] = None):
@@ -144,9 +150,9 @@ class AgentTrace:
         self._metadata: Dict[str, Any] = {}
         self._steps: List[dict] = []
 
-    # ------------------------------------------------------------------
+    ############################################################################
     # Lifecycle — called by ``AmphibiousAutoma.arun``
-    # ------------------------------------------------------------------
+    ############################################################################
 
     def begin_run(
         self,
@@ -195,18 +201,18 @@ class AgentTrace:
         })
         self._persist()
 
-    # ------------------------------------------------------------------
+    ############################################################################
     # Step recording — called by ``_record_*_trace`` in the dispatcher
-    # ------------------------------------------------------------------
+    ############################################################################
 
     def record_step(self, step_data: dict) -> None:
         """Append a step record; persist incrementally."""
         self._steps.append(step_data)
         self._persist()
 
-    # ------------------------------------------------------------------
+    ############################################################################
     # Snapshot / serialization
-    # ------------------------------------------------------------------
+    ############################################################################
 
     def build(self) -> Dict[str, Any]:
         """Return the unified trace dict; pure (no IO)."""
@@ -249,9 +255,9 @@ class AgentTrace:
         with open(path, "r", encoding="utf-8") as f:
             return json.load(f)
 
-    # ------------------------------------------------------------------
+    ############################################################################
     # Internals
-    # ------------------------------------------------------------------
+    ############################################################################
 
     def _persist(self) -> None:
         """Best-effort write to ``<workdir>/trace.json``.
@@ -283,82 +289,6 @@ class AgentTrace:
         if isinstance(data, Enum):
             return data.value
         return data
-
-
-################################################################################################################
-# _AgentSnapshot — async context manager for scoped context mutation
-################################################################################################################
-
-class _AgentSnapshot:
-    """
-    Async context manager for exception-safe temporary field overrides on a Context,
-    with additional management of LayeredExposure._revealed state.
-
-    Used internally by ``snapshot()`` context manager in AmphibiousAutoma.
-
-    On enter:
-    1. Saves original field values and applies overrides.
-    2. Snapshots all LayeredExposure._revealed dicts.
-    3. Manages _revealed according to the chosen mode.
-
-    On exit:
-    - Restores all field values.
-    - Restores all _revealed dicts to their pre-enter state.
-
-    Modes (keep_revealed parameter)
-    --------------------------------
-    None (default)  — Clear All: clears all _revealed on enter, restores on exit.
-    dict            — Custom: {field_name: [indices]} specifying which items to keep.
-    """
-
-    def __init__(self, ctx, fields: Dict[str, Any], keep_revealed=None):
-        self._ctx = ctx
-        self._fields = fields
-        self._keep_revealed = keep_revealed
-        self._originals: Dict[str, Any] = {}
-        self._saved_revealed: Dict[str, Dict[int, str]] = {}
-
-    async def __aenter__(self):
-        # 1. Save field values and apply overrides
-        self._originals = {k: getattr(self._ctx, k) for k in self._fields}
-        for k, v in self._fields.items():
-            setattr(self._ctx, k, v)
-
-        # 2. Save all LayeredExposure._revealed snapshots
-        for fname, fval in self._ctx:
-            if isinstance(fval, LayeredExposure):
-                self._saved_revealed[fname] = dict(fval._revealed)
-
-        # 3. Apply revealed management based on mode
-        if self._keep_revealed is None:
-            for _, fval in self._ctx:
-                if isinstance(fval, LayeredExposure):
-                    fval._revealed.clear()
-        else:
-            self._apply_filter(self._keep_revealed)
-
-        return self._ctx
-
-    async def __aexit__(self, *exc) -> None:
-        # Restore field values
-        for k, v in self._originals.items():
-            setattr(self._ctx, k, v)
-        # Restore _revealed state for all LayeredExposure fields
-        for fname, fval in self._ctx:
-            if isinstance(fval, LayeredExposure):
-                fval._revealed.clear()
-                if fname in self._saved_revealed:
-                    fval._revealed.update(self._saved_revealed[fname])
-
-    def _apply_filter(self, keep: Dict[str, List[int]]) -> None:
-        """Remove revealed items not in the keep dict."""
-        for fname, fval in self._ctx:
-            if not isinstance(fval, LayeredExposure):
-                continue
-            allowed = set(keep.get(fname, []))
-            to_remove = [idx for idx in fval._revealed if idx not in allowed]
-            for idx in to_remove:
-                del fval._revealed[idx]
 
 
 ################################################################################################################
@@ -410,155 +340,6 @@ def human_channel(arg: Any = None) -> Any:
 ################################################################################################################
 
 
-class _FallbackSlot:
-    """Mailbox for a single step-level fallback's resolved value.
-
-    Created fresh per step-level fallback. Initialized with a benign
-    default appropriate for the failed Call's expected return type
-    (e.g. ``[]`` for ActionCall, ``""`` for HumanCall). The agent can
-    override the default by calling the auto-injected
-    ``resolve_step_fallback`` tool, which closes over this slot and
-    writes through ``set()``.
-
-    On agent generator exhaustion, the state-machine driver reads
-    ``self.value`` and asends it to the workflow generator's failed
-    yield, resuming the workflow as if the original Call had returned
-    that value.
-    """
-    __slots__ = ("value",)
-
-    def __init__(self, default: Any) -> None:
-        self.value = default
-
-    def set(self, value: Any) -> None:
-        self.value = value
-
-
-def _make_resolve_tool(
-    slot: _FallbackSlot,
-    item: Any,
-) -> FunctionToolSpec:
-    """Build a ``resolve_step_fallback`` tool bound to ``slot``.
-
-    Each step-level fallback gets a fresh tool instance (closure
-    captures ``slot`` and ``item``) with a signature tuned to the
-    failed Call's expected return type. The tool overwrites the
-    slot's default; if the agent never calls it, the default
-    applies.
-
-    Tool-name collisions with user tools are unlikely in practice
-    — the ``resolve_step_fallback`` name is reserved for this
-    framework purpose. The tool is only present in ``ctx.tools``
-    for the duration of one step-level fallback (snapshot scope).
-    """
-    if isinstance(item, ActionCall):
-        tool_name = item.tool_name
-        tool_args = dict(item.tool_args)
-
-        async def resolve_step_fallback(result: Any) -> str:
-            """Submit the recovered result for the failed workflow step.
-
-            Call this once when you have produced the value the
-            failed step should have returned. The workflow will
-            resume with this value as if the original step had
-            succeeded.
-
-            Parameters
-            ----------
-            result : Any
-                The result the failed step should have produced
-                (whatever type its tool would normally return).
-            """
-            slot.set([
-                ToolResult(
-                    tool_name=tool_name,
-                    tool_arguments=tool_args,
-                    result=result,
-                    success=True,
-                )
-            ])
-            return "Result submitted; workflow will resume after you finish."
-
-        return FunctionToolSpec.from_raw(resolve_step_fallback)
-
-    if isinstance(item, HumanCall):
-        async def resolve_step_fallback(response: str) -> str:
-            """Submit the human response for the failed step.
-
-            Call this once with the response the human would have
-            given. The workflow will resume with this string as the
-            HumanCall's return value.
-
-            Parameters
-            ----------
-            response : str
-                The response text to feed back to the workflow.
-            """
-            slot.set(response)
-            return "Response submitted; workflow will resume after you finish."
-
-        return FunctionToolSpec.from_raw(resolve_step_fallback)
-
-    if isinstance(item, LLMCall):
-        protocol = item.protocol
-        if protocol == "chat":
-            async def resolve_step_fallback(text: str) -> str:
-                """Submit text for the failed LLMCall(chat).
-
-                Parameters
-                ----------
-                text : str
-                    The text content the failed chat call should
-                    have returned.
-                """
-                slot.set(text)
-                return "Text submitted; workflow will resume after you finish."
-
-            return FunctionToolSpec.from_raw(resolve_step_fallback)
-        if protocol == "structure_output":
-            constraint = item.constraint
-
-            async def resolve_step_fallback(value_json: str) -> str:
-                """Submit a JSON-encoded value for the failed structure_output LLMCall.
-
-                Parameters
-                ----------
-                value_json : str
-                    JSON string conforming to the constraint's
-                    schema. The framework will parse it into the
-                    expected typed instance.
-                """
-                from bridgic.core.model.protocols import PydanticModel
-                if isinstance(constraint, PydanticModel):
-                    slot.set(constraint.model.model_validate_json(value_json))
-                else:
-                    slot.set(value_json)
-                return "Value submitted; workflow will resume after you finish."
-
-            return FunctionToolSpec.from_raw(resolve_step_fallback)
-        # tool_selector protocol — its return type is hard to
-        # express cleanly via tool args. Inject a no-op tool that
-        # just acknowledges; the slot keeps its ([], None) default.
-
-        async def resolve_step_fallback() -> str:
-            """No-op for failed LLMCall(tool_selector) — the
-            framework will resume the workflow with the empty
-            tool-selection default. Submit explicit recovery is
-            not supported for this protocol."""
-            return (
-                "Acknowledged. The workflow will resume with the "
-                "empty tool-selection default; explicit submission "
-                "is not supported for tool_selector failures."
-            )
-
-        return FunctionToolSpec.from_raw(resolve_step_fallback)
-
-    raise ValueError(
-        f"Cannot build resolve_step_fallback tool for item of type "
-        f"{type(item).__name__}."
-    )
-
-
 @dataclass
 class _AmphiState:
     """Per-AMPHIFLOW-run FSM state.
@@ -584,13 +365,10 @@ class _AmphiState:
         mode transition and by the driver's StopAsyncIteration handler
         when agent generator exhausts back to workflow.
     agent_mode_stack
-        ``AsyncExitStack`` holding the agent-mode snapshot. Pushed when
-        entering agent mode (via ``EnterAgent`` or step-level fallback);
-        popped when the agent generator exhausts or raises.
-    fallback_slot
-        Set during step-level fallback only — carries the agent's
-        recovered value back to the failed workflow yield via
-        ``resolve_step_fallback``. ``None`` for user-yielded EnterAgent.
+        ``AsyncExitStack`` holding the agent-mode scope. Pushed when
+        entering agent mode (via ``EnterAgent`` or full fallback); popped
+        when the agent generator exhausts or raises. (Step-level fallback
+        does not use it — it runs a bounded inline recovery sub-run.)
     max_consecutive_fallbacks, consecutive_failures, step_index, failed_steps
         Step-level fallback bookkeeping. Counts atomic-Call failures
         across the workflow; threshold breach escalates to full
@@ -612,9 +390,8 @@ class _AmphiState:
     # Agent-mode snapshot stack for nested EnterAgent or step-level fallbacks.
     agent_mode_stack: Optional[AsyncExitStack] = None
 
-    # Fallback state for the current step-level fallback and configuration.
+    # Step-level fallback bookkeeping + configuration.
     failed_steps: List[str] = field(default_factory=list)
-    fallback_slot: Optional[_FallbackSlot] = None
     max_consecutive_fallbacks: int = 1
     consecutive_failures: int = 0
 
@@ -625,10 +402,73 @@ class _AmphiState:
 
 
 ################################################################################################################
+# Decision parsing — turn a worker's ``ThinkResult`` (its ``tool_calls``, a
+# list of ``StepToolCall``) into matched ``(ToolCall, ToolSpec)`` pairs. Shared
+# by ``_run_action_call`` and the ``action_tool_call`` template method. A
+# decision with no ``tool_calls`` is the finish — there is no action to run.
+################################################################################################################
+
+def _decision_to_matched_calls(
+    decision: Any, tools: List[ToolSpec]
+) -> List[Tuple[ToolCall, ToolSpec]]:
+    """Turn a ``decision``'s ``tool_calls`` (a list of ``StepToolCall``) into
+    matched ``(ToolCall, ToolSpec)`` pairs against ``tools``.
+
+    Coerces each argument to its declared parameter type (integer / number /
+    boolean) and resolves a positional ``__args__`` against the spec's
+    property order. Calls whose name matches no spec are dropped.
+    """
+    calls = getattr(decision, "tool_calls", None) or []
+
+    # 1. StepToolCall -> ToolCall (with type-coerced arguments).
+    tool_calls: List[ToolCall] = []
+    for idx, call in enumerate(calls):
+        tool_spec = next((s for s in tools if s.tool_name == call.tool), None)
+        param_types: Dict[str, str] = {}
+        if tool_spec and tool_spec.tool_parameters:
+            for name, info in tool_spec.tool_parameters.get("properties", {}).items():
+                param_types[name] = info.get("type", "string")
+        arguments: Dict[str, Any] = {}
+        for arg in call.tool_arguments:
+            value: Any = arg.value
+            param_type = param_types.get(arg.name, "string")
+            if param_type == "integer":
+                try:
+                    value = int(value)
+                except (ValueError, TypeError):
+                    pass
+            elif param_type == "number":
+                try:
+                    value = float(value)
+                except (ValueError, TypeError):
+                    pass
+            elif param_type == "boolean":
+                value = value.lower() in ("true", "1", "yes")
+            arguments[arg.name] = value
+        tool_calls.append(ToolCall(id=f"call_{idx}", name=call.tool, arguments=arguments))
+
+    # 2. Match each ToolCall to its ToolSpec by name.
+    matched: List[Tuple[ToolCall, ToolSpec]] = []
+    for tc in tool_calls:
+        for spec in tools:
+            if tc.name == spec.tool_name:
+                if tc.arguments.get("__args__") is not None:
+                    props = list(spec.tool_parameters.get("properties", {}).keys())
+                    args = tc.arguments.get("__args__")
+                    if isinstance(args, list):
+                        tc.arguments = dict(zip(props, args))
+                    else:
+                        tc.arguments = {props[0]: args} if props else {}
+                matched.append((tc, spec))
+                break
+    return matched
+
+
+################################################################################################################
 # AmphibiousAutoma
 ################################################################################################################
 
-class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
+class AmphibiousAutoma(GraphAutoma, Generic[OTAContextT, ContextT]):
     """Base class for amphibious agents — dual-mode orchestration engine.
 
     Subclasses define behavior by implementing ``on_agent()`` (LLM-driven,
@@ -659,25 +499,31 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
 
     Examples
     --------
-    >>> class MyAgent(AmphibiousAutoma[CognitiveContext]):
-    ...     main_think = think_unit(CognitiveWorker.inline("Execute step"), max_attempts=20)
-    ...     async def on_agent(self, ctx: CognitiveContext):
+    >>> class MyThink(CognitiveWorker):
+    ...     async def thinking(self, ota_context, context=None):
+    ...         return await self._llm.aselect_tool(messages=[...], tools=[...])
+    >>> class MyAgent(AmphibiousAutoma[OTAContext, Context]):
+    ...     main_think = think_unit(MyThink(), max_attempts=20)
+    ...     async def on_agent(self, ota_context, context=None):
     ...         yield ThinkUnit("main_think")
     ...
-    >>> answer = await MyAgent().arun(llm=llm, goal="Complete the task", tools=[...])
+    >>> answer = await MyAgent().arun(llm=llm, user_input="Complete the task")
     """
 
     ############################################################################
     # Class attributes — populated by ``__init_subclass__``
     ############################################################################
 
-    _context_class: Optional[Type[CognitiveContext]] = None
-
-    #: Filter applied to ``_BUILTIN_TOOLS`` during ``arun()`` injection.
-    #: ``None`` (default) injects every built-in tool. A ``frozenset`` of
-    #: tool names restricts injection to that subset; an empty frozenset
-    #: opts out entirely. ``arun(builtin_tools=...)`` overrides at runtime.
-    builtin_tools: ClassVar[Optional[FrozenSet[str]]] = None
+    #: Small-loop context type, resolved from the first generic argument by
+    #: ``_detect_context_classes``. The framework constructs a fresh instance
+    #: of this per ``arun`` (seeding ``goal``), so it must be ``OTAContext``
+    #: (or a subclass).
+    _ota_context_class: Optional[Type[OTAContext]] = None
+    #: Big-loop context type, resolved from the second generic argument. A
+    #: free-form ``Context`` subclass; supplied at run time via ``arun(context=)``
+    #: (optional — the framework reads its ``summary()`` and its declared
+    #: ``tools``).
+    _context_class: Optional[Type[Context]] = None
 
     #: ``@human_channel``-decorated registry, populated by
     #: ``__init_subclass__``. Maps channel-name → method-name. Empty on
@@ -689,8 +535,10 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
 
         Three responsibilities:
 
-        1. Extract the ``CognitiveContext`` type from the generic
-           parameter so ``cls._context_class`` is set.
+        1. Extract the two context types (``OTAContext`` small-loop +
+           ``Context`` loop) from the ``Generic[OTAContextT, ContextT]``
+           parameters so ``cls._ota_context_class`` / ``cls._context_class``
+           are set.
         2. Build the ``cls._human_channels`` registry by walking the MRO
            and collecting every method tagged via ``@human_channel``.
            Subclass overrides win over parent declarations.
@@ -698,7 +546,7 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
            generator (the only shape the dispatch model supports).
         """
         super().__init_subclass__(**kwargs)
-        cls._detect_context_class()
+        cls._detect_context_classes()
         cls._build_human_channel_registry()
         cls._validate_template_forms()
 
@@ -741,26 +589,65 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
                 )
 
     @classmethod
-    def _detect_context_class(cls) -> None:
-        """Resolve ``cls._context_class`` from the ``Generic[T]`` parameter."""
+    def _detect_context_classes(cls) -> None:
+        """Resolve the two context types from ``Generic[OTAContextT, ContextT]``.
+
+        Parses ``__orig_bases__`` for a parametrization carrying exactly two
+        arguments and validates each against its bound: the first must be an
+        :class:`OTAContext` (framework-owned small loop), the second a
+        :class:`Context` (free-form loop). Both are required — there is no
+        single-argument form.
+
+        A subclass of an already-parametrized agent (whose own
+        ``__orig_bases__`` no longer name the generic) inherits both classes
+        from its base. The error path fires only when neither parametrization
+        nor inheritance yields a valid pair.
+        """
         for base in getattr(cls, "__orig_bases__", []):
-            origin = get_origin(base)
-            if origin is not None:
-                args = get_args(base)
-                if args:
-                    context_type = args[0]
-                    if isinstance(context_type, type) and issubclass(context_type, CognitiveContext):
-                        cls._context_class = context_type
-                        return
+            if get_origin(base) is None:
+                continue
+            args = get_args(base)
+            if len(args) != 2:
+                continue
+            ota_type, loop_type = args
+            # Skip bare-TypeVar / unresolved parametrizations; inheritance
+            # (below) covers concrete-parametrized intermediate subclasses.
+            if not (isinstance(ota_type, type) and isinstance(loop_type, type)):
+                continue
+            if not issubclass(ota_type, OTAContext):
+                raise TypeError(
+                    f"{cls.__name__}: the first generic argument {ota_type.__name__!r} "
+                    f"is not an OTAContext. AmphibiousAutoma[OTAContextT, ContextT] "
+                    f"requires the small-loop context (arg 1) to subclass OTAContext, "
+                    f"e.g. class {cls.__name__}(AmphibiousAutoma[OTAContext, Context])."
+                )
+            if not issubclass(loop_type, Context):
+                raise TypeError(
+                    f"{cls.__name__}: the second generic argument {loop_type.__name__!r} "
+                    f"is not a Context. AmphibiousAutoma[OTAContextT, ContextT] requires "
+                    f"the loop context (arg 2) to subclass Context, "
+                    f"e.g. class {cls.__name__}(AmphibiousAutoma[OTAContext, Context])."
+                )
+            cls._ota_context_class = ota_type
+            cls._context_class = loop_type
+            return
+
+        # Inheritance: a subclass of an already-parametrized agent.
         for base in cls.__bases__:
-            if hasattr(base, "_context_class") and base._context_class is not None:
-                cls._context_class = base._context_class
+            ota_inherited = getattr(base, "_ota_context_class", None)
+            loop_inherited = getattr(base, "_context_class", None)
+            if ota_inherited is not None and loop_inherited is not None:
+                cls._ota_context_class = ota_inherited
+                cls._context_class = loop_inherited
                 break
 
-        if cls._context_class is None or not issubclass(cls._context_class, CognitiveContext):
+        if cls._ota_context_class is None or cls._context_class is None:
             raise TypeError(
-                f"{cls.__name__} must specify a CognitiveContext type via generic parameter, "
-                f"e.g., class {cls.__name__}(AmphibiousAutoma[MyContext])"
+                f"{cls.__name__} must specify both context types via the generic "
+                f"parameters, e.g. "
+                f"class {cls.__name__}(AmphibiousAutoma[OTAContext, Context]). "
+                f"Arg 1 (small loop) must subclass OTAContext; arg 2 (loop) must "
+                f"subclass Context."
             )
 
     @classmethod
@@ -788,9 +675,18 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
     ):
         super().__init__(name=name, thread_pool=thread_pool, running_options=running_options)
 
-        # User-facing state
+        # User-facing state. Two context slots for the two loops, each read
+        # through a property accessor (``self.ota_ctx`` / ``self.ctx``) so
+        # internal methods reach the active context off ``self`` rather than
+        # threading it as a parameter:
+        #   * ``_current_ota_context`` — the small-loop OTA context, freshly
+        #     constructed per ``arun`` and swapped to a nested sub-context for
+        #     the duration of a delegation (via ``_ota_scope``). Read: ``ota_ctx``.
+        #   * ``_current_context`` — the loop knowledge context, supplied by
+        #     the caller and read-only to the run. Read: ``ctx``.
         self._llm = None
-        self._current_context: Optional[CognitiveContextT] = None
+        self._current_ota_context: Optional[OTAContextT] = None
+        self._current_context: Optional[ContextT] = None
         self._run_mode: Optional[RunMode] = None
 
         # Log configuration
@@ -819,8 +715,26 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         return self._llm
 
     @property
-    def context(self) -> Optional[CognitiveContextT]:
-        """Access the current context."""
+    def ota_ctx(self) -> Optional[OTAContextT]:
+        """The active small-loop (OTA) context.
+
+        Freshly constructed per ``arun`` and swapped to a nested sub-context
+        for the span of a delegation (``EnterAgent`` / ``ThinkAgent`` /
+        step-level fallback) by ``_ota_scope``. Internal methods read the
+        active context through this accessor instead of threading it as a
+        parameter; the underlying slot (``_current_ota_context``) is written
+        only by ``arun`` and ``_ota_scope``.
+        """
+        return self._current_ota_context
+
+    @property
+    def ctx(self) -> Optional[ContextT]:
+        """The loop (knowledge) context — the free-form context passed to
+        ``arun(context=)`` (or a fresh default when none was supplied).
+
+        Shared read-only across the parent run and any nested delegation;
+        only the small loop (``ota_ctx``) is isolated per sub-run.
+        """
         return self._current_context
 
     @property
@@ -839,26 +753,26 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
     # (yielding framework primitives) or plain coroutine; dispatcher accepts
     # both. Scope rules are documented on the class docstring above.
     ############################################################################
-    async def observation(self, ctx: CognitiveContextT) -> AsyncGenerator[Any, Any]:
+    async def observation(self, ota_context: OTAContextT, context: Optional[ContextT] = None) -> AsyncGenerator[Any, Any]:
         """Agent-level default observation, shared across all workers.
 
         Called before each thinking phase; workers' own ``observation()``
         delegates here when it returns ``_DELEGATE`` / ``None``.
 
-        Yield ``RETURN(text)`` to set ``ctx.observation`` for this cycle.
-        Exhausting without ``RETURN`` (or yielding ``RETURN(None)``)
-        **preserves** the previous ``ctx.observation`` — so
+        Yield ``RETURN(text)`` to set ``ota_context.obs_result`` for this
+        cycle. Exhausting without ``RETURN`` (or yielding ``RETURN(None)``)
+        **preserves** the previous ``ota_context.obs_result`` — so
         ``after_action``-driven refresh patterns work without a dedicated
         passthrough override.
 
-        >>> async def observation(self, ctx):
+        >>> async def observation(self, ota_context, context=None):
         ...     snapshot = yield ActionCall("bash", command="bridgic-browser snapshot")
         ...     yield RETURN(snapshot[0].result)
         """
         if False:  # pragma: no cover — async generator stub
             yield
 
-    async def on_agent(self, ctx: CognitiveContextT) -> AsyncGenerator[Any, Any]:
+    async def on_agent(self, ota_context: OTAContextT, context: Optional[ContextT] = None) -> AsyncGenerator[Any, Any]:
         """Agent mode: LLM-driven cognitive flow.
 
         Override to declare the agent's strategy. on_agent body is
@@ -868,15 +782,15 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         Without ``RETURN``, the framework auto-captures the final answer
         from the last think step's ``step_content``.
 
-        >>> async def on_agent(self, ctx):
+        >>> async def on_agent(self, ota_context, context=None):
         ...     yield ThinkUnit("main_think", max_attempts=20)
         ...     yield ThinkUnit("exec_think", until=lambda c: c.done)
-        ...     yield RETURN(ctx.cognitive_history.get_all()[-1].content)
+        ...     yield RETURN(ota_context.ota_record[-1].think_result.step_content)
         """
         if False:  # pragma: no cover — async generator stub
             yield
 
-    async def on_workflow(self, ctx: CognitiveContextT) -> AsyncGenerator[Union[ActionCall, HumanCall, EnterAgent, LLMCall], None]:
+    async def on_workflow(self, ota_context: OTAContextT, context: Optional[ContextT] = None) -> AsyncGenerator[Union[ActionCall, HumanCall, EnterAgent, LLMCall], None]:
         """Workflow mode: deterministic flow as an async generator.
 
         Override to declare a deterministic workflow. Yield ``ActionCall``
@@ -885,7 +799,7 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         early. Use ``result = yield ActionCall(...)`` to receive results
         via ``asend()``.
 
-        >>> async def on_workflow(self, ctx):
+        >>> async def on_workflow(self, ota_context, context=None):
         ...     yield ActionCall("navigate_to", url="http://example.com")
         ...     result = yield ActionCall("click_element_by_ref", ref="42")
         ...     summary = yield LLMCall.chat("Summarize the page in one line.")
@@ -894,32 +808,35 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         if False:  # pragma: no cover — makes this a proper async generator stub
             yield
 
-    async def before_action(
-        self,
-        decision_result: Any,
-        ctx: CognitiveContextT,
-    ) -> AsyncGenerator[Any, Any]:
+    async def before_action(self, ota_context: OTAContextT, context: Optional[ContextT] = None) -> AsyncGenerator[Any, Any]:
         """Agent-level before_action hook, shared across all workers.
 
         Called when a worker's ``before_action()`` returns ``_DELEGATE``
-        / ``None``. Yield ``RETURN(modified_decision)`` to override the
-        decision; exhausting without RETURN (or returning ``None`` from
-        a coroutine override) is passthrough — the original
-        ``decision_result`` is preserved.
+        / ``None``. Payload-free — read the pending decision from
+        ``ota_context.think_result``. Yield ``RETURN(modified_decision)``
+        to override the decision; exhausting without RETURN (or returning
+        ``None`` from a coroutine override) is passthrough — the folded
+        decision stands.
 
-        >>> async def before_action(self, decision_result, ctx):
-        ...     adjusted = sanitize(decision_result)
+        >>> async def before_action(self, ota_context, context=None):
+        ...     adjusted = sanitize(ota_context.think_result)
         ...     yield RETURN(adjusted)
         """
         if False:  # pragma: no cover — async generator stub
             yield
 
-    async def action_tool_call(self, tool_list: List[Tuple[ToolCall, ToolSpec]], context: CognitiveContextT) -> ActionResult:
-        """Execute tool calls concurrently and collect results.
+    async def action_tool_call(self, ota_context: OTAContextT, context: Optional[ContextT] = None) -> ActionResult:
+        """Execute the current decision's tool calls concurrently, collect results.
 
-        Override to customize tool execution (e.g. sequential, rate
-        limiting, sandboxing).
+        The calls are read off the decision on ``ota_context.think_result``
+        (a ``before_action`` hook may have already filtered or replaced it)
+        and matched against ``ota_context.tools``. Override to customize
+        execution (sequential, rate-limited, sandboxed); both contexts are
+        passed for parity with the other template methods.
         """
+        matched = _decision_to_matched_calls(
+            ota_context.think_result, ota_context.tools
+        )
 
         async def _run_one(tool_call: ToolCall, tool_spec: ToolSpec) -> ActionStepResult:
             tool_worker = tool_spec.create_worker()
@@ -951,32 +868,22 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
                 )
 
         step_results = await asyncio.gather(
-            *(_run_one(tc, ts) for tc, ts in tool_list)
+            *(_run_one(tc, ts) for tc, ts in matched)
         )
         return ActionResult(results=list(step_results))
 
-    async def action_custom_output(self, decision_result: Any, context: CognitiveContextT) -> Any:
-        """Handle structured output from a worker with ``output_schema`` set.
-
-        Called instead of ``action_tool_call()`` when the worker
-        produces a typed Pydantic instance. Override to post-process or
-        validate. Returning ``None`` (e.g. ``pass`` stub) is treated as
-        passthrough — the original ``decision_result`` is preserved so
-        stub overrides don't silently drop the typed output.
-        """
-        return decision_result
-
-    async def after_action(self, step_result: Any, ctx: CognitiveContextT) -> AsyncGenerator[Any, Any]:
+    async def after_action(self, ota_context: OTAContextT, context: Optional[ContextT] = None) -> AsyncGenerator[Any, Any]:
         """Agent-level after_action hook.
 
-        Called after action execution. Override to update custom
-        context fields or trigger follow-up primitives based on
-        results. ``RETURN`` is unused here — the hook's return value is
+        Called after action execution. Payload-free — read the action
+        result from ``ota_context.action_result``. Override to update
+        custom context fields or trigger follow-up primitives based on
+        it. ``RETURN`` is unused here — the hook's return value is
         ignored.
 
-        >>> async def after_action(self, step_result, ctx):
-        ...     summary = yield LLMCall.chat(f"Summarize: {step_result}")
-        ...     ctx.last_summary = summary
+        >>> async def after_action(self, ota_context, context=None):
+        ...     summary = yield LLMCall.chat(f"Summarize: {ota_context.action_result}")
+        ...     ota_context.action_result  # action payload on the current round
         """
         if False:  # pragma: no cover — async generator stub
             yield
@@ -988,14 +895,14 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
     # ``_dispatch_step`` routes each yield to a ``_run_<primitive>`` /
     # ``_enter_agent`` handler. ``RETURN`` is the only yield NOT routed
     # through dispatch — the two drivers intercept it directly as a loop
-    # control signal. ``snapshot`` / ``_phase_context`` provide the
-    # scoped-context mechanism EnterAgent and step-level fallback rely on.
+    # control signal. ``_ota_scope`` provides the fresh-instance delegation
+    # mechanism EnterAgent, ThinkAgent, and step-level fallback rely on
+    # (each runs a nested OTA episode with its own ``OTAContext``).
     ############################################################################
 
     async def _invoke_template(
         self,
         gen_or_coro: Any,
-        ctx: CognitiveContextT,
         *,
         scope: str = "hook",
     ) -> Any:
@@ -1034,7 +941,7 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
                     if isinstance(item, RETURN):
                         return_value = item.value
                         break
-                    send_value = await self._dispatch_step(item, ctx, scope=scope)
+                    send_value = await self._dispatch_step(item, scope=scope)
         finally:
             # Cleanup
             try:
@@ -1047,7 +954,6 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
     async def _dispatch_step(
         self,
         item: Any,
-        ctx: CognitiveContextT,
         *,
         scope: str = "hook",
     ) -> Any:
@@ -1089,7 +995,7 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
                 )
 
             # Mode switch
-            return await self._enter_agent(self.on_agent(ctx), ctx, item=item)
+            return await self._enter_agent(item=item)
 
         if isinstance(item, HumanCall):
             # Scope validation
@@ -1132,7 +1038,7 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
                     "cognitive loop, or EnterAgent to enter an on_agent flow."
                 )
             # Run ThinkUnit
-            return await self._run_think_unit(item, ctx)
+            return await self._run_think_unit(item)
 
         if isinstance(item, ThinkAgent):
             # Scope validation: ThinkAgent is a cognitive step that delegates to an external agent runtime.
@@ -1147,7 +1053,7 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
                 )
             
             # ThinkAgent
-            return await self._run_think_agent(item, ctx)
+            return await self._run_think_agent(item)
 
         if isinstance(item, ActionCall):
             # Scope validation: ActionCall is an atomic step and must be handled by on_workflow or a hook, never on_agent.
@@ -1160,16 +1066,20 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
                     "before_action / after_action)."
                 )
             
-            # ActionCall
-            decision = item.decision
+            # ActionCall — wrap the single tool call into a ThinkResult decision.
+            decision = ThinkResult(
+                step_content=item.description,
+                tool_calls=[StepToolCall(
+                    tool=item.tool_name,
+                    tool_arguments=[
+                        ToolArgument(name=k, value=str(v)) for k, v in item.tool_args.items()
+                    ],
+                )],
+            )
             if scope == "hook":
-                action_result = await self._run_action_call(
-                    decision, ctx, with_hooks=False, top_level=False,
-                )
+                action_result = await self._run_action_call(decision, with_hooks=False, top_level=False)
             else:
-                action_result = await self._run_action_call(
-                    decision, ctx, _worker=None,
-                )
+                action_result = await self._run_action_call(decision, _worker=None)
 
             inner = getattr(action_result, "result", None)
             if isinstance(inner, ActionResult):
@@ -1192,93 +1102,47 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
     
     async def _enter_agent(
         self,
-        agent_obj: Any,
-        ctx: CognitiveContextT,
         *,
         item: Optional[EnterAgent] = None,
-        snapshot_kwargs: Optional[Dict[str, Any]] = None,
     ) -> Any:
-        """Drive the on_agent generator. When ``item`` is provided
-        (yield-driven entry), emit ``[EnterAgent] goal=...`` header +
-        bump depth + ``-> final:`` arrow closer via
-        ``_record_enter_agent``. When ``item`` is None (inline /
-        AMPHIFLOW internal use) no envelope is emitted.
+        """Run a fresh nested OTA episode of the agent's ``on_agent`` strategy.
+
+        Delegation = a fresh sub-run (isolation by construction), not a
+        snapshot of the parent context. A fresh :class:`OTAContext` is
+        built (own ``user_input`` / ``ota_record``, carrying the OTA context
+        class's declared tools) and installed as
+        ``self._current_ota_context`` for the sub-flow; the parent's OTA
+        context is restored when the sub-flow ends. The loop knowledge
+        context is **shared** (read via the ``current_agent`` ContextVar) —
+        only the small loop is isolated.
+
+        Two entry shapes:
+
+        * ``item`` (a yielded ``EnterAgent``) — sub-goal is ``item.goal``.
+          Emits the ``[EnterAgent]`` header + ``-> final:`` closer.
+        * no ``item`` (AMPHIFLOW full fallback) — the sub-run inherits the
+          parent's goal. No envelope.
+
+        (Step-level fallback no longer routes through here — it runs a
+        bounded inline recovery via ``_run_fallback_agent``.)
+
+        The sub-run's tools always come from the OTA context class
+        declaration (``OTAContext.tool``); nothing is filtered or passed in.
+        The inherited goal is read off ``self.ota_ctx`` (still the parent —
+        the scope swap happens afterwards, step 3 / 4).
         """
-        async def _enter_agent_body(
-            agent_obj: Any,
-            ctx: CognitiveContextT,
-            *,
-            item: Optional[EnterAgent] = None,
-            snapshot_kwargs: Optional[Dict[str, Any]] = None,
-        ) -> Any:
-            """Body of ``_enter_agent``: snapshot build + AMPHIFLOW hand-off
-            or inline drive. Header/depth/closer orchestration lives in the
-            outer ``_enter_agent``."""
-            # 1. If from EnterAgent. Build the snapshot kwargs
-            if item is not None:
-                history = (
-                    item.history if item.history is not None
-                    else CognitiveHistory()
-                )
-                snapshot_kwargs = {
-                    "goal": item.goal,
-                    "cognitive_history": history,
-                }
-                if item.tools is not None:
-                    allowed = set(item.tools)
-                    filtered_tools = CognitiveTools()
-                    for tool in ctx.tools.get_all():
-                        if tool.tool_name in allowed:
-                            filtered_tools.add(tool)
-                    snapshot_kwargs["tools"] = filtered_tools
-                if item.skills is not None:
-                    allowed = set(item.skills)
-                    filtered_skills = CognitiveSkills()
-                    for skill in ctx.skills.get_all():
-                        if skill.name in allowed:
-                            filtered_skills.add(skill)
-                    snapshot_kwargs["skills"] = filtered_skills
+        # 1. Resolve the fresh sub-run's goal from the entry shape (its tools
+        #    come from the OTA context class declaration, so there is nothing
+        #    to pass or filter). ``self.ota_ctx`` is still the parent here.
+        if item is not None:
+            sub_goal: str = item.goal
+        else:
+            sub_goal = self.ota_ctx.user_input
 
-            # 2. AMPHIFLOW path: hand off to the state machine, return None.
-            if self._run_mode is RunMode.AMPHIFLOW:
-                fsm = self._amphi
-                assert fsm is not None, (
-                    "AMPHIFLOW run_mode but ``self._amphi`` is None — "
-                    "``_enter_agent`` was called outside ``_amphiflow``'s "
-                    "state machine. Check the run-mode / FSM lifecycle."
-                )
-                if snapshot_kwargs is not None:
-                    stack = AsyncExitStack()
-                    try:
-                        await stack.__aenter__()
-                        await stack.enter_async_context(
-                            self.snapshot(**snapshot_kwargs),
-                        )
-                    except BaseException:
-                        try:
-                            await agent_obj.aclose()
-                        except Exception:
-                            pass
-                        try:
-                            await stack.__aexit__(None, None, None)
-                        except Exception:
-                            pass
-                        raise
-                    fsm.agent_mode_stack = stack
-                fsm.agent_gen = agent_obj
-                fsm.scope = "agent"
-                return None
+        # 2. Build the fresh small-loop OTA context (isolation by construction;
+        #    it auto-carries the OTA context class's declared tools).
+        sub_ctx = self._ota_context_class(user_input=sub_goal)
 
-            # 3. Inline path: drive the agent to completion and return the inner RETURN value. 
-            if snapshot_kwargs is not None:
-                async with self.snapshot(**snapshot_kwargs):
-                    return await self._invoke_template(
-                        agent_obj, ctx, scope="agent",
-                    )
-            return await self._invoke_template(
-                agent_obj, ctx, scope="agent",
-            )
-    
         envelope = item is not None
         if envelope:
             self._log(
@@ -1288,16 +1152,92 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
             )
             self._log_depth += 1
         try:
-            result = await _enter_agent_body(
-                agent_obj, ctx, item=item, snapshot_kwargs=snapshot_kwargs,
-            )
+            # 3. AMPHIFLOW path: install the sub-context on an
+            #    ``AsyncExitStack`` (restored when the agent generator
+            #    exhausts, via ``fsm.agent_mode_stack``), then hand the
+            #    fresh ``on_agent`` generator to the state machine.
+            #    Mirrors the legacy snapshot hand-off — only the scoped
+            #    object changed (a fresh OTA context, not field overrides).
+            if self._run_mode is RunMode.AMPHIFLOW:
+                fsm = self._amphi
+                assert fsm is not None, (
+                    "AMPHIFLOW run_mode but ``self._amphi`` is None — "
+                    "``_enter_agent`` was called outside ``_amphiflow``'s "
+                    "state machine. Check the run-mode / FSM lifecycle."
+                )
+                stack = AsyncExitStack()
+                agent_obj = None
+                try:
+                    await stack.__aenter__()
+                    await stack.enter_async_context(self._ota_scope(sub_ctx))
+                    # Build the generator AFTER the swap so its ``ctx``
+                    # parameter is the fresh sub-context.
+                    agent_obj = self.on_agent(sub_ctx, self.ctx)
+                except BaseException:
+                    if agent_obj is not None:
+                        try:
+                            await agent_obj.aclose()
+                        except Exception:
+                            pass
+                    try:
+                        await stack.__aexit__(None, None, None)
+                    except Exception:
+                        pass
+                    raise
+                fsm.agent_mode_stack = stack
+                fsm.agent_gen = agent_obj
+                fsm.scope = "agent"
+                result = None
+            else:
+                # 4. Inline path: drive the fresh sub-run to completion
+                #    against the fresh sub-context, then restore the parent.
+                async with self._ota_scope(sub_ctx):
+                    result = await self._invoke_template(
+                        self.on_agent(sub_ctx, self.ctx), scope="agent",
+                    )
+
             if envelope:
                 self._record_enter_agent(item, result)
             return result
         finally:
             if envelope:
                 self._log_depth -= 1
-    
+
+    async def _run_fallback_agent(self, goal: str) -> Any:
+        """Run a bounded recovery sub-run inline and return its conclusion.
+
+        Step-level fallback — unlike full fallback, which hands ``on_agent``
+        to the state machine for the rest of the run — is a *bounded*
+        recovery: a fresh OTA episode runs to completion against ``goal``,
+        and its conclusion is what the caller shapes into the failed step's
+        return type and asends to the resuming workflow.
+
+        The conclusion is read off the **isolated sub-context** — the
+        sub-run's ``RETURN`` value, else its last think step's
+        ``step_content``. It deliberately never touches
+        ``self._final_answer``: that slot is owned by the run drivers
+        (``_agent`` / ``_workflow`` / ``_amphiflow``) for the run's *own*
+        final answer (``return self._final_answer or summary()``), so a
+        helper must not reset it. The recovery agent's think step still
+        updates ``self._final_answer`` naturally (as any agent run does) —
+        last meaningful answer wins, overwritten if the resuming workflow
+        yields its own ``RETURN``.
+
+        Nothing is injected and no toolset is mutated — the sub-run carries
+        the OTA context class's declared tools, same as any other sub-run.
+        """
+        sub_ctx = self._ota_context_class(user_input=goal)
+        async with self._ota_scope(sub_ctx):
+            result = await self._invoke_template(
+                self.on_agent(sub_ctx, self.ctx), scope="agent",
+            )
+        if result is not None:
+            return result
+        # No RETURN — fall back to the recovery run's last think conclusion,
+        # read off the isolated sub-context (never ``self._final_answer``).
+        last_decision = sub_ctx.think_result
+        return getattr(last_decision, "step_content", None) or None
+
     async def _run_human_call(self, item: "HumanCall") -> str:
         """Run one HumanCall and emit ``[Human Interaction]`` header +
         ``-> result:`` arrow. ``_record_human_call`` is invoked here so
@@ -1410,15 +1350,16 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
     async def _run_think_unit(
         self,
         item: ThinkUnit,
-        ctx: CognitiveContextT,
-    ) -> None:
+    ) -> Any:
         """Drive one ``ThinkUnit`` yield through its observe-think-act cycle.
+
+        Returns the think unit's result — the finishing think's
+        ``step_content`` — which becomes the ``yield ThinkUnit(...)`` value.
 
         Resolves the descriptor from ``item.name``, clones the
         ``CognitiveWorker`` template (state isolation), resolves
         per-yield overlays against descriptor defaults, sets up the
-        runtime env (LLM injection, verbose, tools / skills filters),
-        and runs the OTC loop.
+        runtime env (LLM injection, verbose), and runs the OTC loop.
 
         Emits the ``[Think] <name>`` header + bumps ``_log_depth`` so
         per-cycle arrows nest underneath. Mirrors ``_run_think_agent``
@@ -1439,12 +1380,6 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
             item.max_attempts if item.max_attempts is not None
             else descriptor._max_attempts
         )
-        tools: Optional[List[str]] = (
-            item.tools if item.tools is not None else descriptor._tools
-        )
-        skills: Optional[List[str]] = (
-            item.skills if item.skills is not None else descriptor._skills
-        )
         # on_error / max_retries are descriptor-only (no per-yield overlay).
         on_error: ErrorStrategy = descriptor._on_error
         max_retries: int = descriptor._max_retries
@@ -1461,17 +1396,17 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         self._log("Think", item.name, color="cyan")
         self._log_depth += 1
         try:
-            await self._run_think_unit_body(
+            result = await self._run_think_unit_body(
                 worker, worker_label,
                 until=until,
                 max_attempts=max_attempts,
-                tools=tools,
-                skills=skills,
                 on_error=on_error,
                 max_retries=max_retries,
             )
         finally:
             self._log_depth -= 1
+        
+        return result
 
     async def _run_think_unit_body(
         self,
@@ -1480,31 +1415,36 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         *,
         until: Optional[Union[Callable[..., bool], Callable[..., Awaitable[bool]]]] = None,
         max_attempts: int = 1,
-        tools: Optional[List[str]] = None,
-        skills: Optional[List[str]] = None,
         on_error: ErrorStrategy = ErrorStrategy.RAISE,
         max_retries: int = 0,
     ) -> None:
         """OTC body — the actual ``CognitiveWorker`` observe-think-act loop.
 
-        Split out from ``_run_think_unit`` so the tool / skill
-        restoration ``try / finally`` keeps its shape; the outer method
+        Split out from ``_run_think_unit`` so the verbose-injection /
+        token-tracking ``try / finally`` keeps its shape; the outer method
         wraps it with descriptor resolution + ``[Think]`` header.
+
+        The toolset the LLM sees is whatever the worker's ``thinking()``
+        assembles from ``ota_context.tools`` (the OTA loop owns the tool
+        registry) — the think unit no longer narrows it. Its only
+        knobs are loop control (``max_attempts`` / ``until``) and the
+        per-cycle error policy (``on_error`` / ``max_retries``).
         """
         ########################
         # Setup runtime env.
         ########################
-        # Context
-        context = self._current_context
-        if context is None:
+        # The active small-loop OTA context the worker operates on (stable for
+        # the whole OTC loop — a ThinkUnit never swaps the delegation scope).
+        ota_ctx = self.ota_ctx
+        if ota_ctx is None:
             raise RuntimeError(
                 "Cannot call _run_think_unit(): no active context. "
                 "_run_think_unit() must be called within an on_agent() method."
             )
 
-        # LLM
+        # LLM (final CognitiveWorker has no set_llm — LLM is set directly)
         if worker._llm is None and self._llm is not None:
-            worker.set_llm(self._llm)
+            worker._llm = self._llm
         if worker._llm is None:
             raise RuntimeError(
                 f"ThinkUnit's CognitiveWorker ({worker_label}) has no LLM. "
@@ -1518,35 +1458,6 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
             worker._verbose = self._verbose
             injected_verbose = True
 
-        # tools filter
-        original_tools: Optional[CognitiveTools] = None
-        if tools is not None:
-            original_tools = context.tools
-            filtered_tools = CognitiveTools()
-            for tool in original_tools.get_all():
-                if tool.tool_name in tools:
-                    filtered_tools.add(tool)
-            context.tools = filtered_tools
-
-        # skills filter
-        original_skills: Optional[CognitiveSkills] = None
-        filtered_skills: Optional[CognitiveSkills] = None
-        filtered_to_orig: Dict[int, int] = {}
-        if skills is not None:
-            original_skills = context.skills
-            filtered_skills = CognitiveSkills()
-            orig_to_filtered: Dict[int, int] = {}
-            for orig_idx, skill in enumerate(original_skills.get_all()):
-                if skill.name in skills:
-                    new_idx = len(filtered_skills)
-                    filtered_skills.add(skill)
-                    orig_to_filtered[orig_idx] = new_idx
-                    filtered_to_orig[new_idx] = orig_idx
-            for orig_idx, detail in original_skills._revealed.items():
-                if orig_idx in orig_to_filtered:
-                    filtered_skills._revealed[orig_to_filtered[orig_idx]] = detail
-            context.skills = filtered_skills
-
         # spent-tokens delta tracker
         tokens_before = worker.spent_tokens
 
@@ -1554,39 +1465,41 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         # OTC cycle closure
         ########################
         async def _run_observe_think_act(cycle: int) -> bool:
-            # 1. Observe (worker → agent fallback)
-            obs = await self._invoke_template(worker.observation(context), context)
+            # 0. Open a fresh OTA round at cycle start
+            ota_ctx.open_record()
+
+            # 1. Observe (worker → agent fallback) → ``ota.obs_result``.
+            obs = await self._invoke_template(worker.observation(ota_ctx))
             if obs is _DELEGATE or obs is None:
-                obs = await self._invoke_template(self.observation(context), context)
+                obs = await self._invoke_template(self.observation(ota_ctx, self.ctx))
             if obs is not None:
-                context.observation = obs
+                ota_ctx.obs_result = obs
 
-            # 2. Think
-            decision = await worker.arun(context=context)
+            # 2. Think (worker reads the small-loop OTA ``ota_ctx``
+            decision = await worker.arun(ota_context=ota_ctx, context=self.ctx)
             self._record_think_unit(worker, obs, decision, cycle=cycle)
-
-            # 3. Act — top_level=False so the act phase nests under
-            # the surrounding [Think] header (one ``-> result:`` arrow
-            # per tool call, not a new [Action Execution] section).
-            # ``worker.arun`` always returns a decision, so no None
-            # guard is needed (a None would already have crashed
-            # ``_record_think_unit`` above).
-            await self._run_action_call(
-                decision, context, _worker=worker, top_level=False,
-            )
-
-            # Auto-captured final answer
-            if decision.finish and decision.step_content:
+            # Fold the full decision onto the round (the act path re-folds the
+            # same via _run_action_call; the finish path below relies on it too).
+            self.ota_ctx.think_result = decision
+            if decision.tool_calls == []:
+                # No tool calls → this IS the finish; the think text is both
+                # the run's final answer and the ``yield ThinkUnit`` result.
+                self.ota_ctx.action_result = None
                 self._final_answer = decision.step_content
+                return True, decision.step_content
 
-            return decision.finish
+            # 3. Act — execute the tool calls. On a non-finishing cycle the
+            # ``yield ThinkUnit`` result is still the latest think text.
+            await self._run_action_call(decision, _worker=worker, top_level=False)
+            return False, decision.step_content
 
         # Run loop with on_error handling, then restore environment.
+        result: Any = None
         try:
             for cycle_idx in range(max_attempts):
                 cycle_num = cycle_idx + 1
                 try:
-                    finished = await _run_observe_think_act(cycle_num)
+                    finished, result = await _run_observe_think_act(cycle_num)
                 except Exception as e:
                     if on_error == ErrorStrategy.RAISE:
                         raise RuntimeError(
@@ -1594,12 +1507,15 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
                             f"observe-think-act cycle: {e}"
                         ) from e
                     elif on_error == ErrorStrategy.IGNORE:
+                        # ``result`` keeps the last successful cycle's
+                        # ``step_content`` (None if none has succeeded) —
+                        # an ignored cycle contributes no value.
                         finished = False
                     elif on_error == ErrorStrategy.RETRY:
                         finished = False
                         for attempt in range(max_retries + 1):
                             try:
-                                finished = await _run_observe_think_act(cycle_num)
+                                finished, result = await _run_observe_think_act(cycle_num)
                                 break
                             except Exception as retry_e:
                                 if attempt == max_retries:
@@ -1611,7 +1527,7 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
                     if finished:
                         break
                     if until is not None:
-                        cond_result = until(context)
+                        cond_result = until(ota_ctx)
                         if inspect.iscoroutine(cond_result):
                             cond_result = await cond_result
                         if cond_result:
@@ -1620,29 +1536,21 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
             self.spent_tokens += worker.spent_tokens - tokens_before
             if injected_verbose:
                 worker._verbose = None
-            if original_tools is not None:
-                context.tools = original_tools
-            if original_skills is not None:
-                if filtered_skills is not None:
-                    for filtered_idx, detail in filtered_skills._revealed.items():
-                        orig_idx = filtered_to_orig.get(filtered_idx)
-                        if orig_idx is not None:
-                            original_skills._revealed[orig_idx] = detail
-                context.skills = original_skills
+        
+        return result
 
-    async def _run_think_agent(
-        self,
-        item: ThinkAgent,
-        ctx: CognitiveContextT,
-    ) -> Any:
+    async def _run_think_agent(self, item: ThinkAgent) -> Any:
         """Drive one ``ThinkAgent`` yield through one delegated cycle.
 
         Resolves the descriptor from ``item.name``, clones the
-        ``AgentWorker`` template (state isolation), wraps the body in
-        a context ``snapshot(...)`` that overlays per-yield ``goal`` /
-        ``expose_tools`` onto ``ctx.goal`` / ``ctx.tools``, runs the
-        observation phase (worker → agent fallback), then drives the
-        worker.
+        ``AgentWorker`` template (state isolation), runs the delegation
+        against a **fresh nested OTA context** (its ``goal`` is the
+        per-yield ``goal`` overlaid on the parent's; its ``tools`` are the
+        ``expose_tools``-filtered parent toolset), runs the observation
+        phase (worker → agent fallback), then drives the worker. The
+        parent OTA context is restored when the delegation ends — it is
+        never mutated (isolation by construction, replacing the removed
+        snapshot mechanism).
 
         **Decision channel.** The worker does NOT execute the external
         agent's tool calls — it only *produces* decisions, exactly like
@@ -1650,15 +1558,15 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         is surfaced onto a per-delegation ``asyncio.Queue`` as a
         ``(decision, future)`` pair; a consumer task — owned here, alive
         only for this one delegation — pulls each, runs it through
-        ``_run_action_call`` (so ``before_action`` / ``after_action``
-        hooks fire and ``_record_action_call`` lands it in the trace),
-        and resolves the future. ``AmphibiousAutoma`` is the only place
-        that *acts*.
+        ``_run_action_call`` against the fresh sub-context (so
+        ``before_action`` / ``after_action`` hooks fire and the call lands
+        in the sub-run's rounds + the trace), and resolves the future.
+        ``AmphibiousAutoma`` is the only place that *acts*.
 
-        Per-yield knobs flow through ``ctx`` exactly the way
-        ``CognitiveWorker`` reads its inputs — no worker-side slots,
-        no second protocol. ``AgentWorker.thinking()`` reads
-        ``context.goal`` directly.
+        Per-yield knobs flow through the fresh sub-context exactly the way
+        ``CognitiveWorker`` reads its inputs — no worker-side slots, no
+        second protocol. ``AgentWorker.thinking()`` reads ``context.goal``
+        directly (the fresh sub-context's).
 
         Mirrors ``_run_think_unit`` in shape — the two cognitive-
         composition drivers share the same skeleton.
@@ -1679,22 +1587,19 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         )
 
         ########################
-        # Build snapshot fields for the ``ctx`` overlay
+        # Build the fresh nested OTA context for this delegation
         ########################
-        # ``yield ThinkAgent(goal=...)`` lands on ``ctx.goal`` for the
-        # duration of this delegation; ``expose_tools`` filters
-        # ``ctx.tools`` down to the whitelisted set (mirrors
-        # ``_run_think_unit_body``'s ``tools`` filter).
-        snapshot_fields: Dict[str, Any] = {}
-        if item.goal is not None:
-            snapshot_fields["goal"] = item.goal
-        if expose_tools_filter is not None:
-            filter_set = set(expose_tools_filter)
-            filtered_tools = CognitiveTools()
-            for tool in ctx.tools.get_all():
-                if tool.tool_name in filter_set:
-                    filtered_tools.add(tool)
-            snapshot_fields["tools"] = filtered_tools
+        # ``yield ThinkAgent(goal=...)`` becomes the sub-context's goal
+        # (else inherit the parent's); ``expose_tools`` narrows the parent's
+        # ``ota.tools`` to the whitelisted set — the external agent only ever
+        # sees / calls these (it MCP-ifies ``ota.tools``), so the filter is a
+        # real construction-time narrowing here, not just a render-time one.
+        # ``self.ota_ctx`` is still the parent here — the scope swap to
+        # ``sub_ctx`` happens below via ``_ota_scope``.
+        parent_ota = self.ota_ctx
+        sub_goal: str = item.goal if item.goal is not None else parent_ota.user_input
+        sub_tools = self._filter_tools(parent_ota.tools, expose_tools_filter)
+        sub_ctx = self._ota_context_class(user_input=sub_goal, tools=sub_tools)
 
         ########################
         # Clone worker (state isolation) + wire the decision channel
@@ -1706,7 +1611,8 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         async def _execute_decisions() -> None:
             """Per-delegation consumer: pull the decisions the worker
             surfaces from the external agent's MCP tool calls, run each
-            through ``_run_action_call``, resolve the result future.
+            through ``_run_action_call`` (folding onto the fresh
+            sub-context), resolve the result future.
 
             Lives only for this one delegation — it ends as soon as the
             ``_DELEGATION_DONE`` sentinel arrives (put in the ``finally``
@@ -1719,9 +1625,7 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
                     return
                 decision, result_future = msg
                 try:
-                    step = await self._run_action_call(
-                        decision, ctx, _worker=worker, top_level=False,
-                    )
+                    step = await self._run_action_call(decision, _worker=worker, top_level=False)
                     result_future.set_result(step)
                 except Exception as exc:  # surface to the worker's await
                     result_future.set_exception(exc)
@@ -1737,14 +1641,11 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         self._log_depth += 1
         try:
             ########################
-            # Drive within the snapshot, alongside the consumer
+            # Drive within the fresh sub-context, alongside the consumer
             ########################
             consumer = asyncio.create_task(_execute_decisions())
             try:
-                if snapshot_fields:
-                    async with self.snapshot(**snapshot_fields):
-                        result = await self._run_think_agent_body(worker)
-                else:
+                async with self._ota_scope(sub_ctx):
                     result = await self._run_think_agent_body(worker)
             finally:
                 # Worker is done → no more decisions can arrive (the
@@ -1771,21 +1672,21 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
 
         Split out from ``_run_think_agent`` so the verbose-injection +
         token-tracking ``try / finally`` keeps its shape; the outer
-        method handles descriptor resolution, the ``ctx`` snapshot,
-        header / depth orchestration, and the ``_record_think_agent``
-        envelope.
+        method handles descriptor resolution, installing the fresh
+        sub-context (``_ota_scope``), header / depth orchestration, and
+        the ``_record_think_agent`` envelope.
 
         Tests that want to bypass the actual MCP host + subprocess can
-        patch this method — by the time it runs, ``ctx.goal`` /
-        ``ctx.tools`` already reflect the per-yield overlay so
-        introspection works.
+        patch this method — by the time it runs, ``self.ota_ctx`` is the
+        fresh sub-context (its ``user_input`` / ``tools`` reflect the
+        per-yield overlay) so introspection works.
 
         Returns the ``AgentResult`` from ``worker.arun`` — the parent
         unwraps ``.output`` for the ``yield ThinkAgent`` asend value and
         folds the whole result into the trace envelope.
         """
-        context = self._current_context
-        if context is None:
+        ota_ctx = self.ota_ctx
+        if ota_ctx is None:
             raise RuntimeError(
                 "Cannot call _run_think_agent(): no active context. "
                 "_run_think_agent() must be called within an on_agent() method."
@@ -1801,16 +1702,16 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
             ########################
             # Observe (worker → agent fallback)
             ########################
-            obs = await self._invoke_template(worker.observation(context), context)
+            obs = await self._invoke_template(worker.observation(ota_ctx))
             if obs is _DELEGATE or obs is None:
-                obs = await self._invoke_template(self.observation(context), context)
+                obs = await self._invoke_template(self.observation(ota_ctx, self.ctx))
             if obs is not None:
-                context.observation = obs
+                ota_ctx.obs_result = obs
 
             ########################
             # Drive the worker — return value is the AgentResult
             ########################
-            return await worker.arun(context=context)
+            return await worker.arun(ota_context=ota_ctx, context=self.ctx)
         finally:
             if injected_verbose:
                 worker._verbose = None
@@ -1818,7 +1719,6 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
     async def _run_action_call(
         self,
         decision: Any,
-        ctx: CognitiveContextT,
         *,
         _worker: Optional[CognitiveWorker] = None,
         with_hooks: bool = True,
@@ -1826,8 +1726,8 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
     ) -> Step:
         """Execute a thinking decision — the single canonical action executor.
 
-        Routes to ``action_tool_call()`` (tool-call output) or
-        ``action_custom_output()`` (custom output_schema), optionally
+        Executes the decision's ``tool_calls`` via ``action_tool_call()``
+        (a decision with none is the finish — no action runs), optionally
         wrapped by ``before_action`` / ``after_action`` hooks. When
         ``_worker`` is given AND ``with_hooks`` is True, the worker-level
         hooks run first and delegate to the agent level via ``_DELEGATE``.
@@ -1842,182 +1742,85 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         ThinkUnit, the dispatcher's hook-scope branch, MCP bridge in
         ThinkAgent) pass ``top_level=False`` to suppress the header.
         """
-        # Parsing closures
-        def _parse_decision(
-            decision: Any,
-        ) -> Tuple[bool, Optional[List[StepToolCall]], Any]:
-            """Returns ``(is_tool_call_form, calls, decision_result)``.
+        # The active small-loop OTA context
+        ota_ctx = self.ota_ctx
 
-            * ``is_tool_call_form`` — True when ``decision.output`` is
-              declared as ``List[StepToolCall]`` (tool-call path);
-              False when it is a BaseModel (custom-output path).
-            * ``calls`` — the raw ``StepToolCall`` list when tool-call
-              form, else ``None``.
-            * ``decision_result`` — ``List[Tuple[ToolCall, ToolSpec]]``
-              for tool-call form (ready for ``action_tool_call``), or
-              the raw output BaseModel for custom-output form.
-            """
-            def _is_list_step_tool_call(d: Any) -> bool:
-                if not isinstance(d, BaseModel):
-                    return False
-                fi = type(d).model_fields.get('output')
-                if fi is None:
-                    return False
-                ann = fi.annotation
-                if get_origin(ann) is Annotated:
-                    ann = get_args(ann)[0]
-                if ann is None:
-                    return False
-                origin = get_origin(ann)
-                if origin is list:
-                    args = get_args(ann)
-                    return len(args) == 1 and args[0] is StepToolCall
-                return False
+        # A nested hook-scope ActionCall (``with_hooks=False``) runs INSIDE the
+        # outer round, which already folded the outer decision onto
+        # ``think_result``. Since the act phase re-reads ``think_result``, this
+        # nested call must not leave its own decision there — save the outer's
+        # and restore it on exit. Top-level / OTC calls persist think_result:
+        # it is the round's real think.
+        _restore_think = not with_hooks
+        _outer_think = ota_ctx.think_result if _restore_think else None
 
-            def _convert_to_tool_calls(calls: List) -> List[ToolCall]:
-                """Convert StepToolCall list into ToolCall objects with type-coerced arguments."""
-                _, tool_specs = ctx.get_field('tools')
-                tool_calls = []
-                for idx, call in enumerate(calls):
-                    tool_spec = next((s for s in tool_specs if s.tool_name == call.tool), None)
-                    param_types: Dict[str, str] = {}
-                    if tool_spec and tool_spec.tool_parameters:
-                        for name, info in tool_spec.tool_parameters.get('properties', {}).items():
-                            param_types[name] = info.get('type', 'string')
-                    arguments: Dict[str, Any] = {}
-                    for arg in call.tool_arguments:
-                        value: Any = arg.value
-                        param_type = param_types.get(arg.name, 'string')
-                        if param_type == 'integer':
-                            try:
-                                value = int(value)
-                            except (ValueError, TypeError):
-                                pass
-                        elif param_type == 'number':
-                            try:
-                                value = float(value)
-                            except (ValueError, TypeError):
-                                pass
-                        elif param_type == 'boolean':
-                            value = value.lower() in ('true', '1', 'yes')
-                        arguments[arg.name] = value
-                    tool_calls.append(ToolCall(id=f"call_{idx}", name=call.tool, arguments=arguments))
-                return tool_calls
-
-            def _match_tool_calls(tool_calls: List[ToolCall]) -> List[Tuple[ToolCall, ToolSpec]]:
-                """Match each ToolCall to its ToolSpec by name."""
-                _, tool_specs = ctx.get_field('tools')
-                matched: List[Tuple[ToolCall, ToolSpec]] = []
-                for tc in tool_calls:
-                    for spec in tool_specs:
-                        if tc.name == spec.tool_name:
-                            if tc.arguments.get("__args__") is not None:
-                                props = list(spec.tool_parameters.get('properties', {}).keys())
-                                args = tc.arguments.get("__args__")
-                                if isinstance(args, list):
-                                    tc.arguments = dict(zip(props, args))
-                                else:
-                                    tc.arguments = {props[0]: args} if props else {}
-                            matched.append((tc, spec))
-                            break
-                return matched
-
-            output = getattr(decision, 'output', None)
-            if _is_list_step_tool_call(decision):
-                calls = output
-                tool_calls = _convert_to_tool_calls(calls)
-                return True, calls, _match_tool_calls(tool_calls)
-            return False, None, output
-
-        # Execution closure
-        async def _execute(
-            decision_result: Any,
-            *,
-            is_tool_call_form: bool,
-            calls: Optional[List[StepToolCall]],
-        ) -> Step:
-            # Tool-call form.
-            if is_tool_call_form:
-                if not calls:
-                    result = Step(
-                        content=decision.step_content,
-                        result=None,
-                        metadata={"tool_calls": []},
-                    )
-                    ctx.add_info(result)
-                    return result
-                action_result = await self.action_tool_call(decision_result, ctx)
-                result = Step(
-                    content=decision.step_content,
-                    result=action_result,
-                    metadata={},
-                )
-                ctx.add_info(result)
-                return result
-
-            # Custom-output form.
-            custom_ret = await self.action_custom_output(decision_result, ctx)
-            action_result = decision_result if custom_ret is None else custom_ret
-            result = Step(content=decision.step_content, result=action_result, metadata={})
-            ctx.add_info(result)
-            return result
-
-        # Top-level: emit header + bump depth so children (observation,
-        # hook arrows, result arrow) nest under ``[Action Execution]``.
+        # Top-level: Log
         if top_level:
             desc = getattr(decision, "step_content", "") or ""
             if not desc:
-                # Fall back to the tool name(s) from decision.output —
-                # workflow-yielded ActionCalls often omit ``description``.
-                output = getattr(decision, "output", None) or []
-                tools = [getattr(c, "tool", None) for c in output]
-                tools = [t for t in tools if t]
-                desc = ", ".join(tools) if tools else "<action>"
+                calls = getattr(decision, "tool_calls", None) or []
+                names = [getattr(c, "tool", None) for c in calls]
+                names = [t for t in names if t]
+                desc = ", ".join(names) if names else "<action>"
             self._log("Action Execution", _brief(desc), color="green")
             self._log_depth += 1
+
         try:
             # Top-level observation gathering (agent-level only).
             if top_level:
-                obs = await self._invoke_template(self.observation(ctx), ctx)
+                obs = await self._invoke_template(self.observation(ota_ctx, self.ctx))
                 if obs is not None:
-                    ctx.observation = obs
+                    ota_ctx.obs_result = obs
                     self._log("Observation", _brief(obs), color="green")
 
-            # Parse
-            is_tool_call_form, calls, decision_result = _parse_decision(decision)
+            # Fold the decision onto the current round BEFORE before_action so
+            # the payload-free hook reads it via ``ota_context.think_result``.
+            ota_ctx.think_result = decision
 
-            # Before_action hooks.
+            # Before_action hooks
             if with_hooks:
-                original_decision_result = decision_result
                 with self._hook_log_scope("before_action"):
                     if _worker is not None:
                         worker_ret = await self._invoke_template(
-                            _worker.before_action(decision_result, ctx), ctx,
+                            _worker.before_action(ota_ctx, self.ctx),
                         )
                         if worker_ret is _DELEGATE or worker_ret is None:
                             agent_ret = await self._invoke_template(
-                                self.before_action(original_decision_result, ctx), ctx,
+                                self.before_action(ota_ctx, self.ctx),
                             )
-                            decision_result = original_decision_result if agent_ret is None else agent_ret
+                            if agent_ret is not None:
+                                ota_ctx.think_result = agent_ret
                         else:
-                            decision_result = worker_ret
+                            ota_ctx.think_result = worker_ret
                     else:
                         agent_ret = await self._invoke_template(
-                            self.before_action(decision_result, ctx), ctx,
+                            self.before_action(ota_ctx, self.ctx),
                         )
-                        decision_result = original_decision_result if agent_ret is None else agent_ret
+                        if agent_ret is not None:
+                            ota_ctx.think_result = agent_ret
 
-            # Execute
-            result = await _execute(
-                decision_result,
-                is_tool_call_form=is_tool_call_form, calls=calls,
-            )
+            # Execute the (possibly hook-modified) decision off
+            # ``ota_context.think_result``: run its ``tool_calls`` via
+            # ``action_tool_call``, or — when there are none — finish (the
+            # content-only think has no action payload).
+            final_decision = ota_ctx.think_result
+            if getattr(final_decision, "tool_calls", None):
+                action_result = await self.action_tool_call(ota_ctx, self.ctx)
+                result = Step(result=action_result)
+            else:
+                # No tool calls — a content-only finish; no action payload.
+                result = Step(result=None)
+
+            # Fold the action payload onto the current round BEFORE after_action
+            # so the payload-free hook reads it via ``ota_context.action_result``.
+            ota_ctx.action_result = result.result
 
             # Record (trace + ``-> result:`` arrow). Sits between hooks
             # so the arrow lands chronologically between ``-> before_action:``
             # and ``-> after_action:`` arrows.
             self._record_action_call(
-                _worker, ctx.observation, decision, result, ctx,
+                _worker, obs=ota_ctx.obs_result, decision=final_decision,
+                action_result=result,
             )
 
             # After_action hooks — skipped entirely when with_hooks=False.
@@ -2025,71 +1828,68 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
                 with self._hook_log_scope("after_action"):
                     if _worker is not None:
                         delegate = await self._invoke_template(
-                            _worker.after_action(result, ctx), ctx,
+                            _worker.after_action(ota_ctx, self.ctx),
                         )
                         if delegate is _DELEGATE or delegate is None:
-                            await self._invoke_template(self.after_action(result, ctx), ctx)
+                            await self._invoke_template(self.after_action(ota_ctx, self.ctx))
                     else:
-                        await self._invoke_template(self.after_action(result, ctx), ctx)
+                        await self._invoke_template(self.after_action(ota_ctx, self.ctx))
 
             return result
         finally:
             if top_level:
                 self._log_depth -= 1
+            if _restore_think:
+                ota_ctx.think_result = _outer_think
 
     @asynccontextmanager
-    async def snapshot(self, *, goal: Optional[str] = None,
-                   keep_revealed: Optional[Dict[str, List[int]]] = None,
-                   **snapshot_fields):
-        """
-        Temporarily override context fields for the duration of the block.
+    async def _ota_scope(self, sub_ctx: OTAContextT):
+        """Install ``sub_ctx`` as the active small-loop context for a block.
+
+        Delegation isolation by construction (replaces the removed
+        ``snapshot`` / ``_AgentSnapshot`` field-override machinery): a
+        fresh :class:`OTAContext` becomes ``self._current_ota_context`` for
+        the duration of the block, and the parent OTA context is restored
+        on exit (including on exception). The parent context is **never
+        mutated** — the sub-run's ``rounds`` accumulate on its own object.
 
         Parameters
         ----------
-        goal : Optional[str]
-            Temporary goal injected into the context so the LLM knows
-            the purpose of this phase.
-        keep_revealed : Optional[Dict[str, List[int]]]
-            Passed to ``_AgentSnapshot`` for revealed state management.
-        **snapshot_fields
-            Additional context fields to temporarily override during this phase.
+        sub_ctx : OTAContextT
+            The fresh small-loop context to make active.
         """
-        async with self._phase_context(keep_revealed=keep_revealed,
-                                       goal=goal, **snapshot_fields):
-            yield
-
-    @asynccontextmanager
-    async def _phase_context(self, *,
-                             keep_revealed: Optional[Dict[str, List[int]]] = None,
-                             **snapshot_fields):
-        """Shared implementation for snapshot() context manager.
-
-        Subclasses can override this to inject custom behavior around
-        snapshot blocks (e.g., logging, metrics, extended trace capture).
-
-        Parameters
-        ----------
-        keep_revealed : Optional[Dict[str, List[int]]]
-            Revealed state management mode for ``_AgentSnapshot``.
-        **snapshot_fields
-            Context fields to temporarily override during this phase.
-        """
-        context = self._current_context
-        fields = {k: v for k, v in snapshot_fields.items() if v is not None}
-
-        if not fields and keep_revealed is None:
-            raise ValueError(
-                "snapshot(): no snapshot fields, keep_revealed, "
-                "or goal provided. If no context state needs to be scoped, "
-                "use _run() directly — the behavior is identical."
-            )
-
-        snap = _AgentSnapshot(context, fields, keep_revealed=keep_revealed)
-        await snap.__aenter__()
+        parent_ctx = self._current_ota_context
+        self._current_ota_context = sub_ctx
         try:
-            yield
+            yield sub_ctx
         finally:
-            await snap.__aexit__(None, None, None)
+            self._current_ota_context = parent_ctx
+
+    @staticmethod
+    def _filter_tools(
+        tools: List[ToolSpec],
+        allowed_names: Optional[List[str]],
+    ) -> List[ToolSpec]:
+        """Return a fresh ``list`` of ``tools`` narrowed to a whitelist.
+
+        When ``allowed_names`` is ``None`` the result is a verbatim copy
+        (no narrowing). Always returns a NEW list — the input is never
+        mutated, so a sub-run's filtered toolset never aliases the parent's.
+        """
+        if allowed_names is None:
+            return AmphibiousAutoma._clone_tools(tools)
+        allowed = set(allowed_names)
+        return [tool for tool in tools if tool.tool_name in allowed]
+
+    @staticmethod
+    def _clone_tools(tools: List[ToolSpec]) -> List[ToolSpec]:
+        """Return a fresh ``list`` carrying the same specs.
+
+        A shallow copy of the list (the ``ToolSpec`` instances are
+        shared — they are stateless), so a sub-run's ``ota.tools`` is an
+        independent list from the parent's.
+        """
+        return list(tools)
 
     ############################################################################
     # Internal helpers — logging, trace recording, override detection.
@@ -2111,13 +1911,7 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         finally:
             self._log_hook_name = prev
 
-    def _log(
-        self,
-        label: str,
-        content: str = "",
-        *,
-        color: str = "white",
-    ) -> None:
+    def _log(self, label: str, content: str = "", *, color: str = "white") -> None:
         """Render one log line.
 
         Two display forms, chosen automatically:
@@ -2142,9 +1936,6 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         Gating: main-scope lines need ``self._verbose``; hook-scope
         lines need ``self._verbose_hook`` (independent flags).
         """
-        import textwrap
-        from datetime import datetime
-
         in_hook = self._log_hook_name is not None
         # Gating
         if in_hook:
@@ -2185,15 +1976,13 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
             body = str(content)
             final_color = color
 
-        # Wrap so continuation lines align with body start. Terminal
-        # width is fixed at 120 — typical modern setups are wider, but
-        # this keeps things readable when piped to a narrower view.
-        terminal_width = 120
+        # Wrap so continuation lines align with body start, at the
+        # fixed ``_LOG_TERMINAL_WIDTH``.
         plain = prefix + body
-        if len(plain) <= terminal_width or not body:
+        if len(plain) <= _LOG_TERMINAL_WIDTH or not body:
             printer.print(plain, color=final_color)
             return
-        body_width = max(terminal_width - len(prefix), 20)
+        body_width = max(_LOG_TERMINAL_WIDTH - len(prefix), 20)
         wrapped = textwrap.wrap(
             body,
             width=body_width,
@@ -2213,22 +2002,16 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         obs: Any,
         decision: Any,
         action_result: Step,
-        context: Any,
     ) -> None:
         """Record + log an act-phase step.
 
         Called both from worker OTC (per cycle, ``worker`` supplied) and
         from the dispatcher (per ``yield ActionCall``, ``worker=None``).
-        Detects the output type from the action_result:
-
-        * tool calls (ActionResult with results) → ``TOOL_CALLS``
-        * structured BaseModel output → ``STRUCTURED``
-        * everything else (content only) → ``CONTENT_ONLY``
+        The act result is either an ``ActionResult`` (tool calls →
+        ``TOOL_CALLS``) or ``None`` (a content-only finish → ``CONTENT_ONLY``).
         """
         tool_calls = []
         output_type = StepOutputType.CONTENT_ONLY
-        structured_output = None
-        structured_output_class = None
         result_obj = None
 
         if action_result is not None and isinstance(action_result, Step):
@@ -2243,15 +2026,6 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
                         "success": r.success,
                         "error": r.error,
                     })
-            elif result_obj is not None and isinstance(result_obj, BaseModel):
-                output_type = StepOutputType.STRUCTURED
-                structured_output = result_obj.model_dump()
-                structured_output_class = (
-                    f"{result_obj.__class__.__module__}.{result_obj.__class__.__qualname__}"
-                )
-            elif result_obj is not None:
-                output_type = StepOutputType.STRUCTURED
-                structured_output = {"__value__": result_obj}
 
         # Trace storage
         if self._agent_trace is not None:
@@ -2262,8 +2036,6 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
                 "observation": str(obs) if obs is not None else None,
                 "observation_hash": observation_fingerprint(obs),
                 "output_type": output_type.value,
-                "structured_output": structured_output,
-                "structured_output_class": structured_output_class,
             })
 
         # Log arrow(s). One ``-> result: ...`` line per tool call (so
@@ -2281,12 +2053,6 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
                 if not tc["success"] and tc["error"]:
                     content += f" — {_brief(tc['error'], n=200)}"
                 self._log("result", content, color=line_color)
-        elif output_type == StepOutputType.STRUCTURED:
-            self._log(
-                "result",
-                f"<structured> {_brief(structured_output)}",
-                color="green",
-            )
         else:  # CONTENT_ONLY
             step_content = getattr(decision, "step_content", "")
             if step_content:
@@ -2313,11 +2079,11 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         OTC runs are visually delimited. Cycle 1 is the natural opener
         right after the ``[Think]`` header, so no divider for it.
         """
-        # Cycle divider (cycle 2+). Gated by ``_verbose`` since this
+        # Cycle divider (cycle 1+). Gated by ``_verbose`` since this
         # is main-flow output, not hook-scope. Same spacer width as
         # arrow lines so the divider aligns with the surrounding ``->``
         # column.
-        if cycle >= 2 and self._verbose:
+        if cycle >= 1 and self._verbose:
             divider_indent = " " * (
                 _LOG_TS_PREFIX_WIDTH + max(0, self._log_depth - 1) * 2
             )
@@ -2419,10 +2185,10 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         result_preview = _brief(output) if output is not None else ""
 
         # Record the yield-supplied goal verbatim. The "resolved goal"
-        # — whatever was actually in ``ctx.goal`` during the
-        # delegation — is already captured by ``AgentTrace``'s
-        # top-level ``goal`` field (the original arun goal) plus any
-        # ``EnterAgent`` step in scope. No need to duplicate here.
+        # — whatever the delegation's sub-context ``user_input`` was —
+        # is already captured by ``AgentTrace``'s top-level ``goal``
+        # field (the original arun input) plus any ``EnterAgent`` step
+        # in scope. No need to duplicate here.
         goal = item.goal
         step_content = f"ThinkAgent({item.name!r})"
         if goal:
@@ -2524,25 +2290,6 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
     # based on the resolved mode.
     ############################################################################
 
-    def _resolve_builtin_filter(
-        self, override: Optional[Iterable[str]],
-    ) -> Optional[FrozenSet[str]]:
-        """Resolve which built-in tool names should be auto-injected.
-
-        Resolution order: ``arun(builtin_tools=...)`` argument →
-        class-level ``builtin_tools`` attribute → ``None`` (inject all).
-
-        Returns
-        -------
-        Optional[FrozenSet[str]]
-            ``None`` means inject every entry of ``_BUILTIN_TOOLS``;
-            a frozenset (possibly empty) restricts injection to the
-            listed tool names.
-        """
-        if override is not None:
-            return frozenset(override)
-        return type(self).builtin_tools
-
     def _resolve_mode(self, mode: RunMode) -> RunMode:
         """Resolve and validate the run mode against overridden template methods.
 
@@ -2635,15 +2382,15 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         -------
         str
             ``self._final_answer`` (if set by a ``RETURN(value)`` yield
-            or by a worker's ``finish=True``) or ``ctx.summary()``.
+            or by a worker finishing via empty ``tool_calls``) or the
+            OTA context's ``summary()``.
         """
-        ctx = self._current_context
         return_value = await self._invoke_template(
-            self.on_agent(ctx), ctx, scope="agent",
+            self.on_agent(self.ota_ctx, self.ctx), scope="agent",
         )
         if return_value is not None:
             self._final_answer = str(return_value)
-        return self._final_answer or ctx.summary()
+        return self._final_answer or self.ota_ctx.summary()
 
     @worker(is_output=True)
     async def _workflow(self) -> str:
@@ -2659,15 +2406,14 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         -------
         str
             ``self._final_answer`` (if set by a ``RETURN(value)`` yield)
-            or ``ctx.summary()``.
+            or the OTA context's ``summary()``.
         """
-        ctx = self._current_context
         return_value = await self._invoke_template(
-            self.on_workflow(ctx), ctx, scope="workflow",
+            self.on_workflow(self.ota_ctx, self.ctx), scope="workflow",
         )
         if return_value is not None:
             self._final_answer = str(return_value)
-        return self._final_answer or ctx.summary()
+        return self._final_answer or self.ota_ctx.summary()
 
     @worker(is_output=True)
     async def _amphiflow(self, max_consecutive_fallbacks: int) -> str:
@@ -2681,13 +2427,13 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         Step-level fallback is the only thing this driver owns above
         plain dispatch: when ``_dispatch_step`` raises and the failed
         primitive was an atomic Call in workflow scope, it counts the
-        failure, synthesises a fallback EnterAgent (snapshot with
-        ``fallback_goal`` + auto-injected ``resolve_step_fallback``),
-        and lets the FSM drive the recovery agent. On threshold
-        breach or a workflow generator-internal exception, the
-        workflow generator is closed and ``on_agent`` runs linearly
-        via ``_invoke_template`` (full fallback — workflow does not
-        resume).
+        failure, runs a bounded inline recovery sub-run
+        (``_run_fallback_agent``), shapes that sub-run's final answer
+        into the failed step's return type, and asends it to the
+        resuming workflow. On threshold breach or a workflow
+        generator-internal exception, the workflow generator is closed
+        and ``on_agent`` runs linearly via ``_invoke_template`` (full
+        fallback — workflow does not resume).
         """
         def _is_atomic_step(item: Any) -> bool:
             """
@@ -2695,7 +2441,7 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
             """
             return isinstance(item, (
                 ActionCall, HumanCall, LLMCall,
-                EnterAgent, ThinkUnit, ThinkAgent, RETURN,
+                EnterAgent, ThinkUnit, ThinkAgent,
             ))
         
         def _describe_atomic_step(item: Any) -> str:
@@ -2711,47 +2457,42 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
                 return f"LLMCall(protocol={item.protocol!r})"
             return type(item).__name__
         
-        def _make_fallback_slot(item: Any) -> _FallbackSlot:
-            """
-            Create a fallback slot pre-loaded with a benign default value.
-
-            The default is what the workflow's failed yield will receive if
-            the agent does not call the auto-injected
-            ``resolve_step_fallback`` tool. Defaults are chosen so a "void"
-            atomic Call (one whose return value the workflow does not use)
-            can be left alone without blowing up downstream code:
+        def _shape_fallback_value(item: Any, answer: Any) -> Any:
+            """Shape the recovery agent's final answer into the failed step's
+            expected return type, so the suspended workflow resumes as if the
+            step had produced it. ``answer is None`` (the agent produced
+            nothing) degrades to a benign default — chosen so a "void" atomic
+            Call (one whose return value the workflow does not use) resumes
+            without blowing up downstream code:
 
             ============================  ====================================
-            Failed Call                   Default slot value
+            Failed Call                   Shaped value (``answer`` = agent's)
             ============================  ====================================
-            ActionCall                    one ToolResult with result=None
-            HumanCall                     ""
-            LLMCall(protocol="chat")      ""
-            LLMCall("structure_output")   None
-            LLMCall("tool_selector")      ([], None)
+            ActionCall                    one ToolResult(result=answer)
+            HumanCall                     answer or ""
+            LLMCall(protocol="chat")      answer or ""
+            LLMCall("structure_output")   answer (best-effort passthrough)
+            LLMCall("tool_selector")      ([], answer)
             ============================  ====================================
             """
             if isinstance(item, ActionCall):
-                default: Any = [
+                return [
                     ToolResult(
                         tool_name=item.tool_name,
                         tool_arguments=dict(item.tool_args),
-                        result=None,
+                        result=answer,
                         success=True,
                     )
                 ]
-            elif isinstance(item, HumanCall):
-                default = ""
-            elif isinstance(item, LLMCall):
+            if isinstance(item, HumanCall):
+                return answer or ""
+            if isinstance(item, LLMCall):
                 if item.protocol == "chat":
-                    default = ""
-                elif item.protocol == "tool_selector":
-                    default = ([], None)
-                else:
-                    default = None
-            else:
-                default = None
-            return _FallbackSlot(default)
+                    return answer or ""
+                if item.protocol == "tool_selector":
+                    return ([], answer)
+                return answer
+            return answer
 
         def _build_fallback_goal(
             item: Any,
@@ -2761,15 +2502,14 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         ) -> str:
             """Goal text fed to on_agent on step-level fallback.
 
-            Tells the agent (a) what failed and why, (b) that it should
-            recover however it sees fit, and (c) how to feed the result
-            back to the workflow via ``resolve_step_fallback``. The
-            framework auto-injects that tool for the duration of this
-            fallback; calling it once with the recovered value is the only
-            way to override the slot's default value.
+            Tells the agent (a) what failed and why, and (b) that its final
+            answer becomes the value the failed step should have returned —
+            the workflow resumes with it. There is no tool to call and no
+            toolset is touched: the recovery sub-run's conclusion IS the
+            resolution.
             """
             if isinstance(item, ActionCall):
-                intent = item.decision.step_content or item.tool_name
+                intent = item.description or item.tool_name
             else:
                 intent = item_label
             return (
@@ -2777,22 +2517,16 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
                 f"Step intent: {intent}\n"
                 f"Failed call: {item_label}\n"
                 f"Error: {error}\n\n"
-                f"Recover however you see fit. When you have produced the "
-                f"value the failed step should have returned, call the "
-                f"`resolve_step_fallback` tool with that value to feed it "
-                f"back to the workflow. The workflow will resume with it "
-                f"as if the original step had succeeded.\n\n"
-                f"If the failed call's return value is not used downstream, "
-                f"you may omit the `resolve_step_fallback` call — a benign "
-                f"default value is then sent back. End your reasoning when "
-                f"recovery is complete; the workflow will resume "
-                f"automatically."
+                f"Recover however you see fit. Your final answer becomes the "
+                f"value the failed step should have returned — the workflow "
+                f"resumes with it as if the step had succeeded. If the failed "
+                f"call's return value is not used downstream, a brief "
+                f"acknowledgement is fine."
             )
         
         # Initialize the state machine with the workflow generator before `while` loop
         # With workflow as the main focus
-        ctx = self._current_context
-        workflow_gen = self.on_workflow(ctx)
+        workflow_gen = self.on_workflow(self.ota_ctx, self.ctx)
         self._amphi = _AmphiState(
             workflow_gen=workflow_gen,
             max_consecutive_fallbacks=max_consecutive_fallbacks,
@@ -2832,7 +2566,7 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
                         # Symmetric design: add an agent-side primitive (e.g. ``enter_workflow(value)``) that the agent tool call
                         # to deliberately hand control back. ``_dispatch_step`` would handle that yield the way this branch
                         # currently handles ``StopAsyncIteration`` — tear down the agent slot, forward ``value`` via
-                        # ``fallback_slot`` / ``workflow_send``, restore ``scope = "workflow"``. Exhaustion would degrade
+                        # ``workflow_send``, restore ``scope = "workflow"``. Exhaustion would degrade
                         # to a default empty-return fallback (or be a strict-mode error).
                         #
                         # Until that primitive exists, this branch is the single point where the implicit "agent done →
@@ -2844,18 +2578,15 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
                             fsm.agent_mode_stack = None
                         fsm.agent_gen = None
 
-                        # If Full-fallback exhaustion: workflow is dead.
-                        if fsm.workflow_gen is None:  
+                        # Full-fallback exhaustion: the workflow is dead, the
+                        # run is over.
+                        if fsm.workflow_gen is None:
                             fsm.should_break = True
-
-                        # If Step-level fallback or user-yielded EnterAgent
+                        # User-yielded EnterAgent exhausted: resume the workflow
+                        # at the instruction after the EnterAgent yield. (Step-
+                        # level fallback never reaches here — it runs inline.)
                         else:
-                            if fsm.fallback_slot is not None:
-                                fsm.workflow_send = fsm.fallback_slot.value
-                                fsm.fallback_slot = None
                             fsm.scope = "workflow"
-
-                        # In all cases, switch to workflow scope
                         continue
 
                     # If it is Workflow Mode stop. 
@@ -2869,12 +2600,11 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
                             await fsm.agent_mode_stack.__aexit__(type(e), e, e.__traceback__)
                             fsm.agent_mode_stack = None
                         fsm.agent_gen = None
-                        fsm.fallback_slot = None
                         raise
 
                     # If Workflow generator-internal error → full fallback.
                     fsm.workflow_gen = None
-                    await self._enter_agent(self.on_agent(ctx), ctx)
+                    await self._enter_agent()
                     continue
 
                 # RETURN is a control-flow signal — terminate the FSM
@@ -2886,7 +2616,7 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
                     continue
 
                 try:
-                    outcome = await self._dispatch_step(item, ctx, scope=fsm.scope)
+                    outcome = await self._dispatch_step(item, scope=fsm.scope)
                 except Exception as e:
                     # Agent-scope error / unknown yield type: no fallback, just propagate the exception.
                     if fsm.scope == "agent" or not _is_atomic_step(item):
@@ -2905,19 +2635,37 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
                         except Exception:
                             pass
                         fsm.workflow_gen = None
-                        await self._enter_agent(self.on_agent(ctx), ctx)
+                        await self._enter_agent()
                         continue
 
-                    # Step-level fallback.
+                    # Step-level fallback. Run a bounded recovery sub-run
+                    # inline; its final answer, shaped into the failed step's
+                    # return type, is asend-ed to the resuming workflow. No
+                    # tool is injected and no toolset is mutated — the recovery
+                    # sub-run's conclusion IS the resolution.
+                    #
+                    # TODO(amphiflow step-level fallback): this recovery
+                    # semantics is still awkward and needs a rethink. Mapping
+                    # the recovery agent's free-form conclusion (a str) onto the
+                    # failed step's *typed* return via ``_shape_fallback_value``
+                    # is a loose fit (esp. ActionCall -> List[ToolResult] and
+                    # structure_output), and clearing ``_final_answer`` below is
+                    # a patch over the recovery sub-run's think-step writing the
+                    # shared run state. Revisit: a dedicated recovery-value
+                    # channel, or reconsider whether a recovered value should
+                    # feed back into the workflow at all. Left as-is for now.
                     else:
-                        fsm.fallback_slot = _make_fallback_slot(item)
-                        resolve_tool = _make_resolve_tool(fsm.fallback_slot, item)
-                        augmented_tools = CognitiveTools()
-                        for t in ctx.tools.get_all():
-                            augmented_tools.add(t)
-                        augmented_tools.add(resolve_tool)
                         fallback_goal = _build_fallback_goal(item, item_label, e, fsm)
-                        await self._enter_agent(self.on_agent(ctx), ctx, snapshot_kwargs={"goal": fallback_goal, "tools": augmented_tools})
+                        recovered = await self._run_fallback_agent(fallback_goal)
+                        fsm.workflow_send = _shape_fallback_value(item, recovered)
+                        # The recovered value flows to the workflow via
+                        # ``workflow_send`` — it is an internal step value, not
+                        # the run's answer. Clear the ``_final_answer`` that the
+                        # recovery sub-run's think step set on the shared run
+                        # state, so the run's final answer comes from the
+                        # resuming workflow (or ``summary()``), never the
+                        # internal recovery.
+                        self._final_answer = None
                         continue
                 else:
                     if fsm.scope == "agent":
@@ -2948,25 +2696,34 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
 
         if return_value is not None:
             self._final_answer = str(return_value)
-        return self._final_answer or ctx.summary()
-    
+        return self._final_answer or self.ota_ctx.summary()
+
     async def arun(
         self,
         *,
+        user_input: str = "",
         llm: Optional[BaseLlm] = None,
-        context: Optional[CognitiveContextT] = None,
+        context: Optional[ContextT] = None,
+        ota_context: Optional[OTAContextT] = None,
         mode: Optional[RunMode] = RunMode.AUTO,
         max_consecutive_fallbacks: int = 1,
         trace: bool = False,
         workdir: Optional[Union[Path, str]] = None,
-        builtin_tools: Optional[Iterable[str]] = None,
-        **kwargs
     ) -> str:
         """Run the agent. Returns a summary of the final context.
 
-        Two ways to initialize context: pass ``context=my_ctx`` to use a
-        pre-built one, or pass ``goal=`` / ``tools=`` / ``skills=`` (via
-        ``**kwargs``) to have one auto-created.
+        Two contexts, two loops. ``context=`` is the **loop** knowledge
+        context (free-form, optional — defaults to an empty ``_context_class``);
+        the framework constructs a fresh **small-loop** ``OTAContext`` per run
+        from ``_ota_context_class``, seeded with ``user_input`` — unless the
+        caller passes a pre-built ``ota_context=``, which is then used verbatim
+        (its own ``user_input`` stands). That lets the caller seed per-run
+        small-loop state — e.g. inject a per-turn resource the workers/hooks
+        read back off ``ota_context``. Pure dispatch:
+        the automa only schedules and no longer assembles any toolset — each
+        OTA context declares the tools it carries on its class via
+        ``OTAContext.tool`` (framework builtins it wants + its own), so whatever
+        a context declared is exactly what its ``tools`` field holds.
 
         ``mode=RunMode.AUTO`` (default) picks AMPHIFLOW / WORKFLOW / AGENT
         from which template methods the subclass overrides.
@@ -2983,15 +2740,10 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         * ``trace=False, workdir=path`` ⇒ the run dir is created but
           empty (nothing writes ``trace.json``).
 
-        ``builtin_tools`` filters which built-in tools to inject. ``None``
-        (default) defers to the class-level ``builtin_tools`` attribute;
-        an iterable selects exactly those tools; an empty iterable opts
-        out. User-supplied ``tools=[...]`` are never overwritten.
-
         ``max_consecutive_fallbacks`` (AMPHIFLOW only) is the workflow
         step-failure threshold before switching to full agent mode.
         """
-        async def _run_and_report(context: CognitiveContextT) -> str:
+        async def _run_and_report(context: ContextT) -> str:
             """Run the agent, measure time, and log summary."""
             start_time = time.time()
             result = await GraphAutoma.arun(
@@ -3017,12 +2769,17 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
         ########################
         # Pre-initialize status
         ########################
+        # Config
         self._llm = llm
-        self._final_answer = None
+        self._run_mode = self._resolve_mode(mode if mode is not None else RunMode.AUTO)
+
+        # Trace
         self._read_tracker = {}
         self._current_run_dir = None
         self._agent_trace = None
-        self._run_mode = self._resolve_mode(mode if mode is not None else RunMode.AUTO)
+        
+        # State
+        self._final_answer = None
         self.spent_tokens = 0
         self.spent_time = 0.0
         self._log_depth = 0
@@ -3043,79 +2800,40 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
             self._agent_trace = AgentTrace(workdir=self._current_run_dir)
 
         ########################
-        # Initialize context
+        # Initialize the two contexts (pure dispatch — no toolset assembly).
+        #   * Loop — caller-supplied free-form knowledge context, or a fresh
+        #            default ``_context_class`` when none was passed.
+        #   * OTA  — a caller-supplied pre-built small-loop context, or a fresh
+        #            one constructed per run seeded with ``user_input``.
+        # Each context already carries its own declared ``tools`` (populated
+        # from its class's ``OTAContext.tool`` registrations); the framework
+        # does not inject or merge any tools here.
         ########################
-        if context is not None:
-            if not isinstance(context, self._context_class):
-                raise ValueError(
-                    f"Context must be an instance of {self._context_class.__name__}, "
-                    f"got {type(context).__name__}"
-                )
+        if context is not None and not isinstance(context, self._context_class):
+            raise ValueError(
+                f"context= must be an instance of {self._context_class.__name__} "
+                f"(the loop context), got {type(context).__name__}."
+            )
+        if ota_context is not None and not isinstance(ota_context, self._ota_context_class):
+            raise ValueError(
+                f"ota_context= must be an instance of {self._ota_context_class.__name__} "
+                f"(the small-loop context), got {type(ota_context).__name__}."
+            )
 
-        # Separate Exposure fields (tools, skills, etc.) from regular constructor args
-        exposure_fields = self._context_class._exposure_fields
-        if exposure_fields is None:
-            exposure_fields = self._context_class._detect_exposure_fields()
-            self._context_class._exposure_fields = exposure_fields
-
-        # Create the context
-        constructor_kwargs = {}
-        exposure_items = {}  # {field_name: list_of_items}
-        for key, value in kwargs.items():  # Add fields to the context that can directly be added to the context
-            if key in exposure_fields and isinstance(value, (list, tuple)):
-                exposure_items[key] = value
-            elif key in exposure_fields and isinstance(value, Exposure):
-                constructor_kwargs[key] = value
-            else:
-                constructor_kwargs[key] = value
-        
-        if context is None:
-            context = self._context_class(**constructor_kwargs)  # Create the context
-        for field_name, items in exposure_items.items():  # Add items to Exposure fields
-            attr = getattr(context, field_name)
-            for item in items:
-                attr.add(item)
-
-        # Inject built-in tools (e.g. request_human, bash, read_file, ...)
-        allowed_builtins = self._resolve_builtin_filter(builtin_tools)
-        valid_builtin_names = {t.tool_name for t in _BUILTIN_TOOLS}
-        if allowed_builtins is not None:
-            unknown = allowed_builtins - valid_builtin_names
-            if unknown:
-                raise ValueError(
-                    f"Unknown built-in tool name(s) in builtin_tools filter: "
-                    f"{sorted(unknown)}. Valid names: {sorted(valid_builtin_names)}."
-                )
-        existing_tool_names = {t.tool_name for t in context.tools.get_all()}
-        for builtin in _BUILTIN_TOOLS:
-            if allowed_builtins is not None and builtin.tool_name not in allowed_builtins:
-                continue
-            if builtin.tool_name in existing_tool_names:
-                continue
-            # Specialise ``request_human`` against this agent class's
-            # ``@human_channel`` registry so the LLM sees the actual
-            # channel names — both in the tool description and as an
-            # ``enum`` constraint on the ``channel`` parameter. With no
-            # channels registered the factory returns the generic spec.
-            if builtin.tool_name == "request_human":
-                channels = type(self)._human_channels.keys()
-                builtin = build_request_human_tool(channels)
-            context.tools.add(builtin)
-
-        # Set the LLM to the context
-        if self._llm is not None:
-            context.set_llm(self._llm)
-        self._current_context = context
+        loop_ctx = context if context is not None else self._context_class()
+        ota_ctx = ota_context if ota_context is not None else self._ota_context_class(user_input=user_input)
+        self._current_ota_context = ota_ctx
+        self._current_context = loop_ctx
 
         ########################
         # Run the amphibious automa
         ########################
         token = current_agent.set(self)
         try:
-            # Trace lifecycle — begin
+            # Trace lifecycle — begin.
             if self._agent_trace is not None:
                 self._agent_trace.begin_run(
-                    goal=getattr(context, "goal", "") or "",
+                    goal=ota_ctx.user_input or "",
                     agent_class=f"{type(self).__module__}.{type(self).__qualname__}",
                     agent_name=self.name,
                     context_class=(
@@ -3127,7 +2845,7 @@ class AmphibiousAutoma(GraphAutoma, Generic[CognitiveContextT]):
                     max_consecutive_fallbacks=max_consecutive_fallbacks,
                     start_time=time.time(),
                 )
-            return await _run_and_report(context=context)
+            return await _run_and_report(context=loop_ctx)
         finally:
             # Trace lifecycle — end.
             if self._agent_trace is not None:

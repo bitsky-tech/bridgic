@@ -1,526 +1,160 @@
+import functools
 import inspect
-from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional, Generic, TypeVar, Tuple, get_origin, Iterator
+from types import MethodType
+from typing import (
+    Any, Callable, ClassVar, Dict, List, Optional, Tuple, Iterator,
+)
 
 from pydantic import BaseModel, Field, ConfigDict
 from bridgic.core.agentic.tool_specs import ToolSpec
-from bridgic.core.model.types import Message
-from bridgic.amphibious._type import Step, Skill
+from bridgic.core.agentic.tool_specs import FunctionToolSpec
+from bridgic.amphibious._type import OTARecord
 
 
 ################################################################################################################
-# Abstract Base Classes
+# _to_tool_spec — normalize a declared tool (callable | bound method | ToolSpec) into a ToolSpec
 ################################################################################################################
 
-T = TypeVar('T')
+def _to_tool_spec(obj: Any) -> ToolSpec:
+    """Normalize a declared tool into a :class:`ToolSpec`.
 
+    Backing :meth:`OTAContext.tool`, this accepts whatever a context declares
+    and returns a ready-to-use spec. The caller need not care which form it
+    passes:
 
-class Exposure(ABC, Generic[T]):
-    """
-    Abstract base class for field-level data exposure.
+    * a :class:`ToolSpec` — returned unchanged.
+    * a **bound method** (``isinstance(obj, MethodType)``) — kept bound to its
+      own ``self``. ``FunctionToolSpec.from_raw`` rejects bound methods
+      (``isinstance(func, MethodType) -> ValueError``), so the method is wrapped
+      in a ``functools.wraps`` async closure that calls it (awaiting if the
+      result is awaitable); ``_invoke.__signature__`` is pinned to the bound
+      method's signature (which already excludes ``self``) before handing it to
+      ``from_raw``. Capturing the already-bound method is what preserves the
+      original instance as ``self``.
+    * any other **callable** — ``FunctionToolSpec.from_raw(obj)``.
 
-    Manages list-like data (e.g., history records, tool lists) with a unified interface.
-    Subclasses determine the exposure strategy:
-    - LayeredExposure: supports progressive disclosure (summary + per-item details)
-    - EntireExposure: only provides summary (no per-item details)
+    Parameters
+    ----------
+    obj : Any
+        A :class:`ToolSpec`, a bound method, or a plain callable.
 
-    Methods
+    Returns
     -------
-    add(item)
-        Add an element and return its index.
-    summary()
-        Return a list of summary strings for all elements.
-    get_all()
-        Return a copy of all elements.
+    ToolSpec
+        The normalized tool spec.
     """
+    if isinstance(obj, ToolSpec):
+        return obj
 
-    def __init__(self):
-        self._items: List[T] = []
-        self._llm: Optional[Any] = None
+    if isinstance(obj, MethodType):
+        bound = obj
 
-    def __len__(self) -> int:
-        return len(self._items)
+        @functools.wraps(bound)
+        async def _invoke(*args: Any, **kwargs: Any) -> Any:
+            result = bound(*args, **kwargs)
+            if inspect.isawaitable(result):
+                return await result
+            return result
 
-    def __getitem__(self, index: int) -> T:
-        return self._items[index]
+        # A bound-method signature already excludes ``self``.
+        _invoke.__signature__ = inspect.signature(bound)
+        return FunctionToolSpec.from_raw(_invoke)
 
-    def __iter__(self) -> Iterator[T]:
-        return iter(self._items)
-
-    def add(self, item: T) -> int:
-        """
-        Add an element to the collection.
-
-        Parameters
-        ----------
-        item : T
-            The element to add.
-
-        Returns
-        -------
-        int
-            Index of the newly added element (0-based).
-        """
-        self._items.append(item)
-        return len(self._items) - 1
-
-    def get_all(self) -> List[T]:
-        """
-        Return a copy of all elements.
-
-        Returns
-        -------
-        List[T]
-            A copy of all elements.
-        """
-        return self._items.copy()
-
-    def set_llm(self, llm: Any) -> None:
-        """
-        Set the LLM for this exposure.
-
-        Stored as ``self._llm`` and available to subclasses that need it
-        (e.g. ``CognitiveHistory`` uses it for compression).
-        Called automatically by ``Context.set_llm()`` for fields marked with
-        ``json_schema_extra={"use_llm": True}``.
-
-        Parameters
-        ----------
-        llm : Any
-            LLM instance to store.
-        """
-        self._llm = llm
-
-
-class LayeredExposure(Exposure[T]):
-    """
-    Exposure with progressive disclosure support.
-
-    Provides two-level information architecture:
-    - summary(): overview of all items
-    - get_details(index): detailed information for a specific item
-
-    Use this for data where the LLM may need to request details
-    about specific items (e.g., execution history, skills).
-
-    Disclosure state is owned internally: once revealed, an item's detail
-    is cached in _revealed. Call reset_revealed() to clear all cached reveals
-    (e.g., at phase boundaries in a multi-phase agent).
-    """
-
-    def __init__(self):
-        super().__init__()
-        self._revealed: Dict[int, str] = {}  # index → cached detail string
-
-    def reveal(self, index: int) -> Optional[str]:
-        """
-        Get and cache detailed information for a specific element.
-
-        Returns the cached value if already revealed; otherwise calls
-        get_details(index), stores the result, and returns it.
-
-        Parameters
-        ----------
-        index : int
-            Element index (0-based).
-
-        Returns
-        -------
-        Optional[str]
-            Detailed information string, or None if index is invalid.
-        """
-        if index in self._revealed:
-            return self._revealed[index]
-        detail = self.get_details(index)
-        if detail is not None:
-            self._revealed[index] = detail
-        return detail
-
-    def reset_revealed(self) -> None:
-        """
-        Clear all cached reveals.
-
-        Use at phase boundaries to allow the LLM to re-request details
-        that were disclosed in a previous phase.
-        """
-        self._revealed.clear()
-
-    @abstractmethod
-    def summary(self) -> List[str]:
-        """
-        Generate summary strings for all elements.
-
-        Returns
-        -------
-        List[str]
-            One summary string per element.
-        """
-        ...
-
-    @abstractmethod
-    def get_details(self, index: int) -> Optional[str]:
-        """
-        Get detailed information for a specific element.
-
-        Parameters
-        ----------
-        index : int
-            Element index (0-based).
-
-        Returns
-        -------
-        Optional[str]
-            Detailed information string, or None if index is invalid.
-        """
-        ...
-
-
-class EntireExposure(Exposure[T]):
-    """
-    Exposure without progressive disclosure.
-
-    Only provides summary() - all information is exposed at once.
-    Use this for data where per-item details are not needed
-    or the full information should always be available (e.g., tools).
-    """
-    @abstractmethod
-    def summary(self) -> List[str]:
-        """
-        Generate summary strings for all elements.
-
-        Returns
-        -------
-        List[str]
-            One summary string per element.
-        """
-        ...
+    return FunctionToolSpec.from_raw(obj)
 
 
 class Context(BaseModel):
     """
-    Base class for agent context with automatic Exposure field detection.
+    Base class for agent context — fields + an overridable ``summary``.
 
-    Provides unified access to context data through summary and detail retrieval.
-    Automatically discovers Exposure-typed fields and distinguishes between
-    LayeredExposure (supports details) and EntireExposure (summary only).
+    Collapsed (per the small-loop redesign) to its essentials:
 
-    Methods
-    -------
-    summary()
-        Get a dictionary of all field values or Exposure summaries.
-    get_details(field, idx)
-        Get detailed information for a specific LayeredExposure item.
-    get_revealed_items()
-        Get all (field, index) pairs that have been revealed so far.
-    reset_revealed()
-        Clear reveal caches on all LayeredExposure fields.
+    * :meth:`_raw_fields` — the most primitive view: every field's raw value
+      as ``{name: value}`` (no rendering, no filtering).
+    * :meth:`summary` — the **overridable** method the framework injects with
+      that raw dict. The default returns the dict unchanged; an override is
+      handed the ``fields`` dict and composes whatever it wants (usually a
+      ``str``) — without fetching anything itself.
+
+    A bare ``Context`` is free-form cross-turn state (the big-loop half):
+    declare fields and override ``summary``, and that is all. Tools are **not**
+    a base-context concern — they belong to the OTA loop that actually acts, so
+    the tool registry (``tools`` field + :meth:`~OTAContext.tool` /
+    :meth:`~OTAContext.add_tool`) lives on :class:`OTAContext`.
 
     Examples
     --------
     >>> class MyContext(Context):
-    ...     model_config = ConfigDict(arbitrary_types_allowed=True)
-    ...     goal: str
-    ...     history: CognitiveHistory = Field(default_factory=CognitiveHistory)  # LayeredExposure
-    ...     tools: CognitiveTools = Field(default_factory=CognitiveTools)  # EntireExposure
-    ...
-    >>> ctx = MyContext(goal="Complete task")
-    >>> ctx.history.add(Step(content="Step 1", status=True))
-    >>> ctx.summary()  # Returns dict with goal and summaries of history/tools
-    >>> ctx.get_details("history", 0)  # Works - history is LayeredExposure
-    >>> ctx.get_details("tools", 0)  # Returns None - tools is EntireExposure
+    ...     goal: str = ""
+    ...     def summary(self, fields):   # ``fields`` is auto-injected (the raw dict)
+    ...         return f"Goal: {fields['goal']}"
     """
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
-    # Class-level cache for detected fields
-    _exposure_fields: Optional[Dict[str, Dict[str, Any]]] = None
+    ############################################################################
+    # Initialize Context
+    ############################################################################
 
     def __init_subclass__(cls, **kwargs):
         super().__init_subclass__(**kwargs)
-        cls._exposure_fields = None
+
+        # A subclass that overrides ``summary`` uses ``fields`` directly.
+        if "summary" in cls.__dict__:
+            cls.summary = cls._summary_injecting(cls.__dict__["summary"])
+
+    @staticmethod
+    def _summary_injecting(user_summary: Callable) -> Callable:
+        """
+        Wrap an overridden ``summary`` so its ``fields`` argument is always
+        the raw per-field dict (built via :meth:`_raw_fields` when omitted).
+        """
+        @functools.wraps(user_summary)
+        def _wrapped(self, fields: Optional[Dict[str, Any]] = None) -> Any:
+            if fields is None:
+                fields = self._raw_fields()
+            return user_summary(self, fields)
+        return _wrapped
 
     def model_post_init(self, __context: Any) -> None:
         super().model_post_init(__context)
-        if self.__class__._exposure_fields is None:
-            self.__class__._exposure_fields = self._detect_exposure_fields()
 
         # Call __post_init__ if defined in subclass (provides dataclass-like API)
         if hasattr(self, '__post_init__') and callable(getattr(self, '__post_init__')):
             self.__post_init__()
 
-    @classmethod
-    def _detect_exposure_fields(cls) -> Dict[str, Dict[str, Any]]:
-        """Detect all Exposure fields and classify them."""
-        exposure_fields = {}
+    ############################################################################
+    # Core Methods
+    ############################################################################
+    
+    def _raw_fields(self) -> Dict[str, Any]:
+        """Every model field's raw value, unprocessed: ``{name: value}``.
 
-        def _get_exposure_type(field_type: Any) -> Optional[str]:
-            """Return 'layered', 'entire', or None."""
-            if inspect.isclass(field_type):
-                if issubclass(field_type, LayeredExposure):
-                    return 'layered'
-                elif issubclass(field_type, EntireExposure):
-                    return 'entire'
-                elif issubclass(field_type, Exposure):
-                    # Base Exposure - treat as entire (no details)
-                    return 'entire'
-                else:
-                    return None
-
-            origin = get_origin(field_type)
-            if origin and inspect.isclass(origin):
-                if issubclass(origin, LayeredExposure):
-                    return 'layered'
-                elif issubclass(origin, EntireExposure):
-                    return 'entire'
-                elif issubclass(origin, Exposure):
-                    return 'entire'
-                else:
-                    return None
-
-            return None
-
-        for field_name, field_info in cls.model_fields.items():
-            exposure_type = _get_exposure_type(field_info.annotation)
-            if exposure_type:
-                exposure_fields[field_name] = {
-                    'field_name': field_name,
-                    'exposure_type': exposure_type,  # 'layered' or 'entire'
-                }
-
-        return exposure_fields
-
-    @classmethod
-    def get_hidden_fields(cls) -> List[str]:
+        No rendering, no per-field summarising, no filtering — the most
+        primitive view of the context. This is the dict the framework hands
+        to :meth:`summary`.
         """
-        Get list of field names that should be hidden from summary.
+        return {name: getattr(self, name) for name in type(self).model_fields}
 
-        Returns
-        -------
-        List[str]
-            Field names where display is explicitly set to False.
+    def summary(self, fields: Optional[Dict[str, Any]] = None) -> Any:
+        """Assemble this context for the prompt (the **overridable** method).
 
-        Examples
-        --------
-        >>> class MyContext(Context):
-        ...     visible: str = Field(default="")
-        ...     hidden: str = Field(default="", json_schema_extra={"display": False})
-        >>> MyContext.get_hidden_fields()
-        ['hidden']
-        """
-        hidden = []
-        for field_name, field_info in cls.model_fields.items():
-            extra = field_info.json_schema_extra or {}
-            display = extra.get("display", True)
-            if not display:
-                hidden.append(field_name)
-        return hidden
-
-    def set_llm(self, llm: Any) -> None:
-        """
-        Propagate an LLM to all Exposure fields that opt in via ``use_llm=True``.
-
-        Called by ``AmphibiousAutoma`` at run start. Fields opt in by declaring:
-
-            my_field: MyExposure = Field(
-                ..., json_schema_extra={"use_llm": True}
-            )
-
-        Only Exposure fields are considered; non-Exposure fields are ignored.
-        Exposure fields without ``use_llm=True`` are also ignored.
+        An overridden ``summary`` is auto-wrapped (see :meth:`__init_subclass__`)
+        so ``fields`` is always the raw per-field dict (:meth:`_raw_fields`) — the
+        override just uses it (``fields.get(...)``) and composes whatever it wants
+        (typically a ``str``), with zero manual fetch. The default (no override)
+        returns the raw dict unchanged.
 
         Parameters
         ----------
-        llm : Any
-            The LLM instance to propagate.
-        """
-        exposure_fields = self.__class__._exposure_fields or {}
-        for field_name in exposure_fields:
-            field_info = self.__class__.model_fields.get(field_name)
-            if field_info is None:
-                continue
-            extra = field_info.json_schema_extra or {}
-            if extra.get("use_llm", False):
-                field_value = getattr(self, field_name, None)
-                if field_value is not None:
-                    field_value.set_llm(llm)
-
-    def summary(self) -> Dict[str, str]:
-        """
-        Generate a summary dictionary with formatted strings for each field.
-
-        Automatically filters out fields marked with json_schema_extra={"display": False}.
-        Subclasses should override this to provide custom formatting for each field.
-        The returned dictionary maps field names to their formatted string representations.
+        fields : Optional[Dict[str, Any]]
+            The raw per-field dict, auto-injected into an overridden ``summary``.
 
         Returns
         -------
-        Dict[str, str]
-            Field name to formatted summary string mapping.
-            Each value should be a complete, formatted string ready for prompt inclusion.
-            Hidden fields (display=False) are excluded.
+        Any
+            The raw dict by default, or whatever an override composes.
         """
-        result = {}
-        exposure_fields = self.__class__._exposure_fields or {}
-        hidden_fields = set(self.get_hidden_fields())
-
-        # Add non-Exposure fields as simple string (skip hidden fields)
-        for field_name in self.__class__.model_fields:
-            if field_name not in exposure_fields and field_name not in hidden_fields:
-                value = getattr(self, field_name)
-                if value is not None:
-                    # Get field description if available
-                    field_info = self.__class__.model_fields.get(field_name)
-                    description = field_info.description if field_info and field_info.description else None
-
-                    if description:
-                        result[field_name] = f"{field_name} ({description}):\n {value}"
-                    else:
-                        result[field_name] = f"{field_name}:\n {value}"
-
-        # Add Exposure field summaries (skip hidden fields)
-        for field_name in exposure_fields:
-            if field_name not in hidden_fields:
-                field_value = getattr(self, field_name)
-                if field_value and len(field_value) > 0:
-                    # Get field description if available
-                    field_info = self.__class__.model_fields.get(field_name)
-                    description = field_info.description if field_info and field_info.description else None
-                    summaries = field_value.summary()
-                    if description:
-                        result[field_name] = f"{field_name} ({description}):\n" + "\n".join(f"  {s}" for s in summaries)
-                    else:
-                        result[field_name] = f"{field_name}:\n" + "\n".join(f"  {s}" for s in summaries)
-
-        return result
-
-    def format_summary(
-        self,
-        include: Optional[List[str]] = None,
-        exclude: Optional[List[str]] = None,
-        separator: str = "\n"
-    ) -> str:
-        """
-        Format the summary dictionary into a string with field selection.
-
-        Parameters
-        ----------
-        include : Optional[List[str]]
-            If provided, only include these fields (takes priority over exclude).
-        exclude : Optional[List[str]]
-            If provided, exclude these fields from the output.
-        separator : str
-            Separator between field summaries. Default is newline.
-
-        Returns
-        -------
-        str
-            Formatted summary string with selected fields.
-
-        Examples
-        --------
-        >>> ctx.format_summary()  # All fields
-        >>> ctx.format_summary(include=['tools', 'skills'])  # Only capabilities
-        >>> ctx.format_summary(exclude=['tools', 'skills'])  # Only task context
-        """
-        summary_dict = self.summary()
-
-        if include is not None:
-            fields = [f for f in include if f in summary_dict]
-        elif exclude is not None:
-            fields = [f for f in summary_dict if f not in exclude]
-        else:
-            fields = list(summary_dict.keys())
-
-        return separator.join(summary_dict[f] for f in fields if summary_dict.get(f))
-
-    def get_field(self, field: str) -> Tuple[Optional[List[str]], Any]:
-        """
-        Get field information with type-aware return.
-
-        Parameters
-        ----------
-        field : str
-            Name of the field.
-
-        Returns
-        -------
-        Tuple[Optional[List[str]], Any]
-            - If field is an Exposure: (summary list, all items via get_all())
-            - Otherwise: (None, raw field value)
-        """
-        exposure_fields = self.__class__._exposure_fields or {}
-        field_value = getattr(self, field, None)
-
-        if field in exposure_fields:
-            # Exposure field: return (summary, get_all())
-            if field_value and hasattr(field_value, 'summary') and hasattr(field_value, 'get_all'):
-                return (field_value.summary(), field_value.get_all())
-            return ([], [])
-        else:
-            # Non-Exposure field: return (None, value)
-            return (None, field_value)
-
-    def get_details(self, field: str, idx: int) -> Optional[str]:
-        """
-        Get detailed information for a LayeredExposure field item.
-
-        Only works for LayeredExposure fields. Returns None for EntireExposure.
-
-        Parameters
-        ----------
-        field : str
-            Name of the Exposure field.
-        idx : int
-            Item index within the field (0-based).
-
-        Returns
-        -------
-        Optional[str]
-            Detailed information string, or None if:
-            - Field doesn't exist
-            - Field is not a LayeredExposure
-            - Index is invalid
-        """
-        exposure_fields = self.__class__._exposure_fields or {}
-
-        if field not in exposure_fields:
-            return None
-
-        # Only LayeredExposure supports get_details
-        if exposure_fields[field].get('exposure_type') != 'layered':
-            return None
-
-        field_value = getattr(self, field, None)
-        if field_value and hasattr(field_value, 'reveal'):
-            return field_value.reveal(idx)
-
-        return None
-
-    def get_revealed_items(self) -> List[Tuple[str, int]]:
-        """
-        Return all (field_name, index) pairs that have been revealed across
-        all LayeredExposure fields on this context.
-
-        Returns
-        -------
-        List[Tuple[str, int]]
-            Ordered list of (field_name, item_index) that have cached reveals.
-        """
-        result: List[Tuple[str, int]] = []
-        for fname, fval in self:
-            if isinstance(fval, LayeredExposure):
-                for idx in fval._revealed:
-                    result.append((fname, idx))
-        return result
-
-    def reset_revealed(self) -> None:
-        """
-        Reset reveal state on all LayeredExposure fields.
-
-        Equivalent to calling field.reset_revealed() on every LayeredExposure
-        field. Use at phase boundaries so the next phase can request fresh details.
-        """
-        for _, fval in self:
-            if isinstance(fval, LayeredExposure):
-                fval.reset_revealed()
+        return fields if fields is not None else self._raw_fields()
 
     def __iter__(self) -> Iterator[Tuple[str, Any]]:
         """Yield ``(field_name, field_value)`` for every model field on this context."""
@@ -528,684 +162,198 @@ class Context(BaseModel):
             yield field_name, getattr(self, field_name)
 
     def __str__(self) -> str:
-        """
-        Return a formatted string representation of the context.
-
-        Automatically formats all defined fields:
-        - Exposure fields: displays their summary
-        - Other fields: displays field name and value
-
-        Returns
-        -------
-        str
-            Formatted string representation.
-        """
-        exposure_fields = self.__class__._exposure_fields or {}
-        lines = []
-        separator = "-" * 50
-
-        lines.append(f"{'=' * 50}")
-        lines.append(f"  {self.__class__.__name__}")
-        lines.append(f"{'=' * 50}")
-
-        # Format non-Exposure fields first
+        """Return a formatted, human-readable view of every field."""
+        lines = [f"{'=' * 50}", f"  {self.__class__.__name__}", f"{'=' * 50}"]
         for field_name in self.__class__.model_fields:
-            if field_name not in exposure_fields:
-                value = getattr(self, field_name)
-                if value is not None:
-                    lines.append(f"\n[{field_name}]")
-                    lines.append(f"  {value}")
-
-        # Format Exposure fields
-        for field_name, field_info in exposure_fields.items():
-            field_value = getattr(self, field_name, None)
-            lines.append(f"\n[{field_name}] ({field_info.get('exposure_type', 'unknown')})")
-            if field_value and len(field_value) > 0:
-                for i, summary in enumerate(field_value.summary()):
-                    lines.append(f"  [{i}] {summary}")
-            else:
-                lines.append("  (empty)")
-
+            value = getattr(self, field_name)
+            if value is not None:
+                lines.append(f"\n[{field_name}]")
+                lines.append(f"  {value}")
         lines.append(f"\n{'=' * 50}")
         return "\n".join(lines)
 
     def __repr__(self) -> str:
         """Return a concise representation of the context."""
-        exposure_fields = self.__class__._exposure_fields or {}
         parts = []
-
         for field_name in self.__class__.model_fields:
-            if field_name not in exposure_fields:
-                value = getattr(self, field_name)
-                if value is not None:
-                    parts.append(f"{field_name}={value!r}")
-
-        for field_name in exposure_fields:
-            field_value = getattr(self, field_name, None)
-            count = len(field_value) if field_value else 0
-            parts.append(f"{field_name}=[{count} items]")
-
+            value = getattr(self, field_name)
+            if value is not None:
+                parts.append(f"{field_name}={value!r}")
         return f"{self.__class__.__name__}({', '.join(parts)})"
 
 
 ################################################################################################################
-# Default Implementations
+# Small-loop context (framework-owned)
 ################################################################################################################
 
-class CognitiveTools(EntireExposure[ToolSpec]):
-    """
-    Manages available tools (EntireExposure - no progressive disclosure).
-
-    All tool information is exposed in summary. Use get_all() to access
-    the full ToolSpec list when detailed information is needed.
-    """
-
-    def summary(self) -> List[str]:
-        """
-        Generate summary strings for all tools.
-
-        Returns
-        -------
-        List[str]
-            Summary for each tool in format: "• {name}: {description}".
-        """
-        result = []
-        for tool in self._items:
-            desc = tool.tool_description
-            result.append(f"• {tool.tool_name}: {desc}")
-        return result
-
-
-class CognitiveSkills(LayeredExposure[Skill]):
-    """
-    Manages available skills with progressive disclosure (LayeredExposure).
-
-    Provides skill storage, summary generation (name + description),
-    and detailed content retrieval (full SKILL.md content).
-
-    Methods
-    -------
-    add(item)
-        Add a skill from Skill object, file path, or SKILL.md markdown text.
-    add_from_markdown(markdown_text)
-        Parse and add a skill from SKILL.md format.
-    get_by_name(name)
-        Get a skill by its name.
-    """
-
-    def add(self, item) -> int:
-        """
-        Add a skill from various input types.
-
-        Parameters
-        ----------
-        item : Union[Skill, str]
-            - Skill object: added directly.
-            - str: if the string is an existing file path, loaded via add_from_file();
-              otherwise parsed as SKILL.md markdown text via add_from_markdown().
-
-        Returns
-        -------
-        int
-            Index of the newly added skill.
-
-        Raises
-        ------
-        TypeError
-            If item is not a Skill or str.
-        """
-        if isinstance(item, Skill):
-            return super().add(item)
-        elif isinstance(item, str):
-            from pathlib import Path
-            if Path(item).is_file():
-                return self.add_from_file(item)
-            return self.add_from_markdown(item)
-        else:
-            raise TypeError(
-                f"CognitiveSkills.add() expected Skill or str, "
-                f"got {type(item).__name__}"
-            )
-
-    def add_from_markdown(self, markdown_text: str) -> int:
-        """
-        Parse a SKILL.md file and add it as a skill.
-
-        Parameters
-        ----------
-        markdown_text : str
-            Full content of a SKILL.md file (YAML frontmatter + markdown).
-
-        Returns
-        -------
-        int
-            Index of the newly added skill.
-
-        Raises
-        ------
-        ValueError
-            If the markdown doesn't contain valid YAML frontmatter or required fields.
-        """
-        import yaml
-
-        # Split frontmatter and content
-        parts = markdown_text.split('---')
-        if len(parts) < 3:
-            raise ValueError("Invalid SKILL.md format: missing YAML frontmatter")
-
-        frontmatter_text = parts[1].strip()
-        content = '---'.join(parts[2:]).strip()
-
-        # Parse YAML frontmatter
-        frontmatter = yaml.safe_load(frontmatter_text)
-
-        # Validate required fields
-        if not isinstance(frontmatter, dict):
-            raise ValueError("Frontmatter must be a YAML dictionary")
-        if 'name' not in frontmatter:
-            raise ValueError("Missing required field: name")
-        if 'description' not in frontmatter:
-            raise ValueError("Missing required field: description")
-
-        # Extract fields
-        name = frontmatter.pop('name')
-        description = frontmatter.pop('description')
-        metadata = frontmatter  # Remaining fields go to metadata
-
-        # Create and add skill
-        skill = Skill(
-            name=name,
-            description=description,
-            content=content,
-            metadata=metadata
-        )
-        return self.add(skill)
-
-    def add_from_file(self, file_path: str) -> int:
-        """
-        Load and add a skill from a SKILL.md file.
-
-        Parameters
-        ----------
-        file_path : str
-            Path to the SKILL.md file.
-
-        Returns
-        -------
-        int
-            Index of the newly added skill.
-
-        Raises
-        ------
-        FileNotFoundError
-            If the file doesn't exist.
-        ValueError
-            If the file doesn't contain valid SKILL.md format.
-        """
-        from pathlib import Path
-
-        path = Path(file_path)
-        if not path.exists():
-            raise FileNotFoundError(f"Skill file not found: {file_path}")
-
-        markdown_text = path.read_text(encoding='utf-8')
-        return self.add_from_markdown(markdown_text)
-
-    def load_from_directory(self, directory: str, pattern: str = "**/SKILL.md") -> int:
-        """
-        Load all SKILL.md files from a directory recursively.
-
-        Parameters
-        ----------
-        directory : str
-            Path to the directory containing SKILL.md files.
-        pattern : str, optional
-            Glob pattern for finding skill files (default: "**/SKILL.md").
-
-        Returns
-        -------
-        int
-            Number of skills successfully loaded.
-        """
-        from pathlib import Path
-
-        dir_path = Path(directory)
-        if not dir_path.exists():
-            raise FileNotFoundError(f"Directory not found: {directory}")
-
-        count = 0
-        for skill_file in dir_path.glob(pattern):
-            self.add_from_file(str(skill_file))
-            count += 1
-
-        return count
-
-    def summary(self) -> List[str]:
-        """
-        Generate summary strings for all skills.
-
-        Returns
-        -------
-        List[str]
-            Summary for each skill in format: "/{name} - {description}".
-        """
-        result = []
-        for skill in self._items:
-            result.append(f"{skill.name} - {skill.description}")
-        return result
-
-    def get_details(self, index: int) -> Optional[str]:
-        """
-        Get detailed information for a specific skill (full SKILL.md content).
-
-        Parameters
-        ----------
-        index : int
-            Skill index (0-based).
-
-        Returns
-        -------
-        Optional[str]
-            Full skill details including frontmatter and markdown content.
-            Returns None if index is out of range.
-        """
-        if index < 0 or index >= len(self._items):
-            return None
-
-        skill = self._items[index]
-        lines = [
-            f"Skill: {skill.name}",
-            f"Description: {skill.description}",
-            ""
-        ]
-
-        # Add metadata if present
-        if skill.metadata:
-            lines.append("Metadata:")
-            for key, value in skill.metadata.items():
-                lines.append(f"  {key}: {value}")
-            lines.append("")
-
-        # Add full markdown content
-        lines.append("Instructions:")
-        lines.append("-" * 40)
-        lines.append(skill.content)
-
-        return "\n".join(lines)
-
-
-class CognitiveHistory(LayeredExposure[Step]):
-    """
-    Manages execution history with layered memory architecture.
-
-    Memory layers:
-    - Working memory (most recent N steps): Full details displayed directly
-    - Short-term memory (next N steps): Summary only, details available on request
-    - Long-term memory (older steps):
-        - Pending buffer: brief summaries, waiting for batch compression
-        - Compressed summary: LLM-generated concise summary
-
-    Compression is batched: LLM is only called when the pending buffer reaches
-    compress_threshold, reducing LLM calls by a factor of compress_threshold.
-
-    Parameters
-    ----------
-    working_memory_size : int
-        Number of recent steps to show with full details (default: 5).
-    short_term_size : int
-        Number of steps to show as summary before working memory (default: 20).
-    compress_threshold : int
-        Number of pending long-term steps to accumulate before triggering
-        one batch LLM compression (default: 5).
-    """
-
-    def __init__(
-        self,
-        working_memory_size: int = 5,
-        short_term_size: int = 20,
-        compress_threshold: int = 10,
-    ):
-        super().__init__()
-        self.working_memory_size = working_memory_size
-        self.short_term_size = short_term_size
-        self.compress_threshold = compress_threshold
-
-        # Compression state
-        self.compressed_summary: str = ""
-        self.compressed_count: int = 0
-
-    def add(self, item: Step) -> int:
-        """
-        Add a step to history.
-
-        Parameters
-        ----------
-        item : Step
-            The step to add.
-
-        Returns
-        -------
-        int
-            Index of the newly added step.
-        """
-        index = super().add(item)
-        return index
-
-    async def compress_if_needed(self) -> bool:
-        """
-        Compress old history if needed.
-
-        Call this after adding steps to check and perform compression.
-        Requires LLM to be set via set_llm().
-
-        Returns
-        -------
-        bool
-            True if compression was performed, False otherwise.
-        """
-        if not self.needs_compression():
-            return False
-
-        if self._llm is None:
-            return False
-
-        await self._do_compress()
-        return True
-
-    def needs_compression(self) -> bool:
-        """Check if pending long-term steps have reached the compression threshold."""
-        return len(self._get_steps_to_compress()) >= self.compress_threshold
-
-    def _get_steps_to_compress(self) -> List[Step]:
-        """Get steps that should be compressed."""
-        total = len(self._items)
-        working_start = max(0, total - self.working_memory_size)
-        short_term_start = max(0, working_start - self.short_term_size)
-
-        # Steps to compress: from compressed_count to short_term_start
-        if short_term_start > self.compressed_count:
-            return self._items[self.compressed_count:short_term_start]
-        return []
-
-    async def _do_compress(self) -> None:
-        """Perform compression using LLM."""
-        steps_to_compress = self._get_steps_to_compress()
-        if not steps_to_compress:
-            return
-
-        # Build compression prompt
-        formatted_steps = self._format_steps_for_compression(steps_to_compress)
-
-        system_prompt = (
-            "You are a history compression assistant. Compress the execution history "
-            "into a concise summary while preserving critical information.\n"
-            "- Keep key data (IDs, numbers, names) that may be needed later\n"
-            "- Note any failed attempts\n"
-            "- Integrate with existing summary if present\n"
-            "- Output a single concise paragraph"
-        )
-
-        user_parts = []
-        if self.compressed_summary:
-            user_parts.append(f"Existing Summary: {self.compressed_summary}")
-        user_parts.append(f"New Steps:\n{formatted_steps}")
-        user_parts.append("Compressed summary:")
-        user_prompt = "\n\n".join(user_parts)
-
-        # Call LLM
-        new_summary = await self._llm.agenerate(
-            messages=[
-                Message.from_text(text=system_prompt, role="system"),
-                Message.from_text(text=user_prompt, role="user")
-            ]
-        )
-
-        # Update compression state
-        self.compressed_summary = new_summary
-        self.compressed_count += len(steps_to_compress)
-
-    def _format_steps_for_compression(self, steps: List[Step]) -> str:
-        """Format steps for compression prompt."""
-        lines = []
-        for i, step in enumerate(steps):
-            lines.append(f"{i+1}. {step.content}")
-            if step.result:
-                result_str = str(step.result)[:200]
-                lines.append(f"   Result: {result_str}")
-        return "\n".join(lines)
-
-    def _format_step_detail(self, step: Step, max_result_len: int = 500) -> str:
-        """Format a step with full details for working memory display."""
-        lines = [step.content]
-
-        if step.result is not None:
-            result_str = str(step.result)
-            if len(result_str) > max_result_len:
-                result_str = result_str[:max_result_len] + "..."
-            lines.append(f"   Result: {result_str}")
-
-        return "\n".join(lines)
-
-    def _format_step_summary(self, step: Step) -> str:
-        """Format a step as brief summary for short-term memory display."""
-        return step.content
-
-    def summary(self) -> List[str]:
-        """
-        Generate layered summary.
-
-        Returns
-        -------
-        List[str]
-            Formatted strings for each memory layer:
-            - Long-term compressed: LLM-generated summary (if exists)
-            - Long-term pending: brief summaries of steps awaiting compression
-            - Short-term: step summaries with indices (queryable)
-            - Working: full step details with indices
-        """
-        result = []
-        total = len(self._items)
-
-        # Calculate boundaries
-        working_start = max(0, total - self.working_memory_size)
-        short_term_start = max(0, working_start - self.short_term_size)
-
-        # 1. Long-term memory: compressed summary
-        if self.compressed_summary:
-            result.append(f"[History Summary] {self.compressed_summary}")
-
-        # 2. Long-term memory: pending (uncompressed, awaiting batch compression)
-        if self.compressed_count < short_term_start:
-            result.append(f"[Long-term Pending ({self.compressed_count}-{short_term_start - 1})]")
-            for i in range(self.compressed_count, short_term_start):
-                step = self._items[i]
-                summary = self._format_step_summary(step)
-                result.append(f"  [{i}] {summary}")
-
-        # 3. Short-term memory: summary only, queryable for details
-        if short_term_start < working_start:
-            result.append(f"[Short-term Memory ({short_term_start}-{working_start - 1}), query details via 'details']")
-            for i in range(short_term_start, working_start):
-                step = self._items[i]
-                summary = self._format_step_summary(step)
-                result.append(f"  [{i}] {summary}")
-
-        # 4. Working memory: full details
-        if working_start < total:
-            result.append(f"[Working Memory ({working_start}-{total - 1})]")
-            for i in range(working_start, total):
-                step = self._items[i]
-                detail = self._format_step_detail(step)
-                result.append(f"  [{i}] {detail}")
-
-        return result
-
-    def get_details(self, index: int) -> Optional[str]:
-        """
-        Get detailed information for a specific step.
-
-        Parameters
-        ----------
-        index : int
-            Step index (0-based).
-
-        Returns
-        -------
-        Optional[str]
-            Formatted step details, or None if index is out of range.
-        """
-        if index < 0 or index >= len(self._items):
-            return None
-
-        step = self._items[index]
-        lines = [
-            f"Content: {step.content}",
-        ]
-
-        if step.result is not None:
-            result_str = str(step.result)
-            lines.append(f"Result: {result_str}")
-
-        if step.metadata:
-            lines.append("Metadata:")
-            for key, value in step.metadata.items():
-                val_str = str(value)
-                if len(val_str) > 150:
-                    val_str = val_str[:150] + "..."
-                lines.append(f"  {key}: {val_str}")
-
-        return "\n".join(lines)
-
-
-class CognitiveContext(Context):
-    """
-    Default cognitive context providing all fields needed by CognitiveWorker.
-
-    Combines goal, tools, skills, execution history, and observation into
-    a unified context. Users can extend this class to add custom fields.
+class OTAContext(Context):
+    """Small-loop working context: one run's input + its OTA round trace + tools.
+
+    The **framework-owned** half of the two-loop model. During a run the
+    automa drives it directly through the per-round result accessors
+    (``ota_ctx.obs_result = ...`` / ``.think_result`` / ``.action_result``),
+    :meth:`open_record`, and :meth:`add_tool`. Each round is one
+    :class:`OTARecord` (observe/think/action results, ``extra="allow"`` so a
+    ``before_action`` / ``after_action`` hook can fold custom per-round fields
+    like a ``permission_result`` via :meth:`_current_record`).
+
+    Its ``tools`` are **declared on the class** via :meth:`tool` — the registry
+    lives here, not on the base :class:`Context`, because tools are an OTA-loop
+    concern. The framework no longer merges any tools in; whatever the context
+    declares is what the small loop carries.
 
     Attributes
     ----------
-    goal : str
-        The goal to achieve.
-    tools : CognitiveTools
-        Available tools (EntireExposure — summary only, no per-item details).
-    skills : CognitiveSkills
-        Available skills (LayeredExposure — supports progressive disclosure).
-    cognitive_history : CognitiveHistory
-        History of cognitive steps (LayeredExposure — supports progressive disclosure).
-    observation : Optional[str]
-        Current observation from the last observation phase (hidden from summary).
+    user_input : str
+        The single question / objective this OTA run answers.
+    ota_record : List[OTARecord]
+        The observe-think-act round trace (one :class:`OTARecord` per round).
 
     Examples
     --------
-    >>> ctx = CognitiveContext(goal="Complete task")
-    >>> ctx.tools.add(tool_spec)  # Add tools
-    >>> ctx.skills.add_from_file("skills/travel-planning/SKILL.md")  # Add skills
-    >>> ctx.add_info(Step(content="Step 1", status=True))
+    >>> ota = OTAContext(user_input="Find the bug")
+    >>> ota.open_record()                  # framework brackets each OTA cycle
+    >>> ota.obs_result = "saw a stack trace"
+    >>> ota.think_result = decision
+    >>> ota.action_result = tool_output
     """
-    model_config = ConfigDict(arbitrary_types_allowed=True)
+    _declared_tools: ClassVar[List[ToolSpec]] = []  # Tools declared on this class via ``tool`` (per-subclass, inherits bases).
 
-    goal: str = Field(default="", description="The goal to achieve")
-    tools: CognitiveTools = Field(default_factory=CognitiveTools, description="Available tools")
-    skills: CognitiveSkills = Field(default_factory=CognitiveSkills, description="Available skills")
-    cognitive_history: CognitiveHistory = Field(
-        default_factory=CognitiveHistory,
-        description="History of cognitive steps with layered memory",
-        json_schema_extra={"use_llm": True},
+    user_input: str = Field(default="", description="This run's question / objective")
+    ota_record: List[OTARecord] = Field(
+        default_factory=list,
+        description="Observe-think-act round trace (one OTARecord per round)",
+    )
+    tools: List[ToolSpec] = Field(
+        default_factory=list,
+        description="Action-phase tool affordances carried by this OTA run",
     )
 
-    # observation: saved from _observation worker method (not displayed in summary)
-    observation: Optional[str] = Field(
-        default=None,
-        json_schema_extra={"display": False},
-        description="Current observation from the last observation phase"
-    )
+    ############################################################################
+    # Tool registry (action-phase affordances the OTA loop carries)
+    ############################################################################
+    def __init_subclass__(cls, **kwargs):
+        super().__init_subclass__(**kwargs)
 
-    def summary(self) -> Dict[str, str]:
-        """
-        Generate a summary dictionary with formatted strings for each field.
+        # A subclass inherits its bases' declared tools and can add more via its own ``tool`` calls.
+        seeded: List[ToolSpec] = []
+        seen: set = set()
+        for base in cls.__bases__:
+            for spec in getattr(base, "_declared_tools", []):
+                if spec.tool_name in seen:
+                    continue
+                seen.add(spec.tool_name)
+                seeded.append(spec)
+        cls._declared_tools = seeded
 
-        Returns a dictionary where each key is a field name and each value is
-        a formatted string ready for prompt inclusion. Includes previously
-        disclosed details from all LayeredExposure fields.
+    @classmethod
+    def tool(cls, obj):
+        """Declare a tool on this OTA context — usable as a decorator **and** a call.
 
-        Returns
-        -------
-        Dict[str, str]
-            Field name to formatted summary string mapping:
-            - goal: "Goal: {goal}"
-            - tools: formatted tool list
-            - skills: formatted skill list with indices
-            - cognitive_history: formatted history with indices
-            - disclosed_details: previously disclosed details (if any)
-        """
-        result = super().summary()
+        Every context now declares the tools it carries; nothing is
+        auto-injected by the framework. ``obj`` is normalized by
+        :func:`_to_tool_spec` and appended to this class's
+        :attr:`_declared_tools`. The original ``obj`` is returned so this works
+        transparently as a decorator.
 
-        # Format goal
-        result['goal'] = f"Goal: {self.goal}"
-
-        # Format tools (EntireExposure - no detail queries)
-        if len(self.tools) > 0:
-            lines = ["Available Tools:"]
-            for tool_summary in self.tools.summary():
-                lines.append(f"  {tool_summary}")
-            result['tools'] = "\n".join(lines)
-
-        # Format skills (LayeredExposure - with indices for detail queries)
-        if len(self.skills) > 0:
-            lines = ["Available Skills (request details via details: {field: 'skills', index: N}):"]
-            for i, skill_summary in enumerate(self.skills.summary()):
-                lines.append(f"  [{i}] {skill_summary}")
-            result['skills'] = "\n".join(lines)
-
-        # Format history (layered memory architecture)
-        if len(self.cognitive_history) > 0:
-            total = len(self.cognitive_history)
-            working_start = max(0, total - self.cognitive_history.working_memory_size)
-            short_term_start = max(0, working_start - self.cognitive_history.short_term_size)
-
-            lines = ["Execution History:"]
-            if self.cognitive_history.compressed_summary:
-                lines.append("  (Older history compressed into summary)")
-            if short_term_start < working_start:
-                lines.append(f"  (Steps [{short_term_start}-{working_start-1}]: summary only, query details via details)")
-
-            # history.summary() already returns formatted layered output
-            for summary_line in self.cognitive_history.summary():
-                lines.append(f"  {summary_line}")
-
-            result['cognitive_history'] = "\n".join(lines)
-        else:
-            result['cognitive_history'] = "Execution History: (none)"
-
-        # Format disclosed details from LayeredExposure fields' _revealed dicts
-        disclosed_lines = ["Previously Disclosed Details:"]
-        has_disclosed = False
-        for fname, fval in self:
-            if not isinstance(fval, LayeredExposure):
-                continue
-            for idx, detail in fval._revealed.items():
-                disclosed_lines.append(f"\n[{fname}[{idx}]]:\n{detail}")
-                has_disclosed = True
-        if has_disclosed:
-            result['disclosed_details'] = "\n".join(disclosed_lines)
-
-        return result
-
-    def add_info(self, info: Step) -> int:
-        """
-        Add an execution step to history.
+        * ``@MyOTACtx.tool`` on a standalone ``def f(...)`` — registers ``f``,
+          returns ``f``.
+        * ``MyOTACtx.tool(bash_tool)`` — registers an existing :class:`ToolSpec`.
+        * ``MyOTACtx.tool(obj.method)`` — registers a bound method, keeping
+          ``obj`` as its ``self`` (see :func:`_to_tool_spec`).
 
         Parameters
         ----------
-        info : Step
-            The step to add.
+        obj : Callable | ToolSpec
+            A plain callable, a bound method, or an existing tool spec.
 
         Returns
         -------
-        int
-            Index of the added step.
+        Callable | ToolSpec
+            ``obj`` unchanged, so this may be used as a decorator.
         """
-        return self.cognitive_history.add(info)
+        cls._declared_tools.append(_to_tool_spec(obj))
+        return obj
+
+    def add_tool(self, tool: ToolSpec) -> None:
+        """Register a tool into this run's action-phase toolset."""
+        self.tools.append(tool)
+
+    def model_post_init(self, __context: Any) -> None:
+        # Seed this run's toolset from the class's declared tools before the
+        # base hook fires, so a subclass ``__post_init__`` can rely on it. An
+        # explicit ``tools=`` (e.g. a narrowed delegation set) is preserved.
+        if not self.tools:
+            self.tools = list(type(self)._declared_tools)
+        super().model_post_init(__context)
+
+    ############################################################################
+    # Round lifecycle + per-round result accessors
+    ############################################################################
+    def _current_record(self) -> OTARecord:
+        """The in-flight (latest) round; opens one lazily if none exists yet.
+
+        This is the record the result accessors write to, and the fold-point
+        hooks attach custom fields onto (e.g.
+        ``ota_ctx._current_record().permission_result = verdict``).
+        """
+        if not self.ota_record:
+            self.open_record()
+        return self.ota_record[-1]
+    
+    def open_record(self) -> None:
+        """Explicitly open a new round (append a new record to the trace)."""
+        self.ota_record.append(OTARecord())
+
+    @property
+    def obs_result(self) -> Any:
+        return self.ota_record[-1].observation_result if self.ota_record else None
+
+    @obs_result.setter
+    def obs_result(self, value: Any) -> None:
+        self._current_record().observation_result = value
+
+    @property
+    def think_result(self) -> Any:
+        return self.ota_record[-1].think_result if self.ota_record else None
+
+    @think_result.setter
+    def think_result(self, value: Any) -> None:
+        self._current_record().think_result = value
+
+    @property
+    def action_result(self) -> Any:
+        return self.ota_record[-1].action_result if self.ota_record else None
+
+    @action_result.setter
+    def action_result(self, value: Any) -> None:
+        self._current_record().action_result = value
+
+    ############################################################################
+    # Prompt rendering (overridable)
+    ############################################################################
+    def summary(self, fields: Optional[Dict[str, Any]] = None) -> str:
+        """Render this run's small-loop state for the prompt.
+
+        Default: the user input + the OTA round trace. ``fields`` is the
+        auto-injected raw dict (available to an override that prefers it);
+        subclass and override to customise how the run is summarised.
+
+        Returns
+        -------
+        str
+            A prompt-facing rendering of the input + round trace.
+        """
+        parts: List[str] = [f"User input: {self.user_input}"]
+        for i, record in enumerate(self.ota_record):
+            parts.append(f"[Round {i}]")
+            if record.observation_result is not None:
+                parts.append(f"  Observation: {record.observation_result}")
+            if record.think_result is not None:
+                parts.append(f"  Think: {record.think_result}")
+            if record.action_result is not None:
+                parts.append(f"  Action: {record.action_result}")
+            for key, value in (getattr(record, "model_extra", None) or {}).items():
+                parts.append(f"  {key}: {value}")
+        return "\n".join(parts)
 

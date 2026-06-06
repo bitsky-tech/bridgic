@@ -33,6 +33,7 @@ who never use ``AgentWorker`` pay zero install / import cost.
 from __future__ import annotations
 
 import asyncio
+import logging
 import tempfile
 import time
 from pathlib import Path
@@ -48,12 +49,21 @@ from bridgic.core.automa import GraphAutoma, worker
 from bridgic.core.automa.interaction import InteractionFeedback
 from bridgic.core.utils._console import printer
 
-from bridgic.amphibious._context import CognitiveContext
+from bridgic.amphibious._context import Context, OTAContext
 from bridgic.amphibious._cognitive_worker import _DELEGATE
 from bridgic.amphibious.temp._base_agent import AgentRequest, AgentResult, BaseAgent
 from bridgic.amphibious._mcp_host import MCPHost, MCPToolBinding
-from bridgic.amphibious._type import ActionCall, ActionResult, Step
+from bridgic.amphibious._type import (
+    ActionResult,
+    Step,
+    ThinkResult,
+    StepToolCall,
+    ToolArgument,
+)
 from bridgic.amphibious.builtin_tools import ALL_BUILTIN_TOOLS
+
+
+logger = logging.getLogger(__name__)
 
 
 ################################################################################################################
@@ -76,12 +86,12 @@ class AgentWorker(GraphAutoma):
     verbose : Optional[bool]
         Logging override (``None`` = inherit from ``AmphibiousAutoma``).
     verbose_prompt : Optional[bool]
-        When truthy, log the assembled message before each delegation
-        (parity with ``CognitiveWorker.verbose_prompt``).
+        When truthy, log the assembled message before each delegation.
 
     No ``goal`` / ``tools`` / ``skills`` / ``history`` knobs — those are
-    all carried by the ``context`` the framework passes in, and read
-    straight from it (``thinking()`` reads ``context.goal`` etc.).
+    all carried by the contexts the framework passes in, and read
+    straight from them (``thinking()`` reads ``ota_context.user_input``
+    etc.).
 
     Customize by subclassing and overriding the template methods —
     ``thinking`` (assemble the message), ``observation``,
@@ -94,8 +104,8 @@ class AgentWorker(GraphAutoma):
     ... ))
     >>>
     >>> class StrictReviewer(AgentWorker):
-    ...     async def thinking(self, context):
-    ...         base = await super().thinking(context)
+    ...     async def thinking(self, ota_context, context=None):
+    ...         base = await super().thinking(ota_context, context)
     ...         return base + "\\n\\nBe extremely thorough."
     """
 
@@ -117,8 +127,8 @@ class AgentWorker(GraphAutoma):
         # The BASE — mirrors ``CognitiveWorker._llm``.
         self._agent: BaseAgent = agent
 
-        # Logging runtime — parity with ``CognitiveWorker``'s
-        # ``verbose`` / ``verbose_prompt`` (``None`` = inherit / off).
+        # Logging runtime (``None`` = inherit / off). ``verbose`` mirrors
+        # ``CognitiveWorker.verbose``; ``verbose_prompt`` logs the prompt.
         self._verbose = verbose
         self._verbose_prompt = verbose_prompt
 
@@ -140,23 +150,31 @@ class AgentWorker(GraphAutoma):
     ############################################################################
 
     @worker(is_start=True, is_output=True)
-    async def _think(self, context: CognitiveContext) -> Any:
+    async def _think(
+        self,
+        ota_context: OTAContext,
+        context: Optional[Context] = None,
+    ) -> Any:
         """Think-phase entry (mirrors ``CognitiveWorker._thinking``).
 
-        Reads ``context.observation`` (set by
-        ``AmphibiousAutoma._run_think_agent`` before calling ``arun``).
-        Returns the ``AgentResult`` from the delegation — the parent
-        dispatcher unwraps ``.output`` for the ``yield ThinkAgent``
-        asend value.
+        Both contexts are injected by the dispatcher
+        (``arun(ota_context=…, context=…)``): ``ota_context`` is the
+        small-loop OTA state, ``context`` the free-form knowledge. Returns
+        the ``AgentResult`` from the delegation — the parent dispatcher
+        unwraps ``.output`` for the ``yield ThinkAgent`` asend value.
         """
-        if not isinstance(context, CognitiveContext):
+        if not isinstance(ota_context, OTAContext):
             raise TypeError(
-                f"Expected CognitiveContext, got {type(context).__name__}. "
-                "AgentWorker requires CognitiveContext or its subclass."
+                f"Expected OTAContext, got {type(ota_context).__name__}. "
+                "AgentWorker is driven with the small-loop OTA context."
             )
-        return await self._run_think(context)
+        return await self._run_think(ota_context, context)
 
-    async def _run_think(self, context: CognitiveContext) -> AgentResult:
+    async def _run_think(
+        self,
+        ota_context: OTAContext,
+        context: Optional[Context] = None,
+    ) -> AgentResult:
         """Organize context, then delegate to ``self._agent.run(...)``.
 
         Phases:
@@ -182,7 +200,7 @@ class AgentWorker(GraphAutoma):
         # 1. MCP-ify ctx.tools → boot the host
         ########################
         builtin_names = {t.tool_name for t in ALL_BUILTIN_TOOLS}
-        bindings = self._build_bindings_from_ctx(context, builtin_names)
+        bindings = self._build_bindings_from_ctx(ota_context, builtin_names)
 
         loop = asyncio.get_event_loop()
         agent_done_future: asyncio.Future[str] = loop.create_future()
@@ -209,7 +227,7 @@ class AgentWorker(GraphAutoma):
             with tempfile.TemporaryDirectory(prefix="amphi-delegate-") as tmp:
                 cwd = Path(tmp)
 
-                message = await self.thinking(context)
+                message = await self.thinking(ota_context, context)
                 if self._verbose_prompt:
                     printer.print(
                         f"[AgentWorker] prompt → {type(self._agent).__name__}",
@@ -250,17 +268,17 @@ class AgentWorker(GraphAutoma):
     ############################################################################
 
     def _build_bindings_from_ctx(
-        self, ctx: CognitiveContext, builtin_names: set,
+        self, ctx: OTAContext, builtin_names: set,
     ) -> List[MCPToolBinding]:
         """Derive MCP tool bindings from ``ctx.tools``.
 
         Skips framework built-ins (the CLI has its own); any
         ``expose_tools`` filtering already happened upstream where the
-        parent dispatcher snapshotted ``ctx.tools`` down to the
-        whitelisted set before invoking us.
+        parent dispatcher built the sub-run's OTA context with ``ota.tools``
+        narrowed to the whitelisted set before invoking us.
         """
         bindings: List[MCPToolBinding] = []
-        for tool in ctx.tools.get_all():
+        for tool in ctx.tools:
             name = tool.tool_name
             if name in builtin_names:
                 continue
@@ -292,8 +310,8 @@ class AgentWorker(GraphAutoma):
 
         The framework's consumer runs each decision through
         ``_run_action_call`` (worker ``before_action`` / ``after_action``
-        hooks fire, the call lands in ``ctx.cognitive_history`` + the
-        ``AgentTrace``), then resolves the future with the resulting
+        hooks fire, the call folds onto the OTA context's current round +
+        the ``AgentTrace``), then resolves the future with the resulting
         ``Step`` — which is unwrapped here into the raw tool result the
         external agent expects back.
         """
@@ -303,19 +321,23 @@ class AgentWorker(GraphAutoma):
                 "by AmphibiousAutoma._run_think_agent, which wires the "
                 "channel and runs the consumer that executes each decision."
             )
-        # ``from_tool_args`` (not the ``**kwargs`` constructor): the
-        # external agent may name a tool parameter ``description`` or
-        # ``tool_name``, which would collide with ActionCall's own
-        # signature if splatted as kwargs.
-        action_call = ActionCall.from_tool_args(
-            tool_name,
-            args,
-            description=f"[think_agent] {tool_name}",
+        # Build the decision directly: each external-agent tool call becomes a
+        # one-call ``ThinkResult`` for the framework's consumer to execute.
+        # Args are carried as ``ToolArgument`` name/value pairs, so a tool
+        # parameter named ``description`` / ``tool_name`` poses no collision.
+        decision = ThinkResult(
+            step_content=f"[think_agent] {tool_name}",
+            tool_calls=[StepToolCall(
+                tool=tool_name,
+                tool_arguments=[
+                    ToolArgument(name=k, value=str(v)) for k, v in args.items()
+                ],
+            )],
         )
         result_future: "asyncio.Future" = (
             asyncio.get_event_loop().create_future()
         )
-        await self._decision_channel.put((action_call.decision, result_future))
+        await self._decision_channel.put((decision, result_future))
         step = await result_future
         return _extract_tool_result(step)
 
@@ -341,7 +363,7 @@ class AgentWorker(GraphAutoma):
     # Template methods (override by user to customize the behavior)
     ############################################################################
 
-    async def observation(self, context: CognitiveContext) -> Any:
+    async def observation(self, ota_context: OTAContext, context: Optional[Context] = None) -> Any:
         """Worker-level observation hook. Override to customize.
 
         Same contract as ``CognitiveWorker.observation``: returning
@@ -351,23 +373,29 @@ class AgentWorker(GraphAutoma):
         """
         return _DELEGATE
 
-    async def thinking(self, context: CognitiveContext) -> str:
+    async def thinking(
+        self,
+        ota_context: OTAContext,
+        context: Optional[Context] = None,
+    ) -> str:
         """Assemble the message handed to the external agent.
 
         The AgentWorker analog of ``CognitiveWorker.thinking()`` — it
         produces the prompt. The default layout is goal → parent context
-        (summary + observation) → completion contract; override to
-        restructure or inject domain instructions.
+        (small-loop task summary + big-loop knowledge + observation) →
+        completion contract; override to restructure or inject domain
+        instructions.
 
-        ``context.goal`` is the resolved goal: the dispatcher snapshots
-        ``yield ThinkAgent(goal=...)`` onto it before this method runs
-        (or leaves the original ``ctx.goal`` when the yield omits it).
-        The project tools are NOT enumerated here — the agent discovers
-        them through the MCP server; the contract just needs to tell it
-        they exist and how to finish.
+        Two-loop inputs (both injected by the dispatcher): ``ota_context``
+        is the small-loop OTA context — its ``user_input`` is the resolved
+        goal for this delegation; ``context`` is the free-form big-loop
+        knowledge context (``None`` for a pure-reasoning run). The project
+        tools are NOT enumerated here — the agent discovers them through
+        the MCP server; the contract just needs to tell it they exist and
+        how to finish.
         """
-        goal = getattr(context, "goal", None) or ""
-        context_info = _format_context_info(context, context.observation)
+        goal = ota_context.user_input or ""
+        context_info = _format_context_info(ota_context, context, ota_context.obs_result)
 
         parts = [
             "You are running as the external agent layer of an AmphibiousAutoma.",
@@ -393,8 +421,8 @@ class AgentWorker(GraphAutoma):
 
     async def before_action(
         self,
-        decision_result: Any,
-        context: CognitiveContext,
+        ota_context: OTAContext,
+        context: Optional[Context] = None,
     ) -> Any:
         """Worker-level before_action hook. Override to intercept bridged tool calls.
 
@@ -406,8 +434,8 @@ class AgentWorker(GraphAutoma):
 
     async def after_action(
         self,
-        step_result: Any,
-        ctx: CognitiveContext,
+        ota_context: OTAContext,
+        context: Optional[Context] = None,
     ) -> Any:
         """Worker-level after_action hook. Override for side-effects.
 
@@ -434,9 +462,9 @@ class AgentWorker(GraphAutoma):
         ``AgentResult`` for the delegation (mirrors how
         ``CognitiveWorker.arun`` returns its decision).
         """
-        start_time = time.time()
+        start_time = time.monotonic()
         result = await super().arun(*args, feedback_data=feedback_data, **kwargs)
-        self.spent_time += time.time() - start_time
+        self.spent_time += time.monotonic() - start_time
         return result
 
 
@@ -460,24 +488,44 @@ def _extract_tool_result(step: Optional[Step]) -> Any:
 
 
 def _format_context_info(
-    ctx: CognitiveContext, observation: Optional[str],
+    ota_ctx: OTAContext,
+    big_ctx: Optional[Context],
+    observation: Optional[str],
 ) -> str:
     """A compact context block to inline into the message.
 
-    Mirrors ``CognitiveWorker._build_messages``'s context_info
-    construction — picks up the context summary (excluding tools /
-    skills, advertised separately) plus the observation if set.
+    Two-loop layout mirroring ``CognitiveWorker._build_messages``: the
+    big-loop knowledge (``big_ctx.summary()`` — skills / memory) followed
+    by the small-loop task (``ota_ctx.summary()`` — goal + rounds). Both
+    summaries are free-form ``str`` and already exclude the tool list
+    (tools are advertised over MCP, not inlined). The ``observation`` is
+    appended when set (the OTA summary may already carry it, but the
+    explicit trailing block keeps parity with the prior contract).
     """
+    info_parts: List[str] = []
+
+    if big_ctx is not None:
+        try:
+            knowledge = big_ctx.summary()
+        except Exception:
+            logger.exception(
+                "big_ctx.summary() failed; falling back to empty knowledge block"
+            )
+            knowledge = ""
+        if knowledge:
+            info_parts.append(knowledge)
+
     try:
-        summary = ctx.summary()
+        task = ota_ctx.summary()
     except Exception:
-        summary = {}
-    info_parts = [
-        summary[f]
-        for f in summary
-        if f not in ("tools", "skills") and summary.get(f)
-    ]
-    info = "\n".join(info_parts)
+        logger.exception(
+            "ota_ctx.summary() failed; falling back to empty task block"
+        )
+        task = ""
+    if task:
+        info_parts.append(task)
+
+    info = "\n\n".join(info_parts)
     if observation is not None:
         obs_str = str(observation)
         if info:

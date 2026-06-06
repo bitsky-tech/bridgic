@@ -21,7 +21,6 @@ Python API::
 
 from __future__ import annotations
 
-import os
 import textwrap
 from pathlib import Path
 from typing import Optional
@@ -32,7 +31,8 @@ _AMPHI_FILENAME = "amphi.py"
 _AMPHI_PY = '''\
 {task_comment}from bridgic.amphibious import (
     AmphibiousAutoma,
-    CognitiveContext,
+    OTAContext,
+    Context,
     CognitiveWorker,
     think_unit,
     ActionCall,
@@ -41,28 +41,69 @@ _AMPHI_PY = '''\
     LLMCall,
     ThinkUnit,
     RETURN,
+    # Built-in tool specs — declared on the OTA context via OTAContext.tool
+    # (below); nothing is auto-injected by the framework anymore.
+    bash_tool,
+    read_file_tool,
+    write_file_tool,
+    edit_file_tool,
+    glob_tool,
+    grep_tool,
+    request_human_tool,
 )
+from bridgic.core.model.types import Message, Role
+from typing import Optional
 
 
-# Custom context: extend with your own fields (Pydantic BaseModel under the hood).
-class AmphiContext(CognitiveContext):
+# Small-loop context (framework-owned): this run's user_input + OTA round
+# trace + tools. Subclass to fold custom per-run fields onto the current
+# round from the before_action / after_action hooks (OTARecord is extra="allow").
+class AmphiOTAContext(OTAContext):
     pass
 
 
-class Amphi(AmphibiousAutoma[AmphiContext]):
+# This is how tools are declared now — no auto-injection. The OTA context owns
+# the tools it carries; register the framework builtins this run wants (plus
+# any of your own) via OTAContext.tool. The small loop carries exactly what is
+# declared here.
+for _t in (bash_tool, read_file_tool, write_file_tool, edit_file_tool, glob_tool, grep_tool, request_human_tool):
+    AmphiOTAContext.tool(_t)
+
+
+# Big-loop context (free-form, optional): cross-turn knowledge (skills /
+# memory / conversation). Override summary() to render it into the prompt;
+# tools are an OTA-loop concern and live on the OTA context, not here.
+# Drop in favour of a bare OTAContext for a pure-reasoning agent.
+class AmphiBigContext(Context):
+    pass
+
+
+# Think worker: subclass CognitiveWorker and implement thinking() — assemble a
+# prompt from the contexts and call the model; whatever you return, the
+# framework adapts into a decision. Here: native tool-select over the tools the
+# OTA context declares (the OTA loop owns the toolset).
+class MainThink(CognitiveWorker):
+    async def thinking(self, ota_context, context=None):
+        messages = [Message.from_text(ota_context.summary(), role=Role.USER)]
+        return await self._llm.aselect_tool(
+            messages=messages,
+            tools=[t.to_tool() for t in ota_context.tools],
+        )
+
+
+class Amphi(AmphibiousAutoma[AmphiOTAContext, AmphiBigContext]):
     # Think unit — one observe-think-act cycle driven by an LLM. Invoked
     # from on_agent via ``yield ThinkUnit("main_think")``.
-    main_think = think_unit(
-        CognitiveWorker.inline("Decide and execute the next step."),
-        max_attempts=10,
-    )
+    main_think = think_unit(MainThink(), max_attempts=10)
 
     # Agent mode: LLM-driven cognitive flow. Only ThinkUnit (named
     # think_units) and RETURN are allowed here — deterministic tool /
     # HITL / LLM calls belong in on_workflow or in worker hooks. Yield
     # RETURN(answer) to set the final answer; otherwise the framework
-    # auto-captures from the finishing think step's step_content.
-    async def on_agent(self, ctx: AmphiContext):
+    # auto-captures from the finishing think step's step_content. Every
+    # overridable template method takes the same pair: the per-run small-loop
+    # ``ota_context`` and the optional big-loop ``context``.
+    async def on_agent(self, ota_context: AmphiOTAContext, context: Optional[AmphiBigContext] = None):
         yield ThinkUnit("main_think")
         # TODO
 
@@ -71,7 +112,7 @@ class Amphi(AmphibiousAutoma[AmphiContext]):
     # automatic agent fallback on atomic-Call failure). EnterAgent is the
     # explicit mode-switch primitive: workflow suspends, on_agent runs,
     # workflow resumes when on_agent's generator exhausts.
-    async def on_workflow(self, ctx: AmphiContext):
+    async def on_workflow(self, ota_context: AmphiOTAContext, context: Optional[AmphiBigContext] = None):
         # result = yield ActionCall("tool_name", arg="value")
         # feedback = yield HumanCall(prompt="Confirm?")
         # text = yield LLMCall.chat("Summarize the run")

@@ -9,9 +9,7 @@ Sections are annotated with the module(s) that consume each model.
 
 from __future__ import annotations
 
-import hashlib
-import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Awaitable, Callable, Dict, List, Literal, Optional, Union, TYPE_CHECKING
 
@@ -27,30 +25,39 @@ if TYPE_CHECKING:
 ################################################################################################################
 
 class Step(BaseModel):
-    """A single execution step with content, result, and metadata.
+    """One act-phase result — the tool-execution outcome of a single
+    observe-think-act cycle.
 
-    Used by: _context.py (CognitiveHistory, CognitiveContext.add_info),
-             _amphibious_automa.py (_action, _record_trace_step)
+    Carries only the result payload (an ``ActionResult`` for tool calls, or
+    ``None`` for a content-only finish). The think text is NOT here — it
+    lives on the round's ``think_result`` (``ThinkResult.step_content``).
+
+    Used by: _amphibious_automa.py (_run_action_call act-result envelope)
     """
     model_config = ConfigDict(extra="forbid")
 
-    content: str = ""
     result: Optional[Any] = None
-    metadata: Dict[str, Any] = Field(default_factory=dict)
-    status: Optional[bool] = None  # Optional status flag for backward compatibility
 
 
-class Skill(BaseModel):
-    """A skill definition following SKILL.md format.
+class OTARecord(BaseModel):
+    """One OTA (observe-think-act) round of the small loop.
 
-    Used by: _context.py (CognitiveSkills)
+    INVARIANT: one round == one think-decision == one ``_execute`` == one
+    ``ActionResult`` (the N tool calls of a single decision aggregate into
+    ONE ``action_result``).
+
+    ``model_config`` uses ``extra="allow"`` so that user hooks (e.g.
+    ``before_action``/``after_action``) can fold custom per-round fields
+    onto the current round — for example a ``permission_result`` — without
+    subclassing ``OTARecord``.
+
+    Used by: _context.py (OTAContext.ota_record)
     """
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="allow")
 
-    name: str
-    description: str = ""
-    content: str = ""
-    metadata: Dict[str, Any] = Field(default_factory=dict)
+    observation_result: Optional[Any] = None
+    think_result: Optional[Any] = None
+    action_result: Optional[Any] = None
 
 
 ################################################################################################################
@@ -107,13 +114,17 @@ class StepToolCall(BaseModel):
     )
 
 
-class _ThinkBase(BaseModel):
-    """Shared base for the worker's decision models.
+class ThinkResult(BaseModel):
+    """The worker's assembled decision: what to say + which tools to call.
 
-    Carries ``step_content`` + ``finish``; the concrete subclasses
-    ``ThinkDecision`` / ``TypedThinkDecision`` add an ``output`` field.
+    A flat structure — ``step_content`` (the think text / final answer, or a
+    serialized structured result) plus ``tool_calls``. There is no explicit
+    ``finish`` flag: a decision with NO ``tool_calls`` IS the finish (the
+    agent stops calling tools). Both the ``yield ThinkUnit(...)`` result and
+    the run's ``final_answer`` are this decision's ``step_content``.
 
-    Used by: _cognitive_worker.py (assembled decisions)
+    Used by: _cognitive_worker.py (assembled by _assemble_decision),
+    _amphibious_automa.py (the act phase reads ``tool_calls``)
     """
     model_config = ConfigDict(extra="forbid")
 
@@ -121,46 +132,10 @@ class _ThinkBase(BaseModel):
         default="",
         description="Description of what to do in this step, or your analysis/reasoning"
     )
-    finish: bool = Field(
-        default=False,
-        description="Set True when the sub-task is fully complete and no more steps are needed."
-    )
-
-    @field_validator('step_content', mode='before')
-    @classmethod
-    def coerce_step_content(cls, v: Any) -> str:
-        return "" if v is None else str(v)
-
-
-class ThinkDecision(_ThinkBase):
-    """A worker decision in tool-calling form.
-
-    Assembled by ``CognitiveWorker._assemble_decision`` from the LLM's
-    ``(content, tool_calls)`` reply. The act phase routes on the ``output``
-    annotation — ``List[StepToolCall]`` here selects the tool-call path.
-
-    Used by: _cognitive_worker.py, _amphibious_automa.py (act routing)
-    """
-    output: List[StepToolCall] = Field(
+    tool_calls: List[StepToolCall] = Field(
         default_factory=list,
         description="Tool calls to execute this step.",
     )
-
-
-class TypedThinkDecision(_ThinkBase):
-    """A worker decision in typed-output form.
-
-    Wraps the structured result of an ``output_schema`` worker. The act
-    phase routes a non-``List[StepToolCall]`` ``output`` to the
-    custom-output path.
-
-    Used by: _cognitive_worker.py, _amphibious_automa.py (act routing)
-    """
-    output: Any = Field(
-        default=None,
-        description="The structured result produced by an output_schema worker.",
-    )
-
 
 ################################################################################################################
 # Yield primitives
@@ -178,7 +153,7 @@ class TypedThinkDecision(_ThinkBase):
 #
 #   Mode-switch signals (state-machine transitions):
 #     EnterAgent  — suspend on_workflow, run on_agent in a      (on_workflow only)
-#                   snapshotted context; agent generator
+#                   fresh sub-run OTA context; agent generator
 #                   exhaustion implicitly resumes workflow
 #
 #   Cognitive composition (inside on_agent):
@@ -193,17 +168,6 @@ class TypedThinkDecision(_ThinkBase):
 # Scope validation lives in ``_dispatch_step``; mismatches raise
 # ``RuntimeError`` at dispatch time.
 ################################################################################################################
-
-class WorkflowDecision(BaseModel):
-    """
-    Single-step deterministic decision for workflow mode.
-
-    Used by: _amphibious_automa.py (state-machine driver, ActionCall)
-    """
-    model_config = ConfigDict(extra="forbid")
-
-    step_content: str = ""
-    output: List[StepToolCall] = Field(default_factory=list)
 
 
 @dataclass(init=False)
@@ -230,54 +194,11 @@ class ActionCall:
     tool_name: str
     description: str
     tool_args: Dict[str, Any]
-    decision: WorkflowDecision = field(repr=False)
 
-    def __init__(
-        self,
-        tool_name: str,
-        *,
-        description: str = "",
-        **tool_args: Any,
-    ) -> None:
-        self._populate(tool_name, description, tool_args)
-
-    @classmethod
-    def from_tool_args(
-        cls,
-        tool_name: str,
-        tool_args: Dict[str, Any],
-        *,
-        description: str = "",
-    ) -> "ActionCall":
-        """Build an ``ActionCall`` from an explicit tool-arguments dict.
-
-        Collision-free alternative to the ``**kwargs`` constructor: the
-        tool arguments arrive as a single dict, so the tool may use ANY
-        parameter names — including ``tool_name`` / ``description``,
-        which the ``**kwargs`` form cannot represent.
-        """
-        obj = cls.__new__(cls)
-        obj._populate(tool_name, description, dict(tool_args))
-        return obj
-
-    def _populate(
-        self,
-        tool_name: str,
-        description: str,
-        tool_args: Dict[str, Any],
-    ) -> None:
+    def __init__(self, tool_name: str, *, description: str = "", **tool_args: Any) -> None:
         self.tool_name = tool_name
         self.description = description
         self.tool_args = tool_args
-        self.decision = WorkflowDecision(
-            step_content=description,
-            output=[StepToolCall(
-                tool=tool_name,
-                tool_arguments=[
-                    ToolArgument(name=k, value=str(v)) for k, v in tool_args.items()
-                ],
-            )],
-        )
 
 
 @dataclass
@@ -318,24 +239,21 @@ class EnterAgent:
     workflow resumes at the next instruction after this yield. No stack,
     no recursion — each EnterAgent creates a fresh agent generator.
 
-    The optional fields snapshot context for the agent flow only:
-    ``goal`` overrides ``ctx.goal``; ``history`` overrides
-    ``ctx.cognitive_history`` (``None`` → fresh); ``tools`` / ``skills``
-    are name-filters applied to ``ctx.tools`` / ``ctx.skills``. All
-    overrides restore when the agent exhausts.
+    Delegation is **fresh-instance** (isolation by construction): a new
+    small-loop ``OTAContext`` is built for the sub-flow with ``goal`` as
+    its ``user_input``, carrying the OTA context class's declared tools
+    (``OTAContext.tool``). The sub-run owns its ``rounds``; the parent OTA
+    context is restored (never mutated) when the agent exhausts. The
+    big-loop knowledge context is shared (read-only) across parent and
+    sub-run.
 
-    EnterAgent scopes *what the agent sees*; it does not control *how it
-    thinks*. For a single named cognitive step, use ``ThinkUnit`` from
-    inside ``on_agent``. Requires the class to override ``on_agent``.
+    EnterAgent hands the agent a sub-task (``goal``); it does not control
+    *how it thinks*. For a single named cognitive step, use ``ThinkUnit``
+    from inside ``on_agent``. Requires the class to override ``on_agent``.
 
     >>> yield EnterAgent(goal="Handle the login popup")
-    >>> yield EnterAgent(goal="Pick a flight", tools=["search_flights", "book"])
-    >>> yield EnterAgent(goal="Summarize", history=prior_messages, skills=["summary"])
     """
     goal: str = ""
-    history: Optional[Any] = None       # Optional[CognitiveHistory]; None → fresh CognitiveHistory()
-    tools: Optional[List[str]] = None   # Tool-name filter applied to ctx.tools while in agent mode
-    skills: Optional[List[str]] = None  # Skill-name filter applied to ctx.skills while in agent mode
 
 
 LLMCallProtocol = Literal["chat", "structure_output", "tool_selector"]
@@ -430,8 +348,8 @@ class ThinkUnit:
     associated ``ThinkUnitDescriptor`` through
     ``AmphibiousAutoma._run_think_unit``. Fields beyond ``name`` overlay
     the descriptor's defaults (``None`` = descriptor value). The
-    ``asend()`` result is the worker's typed output (or ``None`` if
-    there is no ``output_schema``).
+    ``asend()`` result is the finishing think's ``step_content`` (a
+    ``str``).
 
     >>> result = yield ThinkUnit("main_think")
     >>> result = yield ThinkUnit("exec_think", until=lambda c: c.done, max_attempts=20)
@@ -439,8 +357,6 @@ class ThinkUnit:
     name: str
     until: Optional[Callable[..., Union[bool, Awaitable[bool]]]] = None
     max_attempts: Optional[int] = None
-    tools: Optional[List[str]] = None
-    skills: Optional[List[str]] = None
 
 
 @dataclass(frozen=True)
@@ -467,11 +383,11 @@ class ThinkAgent:
     ``agent_done(result=...)``, or ``None`` if the agent exited
     without signalling.
 
-    >>> class MyAutoma(AmphibiousAutoma[MyContext]):
+    >>> class MyAutoma(AmphibiousAutoma[OTAContext, Context]):
     ...     write_article = think_agent(
     ...         AgentWorker(ClaudeCodeAgent(allowed_builtin_tools=["Write"])),
     ...     )
-    ...     async def on_agent(self, ctx):
+    ...     async def on_agent(self, ota_ctx):
     ...         result = yield ThinkAgent("write_article", goal="Write the article.")
     ...         yield RETURN(result)
     """
@@ -498,9 +414,9 @@ class RETURN:
     Used by: _amphibious_automa.py (_dispatch_step)
 
     Usage::
-        async def on_agent(self, ctx):
-            yield ThinkUnit("main_think", max_attempts=20)
-            yield RETURN(ctx.cognitive_history.get_all()[-1].content)
+        async def on_agent(self, ota_context, context=None):
+            answer = yield ThinkUnit("main_think", max_attempts=20)
+            yield RETURN(answer)   # ``answer`` is the finishing think's step_content
     """
     value: Any = None
 
@@ -579,7 +495,6 @@ class StepOutputType(str, Enum):
     methods).
     """
     TOOL_CALLS = "tool_calls"
-    STRUCTURED = "structured"
     CONTENT_ONLY = "content_only"
     LLM_CALL = "llm_call"
     THINK_AGENT = "think_agent"

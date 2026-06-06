@@ -1,21 +1,17 @@
-"""Built-in tools for AmphibiousAutoma.
+"""Built-in tools for Amphibious agents.
 
-These are pre-packaged ``FunctionToolSpec`` instances auto-injected by
-``AmphibiousAutoma.arun()`` so the LLM can use them in any mode
-(AGENT, WORKFLOW fallback, AMPHIFLOW) with no extra wiring.
+Pre-packaged ``FunctionToolSpec`` instances the framework ships for
+convenience. Nothing is auto-injected — an OTA context carries a built-in only
+if you declare it on the context class via ``OTAContext.tool`` (decorator or
+call), e.g. ``MyOTAContext.tool(bash_tool)``. Import ``ALL_BUILTIN_TOOLS`` to
+declare the whole set at once.
 
 Categories
 ----------
-* ``human``       — request_human (human-in-the-loop)
+* ``human``       — request_human (HITL; resolves the running agent's
+                    ``@human_channel`` registry at call time)
 * ``shell``       — bash (shell command execution)
 * ``filesystem``  — read_file / write_file / edit_file / glob / grep
-
-Selective injection
--------------------
-Subclasses of ``AmphibiousAutoma`` can opt out of specific tools by
-declaring a class-level ``builtin_tools`` attribute (a ``frozenset`` of
-tool names to keep), or by passing ``arun(builtin_tools=[...])`` for
-runtime control. ``None`` (the default) means "inject all".
 """
 
 from ._agent_state import current_agent
@@ -29,10 +25,9 @@ from .filesystem import (
     grep_tool,
 )
 
-# All built-in tools, in display order. ``AmphibiousAutoma`` reads this
-# tuple to decide what to auto-inject (subject to the ``builtin_tools``
-# filter). Adding a new built-in tool means importing its ToolSpec here
-# and appending to this tuple — no other framework wiring needed.
+# All built-in tool specs, in display order. Import this to declare the whole
+# set on an OTA context at once (e.g. ``for t in ALL_BUILTIN_TOOLS: MyOTACtx.tool(t)``).
+# Adding a new built-in means importing its ToolSpec here and appending it.
 ALL_BUILTIN_TOOLS = (
     request_human_tool,
     bash_tool,
