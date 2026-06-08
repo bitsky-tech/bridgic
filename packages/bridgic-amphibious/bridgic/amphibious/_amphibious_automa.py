@@ -1597,7 +1597,7 @@ class AmphibiousAutoma(GraphAutoma, Generic[OTAContextT, ContextT]):
         # ``self.ota_ctx`` is still the parent here — the scope swap to
         # ``sub_ctx`` happens below via ``_ota_scope``.
         parent_ota = self.ota_ctx
-        sub_goal: str = item.goal if item.goal is not None else parent_ota.user_input
+        sub_goal: Any = item.goal if item.goal is not None else parent_ota.user_input
         sub_tools = self._filter_tools(parent_ota.tools, expose_tools_filter)
         sub_ctx = self._ota_context_class(user_input=sub_goal, tools=sub_tools)
 
@@ -2701,7 +2701,7 @@ class AmphibiousAutoma(GraphAutoma, Generic[OTAContextT, ContextT]):
     async def arun(
         self,
         *,
-        user_input: str = "",
+        user_input: Any = "",
         llm: Optional[BaseLlm] = None,
         context: Optional[ContextT] = None,
         ota_context: Optional[OTAContextT] = None,
@@ -2833,7 +2833,7 @@ class AmphibiousAutoma(GraphAutoma, Generic[OTAContextT, ContextT]):
             # Trace lifecycle — begin.
             if self._agent_trace is not None:
                 self._agent_trace.begin_run(
-                    goal=ota_ctx.user_input or "",
+                    goal=str(ota_ctx.user_input or ""),
                     agent_class=f"{type(self).__module__}.{type(self).__qualname__}",
                     agent_name=self.name,
                     context_class=(

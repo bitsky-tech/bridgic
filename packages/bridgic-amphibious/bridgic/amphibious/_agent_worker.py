@@ -394,7 +394,7 @@ class AgentWorker(GraphAutoma):
         the MCP server; the contract just needs to tell it they exist and
         how to finish.
         """
-        goal = ota_context.user_input or ""
+        goal = str(ota_context.user_input or "")
         context_info = _format_context_info(ota_context, context, ota_context.obs_result)
 
         parts = [

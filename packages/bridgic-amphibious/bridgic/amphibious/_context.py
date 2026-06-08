@@ -204,8 +204,10 @@ class OTAContext(Context):
 
     Attributes
     ----------
-    user_input : str
-        The single question / objective this OTA run answers.
+    user_input : Any
+        This run's question / objective. Any payload — a plain ``str``, or a
+        structured input the agent's own hooks (e.g. ``observation``) parse.
+        Framework built-ins only ``str()`` it for default rendering / tracing.
     ota_record : List[OTARecord]
         The observe-think-act round trace (one :class:`OTARecord` per round).
 
@@ -219,7 +221,13 @@ class OTAContext(Context):
     """
     _declared_tools: ClassVar[List[ToolSpec]] = []  # Tools declared on this class via ``tool`` (per-subclass, inherits bases).
 
-    user_input: str = Field(default="", description="This run's question / objective")
+    user_input: Any = Field(
+        default="",
+        description=(
+            "This run's question / objective. Any payload — the agent's hooks "
+            "interpret it; framework built-ins only ``str()`` it (default render)."
+        ),
+    )
     ota_record: List[OTARecord] = Field(
         default_factory=list,
         description="Observe-think-act round trace (one OTARecord per round)",
