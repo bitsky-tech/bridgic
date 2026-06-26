@@ -326,7 +326,7 @@ publish = [{ name = "tomli", specifier = ">=2.0.0" }]
 
 [[package]]
 name = "bridgic-amphibious"
-version = "0.1.2.dev21"
+version = "0.1.2.dev22"
 source = { editable = "packages/bridgic-amphibious" }
 dependencies = [
     { name = "bridgic-core" },
