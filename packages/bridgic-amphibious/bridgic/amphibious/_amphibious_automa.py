@@ -42,6 +42,7 @@ from bridgic.amphibious._type import (
     StepToolCall,
     ToolArgument,
     ThinkResult,
+    generate_tool_call_id,
     ActionCall,
     HumanCall,
     EnterAgent,
@@ -422,7 +423,7 @@ def _decision_to_matched_calls(
 
     # 1. StepToolCall -> ToolCall (with type-coerced arguments).
     tool_calls: List[ToolCall] = []
-    for idx, call in enumerate(calls):
+    for call in calls:
         tool_spec = next((s for s in tools if s.tool_name == call.tool), None)
         param_types: Dict[str, str] = {}
         if tool_spec and tool_spec.tool_parameters:
@@ -445,7 +446,8 @@ def _decision_to_matched_calls(
             elif param_type == "boolean":
                 value = value.lower() in ("true", "1", "yes")
             arguments[arg.name] = value
-        tool_calls.append(ToolCall(id=f"call_{idx}", name=call.tool, arguments=arguments))
+        call_id = getattr(call, "call_id", None) or generate_tool_call_id()
+        tool_calls.append(ToolCall(id=call_id, name=call.tool, arguments=arguments))
 
     # 2. Match each ToolCall to its ToolSpec by name.
     matched: List[Tuple[ToolCall, ToolSpec]] = []
@@ -2020,6 +2022,7 @@ class AmphibiousAutoma(GraphAutoma, Generic[OTAContextT, ContextT]):
                 output_type = StepOutputType.TOOL_CALLS
                 for r in result_obj.results:
                     tool_calls.append({
+                        "tool_id": r.tool_id,
                         "tool_name": r.tool_name,
                         "tool_arguments": r.tool_arguments,
                         "tool_result": r.tool_result,

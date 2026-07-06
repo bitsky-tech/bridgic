@@ -93,7 +93,7 @@ class CognitiveWorker(GraphAutoma):
     ############################################################################
 
     @worker(is_start=True, is_output=True)
-    async def _thinking(self, ota_context: OTAContext, context: Optional[Context] = None) -> Any:
+    async def _thinking(self, ota_context: Optional[OTAContext] = None, context: Optional[Context] = None) -> Any:
         """Framework entry for the thinking phase — orchestrates :meth:`thinking`.
 
         Both contexts are injected by the dispatcher
@@ -114,6 +114,8 @@ class CognitiveWorker(GraphAutoma):
                 "CognitiveWorker has no LLM set — pass llm= when constructing "
                 "the worker."
             )
+        if ota_context is None:
+            ota_context = OTAContext()
 
         result = await self.thinking(ota_context, context)
         return self._assemble_decision(result)
@@ -173,6 +175,7 @@ class CognitiveWorker(GraphAutoma):
         tool_calls = tool_calls or []
         tool_calls = [
             StepToolCall(
+                call_id=self._tool_call_id(call),
                 tool=self._tool_call_name(call),
                 tool_arguments=[
                     ToolArgument(name=str(name), value=value)
@@ -186,6 +189,22 @@ class CognitiveWorker(GraphAutoma):
     ############################################################################
     # Internal helpers
     ############################################################################
+
+    @staticmethod
+    def _tool_call_id(call: Any) -> Optional[str]:
+        """Read a tool call id from common provider/adapter shapes."""
+        if isinstance(call, dict):
+            for key in ("id", "call_id", "tool_call_id"):
+                value = call.get(key)
+                if value:
+                    return str(value)
+            return None
+
+        for attr in ("id", "call_id", "tool_call_id"):
+            value = getattr(call, attr, None)
+            if value:
+                return str(value)
+        return None
 
     @staticmethod
     def _tool_call_name(call: Any) -> str:

@@ -9,6 +9,7 @@ Sections are annotated with the module(s) that consume each model.
 
 from __future__ import annotations
 
+import uuid
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Awaitable, Callable, Dict, List, Literal, Optional, Union, TYPE_CHECKING
@@ -96,6 +97,11 @@ class ToolArgument(BaseModel):
         return str(v) if not isinstance(v, str) else v
 
 
+def generate_tool_call_id() -> str:
+    """Generate a local id for tool calls that arrive without provider ids."""
+    return f"call_{uuid.uuid4().hex[:25]}"
+
+
 class StepToolCall(BaseModel):
     """A single tool call specification.
 
@@ -108,10 +114,19 @@ class StepToolCall(BaseModel):
             "additionalProperties": False,
         }
     )
+    call_id: str = Field(
+        default_factory=generate_tool_call_id,
+        description="Provider tool-call id, or a framework-generated local id.",
+    )
     tool: str = Field(description="Name of the tool to call")
     tool_arguments: List[ToolArgument] = Field(
         description="Arguments as list of name-value pairs, e.g., [{name: 'city', value: 'Beijing'}]"
     )
+
+    @field_validator("call_id", mode="before")
+    @classmethod
+    def ensure_call_id(cls, v: Any) -> str:
+        return str(v) if v not in (None, "") else generate_tool_call_id()
 
 
 class ThinkResult(BaseModel):
@@ -509,6 +524,7 @@ class RecordedToolCall(BaseModel):
     """
     model_config = ConfigDict(extra="forbid")
 
+    tool_id: Optional[str] = None
     tool_name: str
     tool_arguments: Dict[str, Any]
     tool_result: Any
@@ -533,4 +549,3 @@ class TraceStep(BaseModel):
     structured_output_class: Optional[str] = None
     llm_call_protocol: Optional[str] = None  # set when output_type == LLM_CALL
     think_agent_name: Optional[str] = None   # set when output_type == THINK_AGENT
-

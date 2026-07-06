@@ -56,6 +56,7 @@ from bridgic.core.model.types import (
     Message,
     Response,
     Role,
+    ToolCall,
 )
 
 from .tools import get_travel_planning_tools
@@ -74,6 +75,11 @@ def _txt(text: str) -> Response:
 def _tool_call(tool: str, **arguments) -> dict:
     """A plain-dict tool call as ``aselect_tool`` would return."""
     return {"name": tool, "arguments": arguments}
+
+
+def _tool_call_with_id(call_id: str, tool: str, **arguments) -> dict:
+    """A plain-dict tool call carrying a provider/tool-selector id."""
+    return {"id": call_id, "name": tool, "arguments": arguments}
 
 
 def _search_flights_step() -> Tuple[List[dict], str]:
@@ -231,6 +237,91 @@ class TestOTACycle:
         assert rounds[1].action_result.results[0].tool_name == "search_hotels"
 
     @pytest.mark.asyncio
+    async def test_tool_call_id_preserves_provider_id(self):
+        """Provider tool-call ids survive normalization into action results."""
+
+        class TravelOTA(OTAContext):
+            pass
+
+        for _spec in get_travel_planning_tools():
+            TravelOTA.tool(_spec)
+
+        llm = SequencedLLM([
+            (
+                [
+                    _tool_call_with_id(
+                        "provider_search_123",
+                        "search_flights",
+                        origin="Beijing",
+                        destination="Tokyo",
+                        date="2025-06-01",
+                    )
+                ],
+                "Search flights",
+            )
+        ])
+
+        class Agent(AmphibiousAutoma[TravelOTA, Context]):
+            step = think_unit(ToolSelectWorker(), max_attempts=1)
+
+            async def on_agent(self, ota_context, context=None):
+                yield ThinkUnit("step")
+
+        agent = Agent()
+        await agent.arun(llm=llm, context=_make_ctx(), **_SEED)
+
+        first_round = agent._current_ota_context.ota_record[0]
+        assert first_round.think_result.tool_calls[0].call_id == "provider_search_123"
+        assert first_round.action_result.results[0].tool_id == "provider_search_123"
+
+    @pytest.mark.asyncio
+    async def test_missing_tool_call_id_gets_unique_framework_id(self):
+        """Fallback ids are generated per tool call, not reset to call_0 each round."""
+
+        class TravelOTA(OTAContext):
+            pass
+
+        for _spec in get_travel_planning_tools():
+            TravelOTA.tool(_spec)
+
+        llm = SequencedLLM([_search_flights_step()])
+
+        class Agent(AmphibiousAutoma[TravelOTA, Context]):
+            step = think_unit(ToolSelectWorker(), max_attempts=2)
+
+            async def on_agent(self, ota_context, context=None):
+                yield ThinkUnit("step")
+
+        agent = Agent()
+        await agent.arun(llm=llm, context=_make_ctx(), **_SEED)
+
+        rounds = list(agent._current_ota_context.ota_record)
+        tool_ids = [r.action_result.results[0].tool_id for r in rounds]
+        assert len(tool_ids) == 2
+        assert len(set(tool_ids)) == 2
+        assert all(tool_id.startswith("call_") for tool_id in tool_ids)
+
+    @pytest.mark.asyncio
+    async def test_object_tool_call_id_is_normalized(self):
+        """Core ``ToolCall.id`` is also copied into ``StepToolCall.call_id``."""
+
+        worker = ToolSelectWorker()
+        decision = worker._assemble_decision(
+            (
+                [
+                    ToolCall(
+                        id="core_call_456",
+                        name="search_flights",
+                        arguments={"origin": "Beijing"},
+                    )
+                ],
+                "Search flights",
+            )
+        )
+
+        assert decision.tool_calls[0].call_id == "core_call_456"
+
+    @pytest.mark.asyncio
     async def test_arun_auto_creates_default_big_context(self):
         """``arun`` with no ``context=`` builds the default big context; the
         fresh per-run OTA carries ``user_input`` and the class-declared tools."""
@@ -257,6 +348,153 @@ class TestOTACycle:
         assert observed_input == ["Test goal"]
         assert isinstance(agent._current_context, Context)
         assert len(agent._current_ota_context.ota_record) == 1
+
+
+################################################################################
+# Standalone ThinkUnit — descriptor-level arun outside AmphibiousAutoma.
+################################################################################
+
+
+class TestStandaloneThinkUnit:
+    """``think_unit(...).arun`` runs a lightweight CognitiveWorker OTA loop."""
+
+    @pytest.mark.asyncio
+    async def test_standalone_arun_executes_tools_until_finish(self):
+        """Standalone arun executes tool calls and returns the finishing text."""
+
+        class TravelOTA(OTAContext):
+            pass
+
+        for _spec in get_travel_planning_tools():
+            TravelOTA.tool(_spec)
+
+        llm = SequencedLLM([
+            _search_flights_step(),
+            _finish_step("standalone done"),
+        ])
+        ota_ctx = TravelOTA(user_input="Plan Beijing to Tokyo")
+        unit = think_unit(ToolSelectWorker(), max_attempts=3)
+
+        result = await unit.arun(
+            llm=llm,
+            ota_context=ota_ctx,
+            context=_make_ctx(),
+        )
+
+        assert result == "standalone done"
+        assert llm.call_count == 2
+        assert len(ota_ctx.ota_record) == 2
+        first_action = ota_ctx.ota_record[0].action_result
+        assert first_action.results[0].tool_name == "search_flights"
+        assert first_action.results[0].tool_id == (
+            ota_ctx.ota_record[0].think_result.tool_calls[0].call_id
+        )
+        assert first_action.results[0].tool_id.startswith("call_")
+        assert first_action.results[0].success is True
+        assert ota_ctx.ota_record[1].action_result is None
+
+    @pytest.mark.asyncio
+    async def test_standalone_arun_preserves_tool_call_id(self):
+        """Standalone arun uses the same normalized tool-call id as framework dispatch."""
+
+        class TravelOTA(OTAContext):
+            pass
+
+        for _spec in get_travel_planning_tools():
+            TravelOTA.tool(_spec)
+
+        llm = SequencedLLM([
+            (
+                [
+                    _tool_call_with_id(
+                        "standalone_provider_123",
+                        "search_flights",
+                        origin="Beijing",
+                        destination="Tokyo",
+                        date="2025-06-01",
+                    )
+                ],
+                "Search flights",
+            )
+        ])
+        ota_ctx = TravelOTA(user_input="Plan Beijing to Tokyo")
+        unit = think_unit(ToolSelectWorker(), max_attempts=1)
+
+        await unit.arun(
+            llm=llm,
+            ota_context=ota_ctx,
+            context=_make_ctx(),
+        )
+
+        first_round = ota_ctx.ota_record[0]
+        assert first_round.think_result.tool_calls[0].call_id == (
+            "standalone_provider_123"
+        )
+        assert first_round.action_result.results[0].tool_id == (
+            "standalone_provider_123"
+        )
+
+    @pytest.mark.asyncio
+    async def test_standalone_arun_runs_worker_action_hooks(self):
+        """Standalone arun follows worker before_action → action →
+        after_action, with descriptor-level until controlling the loop."""
+
+        class TravelOTA(OTAContext):
+            after_count: int = 0
+            after_seen_tool: str = ""
+
+        for _spec in get_travel_planning_tools():
+            TravelOTA.tool(_spec)
+
+        class HookedWorker(ToolSelectWorker):
+            async def before_action(self, ota_context, context=None):
+                decision = ota_context.think_result
+                decision.tool_calls = decision.tool_calls[:1]
+                return decision
+
+            async def after_action(self, ota_context, context=None):
+                ota_context.after_count += 1
+                result = ota_context.action_result
+                ota_context.after_seen_tool = result.results[0].tool_name
+
+        llm = SequencedLLM([
+            (
+                [
+                    _tool_call(
+                        "search_flights",
+                        origin="Beijing",
+                        destination="Tokyo",
+                        date="2025-06-01",
+                    ),
+                    _tool_call(
+                        "search_hotels",
+                        city="Tokyo",
+                        check_in="2025-06-01",
+                        check_out="2025-06-05",
+                    ),
+                ],
+                "Search both",
+            )
+        ])
+        ota_ctx = TravelOTA(user_input="Plan one step")
+
+        unit = think_unit(
+            HookedWorker(),
+            max_attempts=5,
+            until=lambda ctx: ctx.after_count == 1,
+        )
+        result = await unit.arun(
+            llm=llm,
+            ota_context=ota_ctx,
+            context=_make_ctx(),
+        )
+
+        assert result == "Search both"
+        assert llm.call_count == 1
+        assert ota_ctx.after_count == 1
+        assert ota_ctx.after_seen_tool == "search_flights"
+        action_result = ota_ctx.ota_record[0].action_result
+        assert [r.tool_name for r in action_result.results] == ["search_flights"]
 
 
 ################################################################################
@@ -875,6 +1113,8 @@ class TestAgentTrace:
         assert step.observation_hash is not None
         assert len(step.tool_calls) == 1
         tc: RecordedToolCall = step.tool_calls[0]
+        assert tc.tool_id is not None
+        assert tc.tool_id.startswith("call_")
         assert tc.tool_name == "search_flights"
         assert tc.success is True
         assert tc.error is None
@@ -902,6 +1142,7 @@ class TestAgentTrace:
             assert "observation" in step
             assert "finished" not in step
             assert len(step["tool_calls"]) == 1
+            assert step["tool_calls"][0]["tool_id"].startswith("call_")
             assert step["tool_calls"][0]["tool_name"] == "search_flights"
             assert step["tool_calls"][0]["success"] is True
             assert step["tool_calls"][0]["error"] is None
