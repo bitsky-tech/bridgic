@@ -1,23 +1,26 @@
 [project]
 name = "bridgic-amphibious"
-version = "0.1.1"
+version = "0.2.0"
 classifiers = [
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
 ]
-description = "Bridgic-cognitive has implemented an amphibious execution model: the same system can operate in both LLM-driven agent mode (on_agent()) and deterministic code-driven workflow mode (on_workflow()), and can switch between the two modes autonomously when necessary."
+description = "Dual-mode agent orchestration for LLM-driven agents and deterministic workflows."
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.10,<3.14"
 authors = [
     { name = "Tielei Zhang", email = "zhangtl04@gmail.com" },
 ]
 dependencies = [
     "bridgic-core>=0.3.0",
+    "pydantic>=2.11.0,<2.12.0",
     "pyyaml>=6.0.3",
+    "fastmcp>=2.13.0",
+    "mcp>=1.24.0",
+    "uvicorn>=0.30.0",
 ]
 
 [project.scripts]

@@ -1,89 +1,101 @@
-"""
-Amphibious Agent Framework — Dual-Mode Agent Orchestration.
+"""Amphibious Agent Framework — dual-mode (LLM-driven + deterministic)
+agent orchestration with automatic fallback between the two.
 
-A framework for building agents that can operate in both LLM-driven (agent)
-and deterministic (workflow) modes, with automatic fallback between them.
+Layers:
 
-Architecture Layers
--------------------
+* **Context** — ``Context`` (free-form, big-loop) + ``OTAContext`` (small-loop,
+  framework-owned: the run's ``user_input`` + OTA round trace + tools). The
+  OTA context declares the tools it carries via ``OTAContext.tool`` (decorator
+  or call); nothing is auto-injected.
+* **Worker** — ``CognitiveWorker``: one in-process observe-think-act cycle,
+  anchored on a ``BaseLlm``; subclass and implement its ``thinking`` template
+  method. Symmetric peer: ``AgentWorker``, one external-agent delegation,
+  anchored on a ``BaseAgent`` (the external coding-agent abstraction;
+  ``ClaudeCodeAgent`` and ``CodexAgent`` are the shipped drivers).
+* **Orchestration** — ``AmphibiousAutoma`` + yield primitives (``ThinkUnit``,
+  ``ThinkAgent``, ``EnterAgent``, ``ActionCall``, ``HumanCall``, ``LLMCall``,
+  ``RETURN``) + ``think_unit`` / ``think_agent`` descriptors.
 
-**Abstraction Layer (Data Exposure):**
-- Exposure: Base abstraction for field-level data management
-- LayeredExposure: Supports progressive disclosure (summary + per-item details)
-- EntireExposure: Summary only, no per-item detail queries
-- Context: Base class for agent context with automatic Exposure field detection
-
-**Implementation Layer — Context:**
-- Step: A single execution step with content, result, and metadata
-- Skill: A skill definition following SKILL.md format
-- CognitiveTools: Tool management (EntireExposure)
-- CognitiveSkills: Skill management with progressive disclosure (LayeredExposure)
-- CognitiveHistory: Execution history with layered memory (LayeredExposure)
-- CognitiveContext: The default cognitive context combining all above
-
-**Implementation Layer — Worker (Think Unit):**
-- CognitiveWorker: Pure thinking unit of one observe-think-act cycle.
-  Cognitive policies (acquiring, rehearsal, reflection) enable multi-round
-  thinking within a single call.
-
-**Orchestration Layer:**
-- AmphibiousAutoma: Dual-mode agent engine (agent mode + workflow mode)
-  - think_unit: Descriptor for declaring think units (used in on_agent)
-  - ActionCall, HumanCall, AgentCall: Workflow yield types (used in on_workflow)
-- ErrorStrategy: Error handling strategies (RAISE, IGNORE, RETRY)
-
-Example
--------
->>> class MyAgent(AmphibiousAutoma[CognitiveContext]):
-...     main_think = think_unit(CognitiveWorker.inline("Execute step"), max_attempts=20)
-...     async def on_agent(self, ctx):
-...         await self.main_think
+>>> class MyThink(CognitiveWorker):
+...     async def thinking(self, ota_context, context=None):
+...         return await self._llm.aselect_tool(messages=[...], tools=[...])
+>>> class MyAgent(AmphibiousAutoma[OTAContext, Context]):
+...     main_think = think_unit(MyThink(), max_attempts=20)
+...     async def on_agent(self, ota_ctx):
+...         yield ThinkUnit("main_think")
 ...
->>> ctx = await MyAgent(llm=llm).arun(goal="Complete the task")
+>>> answer = await MyAgent().arun(llm=llm, user_input="Complete the task")
 """
 from ._context import (
-    # Abstraction layer
-    Exposure,
-    LayeredExposure,
-    EntireExposure,
+    # Base (free-form big-loop) + small-loop OTA context
     Context,
-    # Implementation layer - Context components
-    Step,
-    Skill,
-    CognitiveTools,
-    CognitiveSkills,
-    CognitiveHistory,
-    CognitiveContext,
+    OTAContext,
 )
 from ._cognitive_worker import (
-    # Worker
+    # In-process worker (LLM-driven OTC cycle)
     CognitiveWorker,
     # Sentinel
     _DELEGATE,
+)
+from ._agent_worker import (
+    # External-agent worker (delegates one cycle to an external agent)
+    AgentWorker,
+)
+from .temp._base_agent import (
+    # External coding-agent abstraction (the BASE of AgentWorker)
+    BaseAgent,
+    # Concrete CLI drivers shipped with the framework
+    ClaudeCodeAgent,
+    CodexAgent,
+    # Request / result value objects for BaseAgent.run
+    AgentRequest,
+    AgentResult,
 )
 from ._amphibious_automa import (
     # Orchestration
     AmphibiousAutoma,
     AgentTrace,
-    # Think unit descriptor
+    # Human channel decorator
+    human_channel,
+)
+from ._think_unit import (
+    # Think unit (in-process CognitiveWorker)
     think_unit,
     ThinkUnitDescriptor,
 )
+from ._think_agent import (
+    # Think agent (external-agent delegation)
+    think_agent,
+    ThinkAgentDescriptor,
+)
 from .scaffold import create_project
-from .builtin_tools import request_human_tool
+from .builtin_tools import (
+    request_human_tool,
+    bash_tool,
+    read_file_tool,
+    write_file_tool,
+    edit_file_tool,
+    glob_tool,
+    grep_tool,
+)
 
 from ._type import (
+    # Context-layer models
+    Step,
     # Worker data structures
     RunMode,
-    DetailRequest,
     ToolArgument,
     StepToolCall,
-    # Workflow mode yield types
-    HUMAN_INPUT_EVENT_TYPE,
-    WorkflowDecision,
+    # Small-loop round record (one OTA round)
+    OTARecord,
+    # Yield primitives (scope rules — see AmphibiousAutoma docstring)
     ActionCall,
     HumanCall,
-    AgentCall,
+    LLMCall,
+    EnterAgent,
+    ThinkUnit,
+    ThinkAgent,
+    RETURN,
     # Action result data structures
     ErrorStrategy,
     ActionResult,
@@ -96,41 +108,44 @@ from ._type import (
 )
 
 __all__ = [
-    # Abstraction layer
-    "Exposure",
-    "LayeredExposure",
-    "EntireExposure",
+    # Context layer
     "Context",
-
-    # Implementation layer - Context components
+    "OTAContext",
     "Step",
-    "Skill",
-    "CognitiveTools",
-    "CognitiveSkills",
-    "CognitiveHistory",
-    "CognitiveContext",
+    "OTARecord",
 
     # Implementation layer - Worker
     "CognitiveWorker",
     "_DELEGATE",
+    "AgentWorker",
+    "BaseAgent",
+    "ClaudeCodeAgent",
+    "CodexAgent",
+    "AgentRequest",
+    "AgentResult",
 
     # Orchestration layer
     "AmphibiousAutoma",
     "AgentTrace",
     "think_unit",
     "ThinkUnitDescriptor",
+    "think_agent",
+    "ThinkAgentDescriptor",
 
     # Worker data structures
     "RunMode",
-    "DetailRequest",
     "ToolArgument",
     "StepToolCall",
-    # Workflow mode yield types
-    "HUMAN_INPUT_EVENT_TYPE",
-    "WorkflowDecision",
+    # Yield primitives
     "ActionCall",
     "HumanCall",
-    "AgentCall",
+    "LLMCall",
+    "EnterAgent",
+    "ThinkUnit",
+    "ThinkAgent",
+    "RETURN",
+    # Human channel decorator
+    "human_channel",
     # Action result data structures
     "ErrorStrategy",
     "ActionResult",
@@ -142,6 +157,12 @@ __all__ = [
     "StepOutputType",
     # Built-in tools
     "request_human_tool",
+    "bash_tool",
+    "read_file_tool",
+    "write_file_tool",
+    "edit_file_tool",
+    "glob_tool",
+    "grep_tool",
     # Scaffolding
     "create_project",
 ]

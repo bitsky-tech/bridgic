@@ -4,7 +4,7 @@ Mock tools for travel planning testing.
 These tools are simple and reliable, designed to test the cognitive worker architecture.
 They return mock data that simulates real travel planning operations.
 """
-from typing import List, Dict, Any, Optional
+from typing import List, Optional
 from bridgic.core.agentic.tool_specs import FunctionToolSpec
 
 
@@ -78,95 +78,6 @@ async def search_hotels(
     )
 
 
-async def search_attractions(
-    city: str,
-    category: Optional[str] = None
-) -> str:
-    """
-    Search for tourist attractions in a city.
-
-    Parameters
-    ----------
-    city : str
-        The city name where to search for attractions.
-    category : Optional[str], optional
-        Category of attractions (e.g., "museum", "park", "landmark", "restaurant"),
-        by default None (all categories).
-
-    Returns
-    -------
-    str
-        Natural language description of tourist attractions.
-    """
-    category_filter = f" in {category} category" if category else ""
-    return (
-        f"Found 4 tourist attractions in {city}{category_filter}:\n"
-        f"1. {city} Historical Museum (museum), ticket: ¥50\n"
-        f"2. {city} Central Park (park), free entry\n"
-        f"3. {city} Tower (landmark), ticket: ¥120\n"
-        f"4. Traditional {city} Restaurant (restaurant)"
-    )
-
-
-async def create_itinerary(
-    destination: str,
-    start_date: str,
-    end_date: str,
-    activities: List[str]
-) -> str:
-    """
-    Create a travel itinerary for a trip.
-
-    Parameters
-    ----------
-    destination : str
-        The destination city or location.
-    start_date : str
-        Trip start date in YYYY-MM-DD format.
-    end_date : str
-        Trip end date in YYYY-MM-DD format.
-    activities : List[str]
-        List of planned activities or places to visit.
-
-    Returns
-    -------
-    str
-        Natural language description of the created itinerary.
-    """
-    activities_str = "\n".join(f"  - {activity}" for activity in activities)
-    return (
-        f"Travel itinerary created for {destination}:\n"
-        f"Dates: {start_date} to {end_date}\n"
-        f"Planned activities:\n{activities_str}\n"
-        f"Itinerary status: Ready"
-    )
-
-
-async def get_weather(
-    city: str,
-    date: str
-) -> str:
-    """
-    Get weather forecast for a city on a specific date.
-
-    Parameters
-    ----------
-    city : str
-        The city name to get weather for.
-    date : str
-        The date in YYYY-MM-DD format.
-
-    Returns
-    -------
-    str
-        Natural language description of the weather forecast.
-    """
-    city_hash = hash(city) % 100
-    temp = 20 + (city_hash % 15)
-    condition = ["sunny", "cloudy", "rainy", "partly cloudy"][city_hash % 4]
-    return f"Weather forecast for {city} on {date}: {condition}, temperature around {temp}°C"
-
-
 async def book_flight(
     flight_number: str,
     passengers: int = 1
@@ -222,50 +133,6 @@ async def book_hotel(
     )
 
 
-async def book_room(
-    hotel_name: str,
-    room_type: str = "standard",
-    check_in: str = None,
-    check_out: str = None,
-    guests: int = 1
-) -> str:
-    """
-    Book a room at a hotel.
-
-    Parameters
-    ----------
-    hotel_name : str
-        The name of the hotel where to book a room.
-    room_type : str, optional
-        Type of room (e.g., "standard", "deluxe", "suite"), by default "standard".
-    check_in : str, optional
-        Check-in date in YYYY-MM-DD format. If not provided, defaults to tomorrow.
-    check_out : str, optional
-        Check-out date in YYYY-MM-DD format. If not provided, defaults to check_in + 1 day.
-    guests : int, optional
-        Number of guests, by default 1.
-
-    Returns
-    -------
-    str
-        Natural language booking confirmation message.
-    """
-    from datetime import datetime, timedelta
-
-    # Default dates if not provided
-    if check_in is None:
-        check_in = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
-    if check_out is None:
-        check_in_date = datetime.strptime(check_in, "%Y-%m-%d")
-        check_out = (check_in_date + timedelta(days=1)).strftime("%Y-%m-%d")
-
-    reservation_id = f"RM{hash(f'{hotel_name}{check_in}') % 10000:04d}"
-    return (
-        f"Room booking confirmed! {room_type} room at {hotel_name} from {check_in} to {check_out} "
-        f"for {guests} guest(s). Reservation ID: {reservation_id}"
-    )
-
-
 # Create ToolSpec instances for all tools
 def get_travel_planning_tools() -> List[FunctionToolSpec]:
     """
@@ -276,11 +143,9 @@ def get_travel_planning_tools() -> List[FunctionToolSpec]:
     List[FunctionToolSpec]
         A list of FunctionToolSpec instances for all travel planning tools.
     """
-    tools = [
+    return [
         FunctionToolSpec.from_raw(search_flights),
         FunctionToolSpec.from_raw(search_hotels),
         FunctionToolSpec.from_raw(book_flight),
         FunctionToolSpec.from_raw(book_hotel),
-        FunctionToolSpec.from_raw(book_room),
     ]
-    return tools
