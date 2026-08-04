@@ -12,6 +12,7 @@ members = [
     "bridgic-amphibious",
     "bridgic-asl",
     "bridgic-core",
+    "bridgic-llms-litellm",
     "bridgic-llms-openai",
     "bridgic-llms-openai-like",
     "bridgic-llms-vllm",
@@ -291,6 +292,7 @@ dependencies = [
     { name = "bridgic-amphibious" },
     { name = "bridgic-asl" },
     { name = "bridgic-core" },
+    { name = "bridgic-llms-litellm" },
     { name = "bridgic-llms-openai" },
     { name = "bridgic-llms-openai-like" },
     { name = "bridgic-llms-vllm" },
@@ -311,6 +313,7 @@ requires-dist = [
     { name = "bridgic-amphibious", editable = "packages/bridgic-amphibious" },
     { name = "bridgic-asl", editable = "packages/bridgic-asl" },
     { name = "bridgic-core", editable = "packages/bridgic-core" },
+    { name = "bridgic-llms-litellm", editable = "packages/bridgic-integration/llms/bridgic-llms-litellm" },
     { name = "bridgic-llms-openai", editable = "packages/bridgic-integration/llms/bridgic-llms-openai" },
     { name = "bridgic-llms-openai-like", editable = "packages/bridgic-integration/llms/bridgic-llms-openai-like" },
     { name = "bridgic-llms-vllm", editable = "packages/bridgic-integration/llms/bridgic-llms-vllm" },
@@ -405,6 +408,33 @@ requires-dist = [
     { name = "jinja2", specifier = ">=3.1.0" },
     { name = "msgpack", specifier = ">=1.1.1" },
     { name = "pydantic", specifier = ">=2.11.0,<2.12.0" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest", specifier = ">=8.4.0" },
+    { name = "pytest-asyncio", specifier = ">=1.0.0" },
+]
+
+[[package]]
+name = "bridgic-llms-litellm"
+version = "0.1.0"
+source = { editable = "packages/bridgic-integration/llms/bridgic-llms-litellm" }
+dependencies = [
+    { name = "bridgic-core" },
+    { name = "litellm" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "bridgic-core", editable = "packages/bridgic-core" },
+    { name = "litellm", specifier = ">=1.80.0,<1.87" },
 ]
 
 [package.metadata.requires-dev]
