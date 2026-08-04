@@ -19,6 +19,7 @@ dependencies = [
     "bridgic-llms-openai-like>=0.1.2,<0.2.0",
     "bridgic-llms-openai>=0.1.2,<0.2.0",
     "bridgic-llms-vllm>=0.1.3,<0.2.0",
+    "bridgic-llms-litellm>=0.1.0,<0.2.0",
 ]
 
 [dependency-groups]
@@ -59,3 +60,4 @@ bridgic-amphibious = { workspace = true }
 bridgic-llms-openai-like = { workspace = true }
 bridgic-llms-openai = { workspace = true }
 bridgic-llms-vllm = { workspace = true }
+bridgic-llms-litellm = { workspace = true }
