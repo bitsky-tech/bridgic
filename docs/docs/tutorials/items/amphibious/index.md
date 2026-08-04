@@ -1,5 +1,10 @@
 # Amphibious
 
+<div class="admonition warning">
+<p class="admonition-title">Documentation update in progress</p>
+<p>This Amphibious tutorial is currently outdated and may not match the <code>bridgic-amphibious 0.2.0</code> API. We are actively updating it. Please use it as conceptual background only until the update is complete.</p>
+</div>
+
 Bridgic Amphibious is a **dual-mode agent framework** that lets you build agents operating in both LLM-driven and deterministic modes, with automatic fallback between them. Instead of choosing between full autonomy and rigid workflows, Amphibious gives you both — in the same agent.
 
 The framework is built on a few core design principles:
