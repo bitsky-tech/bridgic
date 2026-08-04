@@ -101,7 +101,7 @@ class CognitiveWorker(GraphAutoma):
         small-loop OTA state, ``context`` the free-form knowledge (``None``
         for a pure-reasoning run). Validates the LLM, calls the overridable
         :meth:`thinking` method to interact with the LLM, then *adapts* its
-        result — ``(content, tool_calls)``, a structured ``BaseModel``, or
+        result — ``(tool_calls, content)``, a structured ``BaseModel``, or
         text — into the framework's decision shape (see
         :meth:`_assemble_decision`). That decision becomes the ``arun()``
         return value — the driver captures it and runs the act phase.
@@ -281,7 +281,7 @@ class CognitiveWorker(GraphAutoma):
         raise NotImplementedError(
             "CognitiveWorker.thinking must be overridden: assemble the prompt "
             "from the two contexts, call self._llm, and return "
-            "(content, tool_calls), a pydantic BaseModel, or text."
+            "(tool_calls, content), a pydantic BaseModel, or text."
         )
 
     async def before_action(self, ota_context: OTAContext, context: Optional[Context] = None) -> Any:

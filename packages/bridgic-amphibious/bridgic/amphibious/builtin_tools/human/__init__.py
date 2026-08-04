@@ -1,18 +1,16 @@
 """Human-in-the-loop built-in tools.
 
-Every ``AmphibiousAutoma`` agent automatically receives ``request_human``
-in its ``context.tools`` during ``arun()`` (subject to the
-``builtin_tools`` filter). The LLM can call it in any mode (AGENT,
-WORKFLOW fallback, AMPHIFLOW) with no extra wiring::
+Nothing is auto-injected. Declare ``request_human_tool`` on the OTA context
+used by a run when an LLM-driven ``ThinkUnit`` should be able to ask a human::
 
-    await agent.arun(user_input="...", tools=[search_tool])
+    from bridgic.amphibious import OTAContext, request_human_tool
 
-Importing and passing ``request_human_tool`` explicitly still works —
-the injection step deduplicates by tool name::
+    class MyOTAContext(OTAContext):
+        pass
 
-    from bridgic.amphibious.builtin_tools import request_human_tool
+    MyOTAContext.tool(request_human_tool)
 
-    await agent.arun(user_input="...", tools=[search_tool, request_human_tool])
+Deterministic workflow and hook code can instead yield ``HumanCall``.
 """
 
 from .request_human import request_human_tool

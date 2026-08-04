@@ -192,11 +192,8 @@ class ActionCall:
     Each instance wraps exactly one tool call.
 
     The ``**kwargs`` constructor is the ergonomic form for hand-written
-    workflow code, but it cannot express a tool whose own parameter is
-    named ``tool_name`` or ``description`` — those names are claimed by
-    the signature. When the tool arguments come from an external source
-    (e.g. an MCP-bridged call, where the agent may pick any parameter
-    names), use the collision-free ``ActionCall.from_tool_args(...)``.
+    workflow code. The names ``tool_name`` and ``description`` are reserved
+    by its signature and cannot also be used as tool arguments.
 
     Used by: _amphibious_automa.py (state-machine driver)
 
@@ -204,7 +201,6 @@ class ActionCall:
         yield ActionCall("navigate_to", url="http://example.com")
         yield ActionCall("click_element_by_ref", description="Click submit", ref="e42")
         result = yield ActionCall("fill_field", name="user", value="john")
-        ActionCall.from_tool_args("save", {"description": "draft"})  # collision-free
     """
     tool_name: str
     description: str

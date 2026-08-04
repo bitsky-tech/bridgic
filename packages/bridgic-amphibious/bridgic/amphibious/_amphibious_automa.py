@@ -751,9 +751,10 @@ class AmphibiousAutoma(GraphAutoma, Generic[OTAContextT, ContextT]):
         return self._final_answer
 
     ############################################################################
-    # Template methods — overridable hooks. May be written as async-generator
-    # (yielding framework primitives) or plain coroutine; dispatcher accepts
-    # both. Scope rules are documented on the class docstring above.
+    # Template methods — overridable hooks. AmphibiousAutoma overrides must be
+    # async generators (yielding framework primitives), as enforced by
+    # ``_validate_template_forms``. Scope rules are documented on the class
+    # docstring above.
     ############################################################################
     async def observation(self, ota_context: OTAContextT, context: Optional[ContextT] = None) -> AsyncGenerator[Any, Any]:
         """Agent-level default observation, shared across all workers.
@@ -1005,8 +1006,8 @@ class AmphibiousAutoma(GraphAutoma, Generic[OTAContextT, ContextT]):
                 raise RuntimeError(
                     f"HumanCall(prompt={item.prompt!r}) is not allowed inside "
                     "on_agent — the agent should request human input via the "
-                    "auto-injected ``request_human`` tool (called by the LLM "
-                    "during a ThinkUnit), not by yielding HumanCall directly. "
+                    "explicitly declared ``request_human`` tool (called by the "
+                    "LLM during a ThinkUnit), not by yielding HumanCall directly. "
                     "If you need a deterministic human step, put it in "
                     "on_workflow."
                 )

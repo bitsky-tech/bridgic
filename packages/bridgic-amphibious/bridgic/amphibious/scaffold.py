@@ -73,7 +73,8 @@ for _t in (bash_tool, read_file_tool, write_file_tool, edit_file_tool, glob_tool
 # Big-loop context (free-form, optional): cross-turn knowledge (skills /
 # memory / conversation). Override summary() to render it into the prompt;
 # tools are an OTA-loop concern and live on the OTA context, not here.
-# Drop in favour of a bare OTAContext for a pure-reasoning agent.
+# Use the base Context directly as the second generic when no custom
+# big-loop state is needed; AmphibiousAutoma still requires both generics.
 class AmphiBigContext(Context):
     pass
 

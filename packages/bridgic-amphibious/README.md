@@ -1,375 +1,368 @@
 # Bridgic Amphibious
 
-**Dual-mode agent framework** — build agents that operate in both LLM-driven and deterministic modes, with automatic fallback between them.
+Bridgic Amphibious is a yield-driven orchestration framework for combining
+LLM-directed agents, deterministic workflows, and external coding-agent
+delegation in one Python class.
 
-## Core Design Philosophy
+Version 0.2.0 introduces a two-loop context model and an explicit set of yield
+primitives. The examples below describe the 0.2.0 API.
 
-### 1. Agent = Think Units + Context Orchestration
+## Highlights
 
-Traditional agent frameworks require developers to work with low-level execution primitives. Bridgic Amphibious raises the abstraction level: an agent is defined by **declaring think units** and **orchestrating them with context**.
+- **Two execution loops:** a per-run `OTAContext` for observe-think-act state,
+  plus a free-form `Context` for longer-lived knowledge.
+- **Three run modes:** agent, workflow, and amphibious workflow-with-fallback.
+- **Explicit composition:** `ThinkUnit` drives an in-process
+  `CognitiveWorker`; `ThinkAgent` delegates to an external CLI agent.
+- **One action pipeline:** model-selected, workflow-selected, and
+  external-agent-selected tools are executed by `AmphibiousAutoma`.
+- **Human-in-the-loop routing:** deterministic `HumanCall` operations and the
+  LLM-callable `request_human` tool share the same named channel registry.
 
-```python
-class TravelAgent(AmphibiousAutoma[TravelContext]):
-    # Declare think units — each encapsulates a specific thinking pattern
-    planner = think_unit(
-        CognitiveWorker.inline("Analyze the goal and decide the next step"),
-        max_attempts=20,
-    )
+## Installation
 
-    async def on_agent(self, ctx: TravelContext):
-        # Orchestrate think units with context scoping
-        async with self.snapshot(goal="Plan the trip"):
-            await self.planner
-
-        async with self.snapshot(goal="Execute each step of the plan"):
-            await self.planner
-```
-
-Each `await self.planner` triggers a complete **observe-think-act** cycle:
-1. **Observe** — gather the current state (overridable at both worker and agent level)
-2. **Think** — LLM decides the next action based on context and available tools
-3. **Act** — execute tool calls or produce structured output
-
-The developer focuses on *what* to think about and *how to scope context*, not on the mechanics of LLM calls, tool matching, or output parsing.
-
-### 2. Functional Execution vs. Decision Making — Decoupled
-
-In traditional software, *what to do* and *when to do it* are intertwined in code logic. Bridgic Amphibious cleanly separates them:
-
-- **Functional modules** (tools, skills) — pure capabilities, independent of execution order
-- **Decision making** — can be handled in two fundamentally different ways:
-
-| Mode | Decision Maker | Defined In | Best For |
-|------|---------------|-----------|----------|
-| **Workflow** (`on_workflow`) | Developer's code | `yield ActionCall(...)` | Known, repeatable processes |
-| **Agent** (`on_agent`) | LLM reasoning | `await self.think_unit` | Open-ended, adaptive tasks |
-
-The same agent can implement **both** modes and switch between them at runtime:
-
-```python
-class ResilientAgent(AmphibiousAutoma[MyContext]):
-    exec_think = think_unit(CognitiveWorker.inline("Execute step"), max_attempts=10)
-
-    async def on_agent(self, ctx):
-        """LLM-driven mode: AI decides what to do."""
-        await self.exec_think
-
-    async def on_workflow(self, ctx):
-        """Deterministic mode: developer defines the exact steps."""
-        yield ActionCall("login", username="admin", password="secret")
-        yield ActionCall("navigate_to", url="/dashboard")
-        result = yield ActionCall("extract_data", selector=".metrics")
-
-        # Pause and ask the human for confirmation
-        feedback = yield HumanCall(prompt="Data extracted. Proceed with analysis?")
-
-        # Fall back to agent for complex situations
-        yield AgentCall(goal="Analyze the extracted data", max_attempts=5)
-```
-
-**Runtime mode switching** happens automatically:
-- **Workflow failure → Agent fallback**: If a workflow step fails, the framework can automatically switch to agent mode to resolve the issue, then resume the workflow
-- **Configurable degradation**: `max_consecutive_fallbacks` controls when to abandon the workflow entirely and hand over to full agent mode
-- **Explicit mode control**: `arun(mode=RunMode.AGENT)` or `arun(mode=RunMode.AMPHIFLOW)`
-
-## Architecture
-
-```mermaid
-graph TB
-    subgraph AmphibiousAutoma
-        subgraph Row1["Running Mode"]
-            direction LR
-            Workflow -. "Auto-degradation" .-> Agent
-            Agent -. "Auto-swith" .-> Workflow
-        end
-
-        subgraph Row2["Observe → Think → Act "]
-            direction LR
-            Observe["Observe"]
-            Think["Think"]
-            Act["Act"]
-            Observe --> Think --> Act --> Observe
-        end
-
-        subgraph Row3["CognitiveContext — global shared state"]
-            Data
-            Exposure
-        end
-    end
-```
-
-The key insight: **Context sits on top as the global state**, and the **on_agent / on_workflow duality lives inside the Think phase** — they are two interchangeable strategies for the same decision point in the observe-think-act cycle.
-
-### Layer 1: Data Exposure
-
-Controls how context data is disclosed to the LLM.
-
-- **`EntireExposure[T]`** — All data visible at once (used for tools)
-- **`LayeredExposure[T]`** — Progressive disclosure: a summary tier plus on-demand detail tiers (used for skills, history)
-
-```python
-# A LayeredExposure field organizes its items into tiers: a compact
-# summary the LLM sees up front, and fuller detail revealed on demand
-# via Context.get_details(field, index).
-```
-
-### Layer 2: Context
-
-`Context` is a Pydantic `BaseModel` that auto-detects Exposure fields and provides `summary()`, `get_details()`, and `format_summary()`.
-
-`CognitiveContext` is the default implementation with:
-- `goal` — what the agent is trying to achieve
-- `tools` (EntireExposure) — available tool specifications
-- `skills` (LayeredExposure) — available skills with progressive disclosure
-- `cognitive_history` (LayeredExposure) — execution history with layered memory:
-  - **Working memory**: recent steps with full details
-  - **Short-term memory**: older steps as summaries, queryable for details
-  - **Long-term memory**: compressed via LLM into concise summaries
-
-### Layer 3: CognitiveWorker (Think Unit)
-
-A `CognitiveWorker` is a pure thinking unit — it only decides *what to do*, not *how to execute*. Its one template method is `thinking(self, context)`: it talks to the LLM and returns a `(content, tool_calls)` pair, which the framework parses into a decision. A thinking step that returns no tool calls is "finished".
-
-```python
-# The common case needs no subclass — give a prompt; the default
-# thinking() uses native function-calling.
-worker = CognitiveWorker.inline("Plan ONE immediate next step")
-
-# Override thinking() to take full control of the LLM interaction —
-# a custom protocol, a model without native function-calling, etc.
-class AnalysisWorker(CognitiveWorker):
-    prompt = "Analyze the current situation and decide the best next action."
-
-    async def thinking(self, context):
-        # Write your own LLM call; return (content, tool_calls).
-        resp = await self._llm.achat(messages=my_messages(context))
-        return self._extract_chat_content(resp), []
-
-    async def observation(self, context):
-        # Custom observation logic
-        return f"Page title: {await get_page_title()}"
-```
-
-**Structured Output**: Set `output_schema` to skip the tool-call loop entirely and produce a typed Pydantic instance:
-
-```python
-class PlanResult(BaseModel):
-    phases: List[Phase]
-    estimated_steps: int
-
-planner = CognitiveWorker.inline(
-    "Create an execution plan",
-    output_schema=PlanResult,
-)
-```
-
-### Layer 4: AmphibiousAutoma (Orchestration)
-
-The top-level agent class that ties everything together.
-
-**Think Unit Descriptors** declare reusable thinking patterns at the class level:
-
-```python
-class MyAgent(AmphibiousAutoma[CognitiveContext]):
-    # Declare think units as class attributes
-    main_think = think_unit(
-        CognitiveWorker.inline("Execute the next step"),
-        max_attempts=20,
-        on_error=ErrorStrategy.RETRY,
-        max_retries=2,
-    )
-
-    async def on_agent(self, ctx):
-        # Simple: single execution
-        await self.main_think
-
-        # With loop condition
-        await self.main_think.until(
-            lambda ctx: some_condition(ctx),
-            max_attempts=50,
-        )
-
-        # With tool/skill filtering
-        await self.main_think.until(
-            lambda ctx: ctx.goal_reached,
-            tools=["search", "analyze"],
-            skills=["data_extraction"],
-        )
-```
-
-**Phase Annotation** scopes context and captures execution traces:
-
-```python
-async def on_agent(self, ctx):
-    async with self.snapshot(goal="Handle edge case", custom_field="override"):
-        await self.fix_think
-```
-- `snapshot()` — temporarily overrides context fields
-
-## Quick Start
-
-### Installation
+Bridgic Amphibious 0.2 supports Python 3.10 through 3.13.
 
 ```bash
 pip install bridgic-amphibious
 ```
 
-### Minimal Agent (Agent Mode)
+The package also provides a small project scaffold:
+
+```bash
+bridgic-amphibious create --task "Investigate order A-42"
+```
+
+This creates `amphi.py` in the current directory. Use `--base-dir` to choose
+another directory. The command refuses to overwrite an existing `amphi.py`.
+
+## Quick start: an LLM-directed agent
+
+Every `AmphibiousAutoma` declares two context types. The first generic
+argument must be an `OTAContext`; the second must be a `Context`.
 
 ```python
 from bridgic.amphibious import (
-    AmphibiousAutoma, CognitiveContext, CognitiveWorker, think_unit
+    AmphibiousAutoma,
+    CognitiveWorker,
+    Context,
+    OTAContext,
+    RETURN,
+    ThinkUnit,
+    think_unit,
 )
+from bridgic.core.model.types import Message, Role
 
-class SimpleAgent(AmphibiousAutoma[CognitiveContext]):
-    executor = think_unit(
-        CognitiveWorker.inline("Decide and execute the next step"),
-        max_attempts=10,
-    )
 
-    async def on_agent(self, ctx):
-        await self.executor
+class SupportOTAContext(OTAContext):
+    """Per-run input, tools, and observe-think-act records."""
 
-# Run
-agent = SimpleAgent(llm=my_llm)
-await agent.arun(goal="Book a flight from Beijing to Tokyo", tools=[...])
-```
+    def summary(self, fields):
+        return (
+            f"User input: {fields['user_input']}\n"
+            f"OTA history: {fields['ota_record']}"
+        )
 
-### Minimal Agent (Workflow Mode)
 
-```python
-from bridgic.amphibious import AmphibiousAutoma, CognitiveContext, ActionCall, HumanCall
+@SupportOTAContext.tool
+async def lookup_order(order_id: str) -> str:
+    """Return the current status of an order."""
+    return f"Order {order_id} is packed and waiting for pickup."
 
-class WorkflowAgent(AmphibiousAutoma[CognitiveContext]):
-    async def on_workflow(self, ctx):
-        result = yield ActionCall("search_flights", origin="Beijing", destination="Tokyo", date="2024-06-01")
-        feedback = yield HumanCall(prompt="Found flights. Book CA123?")
-        if feedback == "yes":
-            yield ActionCall("book_flight", flight_number="CA123")
 
-# Pure workflow mode does not need an LLM
-agent = WorkflowAgent()
-await agent.arun(goal="Book a flight", tools=[...])
-```
+class SupportKnowledge(Context):
+    customer_tier: str = "standard"
 
-### Amphiflow Mode (Workflow + Agent Fallback)
+    def summary(self, fields):
+        return f"Customer tier: {fields['customer_tier']}"
 
-```python
-class AmphiflowAgent(AmphibiousAutoma[CognitiveContext]):
-    fixer = think_unit(
-        CognitiveWorker.inline("Fix the current issue and complete the step"),
-        max_attempts=5,
-    )
 
-    async def on_agent(self, ctx):
-        await self.fixer
+class SupportThink(CognitiveWorker):
+    async def thinking(self, ota_context, context=None):
+        knowledge = context.summary() if context is not None else ""
+        prompt = "\n\n".join(part for part in (
+            knowledge,
+            ota_context.summary(),
+            "Use the available tools when needed, then answer the user.",
+        ) if part)
+        return await self._llm.aselect_tool(
+            messages=[Message.from_text(prompt, role=Role.USER)],
+            tools=[tool.to_tool() for tool in ota_context.tools],
+        )
 
-    async def on_workflow(self, ctx):
-        yield ActionCall("login", username="admin", password="secret")
-        yield ActionCall("navigate_to", url="/dashboard")
-        # If any step fails, the framework falls back to on_agent() to resolve it
 
-agent = AmphiflowAgent(llm=my_llm)
-await agent.arun(
-    goal="Extract dashboard data",
-    tools=[...],
-    mode=RunMode.AMPHIFLOW,       # or RunMode.AUTO (default, auto-detects)
-    max_consecutive_fallbacks=2,   # switch to full agent mode after 2 consecutive failures
+class SupportAgent(AmphibiousAutoma[SupportOTAContext, SupportKnowledge]):
+    support = think_unit(SupportThink(), max_attempts=6)
+
+    async def on_agent(self, ota_context, context=None):
+        answer = yield ThinkUnit("support")
+        yield RETURN(answer)
+
+
+agent = SupportAgent()
+answer = await agent.arun(
+    llm=my_llm,
+    user_input="Where is order A-42?",
+    context=SupportKnowledge(customer_tier="priority"),
 )
+print(answer)
 ```
 
-### Human-in-the-Loop
+`my_llm` is a Bridgic-compatible LLM implementation that supports tool
+selection. A `CognitiveWorker` implements `thinking()` and returns the natural
+result of the LLM protocol it uses:
 
-Three entry points for requesting human input during agent execution:
+- `achat()` returns a response and finishes the think unit.
+- `aselect_tool()` returns `(tool_calls, content)`; the worker continues while
+  tool calls remain and finishes when the list is empty.
+- `astructured_output()` returns a Pydantic model or dictionary, which is
+  serialized into the step content.
+- Plain text also finishes the think unit.
+
+`think_unit(...)` is a class-level declaration. It is invoked from
+`on_agent()` by yielding `ThinkUnit("name")`; the descriptor itself is not
+awaited. `max_attempts` caps observe-think-act cycles, while an optional
+`until` callable can stop after a non-finishing cycle:
 
 ```python
-from bridgic.amphibious import AmphibiousAutoma, CognitiveContext, ActionCall, HumanCall
-
-class InteractiveAgent(AmphibiousAutoma[CognitiveContext]):
-    planner = think_unit(
-        CognitiveWorker.inline("Plan and execute. Use request_human when you need confirmation."),
-        max_attempts=10,
-    )
-
-    # Entry 1: Code-level — call between think units in on_agent()
-    async def on_agent(self, ctx):
-        await self.planner
-        feedback = await self.request_human("Task complete. Any follow-up?")
-
-    # Entry 2: Workflow yield — pause workflow for human input
-    async def on_workflow(self, ctx):
-        yield ActionCall("search_flights", origin="Beijing", destination="Tokyo", date="2024-06-01")
-        feedback = yield HumanCall(prompt="Book this flight?")
-        if feedback == "yes":
-            yield ActionCall("book_flight", flight_number="CA123")
-
-agent = InteractiveAgent(llm=my_llm)
-
-# Entry 3: LLM tool — `request_human` is auto-injected into every agent's tools,
-# so the LLM can call it autonomously without adding it to `tools=[...]`.
-await agent.arun(
-    goal="Plan a trip with user preferences",
-    tools=[search_tool],
+answer = yield ThinkUnit(
+    "support",
+    until=lambda ota: len(ota.ota_record) >= 3,
+    max_attempts=10,
 )
 ```
 
-Override `human_input()` to integrate with your UI (default reads from stdin):
+## The two contexts
+
+`OTAContext` is the framework-owned small-loop context. A fresh instance is
+normally created for each `arun()` and contains:
+
+- `user_input`: the run objective or another caller-defined payload.
+- `ota_record`: one `OTARecord` per observe-think-act round.
+- `tools`: the exact action affordances declared by the context class.
+- `obs_result`, `think_result`, and `action_result`: accessors for the current
+  round.
+
+`Context` is free-form big-loop knowledge. Subclasses can declare Pydantic
+fields and override `summary(fields)` to render them for a prompt. The same
+big-loop context is shared with nested agent delegations; each delegation gets
+its own isolated `OTAContext`.
+
+A caller may provide a pre-built small-loop context with
+`arun(ota_context=...)`. In that case its own `user_input` and tools are used
+as-is.
+
+## Declaring tools
+
+No tools are injected automatically. Register every tool the small loop should
+carry on its `OTAContext` subclass. `tool()` accepts a callable, a bound method,
+or an existing `ToolSpec`, and works both as a decorator and a class method:
 
 ```python
-class WebAgent(AmphibiousAutoma[CognitiveContext]):
-    async def human_input(self, data):
-        return await my_websocket.ask(data["prompt"])
+from bridgic.amphibious import (
+    bash_tool,
+    read_file_tool,
+    request_human_tool,
+)
+
+
+SupportOTAContext.tool(read_file_tool)
+SupportOTAContext.tool(bash_tool)
+SupportOTAContext.tool(request_human_tool)
 ```
 
-### Custom Context
+The shipped tool specs are `request_human_tool`, `bash_tool`,
+`read_file_tool`, `write_file_tool`, `edit_file_tool`, `glob_tool`, and
+`grep_tool`. Register only the capabilities the run needs.
+
+## Run modes and yield primitives
+
+`RunMode.AUTO` is the default and resolves from the template methods a class
+implements:
+
+| Implemented methods | Resolved mode |
+| --- | --- |
+| `on_agent()` only | `RunMode.AGENT` |
+| `on_workflow()` only | `RunMode.WORKFLOW` |
+| Both | `RunMode.AMPHIFLOW` |
+
+In amphibious mode, execution starts in the workflow. An atomic workflow step
+that fails can be handed to a bounded agent recovery flow; repeated failures
+can switch the remainder of the run to agent mode. Configure the threshold
+with `max_consecutive_fallbacks`.
+
+Each primitive has an explicit scope and sends a result back into the async
+generator:
+
+| Primitive | Valid scope | Value sent back by `yield` |
+| --- | --- | --- |
+| `ActionCall` | `on_workflow` or a hook | `list[ToolResult]` |
+| `HumanCall` | `on_workflow` or a hook | Human response string |
+| `LLMCall` | `on_workflow` or a hook | Protocol-specific LLM result |
+| `EnterAgent` | `on_workflow` | Nested result in workflow mode; control transfer in amphibious mode |
+| `ThinkUnit` | `on_agent` | Latest think step content |
+| `ThinkAgent` | `on_agent` | External agent's completion string, or `None` |
+| `RETURN` | Any framework async generator | Return value for the current template |
+
+`on_agent()` is reserved for `ThinkUnit`, `ThinkAgent`, and `RETURN`.
+Deterministic tool calls, human pauses, and direct LLM calls belong in
+`on_workflow()` or in `observation`, `before_action`, and `after_action` hooks.
+`AmphibiousAutoma` template overrides must be async generators; if an override
+has no real yield, include `if False: yield` to preserve that shape.
+
+## Deterministic workflow, direct LLM call, and agent entry
+
+The following class inherits the `on_agent()` strategy from the quick start
+and adds a workflow. Because both strategies are present, `RunMode.AUTO` would
+select amphibious mode. This example explicitly selects `RunMode.WORKFLOW` so
+`EnterAgent` behaves as a nested call and then resumes the workflow.
 
 ```python
-from bridgic.amphibious import CognitiveContext, CognitiveHistory
-from pydantic import Field, ConfigDict
+import asyncio
 
-class MyContext(CognitiveContext):
-    model_config = ConfigDict(arbitrary_types_allowed=True)
+from bridgic.amphibious import (
+    ActionCall,
+    EnterAgent,
+    HumanCall,
+    LLMCall,
+    RETURN,
+    RunMode,
+    human_channel,
+)
 
-    current_page: str = Field(default="", description="Current page URL")
-    extracted_data: dict = Field(default_factory=dict)
 
-class MyAgent(AmphibiousAutoma[MyContext]):
-    ...
+class SupportFlow(SupportAgent):
+    @human_channel("terminal")
+    async def ask_terminal(self, prompt: str) -> str:
+        return await asyncio.to_thread(input, f"{prompt}\n> ")
+
+    async def on_workflow(self, ota_context, context=None):
+        results = yield ActionCall("lookup_order", order_id="A-42")
+        status = results[0].result if results else "No order result"
+
+        summary = yield LLMCall.chat(
+            f"Summarize this status for the customer: {status}"
+        )
+        approved = yield HumanCall(
+            channel="terminal",
+            prompt=f"Send this reply?\n{summary}",
+        )
+        if approved.strip().lower() != "yes":
+            yield RETURN("Reply cancelled")
+
+        escalation = yield EnterAgent(
+            goal="Check whether order A-42 needs proactive intervention"
+        )
+        yield RETURN(escalation or summary)
+
+
+answer = await SupportFlow().arun(
+    llm=my_llm,
+    user_input="Resolve the order question",
+    context=SupportKnowledge(customer_tier="priority"),
+    mode=RunMode.WORKFLOW,
+)
 ```
 
-### Execution Tracing
+`ActionCall` executes one named tool and returns a list of `ToolResult`
+objects. `LLMCall.chat()` requires `llm=` on `arun()`. The other direct
+protocol constructors are `LLMCall.structure_output(..., constraint=...)` and
+`LLMCall.tool_selector(..., tools=...)`; the LLM must implement the matching
+Bridgic protocol.
+
+In `RunMode.WORKFLOW`, `EnterAgent` suspends the workflow, runs `on_agent()`
+with a fresh small-loop context whose `user_input` is the supplied goal, and
+then sends the nested result back to the workflow. The big-loop `Context`
+remains shared. In `RunMode.AMPHIFLOW`, it is a state-machine control transfer;
+an agent-side `RETURN` completes the overall run instead of resuming the
+workflow.
+
+## Human channels
+
+Decorate a plain async method with `@human_channel` or
+`@human_channel("name")`. It accepts a prompt and returns a string.
+
+- With no registered channel, `HumanCall(channel=None)` uses stdin.
+- With exactly one registered channel, its name may be omitted.
+- With multiple registered channels, each call must name one explicitly.
+
+Registering `request_human_tool` on the `OTAContext` lets an LLM call
+`request_human(prompt, channel=None)` during a `ThinkUnit`. It resolves through
+the same channel registry as a workflow's `HumanCall`.
+
+## Delegating to Codex or Claude Code
+
+`ThinkAgent` delegates one cognitive step to an external CLI through an
+`AgentWorker`. Project tools from the nested `OTAContext` are exposed to the
+CLI through an in-process MCP server, and calls return through the parent
+automa's action and hook pipeline.
 
 ```python
-agent = MyAgent()
-await agent.arun(llm=my_llm, goal="...", tools=[...], trace=True)
+from bridgic.amphibious import (
+    AgentWorker,
+    AmphibiousAutoma,
+    ClaudeCodeAgent,
+    CodexAgent,
+    RETURN,
+    ThinkAgent,
+    think_agent,
+)
 
-# Access trace data
-trace = agent._agent_trace.build()
 
-# Save to file
-agent._agent_trace.save("trace.json")
+class DelegatingAgent(AmphibiousAutoma[SupportOTAContext, SupportKnowledge]):
+    investigate_with_codex = think_agent(
+        AgentWorker(CodexAgent(sandbox_mode="workspace-write")),
+        expose_tools=["lookup_order"],
+    )
+    review_with_claude = think_agent(
+        AgentWorker(
+            ClaudeCodeAgent(allowed_builtin_tools=["Read", "Grep"])
+        ),
+        expose_tools=["lookup_order"],
+    )
+
+    async def on_agent(self, ota_context, context=None):
+        investigation = yield ThinkAgent(
+            "investigate_with_codex",
+            goal="Investigate order A-42 with the exposed project tools.",
+        )
+        review = yield ThinkAgent(
+            "review_with_claude",
+            goal=f"Review this investigation and return a concise answer:\n{investigation}",
+        )
+        yield RETURN(review or investigation)
 ```
 
-## Key Concepts
+The per-yield `goal=` overrides the nested run's objective.
+`expose_tools=[...]` narrows the project tools available over MCP; omitting it
+exposes all registered non-builtin project tools. Each delegation uses a
+temporary working directory, so the CLI's own filesystem tools do not see the
+caller's project automatically. Expose explicit project tools over MCP when
+the delegated agent needs project data or mutations.
 
-| Concept | Description |
-|---------|------------|
-| **CognitiveWorker** | Pure thinking unit — decides *what* to do |
-| **think_unit** | Descriptor for declaring workers with execution parameters |
-| **AmphibiousAutoma** | Agent orchestrator with dual execution modes |
-| **on_agent()** | LLM-driven orchestration logic |
-| **on_workflow()** | Deterministic workflow as async generator |
-| **Exposure** | Data visibility abstraction (Entire vs. Layered) |
-| **CognitiveContext** | Agent state: goal, tools, skills, history |
-| **AgentTrace** | Structured execution trace for inspection |
-| **ErrorStrategy** | RAISE, IGNORE, or RETRY on failures |
-| **ActionCall** | Yield in on_workflow() for deterministic tool execution |
-| **HumanCall** | Yield in on_workflow() to pause and request human input |
-| **AgentCall** | Yield in on_workflow() to delegate to agent mode |
-| **request_human_tool** | Built-in FunctionToolSpec for LLM-driven human requests |
-| **request_human()** | Code-level method to request human input in on_agent() |
-| **RunMode** | AGENT, WORKFLOW, AMPHIFLOW, or AUTO |
+The `codex` or `claude` executable must be installed and authenticated
+separately. `CodexAgent` accepts `bin`, `sandbox_mode`, and
+`completion_timeout`. `ClaudeCodeAgent` accepts `bin`,
+`allowed_builtin_tools`, `permission_mode`, and `completion_timeout`.
+
+## Tracing
+
+Tracing is opt-in:
+
+```python
+answer = await agent.arun(
+    llm=my_llm,
+    user_input="Investigate order A-42",
+    trace=True,
+    workdir=".bridgic",
+)
+```
+
+`trace=True` enables in-memory `AgentTrace` capture. Supplying `workdir` creates
+`<workdir>/runs/<run_id>/`; when both options are set, the trace is also
+persisted there as `trace.json`.
 
 ## License
 
-See the repository root for license information.
+Bridgic Amphibious is released under the MIT License. See the repository's
+`LICENSE` file for the full text.
